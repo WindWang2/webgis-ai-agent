@@ -169,8 +169,8 @@ export function StoryView(): React.ReactElement {
     [messages],
   );
   const artifactsByChapter = useMemo(
-    () => assignChapterArtifacts(messages, mapState),
-    [messages, mapState],
+    () => assignChapterArtifacts(messages, mapState, visibleChapters.map((c) => c.id)),
+    [messages, mapState, visibleChapters],
   );
 
   // ADR-0196：编排视图模型 —— spec 形状合法才启用编排模式，否则本地派生兜底。
@@ -503,9 +503,14 @@ export function StoryView(): React.ReactElement {
     if (shareCardPending) return; // #2158：idempotent pending 防重入
     setShareCardPending(true);
     try {
+      // 编排模式：位置/标题/总数取 spec 章节（activePos 是本地派生序，与 spec id 不同源）。
+      const specSharePos = specView ? playPos : -1;
+      const shareChapter = specSharePos >= 0 ? specChapters[specSharePos] : activeChapter;
+      const shareCurrent = specSharePos >= 0 ? specSharePos + 1 : activePos + 1;
+      const shareTotal = specSharePos >= 0 ? specChapters.length : visibleChapters.length;
       const blob = await composeShareCard(map, {
-        title: activeChapter?.title ?? 'StoryMap',
-        subtitle: t('shareCardSubtitle', { current: activePos + 1, total: visibleChapters.length }),
+        title: shareChapter?.title ?? 'StoryMap',
+        subtitle: t('shareCardSubtitle', { current: shareCurrent, total: shareTotal }),
       });
       downloadBlob(blob, `storymap-card-${Date.now()}.png`);
       useToastStore.getState().addToast(t('shareCardGenerated'), 'success');
@@ -515,7 +520,7 @@ export function StoryView(): React.ReactElement {
     } finally {
       setShareCardPending(false);
     }
-  }, [getMapInstance, activeChapter, activePos, visibleChapters.length, t, shareCardPending]);
+  }, [getMapInstance, specView, playPos, specChapters, activeChapter, activePos, visibleChapters.length, t, shareCardPending]);
   // G3D05：用户接管相机 → 暂停自动播放（Pause & Resume，用户控制优先）。
   // 手势判定用 dragstart/pitchstart/rotatestart（非程序化 easeTo）。
   useEffect(() => {

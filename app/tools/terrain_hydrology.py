@@ -350,7 +350,10 @@ def _register_hydrology_v4_tool(
             "sources_geojson": "源点要素 GeoJSON（Point FeatureCollection）或数据引用(ref:xxx)",
             "nodata": "nodata 覆盖值（0=用栅格自带 nodata；NaN 一律视为无效）",
         },
-        side_effect="deterministic_compute",
+        # 无条件写盘 *_costdist.tif（下游 least_cost_path 消费）——
+        # 按「写产物」诚实标注（与 depression_fill 同披露纪律）。
+        side_effect="artifact_creation",
+        data_mutations=("artifact_write",),
         network=False,
         deterministic=True,
         latency_class="slow",

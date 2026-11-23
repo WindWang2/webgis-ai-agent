@@ -24,7 +24,15 @@ vi.mock('@/components/map/map-panel', () => ({
 vi.mock('@/components/chat/story-markdown', () => ({
   default: ({ text }: { text: string }) => <div data-testid="story-md">{text}</div>,
 }));
-vi.mock('react-map-gl/maplibre', () => ({ useMap: () => ({}) }));
+// 分享卡用例需要 map 实例；其余用例保持空引用（getMapInstance → null 早退）。
+let mockMapRefs: Record<string, { getMap: () => unknown }> = {};
+vi.mock('react-map-gl/maplibre', () => ({ useMap: () => mockMapRefs }));
+const composeShareCardMock = vi.fn();
+vi.mock('./narrative-export', () => ({
+  composeShareCard: (...args: unknown[]) => composeShareCardMock(...args),
+  downloadBlob: vi.fn(),
+  exportNarrativePdf: vi.fn(),
+}));
 
 const dispatchActionMock = vi.fn();
 vi.mock('@/lib/contexts/map-action-context', () => ({
@@ -81,6 +89,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   fetchMock.mockReset();
   mockSessionId = 'spec-1';
+  mockMapRefs = {};
   vi.stubGlobal('fetch', fetchMock);
   useHudStore.getState().clearLayers();
 });
@@ -112,6 +121,29 @@ describe('StoryView 编排模式（ADR-0196）', () => {
       });
     });
     expect(screen.getByTestId('story-dashboard-mount')).toBeInTheDocument();
+  });
+
+  it('分享卡取当前 spec 章节标题与位置（而非本地派生第 1 章）', async () => {
+    mockMapRefs = { main: { getMap: () => ({}) } };
+    composeShareCardMock.mockResolvedValue(new Blob(['card']));
+    fetchMock
+      .mockResolvedValueOnce(jsonOk({ messages: MESSAGES }))
+      .mockResolvedValueOnce(jsonOk({ map_state: null }))
+      .mockResolvedValueOnce(jsonOk(SPEC));
+
+    const user = userEvent.setup();
+    render(<StoryView />);
+    await screen.findByTestId('story-orchestrated');
+
+    await user.click(screen.getByRole('button', { name: '下一章节' }));
+    await user.click(screen.getByRole('button', { name: '生成分享卡' }));
+
+    await waitFor(() => {
+      expect(composeShareCardMock).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ title: '宏观态势', subtitle: '章节 2/2' }),
+      );
+    });
   });
 
   it('compile 返回垃圾形状：静默回退本地派生（无徽标、消息章节照常）', async () => {

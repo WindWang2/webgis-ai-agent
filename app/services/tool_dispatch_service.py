@@ -1411,6 +1411,16 @@ class ToolDispatchService:
             )
 
         # 4. 正常路径：大型 GeoJSON 存为 ref；热力图等元数据落地
+        # store 失败必须释放 dedup 占位：这些 await 在执行段 try/except
+        # BaseException（仅覆盖执行段）之外，泄漏会让本 turn 同参重试恒收
+        # 「并发在飞」谎言。
+        async def _store_ref(prefix: str, data: Any) -> Any:
+            try:
+                return await self._session_data.store(session_id, data, prefix=prefix)
+            except BaseException:
+                self._release_key(executed_tools, tool_key, session_id or "")
+                raise
+
         geojson_ref: Optional[str] = None
         heatmap_ref: Optional[str] = None
         ref_descriptor: Optional[dict] = None
@@ -1438,7 +1448,7 @@ class ToolDispatchService:
                 # 与 kde_contours（顶层 FC）保持同一挂载契约。
                 target_data = result["data"]
             if target_data is not None:
-                geojson_ref = await self._session_data.store(session_id, target_data, prefix="geojson")
+                geojson_ref = await _store_ref("geojson", target_data)
             # Kriging vertical slice: the tool returns a SECOND first-class
             # surface (kriging stddev) under ``uncertainty`` — mint it as its
             # own ref so ArtifactRegistry tracks prediction and uncertainty
@@ -1449,9 +1459,7 @@ class ToolDispatchService:
                 and isinstance(result.get("uncertainty"), dict)
                 and result["uncertainty"].get("type") == "FeatureCollection"
             ):
-                uncertainty_ref = await self._session_data.store(
-                    session_id, result["uncertainty"], prefix="geojson"
-                )
+                uncertainty_ref = await _store_ref("geojson", result["uncertainty"])
                 result = dict(result)
                 result["uncertainty_ref"] = uncertainty_ref
                 # The inline body rides no further once its ref exists: the
@@ -1466,16 +1474,12 @@ class ToolDispatchService:
             # elevation_profile 面板经 chart-artifact 工件通道拉取。
             profile_ref: Optional[str] = None
             if isinstance(result.get("profile_chart"), dict):
-                profile_ref = await self._session_data.store(
-                    session_id, result["profile_chart"], prefix="profile"
-                )
+                profile_ref = await _store_ref("profile", result["profile_chart"])
                 result = dict(result)
                 result["profile_ref"] = profile_ref
                 result.pop("profile_chart", None)
             if result.get("type") == "heatmap_raster":
-                heatmap_ref = await self._session_data.store(
-                    session_id, result, prefix="heatmap"
-                )
+                heatmap_ref = await _store_ref("heatmap", result)
                 result = dict(result)
                 result.setdefault("result_ref", heatmap_ref)
             # G13 / WP07（ADR-0284 封套）：能力原语的分析产物封套
@@ -1502,9 +1506,7 @@ class ToolDispatchService:
                     "summary": result.get("summary"),
                     "tool": tool_name,
                 }
-                analysis_ref = await self._session_data.store(
-                    session_id, _envelope, prefix="analysis"
-                )
+                analysis_ref = await _store_ref("analysis", _envelope)
                 result = dict(result)
                 result["data_ref"] = analysis_ref
                 _artifact = dict(result["artifact"])
@@ -2050,6 +2052,16 @@ class ToolDispatchService:
                             cartographic_fingerprint(mapspec)
                         )
                         lifecycle["mapspec"] = mapspec
+                        # 组件突变产生新代：指纹/修订必须随权威 mapspec
+                        # 同步，否则下方 _attach_render_work 从 lifecycle
+                        # 投影的信封与内容不符。
+                        lifecycle["mapspec_fingerprint"] = (
+                            comp.get("mapspec_fingerprint")
+                            or result["mapspec_fingerprint"]
+                        )
+                        if comp.get("mutation_revision") is not None:
+                            lifecycle["mutation_revision"] = comp["mutation_revision"]
+                            result["mutation_revision"] = comp["mutation_revision"]
                     result["profile_component"] = {
                         "component_id": "elevation-profile",
                         "component_type": "elevation_profile",

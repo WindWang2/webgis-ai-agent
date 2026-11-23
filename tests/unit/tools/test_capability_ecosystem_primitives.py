@@ -263,6 +263,31 @@ def test_cap_o08_conditional_quantile_zonal_stats(tmp_path: Path):
         "where 条件变化必须改变有效样本计数 / 覆盖率（metamorphic）")
 
 
+def test_p2_zones_null_properties_do_not_crash(tmp_path: Path):
+    """P2：RFC7946 §3.2 允许 ``properties: null``；zone_id 缺失须回退下标，
+    不得在工具内部抛 AttributeError。"""
+    assert not MISSING, RED
+    reg = _registry()
+    raster_path = _allowed_raster_path(f"grid_props_null_{tmp_path.name}.tif")
+    _write_raster(raster_path)
+    zones = json.loads(json.dumps(_O08_ZONES))
+    zones["features"][0]["properties"] = None
+
+    result = asyncio.run(reg.dispatch(
+        "conditional_quantile_zonal_stats", {
+            "zones": zones, "raster_path": str(raster_path),
+            "quantiles": [0.5], "where": "",
+        }))
+    env = _envelope(result)
+    assert env.get("data") is not None, (
+        f"properties:null 不得导致工具崩溃：{env}")
+    rows = env["data"]["zones"]
+    assert rows[0]["zone_id"] == 0, (
+        f"properties:null 的 zone 应以 zone 下标作 zone_id：{rows[0]}")
+    assert rows[1]["zone_id"] == 2, (
+        f"有 properties 的 zone 仍取 properties.zone_id：{rows[1]}")
+
+
 # ── CAP-O09 原生算法 #2 ───────────────────────────────────────────────
 
 
@@ -313,6 +338,52 @@ def test_cap_o09_network_service_coverage_consistency(tmp_path: Path):
     nums_ident = _numeric_values(_envelope(result_ident)["data"])
     assert any(abs(n - 1.0) < 1e-6 for n in nums_ident), (
         f"两方案完全相同时一致性应 == 1.0，实际 {nums_ident[:20]}")
+
+
+def test_p2_empty_coverage_evidence_is_not_consistent():
+    """P2：覆盖边集为空时 Jaccard 是 0/0（未定义），不得报 1.0 / consistent。
+
+    两种零证据路径：两方案都覆盖不到任何边（cutoff 小于边长）、
+    以及设施坐标非法导致 schemes 为空。
+    """
+    assert not MISSING, RED
+    reg = _registry()
+
+    # 两方案覆盖边集均为空：cutoff=0.5 小于任何边长 → 只到设施吸附节点本身。
+    empty_coverage = asyncio.run(reg.dispatch(
+        "network_service_coverage_consistency", {
+            "network": _O09_NETWORK, "facilities": _O09_FACILITIES,
+            "cutoff": 0.5, "cost_unit": "meters",
+        }))
+    env = _envelope(empty_coverage)
+    assert env["data"]["union_edges"] == 0, env["data"]
+    assert env["data"]["jaccard"] is None, (
+        f"零覆盖证据下 Jaccard 未定义，不得报 1.0：{env['data']}")
+    assert env["data"]["consistent"] is False, (
+        f"零覆盖证据不得宣称方案一致：{env['data']}")
+    assert "not_evaluated" in env["summary"], env["summary"]
+
+    # 零方案：设施坐标非法（Point coordinates 为空）→ schemes 为空。
+    bad_facilities = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "properties": {"scheme": "A"},
+             "geometry": {"type": "Point", "coordinates": []}},
+            {"type": "Feature", "properties": {"scheme": "B"},
+             "geometry": {"type": "Point", "coordinates": []}},
+        ],
+    }
+    zero_schemes = asyncio.run(reg.dispatch(
+        "network_service_coverage_consistency", {
+            "network": _O09_NETWORK, "facilities": bad_facilities,
+            "cutoff": 2.0, "cost_unit": "meters",
+        }))
+    env2 = _envelope(zero_schemes)
+    assert env2["data"]["scheme_count"] == 0, env2["data"]
+    assert env2["data"]["jaccard"] is None, (
+        f"零方案 Jaccard 未定义，不得报 1.0：{env2['data']}")
+    assert env2["data"]["consistent"] is False, (
+        f"零方案不得宣称一致：{env2['data']}")
 
 
 def test_r2_n02_feature_time_is_apportioned_across_segments():

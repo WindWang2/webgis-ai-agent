@@ -388,6 +388,45 @@ async def test_projection_reports_conflict_and_anchor_states(service):
         assert state == "stale"
 
 
+@pytest.mark.asyncio
+async def test_projection_spec_load_failure_degrades_spec_anchors_to_unverified(
+    service, monkeypatch,
+):
+    """spec 读取异常 ≠ 可证缺失：layer/component/feature 锚不得误报 stale。"""
+    sid = _sid()
+    _, base = await _seed_layer(sid)
+    p = await service.create_proposal(
+        sid, author=_actor("u1"), title="t", intents=_intents(base),
+    )
+
+    async def _add(anchor):
+        updated = await service.add_comment(
+            sid, p.proposal_id, _actor("u2", role="viewer"),
+            body="锚", anchor=anchor,
+        )
+        return updated.comments[-1].comment_id
+
+    layer_cid = await _add(Anchor(kind=AnchorKind.LAYER, id="L1"))
+    comp_cid = await _add(Anchor(kind=AnchorKind.COMPONENT, id="c1"))
+    feat_cid = await _add(
+        Anchor(kind=AnchorKind.FEATURE, id="f1", layer_id="L1"),
+    )
+
+    from app.services.mapspec.store import mapspec_store_instance
+
+    async def _boom(*args, **kwargs):
+        raise RuntimeError("mapspec store unavailable")
+
+    monkeypatch.setattr(mapspec_store_instance, "get_mapspec", _boom)
+
+    proj = await service.get_proposal_projection(sid, p.proposal_id)
+    assert proj["anchor_states"] == {
+        layer_cid: "unverified",
+        comp_cid: "unverified",
+        feat_cid: "unverified",
+    }
+
+
 async def test_submit_cannot_replace_server_revision_without_rebase(service):
     sid = _sid()
     _, base = await _seed_layer(sid)

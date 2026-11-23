@@ -228,6 +228,22 @@ async def test_space_time_k_analysis_behavioral(registry):
 
 
 @pytest.mark.asyncio
+async def test_space_time_k_epoch_seconds_span(registry):
+    """Epoch 数值时间戳按秒解析（与 ST-DBSCAN 同契约）。
+
+    三个时间窗跨 7200 s；若按 pandas 默认纳秒解析（1970 塌缩），
+    t_span 会变成 ~7e-6 s，t 网格同样失真。
+    """
+    out = await registry.dispatch(
+        "space_time_k_analysis",
+        {"geojson": _space_time_fc(), "time_field": "ts", "permutations": "0"})
+    assert out.get("success") is True, out
+    data = out["data"]
+    assert data["t_span"] > 7000
+    assert min(data["t"]) > 100
+
+
+@pytest.mark.asyncio
 async def test_mantel_test_analysis_behavioral(registry):
     # validation：缺 time_field → 校验错误
     bad = await registry.dispatch("mantel_test_analysis", {"geojson": _fc([])})
@@ -280,6 +296,27 @@ async def test_cross_pcf_analysis_behavioral(registry):
     assert len(data.get("g12") or []) == 6
     assert len(data.get("envelope_g12_high") or []) == 6
     assert data.get("p_value") is not None
+
+
+@pytest.mark.asyncio
+async def test_cross_pcf_type_nulls_dropped_with_disclosure(registry):
+    """类型字段为空的行剔除并披露，不能 astype(str) 变成 'None' 第三类。
+
+    两类各 12 点 + 3 行空类型：未修复时 distinct 有 3 个取值，
+    cross_pair_correlation 直接拒绝；修复后按 24 个有效点检验。
+    """
+    feats = _two_type_fc()["features"] + [
+        _point(116.02, 39.02, cat=None) for _ in range(3)
+    ]
+    out = await registry.dispatch(
+        "cross_pcf_analysis",
+        {"geojson": _fc(feats), "type_field": "cat",
+         "n_steps": 6, "permutations": "0"})
+    assert out.get("success") is True, out
+    data = out["data"]
+    assert data["n"] == 24
+    assert data["n_type_null_dropped"] == 3
+    assert "type_null_note" in data
 
 
 # ── advanced_spatial ──────────────────────────────────────────────────

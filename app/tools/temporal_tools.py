@@ -685,6 +685,7 @@ def register_temporal_science_tools(registry: ToolRegistry):
         registry,
         name="temporal_seasonal_decompose",
         side_effect="deterministic_compute",
+        result_size_policy="inline_small",
         tags=('季节分解', '时间序列', '趋势', '周期'),
         description=(
             "经典季节分解（classical decomposition，Makridakis 1998）："
@@ -742,6 +743,24 @@ def register_temporal_science_tools(registry: ToolRegistry):
                     "这是经典中心滑动平均分解，不是 STL（无迭代稳健拟合）。"
                 ),
             }
+            # Foundation V3 P2：trend/seasonal/remainder 长度 n、
+            # seasonal_indices 长度 period，随 values 无上限增长——大序列会
+            # 整段内联进 LLM 上下文。inline_small 契约下截断为前缀并披露。
+            _inline_max = 500
+            _trimmed_arrays = {}
+            for _key in ("trend", "seasonal", "seasonal_indices", "remainder"):
+                _arr = payload.get(_key)
+                if isinstance(_arr, list) and len(_arr) > _inline_max:
+                    _trimmed_arrays[_key] = len(_arr)
+                    payload[_key] = _arr[:_inline_max]
+            if _trimmed_arrays:
+                payload["_arrays_trimmed"] = {
+                    "original_lengths": _trimmed_arrays,
+                    "kept_count": _inline_max,
+                    "notice": (
+                        "内联数组仅保留前 500 个位置；完整分量请缩小序列或"
+                        "在本地重算"),
+                }
             _attach_trend_evidence(
                 payload,
                 method="classical_ma",

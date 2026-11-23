@@ -98,9 +98,13 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
 
   const refreshList = useCallback(async () => {
     if (!sessionId) return;
+    const gen = genRef.current;
     try {
-      setBatches((await listImportBatches(sessionId, { ownerToken })) ?? []);
+      const list = await listImportBatches(sessionId, { ownerToken });
+      if (genRef.current !== gen) return; // P2：会话切换后旧列表响应不得覆写当前列表
+      setBatches(list ?? []);
     } catch (e) {
+      if (genRef.current !== gen) return;
       setError(String((e as Error).message ?? e));
     }
   }, [sessionId, ownerToken]);
@@ -330,7 +334,9 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
       for (const m of members) {
         const d = drafts[m.member_key];
         if (!selected.has(m.member_key) || m.unsupported_reason || !d) continue;
-        configs[m.member_key] = d as MemberConfig;
+        // P2：剥离本地 dirty 标记，不把 UI 状态当作 MemberConfig 发给后端
+        const { dirty: _dirty, ...config } = d;
+        configs[m.member_key] = config;
       }
       await saveImportPlan(
         active.batch_id,

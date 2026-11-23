@@ -195,3 +195,37 @@ def test_knox_tool_evidence_blocks():
     assert sig["permutations"] == 99
     assert ev["reproducibility"]["seed"] == 42
     assert payload["data"]["time_field"] == "timestamp"
+
+
+def test_knox_epoch_seconds_parsed_as_seconds():
+    """Epoch 数值时间戳按秒解析（与 ST-DBSCAN 同契约）。
+
+    两个空间紧邻的配对各自相隔 3600 s：60 s 阈值下联合对应为 0。
+    若按 pandas 默认纳秒解析（1970 塌缩），Δt 仅 ~3.6e-6 s，
+    两个空间对都会落入时间阈值 → observed=2。
+    """
+    from app.tools.point_pattern_tools import register_point_pattern_tools
+    from app.tools.registry import ToolRegistry
+
+    features = []
+    for lng0, ts in ((116.0, 1_700_000_000), (116.002, 1_700_000_000)):
+        for dx, dt in ((0.0, 0), (0.00001, 3600)):
+            features.append({
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [lng0 + dx, 39.0]},
+                "properties": {"ts": ts + dt},
+            })
+    registry = ToolRegistry()
+    register_point_pattern_tools(registry)
+    payload = asyncio.run(registry.dispatch("knox_analysis", {
+        "geojson": {"type": "FeatureCollection", "features": features},
+        "time_field": "ts",
+        "critical_distance": 5.0, "critical_time": 60.0,
+        "permutations": "99",
+    }))
+    assert payload["success"] is True, payload.get("message")
+    data = payload["data"]
+    assert data["n"] == 4
+    assert data["n_spatial_pairs"] == 2
+    assert data["n_temporal_pairs"] == 2
+    assert data["observed"] == 0

@@ -58,10 +58,15 @@ export async function commitLayerOverrideForFrame(
   const enqueuedSessionId = getMapSpecSessionCursor().sessionId;
   let outcome: 'routed' | 'superseded' = 'routed';
   await enqueueUserMutation(async () => {
-    const { sessionId, revision, ownerToken } = getMapSpecSessionCursor();
+    const { sessionId, ownerToken } = getMapSpecSessionCursor();
     if (!sessionId || sessionId !== enqueuedSessionId) return;
     const spec = (await readCurrentSpec(sessionId, ownerToken)) as MapSpec | null;
     if (!spec) return;
+    // readCurrentSpec 的 GET map-state 回退会经 setMapSpecRevision 推进游标
+    // —— revision 必须在读取之后取：此前在读取前解构，回退路径的 mutation
+    // 仍携带陈旧 expected_revision → 409 superseded，画幅 override 静默丢弃。
+    const { sessionId: activeSessionId, revision } = getMapSpecSessionCursor();
+    if (activeSessionId !== sessionId) return; // 读取期间切会话 → 作废
     const frames = Array.isArray(spec.layout?.frames) ? [...spec.layout!.frames!] : [];
     if (!frames.some((f) => f && f.id === frameId)) return; // 帧缺席 → 不写
     const nextFrames = frames.map((f) => {

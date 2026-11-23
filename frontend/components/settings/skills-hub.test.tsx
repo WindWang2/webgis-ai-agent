@@ -23,6 +23,7 @@ vi.mock('@/lib/store/useHudStore', () => ({
 }));
 
 import { SkillsHub } from './skills-hub';
+import { invalidateCache } from '@/lib/api/get-fast-path';
 
 const jsonOk = (body: unknown, status = 200) => ({
   ok: true,
@@ -65,6 +66,7 @@ describe('SkillsHub (#551)', () => {
     vi.stubGlobal('fetch', fetchMock);
     uploadResponse = () => jsonOk({ status: 'ok', filename: 'my_skill.py' });
     mockState.skills = [];
+    invalidateCache('/api/v1/chat/skills');
     routeFetch();
   });
 
@@ -125,5 +127,23 @@ describe('SkillsHub (#551)', () => {
     await user.upload(screen.getByTestId('skill-file-input'), file);
 
     expect(await screen.findByText(/需要管理员权限才能上传技能/)).toBeInTheDocument();
+  });
+
+  it('empty backend catalogue clears the store (no demo fallback)', async () => {
+    // 空目录部署：后端返回 []，store 里残留的 demo 技能必须被清掉。
+    mockState.skills = [
+      { id: 'poi', name: 'POI 查询', desc: 'demo', category: '数据获取' },
+    ];
+    fetchMock.mockImplementation((url: string | URL) => {
+      const u = String(url);
+      if (u.includes('/api/v1/chat/skills')) {
+        return Promise.resolve(jsonOk({ skills: [] }));
+      }
+      return Promise.resolve(jsonOk({ code: 'SUCCESS', success: true, data: null }));
+    });
+    const { rerender } = render(<SkillsHub />);
+    await waitFor(() => expect(mockState.skills).toHaveLength(0));
+    rerender(<SkillsHub />);
+    expect(screen.queryByText('POI 查询')).not.toBeInTheDocument();
   });
 });

@@ -334,9 +334,9 @@ class FaissVectorStore:
             # and mutating it here would make a failed write look
             # succeeded to every later reader in this process (#1704).
             repaired = dict(meta)
-            repaired["chunks"] = list(chunks)[:ntotal]
-            for i, ch in enumerate(repaired["chunks"]):
-                ch["index"] = i
+            repaired["chunks"] = [
+                {**ch, "index": i} for i, ch in enumerate(chunks[:ntotal])
+            ]
             try:
                 with _write_lock(self.index_dir):
                     _atomic_write_json(

@@ -58,7 +58,6 @@ export function SkillsHub() {
   const loadSkills = (opts?: { forceRefresh?: boolean; signal?: AbortSignal }) => {
     getSkills(opts)
       .then((skillsList) => {
-        if (!skillsList.length && !opts?.forceRefresh) return;
         setSkills(
           skillsList.map((sk) => ({
             id: sk.name,

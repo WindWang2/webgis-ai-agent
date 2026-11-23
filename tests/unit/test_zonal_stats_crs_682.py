@@ -12,6 +12,7 @@ stats come back as None/zero and look plausible.
 The test walks the TOOL ROUTE (ToolRegistry.dispatch) so the passthrough
 is exercised, not just raster_ops directly.
 """
+import copy
 import os
 import uuid
 
@@ -215,6 +216,43 @@ def test_zonal_stats_does_not_mutate_input_fc():
             os.unlink(raster_path)
         except OSError:
             pass
+
+
+def test_zonal_stats_pipeline_receives_copied_features(monkeypatch):
+    """P2：非破坏拷贝必须真正进入分析管线。
+
+    旧代码 fc_payload = features（调用方原始 dict），522-526 的浅拷贝只用于
+    返回值；分析管线一旦原地改写要素，调用方 FC 即被污染。这里用会改写输入的
+    fake pipeline 钉住隔离契约。
+    """
+    from app.services.spatial_analyzer import SpatialAnalyzer
+
+    fc = {
+        "type": "FeatureCollection",
+        "crs": "EPSG:4326",
+        "features": [{
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [0, 0]},
+            "properties": {"zone_id": 1},
+        }],
+    }
+    snapshot = copy.deepcopy(fc)
+    fake_path = _data_path(f"fake_{uuid.uuid4().hex[:8]}.tif")
+
+    def _mutating_zonal_statistics(payload, raster_path):
+        for feat in payload["features"]:
+            feat["properties"]["mean"] = 999.0
+        return [{"mean": 999.0} for _ in payload["features"]]
+
+    monkeypatch.setattr(
+        "app.lib.geo_analysis.raster_ops.zonal_statistics",
+        _mutating_zonal_statistics,
+    )
+    res = SpatialAnalyzer.zonal_stats(fc, fake_path)
+    assert res.success is True, res.summary
+    assert fc == snapshot, "zonal_stats 必须把要素拷贝交给分析管线，不得暴露调用方 dict"
+    # 顶层 crs 仍随载荷透传（GIS-682）；统计照常合入返回的拷贝
+    assert res.data["features"][0]["properties"]["mean"] == 999.0
 
 
 @pytest.mark.parametrize("pixel_bounds", [

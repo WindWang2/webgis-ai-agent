@@ -126,4 +126,17 @@ describe('commitLayerOverrideForFrame（A03 仅本幅）', () => {
     commitMapSpecDocument(specWithFrames() as never, 12);
     expect(getMapSpecSessionCursor().revision).toBe(12);
   });
+
+  it('回退 GET map-state 刷新游标后，mutation 的 expected_revision 用刷新值（非陈旧值）', async () => {
+    mapStateReads.length = 0;
+    setMapSpecSessionCursor('s-scope', 5, 'tok'); // 游标陈旧；map-state 返回 revision 12
+    const out = await commitLayerOverrideForFrame('fp-2', {
+      layerId: 'layer-0',
+      override: { opacity: 0.5 },
+    });
+    expect(out).toBe('routed');
+    expect(mapStateReads).toHaveLength(1);
+    expect(mutations).toHaveLength(1);
+    expect((mutations[0] as { expected_revision: number }).expected_revision).toBe(12);
+  });
 });

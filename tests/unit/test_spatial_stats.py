@@ -333,3 +333,54 @@ async def test_hotspot_analysis_evidence_uses_contract_normalized_band(stats_too
     assert result.get("success") is True, result
     ev = result.get("scientific_evidence") or {}
     assert ev.get("parameters_applied", {}).get("distance_band") == 1500.0
+
+
+# ─── P2 回归：实现层失败不得被硬编码 success=True 掩盖 ────────────────
+
+
+@pytest.mark.parametrize(
+    "tool_name,extra",
+    [
+        ("ripley_k_analysis", {}),
+        ("quadrat_analysis", {"grid_rows": 2, "grid_cols": 2}),
+    ],
+)
+@pytest.mark.asyncio
+async def test_ripley_quadrat_failure_projects_business_failure(
+        stats_tools, tool_name, extra):
+    """点不足时 spatial_operator 返回 success=False；payload 必须透传该
+    失败（可读 summary），不得报成功后在证据接线处 AttributeError。"""
+    result = await stats_tools.dispatch(tool_name, {
+        "geojson": _fc([_point(116.0, 39.0)]),
+        **extra,
+    })
+    assert result.get("success") is False, result
+    assert "failed" in (result.get("summary") or ""), result
+    assert result.get("code") != "TOOL_ERROR", result
+
+
+# ─── P2 回归：hotspot 证据块 CRS 取自已解析输入 ───────────────────────
+
+
+@pytest.mark.parametrize("significance_method", ["normal", "permutation"])
+@pytest.mark.asyncio
+async def test_hotspot_evidence_crs_reads_parsed_input(
+        stats_tools, significance_method):
+    """入参为 GeoJSON 字符串时，证据块 crs 必须取自 safe_parse 后的 data
+    （保留顶层 crs member），而不是原始字符串（CRS 丢失 → 回落 4326）。"""
+    import json
+
+    fc = _fc(
+        [_point(116.0 + 0.01 * i, 39.0, {"val": 100}) for i in range(10)]
+        + [_point(116.2 + 0.01 * i, 39.2, {"val": 1}) for i in range(10)]
+    )
+    fc["crs"] = {"type": "name", "properties": {"name": "EPSG:4490"}}
+    result = await stats_tools.dispatch("hotspot_analysis", {
+        "geojson": json.dumps(fc),
+        "value_field": "val",
+        "significance_method": significance_method,
+        "permutations": "199",
+    })
+    assert result.get("success") is True, result
+    ev = result.get("scientific_evidence") or {}
+    assert ev.get("inputs", {}).get("crs") == "EPSG:4490"

@@ -142,6 +142,32 @@ describe('resolveFrameEffectiveSpec', () => {
     expect(out.filteredFeatureCount).toBeNull();
   });
 
+  it('time_window start=0 → 与后端真值门一致整体跳过（不施加 epoch 0 窗）', () => {
+    const s = spec();
+    const slot = s.frame_product!.frames[0] as unknown as { data: Record<string, unknown> };
+    delete slot.data.where;
+    slot.data.time_window = { time_field: 'year', time_representation: 'year_int', start: 0, end: 2023 };
+    const out = resolveFrameEffectiveSpec(s, s.frame_product, 'f-2022');
+    expect(out.applied).toEqual(['layer_overrides']); // resolver.py 以 start/end 真值为门
+    expect(out.filteredFeatureCount).toBeNull();
+    const src = (out.document.sources as unknown as Record<string, Record<string, unknown>>)['src-0'];
+    const payload = (src.inlineData ?? src.data) as { features: Array<{ properties: { year: number } }> };
+    expect(payload.features.map((f) => f.properties.year)).toEqual([2020, 2022, 2024]); // 未过滤
+  });
+
+  it("time_window start=null / '' → 与后端真值门一致跳过，不抛 frame_time_window_invalid", () => {
+    const cases: Array<[unknown, unknown]> = [[null, 2024], ['', '']];
+    for (const [start, end] of cases) {
+      const s = spec();
+      const slot = s.frame_product!.frames[0] as unknown as { data: Record<string, unknown> };
+      delete slot.data.where;
+      slot.data.time_window = { time_field: 'year', time_representation: 'year_int', start, end };
+      const out = resolveFrameEffectiveSpec(s, s.frame_product, 'f-2022');
+      expect(out.applied).toEqual(['layer_overrides']);
+      expect(out.filteredFeatureCount).toBeNull();
+    }
+  });
+
   it('independent 图例帧跳过共享分级；palette_colors 类数不匹配丢弃+披露（M6）', () => {
     const s = spec();
     s.frame_product!.shared_expression = {

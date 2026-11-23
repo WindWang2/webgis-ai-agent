@@ -58,6 +58,13 @@ vi.mock('@/lib/mapspec/user-mutation', () => ({
   commitLayerStyleAndCommit: vi.fn(async () => {}),
 }));
 
+// 符号资产面板按 committed 层 id 精确寻址（G40）：用桩捕获实际传入的 layerId。
+vi.mock('@/components/hud/symbol-asset-panel', () => ({
+  default: ({ layerId }: { layerId: string }) => (
+    <div data-testid="symbol-asset-stub" data-layer-id={layerId} />
+  ),
+}));
+
 const heatContractWindow = vi.fn(async () => {
   // mirror assertion source: the adapter must use the 4-60 legacy window
   const src = await import('@/lib/mapspec-runtime/adapter');
@@ -158,6 +165,32 @@ describe('#1077 aliased spec-backed rows (runtimePatch mirror)', () => {
     // 滤镜类控件（线型，规范未建模）保持禁用
     const dashButton = screen.getByText('虚线') as HTMLButtonElement;
     expect(dashButton.disabled).toBe(true);
+    // restore shared mock state
+    mockState.editingLayerId = 'layer-1';
+    (mockState.layers as any)[0] = {
+      id: 'layer-1', name: 'POI 层', type: 'vector', visible: true,
+      opacity: 0.8, style: { color: '#00f2ff', radius_px: 30 },
+    };
+    committedSpec = null;
+  });
+});
+
+describe('G40 symbol assets: alias rows target the hit layer id', () => {
+  it('passes the committed hit id (not the geojson ref alias) for __-suffixed layers', () => {
+    mockState.editingLayerId = 'ref:geojson-abc';
+    (mockState.layers as any)[0] = {
+      ...mockState.layers[0],
+      id: 'ref:geojson-abc',
+      _mapspecLayerId: undefined,
+    };
+    committedSpec = {
+      layers: [{ id: 'ref:geojson-abc__main', type: 'circle' }],
+      sources: {},
+    };
+    render(<LayerStylePanel />);
+    // inspect/apply 走 committed 层精确 id —— 传别名会恒 UNKNOWN_LAYER
+    expect(screen.getByTestId('symbol-asset-stub').getAttribute('data-layer-id'))
+      .toBe('ref:geojson-abc__main');
     // restore shared mock state
     mockState.editingLayerId = 'layer-1';
     (mockState.layers as any)[0] = {

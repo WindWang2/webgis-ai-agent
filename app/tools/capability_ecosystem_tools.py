@@ -375,7 +375,8 @@ def _conditional_quantile_zonal_stats_impl(
                 transform=transform, invert=True)
         except Exception:  # noqa: BLE001 — 单 zone 失败不拖垮全表，但必须披露
             rows.append({
-                "zone_index": idx, "zone_id": feat.get("properties", {}).get("zone_id", idx),
+                "zone_index": idx,
+                "zone_id": (feat.get("properties") or {}).get("zone_id", idx),
                 "valid_pixel_count": 0, "valid_pixel_coverage": 0.0,
                 "quantiles": {str(q): None for q in qlist},
                 "geometry_repair": "failed:geometry_invalid",
@@ -390,7 +391,7 @@ def _conditional_quantile_zonal_stats_impl(
                  if valid_count else np.full(len(qlist), float("nan")))
         rows.append({
             "zone_index": idx,
-            "zone_id": feat.get("properties", {}).get("zone_id", idx),
+            "zone_id": (feat.get("properties") or {}).get("zone_id", idx),
             "valid_pixel_count": valid_count,
             "valid_pixel_coverage": round(coverage, 6),
             "quantiles": {
@@ -663,32 +664,38 @@ def _network_coverage_consistency_impl(
     names = sorted(coverage)
     # F-11（独立冷审）：>2 方案时不再静默只比前两个。这里计算**两两
     # Jaccard 矩阵**，主结果取全局最低一致性（最保守），并显式披露方案数。
-    pairwise: dict[str, float] = {}
+    pairwise: dict[str, Optional[float]] = {}
     for i, n1 in enumerate(names):
         for n2 in names[i + 1:]:
             s1, s2 = coverage[n1], coverage[n2]
             union_pair = s1 | s2
-            pairwise[f"{n1}|{n2}"] = round(
-                float(len(s1 & s2) / len(union_pair)) if union_pair else 1.0, 6)
+            # 空并集 = 无可比覆盖边：Jaccard 是 0/0，未定义而非 1.0。
+            pairwise[f"{n1}|{n2}"] = (
+                round(float(len(s1 & s2) / len(union_pair)), 6)
+                if union_pair else None)
     if len(names) >= 2:
         a, b = coverage[names[0]], coverage[names[1]]
         union = a | b
-        jaccard = float(len(a & b) / len(union)) if union else 1.0
-        if pairwise:
-            jaccard = min(jaccard, min(pairwise.values()))
+        jaccard: Optional[float] = (
+            float(len(a & b) / len(union)) if union else None)
+        evaluated = [v for v in pairwise.values() if v is not None]
+        if evaluated:
+            jaccard = (min(evaluated) if jaccard is None
+                       else min(jaccard, min(evaluated)))
         only_a, only_b = sorted(a - b), sorted(b - a)
     else:
         only = next(iter(coverage.values())) if coverage else set()
         a = b = only
         union = only
-        jaccard = 1.0
+        # 单方案/零方案：非空覆盖集自比为 1.0；空边集仍是零证据。
+        jaccard = 1.0 if only else None
         only_a, only_b = [], []
 
     elapsed = time.monotonic() - started
     data = {
         "schemes": names,
-        "jaccard": round(jaccard, 6),
-        "consistency": round(jaccard, 6),
+        "jaccard": None if jaccard is None else round(jaccard, 6),
+        "consistency": None if jaccard is None else round(jaccard, 6),
         "covered_edges_a": len(a),
         "covered_edges_b": len(b),
         "shared_edges": len(a & b) if len(names) >= 2 else len(a),
@@ -698,7 +705,7 @@ def _network_coverage_consistency_impl(
         "only_a_count": len(only_a),
         "only_b_count": len(only_b),
         "coverage_ratio_a": (round(len(a) / len(edges), 6) if edges else 0.0),
-        "consistent": bool(jaccard >= 1.0 - 1e-9),
+        "consistent": (jaccard is not None and jaccard >= 1.0 - 1e-9),
         "pairwise_jaccard": pairwise,
         "scheme_count": len(names),
         # G13 / WP08：不可达设施计数披露（无覆盖 ≠ 零差异）。
@@ -766,8 +773,10 @@ def _network_coverage_consistency_impl(
         "truncated": len(feats) >= MAX_NETWORK_EDGES or len(facs) >= MAX_FACILITIES,
     }
     unit_label = "秒（真实时间成本）" if time_mode else "米（平面长度）"
+    jaccard_label = ("not_evaluated（无可比覆盖边，零证据）"
+                     if jaccard is None else f"{jaccard:.3f}")
     summary = (
-        f"{len(names)} 个方案服务覆盖一致性：Jaccard={jaccard:.3f}"
+        f"{len(names)} 个方案服务覆盖一致性：Jaccard={jaccard_label}"
         f"（cutoff={cutoff} {unit_label}）；"
         f"覆盖边 A={len(a)} / B={len(b)}，A 独有 {len(only_a)}，B 独有 {len(only_b)}"
         + ("；注意：输入疑似经纬度坐标，长度量纲不可按米解释"

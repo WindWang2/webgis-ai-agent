@@ -450,7 +450,17 @@ def register_point_pattern_tools(registry: ToolRegistry):
                     correction_hint="pass the property holding ISO-8601/epoch timestamps",
                 )
             field = fallback[0]
-        parsed = pd.to_datetime(gdf[field], errors="coerce", utc=True)
+        # 数值型 epoch 按仓库统一时间契约取**秒**（与 st_dbscan/kriging_st 同口径）：
+        # pd.to_datetime 对数值默认纳秒 —— 秒级字段会被静默解析成 1970，
+        # Δt 全部塌缩到微秒级，knox 的时间阈值随之失真（P2 修复）。
+        ts_series = gdf[field]
+        if pd.api.types.is_numeric_dtype(ts_series):
+            parsed = pd.to_datetime(
+                pd.to_numeric(ts_series, errors="coerce"), unit="s",
+                utc=True, errors="coerce",
+            )
+        else:
+            parsed = pd.to_datetime(ts_series, errors="coerce", utc=True)
         valid = parsed.notna().to_numpy()
         n_dropped = int((~valid).sum())
         t_seconds = parsed[valid].astype("int64").to_numpy() / 1e9
@@ -521,7 +531,16 @@ def register_point_pattern_tools(registry: ToolRegistry):
                     correction_hint="pass the property holding ISO-8601/epoch timestamps",
                 )
             field = fallback[0]
-        parsed = pd.to_datetime(gdf[field], errors="coerce", utc=True)
+        # 数值型 epoch 取**秒**（与 knox/st_dbscan 同口径）：默认纳秒会把
+        # 秒级字段解析成 1970，t 网格/t_span 输出随之失真（P2 修复）。
+        ts_series = gdf[field]
+        if pd.api.types.is_numeric_dtype(ts_series):
+            parsed = pd.to_datetime(
+                pd.to_numeric(ts_series, errors="coerce"), unit="s",
+                utc=True, errors="coerce",
+            )
+        else:
+            parsed = pd.to_datetime(ts_series, errors="coerce", utc=True)
         valid = parsed.notna().to_numpy()
         n_dropped = int((~valid).sum())
         t_seconds = parsed[valid].astype("int64").to_numpy() / 1e9
@@ -753,16 +772,22 @@ def register_point_pattern_tools(registry: ToolRegistry):
                 f"type field '{field}' not found in feature properties",
                 correction_hint="pass the property holding the binary category",
             )
-        types = gdf[field].astype(str).to_numpy()
+        values = gdf[field]
+        valid = values.notna().to_numpy()
+        n_null = int((~valid).sum())
+        types = values[valid].astype(str).to_numpy()
 
         result = cross_pair_correlation(
-            xy, types,
+            xy[valid], types,
             n_steps=int(params["n_steps"]),
             max_distance_ratio=float(params["max_distance_ratio"]),
             bandwidth=float(params["bandwidth"]),
             permutations=int(params["permutations"]),
         )
         result["type_field"] = field
+        if n_null:
+            result["n_type_null_dropped"] = n_null
+            result["type_null_note"] = f"{n_null} 行类型字段为空，已剔除后检验"
         payload = {"success": True, "summary": result["summary"], "data": result}
         uncertainty: list = []
         seed = None

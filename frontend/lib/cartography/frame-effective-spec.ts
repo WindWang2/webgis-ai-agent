@@ -289,8 +289,10 @@ export function resolveFrameEffectiveSpec(
       const representation = typeof tw.time_representation === 'string' ? tw.time_representation : '';
       // 与后端 apply_time_window_to_doc 对齐：缺 time_field/representation
       // → 跳过过滤（写入侧 bind 已校验；畸形 payload 不在此分叉两端行为）。
-      // 缺 start/end 同样对齐后端跳过（resolver 以 start/end 在场为门，评审 r3）。
-      if (field && representation && tw.start !== undefined && tw.end !== undefined) {
+      // start/end 与后端 resolver.py 同为真值门（0/''/null 时后端整体跳过）：
+      // 若此处按「在场」放行，前端会施加过滤或抛 frame_time_window_invalid，
+      // 与后端帧要素集不一致。
+      if (field && representation && tw.start && tw.end) {
       const predicate = timeWindowPredicate(tw);
       kept = kept.filter((f) => {
         const props = isRecord(f.properties) ? f.properties : {};

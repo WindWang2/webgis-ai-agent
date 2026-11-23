@@ -607,12 +607,6 @@ def register_terrain_tools(registry: ToolRegistry):
         n_levels: int = 10,
         interval: float | None = None,
     ) -> dict:
-        # 评审 M3：显式 levels 绕过契约的 n_levels 上限 —— 语义等价界
-        # （n_levels 2-30）：≤30 个显式等值面，超出即拒绝。
-        if levels is not None and len(levels) > 30:
-            raise ValueError(
-                f"levels 列表超限：{len(levels)} > 30（与 n_levels 契约上限一致）"
-            )
         contract_params: Dict[str, Any] = {"n_levels": n_levels}
         if interval is not None:
             contract_params["interval"] = interval
@@ -634,6 +628,14 @@ def register_terrain_tools(registry: ToolRegistry):
         elif levels:
             levels_v = [float(v) for v in levels]
 
+        # 评审 M3：显式 levels 绕过契约的 n_levels 上限 —— 语义等价界
+        # （n_levels 2-30）：≤30 个显式等值面，超出即拒绝。校验必须在
+        # 解析之后（JSON 文本的 len 是字符数，不是水平个数）。
+        if levels_v is not None and len(levels_v) > 30:
+            raise ValueError(
+                f"levels 列表超限：{len(levels_v)} > 30（与 n_levels 契约上限一致）"
+            )
+
         arr, transform, crs, eff_nodata, bounds = _read_terrain_window(
             raster_path, None
         )
@@ -645,13 +647,19 @@ def register_terrain_tools(registry: ToolRegistry):
             interval=interval_v,
             nodata=eff_nodata,
         )
+        feature_count = len(fc["features"])
         fc_trimmed = trim_features(fc)
         payload = {
             "success": True,
-            "feature_count": len(fc_trimmed["features"]),
+            "feature_count": feature_count,
             "contours": fc_trimmed,
             "meta": meta,
         }
+        if "_trim" in fc_trimmed:
+            payload["_features_trimmed"] = {
+                "original_count": feature_count,
+                "kept_count": len(fc_trimmed["features"]),
+            }
         return _terrain_evidence(
             payload,
             "terrain.contours",

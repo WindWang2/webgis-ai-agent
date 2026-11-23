@@ -172,6 +172,59 @@ class TestMaterializeOnSave:
         assert set(snap.durable_pointers) == {payloads[0]}
         assert snap.materialize_skipped == [payloads[1]]
 
+    async def test_budget_pre_size_gate_skips_before_canonical_dumps(
+        self, data_dir, monkeypatch,
+    ):
+        """P2 perf：明显超预算的 JSON 载荷在 canonical_dumps **之前**被
+        有界估算预量尺拒绝 —— 不为注定被拒的大载荷付整串序列化拷贝。"""
+        sid = "wsv4-budget-pregate"
+        ref = await session_data_manager.store(sid, _FC, prefix="geojson")
+        import app.services.project_artifact_promotion as pap
+        from app.services.workspace.durability import materialize_ref_payload
+
+        calls = []
+        real = pap.canonical_dumps
+
+        def _spy(payload):
+            calls.append(payload)
+            return real(payload)
+
+        monkeypatch.setattr(pap, "canonical_dumps", _spy)
+        pointer, reason = await materialize_ref_payload(sid, ref, budget_bytes=1)
+        assert pointer is None and reason == "budget"
+        assert calls == []  # pre-size gate 先于 canonical 序列化生效
+
+    async def test_cube_manifest_pointer_does_not_consume_materialize_budget(
+        self, data_dir,
+    ):
+        """P2 data-integrity：cube 的 manifest-only 指针不把逻辑 byte_size
+        当新写字节扣预算 —— 同批后续 ref 不再被假 "budget" 跳过。"""
+        sid = "wsv4-cube-budget"
+        cube_id = uuid.uuid4().hex[:8]
+        ref = f"ref:cube/{cube_id}"
+        cube_dir = data_dir / sid / "lakehouse-cubes" / cube_id
+        cube_dir.mkdir(parents=True)
+        (cube_dir / "b1").mkdir()
+        (cube_dir / "b1" / "c0").write_bytes(b"x" * 4096)
+        (cube_dir / "zarr.json").write_bytes(b'{"zarr_format": 2}')
+        cube_bytes = sum(
+            p.stat().st_size for p in cube_dir.rglob("*") if p.is_file())
+        await register_artifact(sid, artifact_id=ref, artifact_type="lakehouse_cube")
+        # cube 先入账（list_artifacts 按 updated_at 排序），JSON ref 后入账。
+        json_ref = await session_data_manager.store(
+            sid, {"type": "FeatureCollection", "features": []}, prefix="geojson")
+        time.sleep(0.01)
+        await register_artifact(sid, artifact_id=json_ref, producer_tool="buffer")
+        snap = await get_workspace_snapshot_service().save_snapshot(
+            sid, project_id="proj-cube-budget", materialize="claimed",
+            max_materialize_bytes=cube_bytes,
+        )
+        assert snap is not None
+        assert ref in snap.durable_pointers
+        # 修复前：cube 扣全额 byte_size → remaining==0 → json_ref 被假 budget 跳过。
+        assert json_ref in snap.durable_pointers
+        assert json_ref not in snap.materialize_skipped
+
     async def test_invalid_materialize_rejected(self, data_dir):
         assert await get_workspace_snapshot_service().save_snapshot(
             "wsv4-bad", materialize="everything"

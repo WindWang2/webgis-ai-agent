@@ -615,6 +615,41 @@ async def test_guardrail_block_releases_dedup_slot(
     assert fake_registry.dispatch.call_count == 1
 
 
+@pytest.mark.asyncio
+async def test_store_exception_releases_dedup_slot(
+    service, fake_registry, clean_session, monkeypatch,
+):
+    """store() 抛异常（执行段之外的 await）也必须释放 dedup 占位：
+    本 turn 同参重试不得被谎报为「并发在飞」。"""
+    fake_registry.dispatch.return_value = {
+        "type": "FeatureCollection",
+        "features": [{
+            "geometry": {"type": "Point", "coordinates": [116.4, 39.9]},
+            "properties": {},
+        }],
+        "summary": "1 point",
+    }
+    real_store = session_data_manager.store
+    outage = True
+
+    async def store_with_outage(sid, data, prefix="data"):
+        if outage and prefix == "geojson":
+            raise ConnectionError("session store down")
+        return await real_store(sid, data, prefix=prefix)
+
+    monkeypatch.setattr(session_data_manager, "store", store_with_outage)
+    executed: set = set()
+    tc = _tc("search_poi", {"q": "school"}, tc_id="call_store_outage")
+    with pytest.raises(ConnectionError):
+        await service.dispatch(tc, clean_session, executed)
+    assert executed == set(), "store failure must release the dedup slot"
+
+    outage = False
+    retried = await service.dispatch(tc, clean_session, executed)
+    assert retried.status == "ok"
+    assert "[重复调用拦截]" not in retried.llm_payload
+
+
 def test_tool_name_normalization_table():
     """断言 legacy 工具名被正确映射为 webgis_* canonical 名称。
 

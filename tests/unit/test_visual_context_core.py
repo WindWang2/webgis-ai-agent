@@ -420,6 +420,47 @@ async def test_resolve_attachments_caps_count(vc_session):
     assert len(outcome.images) == MAX_ATTACHMENTS_PER_TURN
 
 
+async def test_resolve_attachments_overflow_gets_receipts(vc_session):
+    """V09：超每 turn 上限的附件不静默丢弃 —— 逐条 refused 回执。"""
+    refs = []
+    for i in range(MAX_ATTACHMENTS_PER_TURN + 2):
+        saved, _ = await _seed_attachment(vc_session, seed=50 + i)
+        refs.append(_Ref(saved.evidence_id))
+    outcome = await resolve_attachments(vc_session, refs, images_allowed=True)
+    assert len(outcome.images) == MAX_ATTACHMENTS_PER_TURN
+    assert len(outcome.receipts) == len(refs)
+    overflow = outcome.receipts[MAX_ATTACHMENTS_PER_TURN:]
+    assert [r.evidence_id for r in overflow] == [
+        r.evidence_id for r in refs[MAX_ATTACHMENTS_PER_TURN:]]
+    assert all(r.status == "refused"
+               and r.reason == "attachment_limit_exceeded" for r in overflow)
+
+
+async def test_evidence_index_reads_past_256_records(vc_session):
+    """P2：索引读取不截断 —— 第 257+ 条 bound 证据仍可解析且不被台账误判。"""
+    from app.services.session_data import session_data_manager
+    from app.services.visual_context.resolver import AttachmentReceipt
+
+    saved, data = await _seed_attachment(vc_session, seed=70)
+    fillers = [_map_record(vc_session, mapspec_revision=i) for i in range(256)]
+    ok = await session_data_manager.set_map_state(
+        vc_session, vc_store.INDEX_KEY,
+        [r.to_dict() for r in fillers] + [saved.to_dict()])
+    assert ok
+    loaded = await vc_store.load_evidence_index_strict(vc_session)
+    assert len(loaded) == len(fillers) + 1
+    assert any(r.evidence_id == saved.evidence_id for r in loaded)
+    # 解析仍可读（blob 引用仍在）；台账复验不得把它误判为已撤。
+    got = await vc_store.resolve_evidence(
+        vc_session, saved.evidence_id, max_bytes=8 * 1024 * 1024)
+    assert got is not None and got[1] == data
+    ledger = SentImageLedger()
+    ledger.record(vc_session, [AttachmentReceipt(
+        evidence_id=saved.evidence_id, status="sent",
+        derived_sha256=saved.derived_sha256)])
+    assert await ledger.find_revoked(vc_session) == []
+
+
 # ── profile（能力投影 / 三重门）─────────────────────────────────────────
 
 class _FakeRpc:

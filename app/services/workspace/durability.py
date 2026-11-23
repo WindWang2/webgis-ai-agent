@@ -74,7 +74,8 @@ async def materialize_ref_payload(
     ``budget_bytes``（pre-size gate，round-1 review MAJOR）：canonical 字节
     序列化/读盘**之后**、写 BlobStore **之前**量尺 —— 超过预算即返回
     ``(None, "budget")``，绝不落盘，绝不透支预算。None 预算 = 无界（兼容
-    旧调用语义）。
+    旧调用语义）。canonical 之前另有 JSON lane 的有界估算预量尺（明显
+    超预算的大载荷直接拒绝，见下方 P2 注释）。
 
     Returns ``(pointer, skip_reason)``：
     - ``({"content_location", "content_payload_sha256", "content_type",
@@ -212,6 +213,9 @@ async def materialize_ref_payload(
             "content_payload_sha256": str(publication.get("data_object_id") or ""),
             "content_type": "lakehouse_manifest",
             "byte_size": int(publication.get("byte_size") or 0),
+            # manifest-only 发布不拷贝内容 blob（byte_size 是 cube 的逻辑
+            # 总量，不是本轮新写字节）；显式 0 防止调用方回退扣全额。
+            "new_bytes": 0,
         }, None
     # JSON lane：canonical 序列化一次 → 同一批字节回填摘要与写盘
     # （与 promotion 的 single-serialization 契约一致）。
@@ -223,6 +227,20 @@ async def materialize_ref_payload(
         return None, None
     if payload is None:
         return None, None
+    if budget_bytes is not None:
+        # P2（review）：预量尺闸门 —— 有界结构估算（O(估算节点上限)，不物化
+        # 序列化字符串）在 canonical_dumps 之前拦下**明显**超预算的大 ref，
+        # 避免"整读 + canonical 二次拷贝后才被拒"。估算器是启发式（可能高
+        # 估），故仅在超过预算 2× 时提前拒绝；canonical 后的实际字节闸门
+        # 仍是权威判据，边界载荷不会被估算误拒。
+        from app.lib.json_size import estimate_json_bytes
+
+        try:
+            estimated = await asyncio.to_thread(estimate_json_bytes, payload)
+        except Exception:  # noqa: BLE001 — 估算失败回退权威闸门
+            estimated = None
+        if estimated is not None and estimated > int(budget_bytes) * 2:
+            return None, "budget"
     try:
         from app.services.project_artifact_promotion import canonical_dumps
 

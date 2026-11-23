@@ -24,6 +24,7 @@ from app.services.temporal import (
     TemporalRasterEngine,
     TemporalEngine,
     TemporalFilter,
+    TemporalAggregation,
     TemporalGranularity,
     TemporalFieldType,
     TemporalUnit,
@@ -862,3 +863,58 @@ def test_unified_temporal_engine_facade(sample_temporal_geojson, sample_st_clust
         {"timestamp": "2026-02-01T00:00:00Z", "data": [[5, 6], [7, 8]]},
     ])
     assert raster_res.raster_difference["mean_difference"] == 4.0
+
+
+@pytest.mark.asyncio
+async def test_execute_change_preserves_declared_crs_for_centroid_shift():
+    """execute_change passed bare feature lists into compare_snapshots, so
+    extract_declared_crs saw a list and returned None: EPSG:3857 coordinates
+    were treated as degrees and the centroid shift came out ~11,000 km
+    instead of ~140 m."""
+    from pyproj import Transformer
+
+    from app.services.temporal.change import haversine_distance
+
+    lon1, lat1 = 116.40, 39.90
+    lon2, lat2 = 116.401, 39.901
+    transformer = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
+    x1, y1 = transformer.transform(lon1, lat1)
+    x2, y2 = transformer.transform(lon2, lat2)
+
+    def collection(x, y):
+        return {
+            "type": "FeatureCollection",
+            "crs": {"type": "name", "properties": {"name": "EPSG:3857"}},
+            "features": [{
+                "type": "Feature",
+                "properties": {"id": "a"},
+                "geometry": {"type": "Point", "coordinates": [x, y]},
+            }],
+        }
+
+    engine = TemporalEngine()
+    res = await engine.execute_change(
+        dataset_t1=collection(x1, y1),
+        dataset_t2=collection(x2, y2),
+    )
+
+    expected = haversine_distance((lon1, lat1), (lon2, lat2))
+    shift = res.change_summary["geometry_deltas"]["mean_centroid_shift_meters"]
+    assert shift == pytest.approx(expected, rel=1e-3)
+
+
+@pytest.mark.asyncio
+async def test_execute_aggregate_interval_only_spec_uses_spec_metrics(sample_temporal_geojson):
+    """A TemporalAggregation(interval_unit="day") has aggregation_func=None;
+    execute_aggregate used to pass metrics=[None], and TemporalMetric(None)
+    raised UnsupportedMethod instead of aggregating with the spec's metrics."""
+    engine = TemporalEngine()
+
+    res = await engine.execute_aggregate(
+        dataset=sample_temporal_geojson,
+        temporal_field="timestamp",
+        agg_spec=TemporalAggregation(interval_unit="day"),
+    )
+
+    assert res.status == "success"
+    assert res.change_summary["aggregated_buckets"] == 10

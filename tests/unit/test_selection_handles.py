@@ -166,6 +166,35 @@ def test_handle_quota_lru_eviction():
     handle_store.get("sess-q", "ref:a", handles[-1])  # 最新的仍在
 
 
+def test_store_purge_session_reclaims_deleted_session_bucket():
+    store = sh.SelectionHandleStore()
+    entry = store.create(
+        "sess-deleted", "ref:a", 1, {"kind": "ids", "ids": ["0"]}, 1, True)
+    store.purge_session("sess-deleted")
+    with pytest.raises(SelectionHandleError) as ei:
+        store.get("sess-deleted", "ref:a", entry.handle)
+    assert ei.value.code == "not_found"
+    with store._lock:
+        assert "sess-deleted" not in store._by_session
+    store.purge_session("sess-deleted")  # 幂等
+
+
+def test_store_global_sweep_reclaims_idle_session_buckets(monkeypatch):
+    import types
+
+    clock = {"now": 2_000_000_000.0}
+    monkeypatch.setattr(sh, "time", types.SimpleNamespace(time=lambda: clock["now"]))
+    store = sh.SelectionHandleStore()
+    store.create("sess-gone", "ref:a", 1, {"kind": "ids", "ids": ["0"]}, 1, True)
+    interval = getattr(sh, "GLOBAL_SWEEP_INTERVAL_SECONDS", 60)
+    clock["now"] += sh.SELECTION_TTL_SECONDS + interval + 1
+    store.create("sess-live", "ref:a", 1, {"kind": "ids", "ids": ["0"]}, 1, True)
+    with store._lock:
+        # 已删除会话的 bucket 空闲超 TTL 后由全局清扫回收，不等该会话再被访问
+        assert "sess-gone" not in store._by_session
+        assert "sess-live" in store._by_session
+
+
 # ─── 分页（不漏不重） ───────────────────────────────────────────────────────
 
 def _paginate(entry, fc, limit=7):
@@ -199,6 +228,32 @@ def test_features_paging_ids_scope_exact_enumeration():
     assert rows == list(range(0, 30, 3))
     assert entry.count == 10
     assert "ids_resolved" in last["reason_codes"]
+
+
+def test_ids_resolution_is_cached_at_creation_not_per_page(monkeypatch):
+    fc = _fc(30, with_wfid=True)
+    calls = {"n": 0}
+    orig = sh._resolve_ids
+
+    def _counting(features, ids):
+        calls["n"] += 1
+        return orig(features, ids)
+
+    monkeypatch.setattr(sh, "_resolve_ids", _counting)
+    ids = [f"wf1-{i:04d}" for i in range(0, 30, 3)]
+    entry = asyncio.run(create_selection(
+        "sess-cache", "ref:a", 4, {"kind": "ids", "ids": ids}, fc["features"]))
+    assert calls["n"] == 1
+    cursor, pages = None, 0
+    while True:
+        page = asyncio.run(selection_features_page(
+            entry, fc, limit=3, cursor=cursor, fields=None, order=None))
+        pages += 1
+        if not page["has_more"]:
+            break
+        cursor = page["next_cursor"]
+    assert pages > 1
+    assert calls["n"] == 1, "ids 解析应在创建 handle 时缓存，分页不得逐页重跑"
 
 
 def test_features_paging_am_split_scope():

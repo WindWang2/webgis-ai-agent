@@ -70,13 +70,13 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
   // 写进权威 spec）。无规范键的控件（brightness/contrast/saturation/
   // dashArray/fill/renderType 等滤镜类）返回空 —— 这些控件在 spec 层保持
   // 禁用（规范未建模，不发明语义）。
-  const specLayerType = (() => {
+  const specLayerHit = (() => {
     const specLayers = (committedSpec as { layers?: { id?: string; type?: string }[] })?.layers;
-    const hit = specLayers?.find(
+    return specLayers?.find(
       (l) => l?.id === specLayerKey || (!!l?.id && l.id.startsWith(`${specLayerKey}__`)),
     );
-    return hit?.type;
   })();
+  const specLayerType = specLayerHit?.type;
   // G20：数值栅格层挂局部表达工作台；旧 PNG / 瓦片层没有数值源，
   // 只显示「从已登记栅格绑定」的选择器，绝不出现伪波段/伪像元控件。
   const numericRaster = (() => {
@@ -120,11 +120,13 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
 
   // G40：点（circle）/面（fill）矢量层挂符号资产面板（点符号/面纹理绑定）。
   const symbolAssetLayer = (() => {
-    if (!specBacked || !specLayerKey) return null;
+    if (!specBacked || !specLayerKey || !specLayerHit?.id) return null;
     // R2 #2179：HUD layer.type('vector'|'raster'|…) 不蕴含 spec 层型 ——
     // 判据必须取 committedSpec 层的 specLayerType（同 G33/G41/G47 口径）。
+    // 绑定通道按 committed 层 id 精确寻址：别名行（specLayerKey 为
+    // geojson ref）必须传命中的 hit.id，否则 inspect/apply 恒 UNKNOWN_LAYER。
     return (specLayerType === 'circle' || specLayerType === 'fill')
-      ? { layerId: specLayerKey } : null;
+      ? { layerId: String(specLayerHit.id) } : null;
   })();
 
   // G41：双变量/可靠性作者入口。与 G33 不同，本域不要求层已有专题图例
