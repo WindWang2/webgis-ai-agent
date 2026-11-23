@@ -10,6 +10,10 @@ import { applyStyleIntent, STYLE_PALETTES, CLASSIFICATION_METHODS, type StyleInt
  * （lock 护栏与批量操作一致）。
  */
 
+function isFiniteNumber(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v);
+}
+
 function validIntent(p: Record<string, unknown>): boolean {
   if (typeof p['layerId'] !== 'string' || !p['layerId']) return false;
   const kind = p['kind'];
@@ -20,13 +24,18 @@ function validIntent(p: Record<string, unknown>): boolean {
     case 'set_palette':
       return typeof p['palette'] === 'string' && STYLE_PALETTES.has(p['palette']);
     case 'set_opacity':
+      return isFiniteNumber(p['opacity']);
     case 'set_stroke_width':
+      return isFiniteNumber(p['width']);
     case 'set_point_size':
+      return isFiniteNumber(p['size']);
     case 'lighten':
     case 'darken':
     case 'thinner':
     case 'thicker':
-      return true; // 数值合法性由 applier 钳制（amount 缺省语义）
+      // amount 可缺省（applier 有默认语义）；显式提供时必须可消费 —— run 只
+      // 拷贝 number 字段，字符串会被静默丢弃并按缺省语义落地。
+      return p['amount'] === undefined || p['amount'] === null || isFiniteNumber(p['amount']);
     case 'set_classification':
       return (
         (typeof p['method'] === 'string' && CLASSIFICATION_METHODS.has(p['method']))

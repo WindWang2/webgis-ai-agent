@@ -129,6 +129,30 @@ def test_default_policies_equivalent_to_status_quo(roots):
             "worker_cache"} <= kinds_seen
 
 
+def test_assess_prefetched_row_avoids_duplicate_object_selects(roots):
+    """assess 每对象只查一次登记行：``_upsert_object`` 复用预取结果，不再对
+    同一 (kind, object_id) 发第二个 SELECT（N+1 回归）。"""
+    from sqlalchemy import event
+
+    for i in range(3):
+        (roots["artifacts"] / f"nplus1-{i}.tif").write_bytes(b"x")
+    selects = []
+
+    def _record(conn, cursor, statement, parameters, context, executemany):
+        if "FROM lifecycle_objects" in statement:
+            selects.append(statement)
+
+    event.listen(Engine, "before_cursor_execute", _record)
+    try:
+        with SessionLocal() as db:
+            summary = assess(db, persist=True,
+                             now=datetime(2026, 9, 11, tzinfo=timezone.utc))
+    finally:
+        event.remove(Engine, "before_cursor_execute", _record)
+    assert summary["kinds"]["artifact_cache"]["total"] == 3
+    assert len(selects) == 3, "每对象恰好一次 SELECT（此前为两次）"
+
+
 def test_adapters_enumerate_real_mechanisms(roots):
     (roots["artifacts"] / "a.tif").write_bytes(b"x")
     (roots["cog"] / "s" / "b.tif").parent.mkdir(parents=True)

@@ -123,9 +123,9 @@ def workspace_snapshot_protected_pointers() -> Tuple[set, set, bool]:
         )
         return locations, shas, True
     seen_entries: set = set()
+    counted = 0
     truncated = False
     for proj_dir in project_dirs:
-        project_counted = 0
         # ADR-0226：同一项目域还有 runtime-snapshots/*.json —— 其
         # ``source_bindings[].durable_pointer`` 与 workspace 快照指针同语义
         # （同一 BlobStore），保护面必须一并覆盖（否则组合 workspace 快照被
@@ -161,22 +161,24 @@ def workspace_snapshot_protected_pointers() -> Tuple[set, set, bool]:
                     entry_key = (loc, sha)
                     if entry_key in seen_entries:
                         continue  # 重复指针不重复计数（round-2 review MAJOR a）
-                    if project_counted >= SNAPSHOT_POINTER_SCAN_CAP:
+                    if counted >= SNAPSHOT_POINTER_SCAN_CAP:
                         logger.error(
-                            "[quota] workspace snapshot pointer scan hit per-project cap %d — "
+                            "[quota] workspace snapshot pointer scan hit cap %d — "
                             "protection scan incomplete (project=%s)",
                             SNAPSHOT_POINTER_SCAN_CAP, proj_dir.name,
                         )
                         truncated = True
                         break
                     seen_entries.add(entry_key)
-                    project_counted += 1
+                    counted += 1
                     if loc:
                         locations.add(loc)
                     if sha:
                         shas.add(sha)
             if truncated:
                 break
+        if truncated:
+            break
     return locations, shas, truncated
 
 

@@ -142,6 +142,14 @@ class TestReportHygiene:
         report = run_quality_checks(prof)
         assert report.status is QualityStatus.UNCHECKED
 
+    def test_no_evidence_profile_unchecked(self):
+        prof = DatasetProfileV3(
+            target_ref="x", category="unknown", profile_quality=ProfileQuality.PARTIAL,
+        )
+        report = run_quality_checks(prof)
+        assert report.checks_run == []
+        assert report.status is QualityStatus.UNCHECKED
+
     def test_issues_bounded_with_error_priority(self):
         issues = [
             QualityIssue(code=QualityIssueCode.CRS_MISSING, severity="warning")

@@ -11,8 +11,12 @@ import copy
 import pytest
 
 from app.lib.data.fingerprints import canonical_fingerprint
-from app.services.project_runtime.refresh.contracts import ChangeEvidence
+from app.services.project_runtime.refresh.contracts import (
+    CandidateStatus,
+    ChangeEvidence,
+)
 from app.services.project_runtime.refresh.execution import InMemoryMapSpecPort
+from app.services.project_runtime.refresh.records import RefreshCandidate
 from app.services.project_runtime.refresh.service import (
     ProjectDataRefreshService,
     RefreshError,
@@ -428,3 +432,82 @@ async def test_o12_scenario_c_nodata_or_global_dependency_forces_conservative(db
     # 证据缺失/未对齐时保守，不得 silently unchanged
     assert proposal.diffs[0].change_class != "none"
     assert proposal.plan.recompute or proposal.plan.conservative
+
+
+# ── P2 复审：cancel lease / adopt 可采纳性 / rollback 前提 ────────────
+
+@pytest.mark.asyncio
+async def test_cancel_contends_for_exec_lease_and_is_never_silently_overwritten(db):
+    svc = _service(StaticPayloadProvider({SOURCE_REF: _payload(1, BASE_FEATURES)}),
+                   _mapspec())
+    proposal = await _prepared(svc, db)
+    cid = f"g10c-{proposal.proposal_id}"
+    await svc.store.save_candidate(RefreshCandidate(
+        candidate_id=cid, proposal_id=proposal.proposal_id,
+        project_id=PROJECT_ID, status=CandidateStatus.PENDING,
+        retry_key="pending-not-executed",
+    ))
+    lease_key = f"g10p-{proposal.proposal_id}-exec"
+    acquired, _ = svc.store.acquire_lease(PROJECT_ID, lease_key)
+    assert acquired
+    try:
+        with pytest.raises(RefreshError) as exc:
+            await svc.execute(db, project_id=PROJECT_ID,
+                              proposal_id=proposal.proposal_id,
+                              user_id=USER_ID, cancel=True)
+        assert exc.value.code == "execution_in_progress"
+        # execute 持锁期间 cancel 不得写候选（否则随后会被 execute 覆盖）
+        assert (svc.store.load_candidate(PROJECT_ID, cid).status
+                is CandidateStatus.PENDING)
+    finally:
+        svc.store.release_lease(PROJECT_ID, lease_key)
+
+    cancelled = await svc.execute(db, project_id=PROJECT_ID,
+                                  proposal_id=proposal.proposal_id,
+                                  user_id=USER_ID, cancel=True)
+    assert cancelled["candidate"].status is CandidateStatus.CANCELLED
+    assert (svc.store.load_candidate(PROJECT_ID, cid).status
+            is CandidateStatus.CANCELLED)
+
+
+@pytest.mark.asyncio
+async def test_adopt_refuses_candidate_with_hard_semantic_errors(db):
+    svc = _service(StaticPayloadProvider({SOURCE_REF: _payload(1, BASE_FEATURES)}),
+                   _mapspec())
+    await svc.check_updates(db, project_id=PROJECT_ID, session_id=SESSION_ID,
+                            user_id=USER_ID)
+    changed_crs = _payload(2, BASE_FEATURES)
+    changed_crs["descriptor"]["crs"] = "EPSG:3857"
+    svc.payload_provider = StaticPayloadProvider({SOURCE_REF: changed_crs})
+    proposal = await svc.preview(db, project_id=PROJECT_ID, session_id=SESSION_ID,
+                                 user_id=USER_ID, dag=_dag())
+    run = await svc.execute(db, project_id=PROJECT_ID,
+                            proposal_id=proposal.proposal_id, user_id=USER_ID)
+    assert run["candidate"].adoptable is False
+    assert run["candidate"].hard_semantic_errors
+
+    before, before_rev = await svc.port.read(SESSION_ID)
+    with pytest.raises(RefreshError) as exc:
+        await svc.adopt(db, project_id=PROJECT_ID,
+                        proposal_id=proposal.proposal_id, user_id=USER_ID)
+    assert exc.value.code == "candidate_not_ready"
+    after, after_rev = await svc.port.read(SESSION_ID)
+    assert canonical_fingerprint(after) == canonical_fingerprint(before)
+    assert after_rev == before_rev
+    # 不可采纳 ≠ 漂移：proposal 保持 READY，等待重新执行/重新预览
+    assert svc.store.load_proposal(PROJECT_ID, proposal.proposal_id).status.value == "ready"
+
+
+@pytest.mark.asyncio
+async def test_rollback_requires_adopted_proposal(db):
+    svc = _service(StaticPayloadProvider({SOURCE_REF: _payload(1, BASE_FEATURES)}),
+                   _mapspec())
+    proposal = await _prepared(svc, db)
+    # 未采纳的 proposal 即便带 baseline snapshot id 也不得 resume 无关快照
+    proposal.baseline_snapshot_id = "prs-unrelated"
+    await svc.store.save_proposal(proposal)
+    with pytest.raises(RefreshError) as exc:
+        await svc.rollback(project_id=PROJECT_ID,
+                           proposal_id=proposal.proposal_id,
+                           user_id=USER_ID, db=db)
+    assert exc.value.code == "not_adopted"

@@ -77,6 +77,18 @@ class TestContractModel:
         assert s["feature_count"] == 5000
         assert s["quality_hint"] == "valid"
 
+    def test_summary_never_exceeds_budget(self):
+        import json
+
+        c = ArtifactContract(
+            artifact_id="ref:" + "a" * 5000,
+            artifact_type="vector",
+            storage_ref="ref:" + "b" * 5000,
+        )
+        for budget in (1600, 600, 200):
+            view = c.summary(max_chars=budget)
+            assert len(json.dumps(view, ensure_ascii=False, default=str)) <= budget
+
 
 class TestArtifactRecordBridge:
     def _record(self, **kw):

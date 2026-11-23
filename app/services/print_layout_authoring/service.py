@@ -625,10 +625,19 @@ def _svg_to_png(svg: str, width_mm: float, height_mm: float, dpi: int) -> bytes:
         from app.lib.cartography.symbol_asset_svg import prepare_svg_for_rasterize
         src.write_bytes(prepare_svg_for_rasterize(
             svg, w_px, h_px).encode("utf-8"))
-        proc = subprocess.run(
-            [exe, "-w", str(w_px), "-h", str(h_px), "-o", str(dst), str(src)],
-            capture_output=True, timeout=60,
-        )
+        try:
+            proc = subprocess.run(
+                [exe, "-w", str(w_px), "-h", str(h_px), "-o", str(dst), str(src)],
+                capture_output=True, timeout=60,
+            )
+        except subprocess.TimeoutExpired as ex:
+            raise PrintLayoutServiceError(
+                "PNG_RENDER_TIMEOUT", f"rsvg-convert timed out after {ex.timeout}s",
+                504) from ex
+        except OSError as ex:
+            raise PrintLayoutServiceError(
+                "PNG_RENDER_FAILED", f"{type(ex).__name__}: {str(ex)[:200]}",
+                500) from ex
         if proc.returncode != 0 or not dst.is_file():
             raise PrintLayoutServiceError(
                 "PNG_RENDER_FAILED", proc.stderr.decode("utf-8", "replace")[:200], 500)

@@ -5,7 +5,7 @@ import { canTransitionChartState, deriveChartState, chartStateToPlacementPatch }
 import type { ChartState } from '@/lib/map-components/chart-state';
 import type { ComponentPlacement } from '@/lib/mapspec-compiler/types';
 import { getCommittedMapSpec } from '@/lib/mapspec/session-cursor';
-import { publishSelection } from '@/lib/selection/selection-store';
+import { publishSelection, MAX_SELECTED_CATEGORIES } from '@/lib/selection/selection-store';
 import catalog from '@/lib/map-components/component-catalog.generated.json';
 
 /**
@@ -212,14 +212,17 @@ export const chartCommands: Record<string, CommandEntry> = {
         && compOptions.selectionField.trim()
         ? compOptions.selectionField
         : undefined;
+      // selection-store 有界契约（selected_categories ≤ 20）：结果必须回传
+      // 实际发布的集合，回传完整入参会让调用方以为地图过滤覆盖了全部类别。
+      const publishedCategories = categories.slice(0, MAX_SELECTED_CATEGORIES);
       publishSelection('select', {
         source: 'chart',
         layer_id: boundLayerId,
         artifact_ref: componentId,
-        selected_categories: categories.slice(0, 20),
+        selected_categories: publishedCategories,
         filter_field: selectionField,
       });
-      return ok({ componentId, layerId: boundLayerId, categories });
+      return ok({ componentId, layerId: boundLayerId, categories: publishedCategories });
     },
   },
 

@@ -294,6 +294,8 @@ export function GeoreferencingWorkbenchPanel({
    */
   const sessionUiEpochRef = useRef(0);
   const deletedSourceIdsRef = useRef<Set<string>>(new Set());
+  /** 未保存编辑标记镜像：轮询回包不得覆盖用户进行中的 GCP/配置编辑。 */
+  const dirtyRef = useRef(false);
   const tRef = useRef(t);
   tRef.current = t;
   const addToastRef = useRef(addToast);
@@ -312,9 +314,12 @@ export function GeoreferencingWorkbenchPanel({
     width: VIEWER_WIDTH, height: VIEWER_HEIGHT,
   });
 
-  const applyPlanToEditor = useCallback((plan: GeorefDraftPlan) => {
+  const applyPlanToEditor = useCallback((plan: GeorefDraftPlan, preserveLocalEdits = false) => {
     setActivePlan(plan);
     setSelectedSourceId(plan.source_id);
+    // 作业轮询期间若用户有未保存编辑，只刷新 activePlan（诊断/产物），
+    // 不回写编辑器，避免静默覆盖 GCP 行并清空撤销栈。
+    if (preserveLocalEdits) return;
     setTargetCrs(plan.target_crs);
     setResampling(plan.resampling);
     setTargetResM(plan.target_resolution_m != null ? String(plan.target_resolution_m) : '');
@@ -350,7 +355,7 @@ export function GeoreferencingWorkbenchPanel({
           const st = await pollGeorefStatus(ctx, planId);
           if (epoch !== sessionUiEpochRef.current) { stopPolling(); return; }
           setJobStatus(st);
-          applyPlanToEditor(st.plan);
+          applyPlanToEditor(st.plan, dirtyRef.current);
           if (!['pending', 'queued', 'running', 'cancelling'].includes(st.status)) {
             stopPolling();
             setExecuting(false);
@@ -365,9 +370,14 @@ export function GeoreferencingWorkbenchPanel({
               );
             }
           }
-        } catch {
+        } catch (err) {
+          if (epoch !== sessionUiEpochRef.current) return;
           stopPolling();
           setExecuting(false);
+          // 轮询失败必须同时清掉旧 running 状态，否则 isJobRunning 恒真、
+          // 面板永久卡在「运行中」且进度不再更新。
+          setJobStatus(null);
+          addToastRef.current(asGeorefError(err).message, 'error');
         }
       };
       void pollOnce();
@@ -565,6 +575,7 @@ export function GeoreferencingWorkbenchPanel({
    */
   const gcpsRef = useRef<EditableGcpRow[]>([]);
   useEffect(() => { gcpsRef.current = gcps; }, [gcps]);
+  useEffect(() => { dirtyRef.current = dirty; }, [dirty]);
 
   const mutateGcps = useCallback((updater: (prev: EditableGcpRow[]) => EditableGcpRow[]) => {
     const prev = gcpsRef.current;
@@ -675,10 +686,12 @@ export function GeoreferencingWorkbenchPanel({
   const handleDeleteSource = async () => {
     if (!ctx || !selectedSource) return;
     const deletedSid = selectedSource.source_id;
+    const epoch = sessionUiEpochRef.current;
     mutationEpochRef.current += 1;
     deletedSourceIdsRef.current.add(deletedSid);
     try {
       await deleteGeorefSource(ctx, deletedSid);
+      if (epoch !== sessionUiEpochRef.current) return;
       const remSources = sources.filter((s) => s.source_id !== deletedSid);
       const remPlans = plans.filter((p) => p.source_id !== deletedSid);
       setSources(remSources);
@@ -705,6 +718,7 @@ export function GeoreferencingWorkbenchPanel({
       }
     } catch (err) {
       deletedSourceIdsRef.current.delete(deletedSid);
+      if (epoch !== sessionUiEpochRef.current) return;
       addToast(asGeorefError(err).message, 'error');
     }
   };
@@ -989,6 +1003,13 @@ export function GeoreferencingWorkbenchPanel({
         const msg = t('partialBindWarning', { rev: nextRev });
         setBindMessage(msg);
         addToast(msg, 'warning');
+      } else {
+        // 既非 bound 也非 partial_success 的硬失败（带 error_code/message）：
+        // 旧代码无 else 分支，服务端错误被静默吞掉。
+        const msg =
+          [res.error_code, res.message].filter(Boolean).join(': ') || t('jobFailed');
+        setBindMessage(msg);
+        addToast(msg, 'error');
       }
     } catch (err) {
       addToast(asGeorefError(err).message, 'error');

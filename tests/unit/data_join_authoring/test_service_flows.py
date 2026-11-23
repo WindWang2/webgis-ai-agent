@@ -70,6 +70,29 @@ async def test_preview_full_diagnostics_and_evidence(seeded_sources):
     assert stored["preview_digest"]
 
 
+async def test_preview_runs_join_off_event_loop(seeded_sources, monkeypatch):
+    """预览的全量 join 不在事件循环线程执行（与执行体 asyncio.to_thread 一致）。"""
+    import threading
+
+    view = await service.create_plan(
+        seeded_sources["session_id"], _flagship_plan(seeded_sources),
+        actor=seeded_sources["actor"])
+    loop_ident = threading.get_ident()
+    seen = {}
+    real_run = service.JoinExecutor.run_attribute
+
+    def recording_run(self, left, right):
+        seen["ident"] = threading.get_ident()
+        return real_run(self, left, right)
+
+    monkeypatch.setattr(service.JoinExecutor, "run_attribute", recording_run)
+    result = await service.preview_plan(
+        seeded_sources["session_id"], view["plan_id"], expected_revision=1,
+        actor=seeded_sources["actor"])
+    assert result["status"] == "ready"
+    assert seen["ident"] != loop_ident
+
+
 async def test_execute_inline_completes_with_full_receipt(seeded_sources):
     view = await service.create_plan(seeded_sources["session_id"], _flagship_plan(seeded_sources),
                                      actor=seeded_sources["actor"])

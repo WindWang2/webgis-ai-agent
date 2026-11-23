@@ -734,7 +734,7 @@ def rule_temporal_gaps(ctx: RuleEvalContext) -> RuleOutcome:
 
 
 _MOJIBAKE_MARKERS = (
-    "Ã", "â€", "æ", "å", "ç\x81", "ï¿½", "\ufffd", "å", "ç", "é\U0001d400",
+    "Ã", "â€", "æ", "å", "ç\x81", "ï¿½", "\ufffd", "ç", "é\U0001d400",
 )
 
 
@@ -749,6 +749,12 @@ def _looks_mojibake(text: str) -> bool:
     # 双重编码证据：latin-1 → utf-8 往返能解出更长/有效文本
     try:
         roundtrip = text.encode("latin-1").decode("utf-8")
+        return len(roundtrip) >= 1 and roundtrip != text
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        pass
+    # Windows-1252 变体：UTF-8 字节（0x80–0x9F）按 cp1252 解码后的乱码形
+    try:
+        roundtrip = text.encode("cp1252").decode("utf-8")
         return len(roundtrip) >= 1 and roundtrip != text
     except (UnicodeEncodeError, UnicodeDecodeError):
         # 有标记但不可往返：仅当标记密度高才判乱码（避免北欧字母误报）
@@ -811,12 +817,20 @@ def rule_topology_adjacency(ctx: RuleEvalContext) -> RuleOutcome:
         except Exception:  # noqa: BLE001 — 非法几何跳过（geometry_validity 负责）
             geoms.append(None)
     overlapping_pairs = 0
+    pairs_checked = 0
     samples: List[str] = []
     for i in range(len(geoms)):
         gi = geoms[i]
         if gi is None or gi.is_empty:
             continue
         for j in range(i + 1, len(geoms)):
+            if _budget_exceeded(ctx):
+                return RuleOutcome(
+                    status="skipped", message="reason=budget",
+                    metric={"reason": "budget", "polygons": len(polygons),
+                            "pairs_checked": pairs_checked},
+                )
+            pairs_checked += 1
             gj = geoms[j]
             if gj is None or gj.is_empty:
                 continue

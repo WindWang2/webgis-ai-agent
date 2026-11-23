@@ -272,17 +272,27 @@ def _read_xlsx_rows(
         wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
     except Exception as e:  # noqa: BLE001
         raise InterpretationError("XLSX_OPEN_FAILED", str(e)[:200]) from e
+    try:
+        # 并行打开公式视图：data_only=True 只给缓存值，公式本身不可见，
+        # 无法计数/披露无缓存公式（快照与 discovery 同口径）。
+        wb_f = openpyxl.load_workbook(path, read_only=True, data_only=False)
+    except Exception as e:  # noqa: BLE001
+        wb.close()
+        raise InterpretationError("XLSX_OPEN_FAILED", str(e)[:200]) from e
     rows: List[Dict[str, str]] = []
     formula_cells = 0
     uncached = 0
     truncated = False
     try:
         ws = wb[sheet]
+        ws_f = wb_f[sheet]
         header: List[str] = []
         data_count = 0
         skipped = 0
         header_row = max(0, int(getattr(interp, "header_row", 0) or 0))
-        for row in ws.iter_rows(values_only=True):
+        for row, row_f in zip(
+            ws.iter_rows(values_only=True), ws_f.iter_rows(values_only=True)
+        ):
             if skipped < header_row:
                 skipped += 1
                 continue
@@ -299,9 +309,15 @@ def _read_xlsx_rows(
             if data_count > row_limit:
                 truncated = True
                 break
+            for v, f in zip(row, row_f):
+                if isinstance(f, str) and f.startswith("="):
+                    formula_cells += 1
+                    if v is None:
+                        uncached += 1
             rows.append({header[i]: _cell_to_str(v) for i, v in enumerate(row) if i < len(header)})
     finally:
         wb.close()
+        wb_f.close()
     return rows, None, truncated, formula_cells, uncached
 
 
@@ -354,8 +370,15 @@ def interpret_table(
         cancel()
 
     if is_xlsx:
-        rows, _total, trunc, _f, _u = _read_xlsx_rows(path, sheet, interp, row_limit, _cancel)
+        rows, _total, trunc, formula_cells, uncached = _read_xlsx_rows(
+            path, sheet, interp, row_limit, _cancel
+        )
         result.truncated = trunc
+        if formula_cells:
+            result.formula_disclosure = (
+                f"含 {formula_cells} 个公式单元格（读取缓存值；"
+                f"其中 {uncached} 个无缓存值将按空值处理）"
+            )
     else:
         rows, _total, trunc, enc, delim = _read_csv_rows(path, interp, row_limit, _cancel)
         result.truncated = trunc
@@ -535,6 +558,13 @@ def interpret_vector(
 ) -> InterpretResult:
     """矢量成员解释：keep_fields 选择 + 几何校验 + CRS 证据落定。"""
     result = InterpretResult()
+    if not hasattr(gdf, "geometry") or not hasattr(gdf, "crs"):
+        # 无几何图层（GPKG 属性表）经 pyogrio 得到普通 DataFrame：typed 拒绝，
+        # 不得让 .crs/.geometry 的 AttributeError 退化为通用 COMMIT_FAILED。
+        raise InterpretationError(
+            "VECTOR_GEOMETRY_MISSING",
+            "图层不含几何列（属性表不是可导入矢量成员）",
+        )
     if len(gdf) > row_limit:
         raise InterpretationError("ROW_BUDGET_EXCEEDED", f"{len(gdf)} 行超过预算 {row_limit}")
 

@@ -64,9 +64,9 @@ function previewResponse(matchCount: number) {
   };
 }
 
-function mockApi(handler: (path: string, init?: RequestInit) => unknown) {
-  vi.mocked(api.apiFetch).mockImplementation(async (path: string) =>
-    handler(path) as never);
+function mockApi(handler: (path: string, init?: { method?: string }) => unknown) {
+  vi.mocked(api.apiFetch).mockImplementation(async (path: string, init?: { method?: string }) =>
+    handler(path, init) as never);
 }
 
 const hudLayers = [
@@ -146,16 +146,30 @@ describe('ExplorationPanel', () => {
       source_ref: 'ref:test-1', source_revision: 3,
       normalized_digest: 'd',
     }));
-    mockApi((path) => {
-      if (path.includes('/views') && !path.includes('?')) return inspectResp;
+    mockApi((path, init) => {
       if (path.includes('/inspect')) return inspectResp;
-      if (path.includes('/views')) return saveMock();
+      if (path.includes('/views') && init?.method === 'POST') return saveMock();
+      if (path.includes('/views')) return { views: [] };
       return previewResponse(2);
     });
+    (globalThis as unknown as { __G46_LAYERS__?: unknown[] }).__G46_LAYERS__ = hudLayers;
     bindExploration('ref:test-1', 3, 'layer-a');
     render(<ExplorationPanel sessionId="s1" ownerToken={null} />);
+    const select = screen.getByTestId('g46-source-select') as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: 'layer-a' } });
+    // 等 inspect ready（buildPlan 依赖 inspect.data.anchor）
+    await screen.findByTestId('g46-source-anchor');
     const input = screen.getByTestId('g46-view-title');
-    await screen.findByTestId('g46-save-view');
-    expect(input).toBeTruthy();
+    fireEvent.change(input, { target: { value: '测试视图' } });
+    screen.getByTestId('g46-save-view').click();
+    await waitFor(() => {
+      expect(saveMock).toHaveBeenCalledTimes(1);
+    });
+    const post = vi.mocked(api.apiFetch).mock.calls.find(
+      ([path, init]) => path.includes('/views') && init?.method === 'POST',
+    );
+    expect(post).toBeTruthy();
+    expect((post![1]!.body as { title: string }).title).toBe('测试视图');
+    (globalThis as unknown as { __G46_LAYERS__?: unknown[] }).__G46_LAYERS__ = [];
   });
 });

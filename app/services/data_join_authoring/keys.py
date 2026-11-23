@@ -73,7 +73,7 @@ def canonical_key_value(
 ) -> Optional[Tuple[str, Any]]:
     """单值 → 规范键值；null/missing → None（不参与匹配）。
 
-    返回 ``(族标记, 规范值)``：字符串 ``("s", v)``、数值 ``("n", float)``、
+    返回 ``(族标记, 规范值)``：字符串 ``("s", v)``、数值 ``("n", int|float)``、
     布尔 ``("b", v)``。类型不可比（list/dict 等）→ typed 阻断。
     """
     if value is None:
@@ -81,10 +81,11 @@ def canonical_key_value(
     if isinstance(value, bool):
         return ("b", value)
     if isinstance(value, (int, float)):
-        f = float(value)
-        if f != f or f in (float("inf"), float("-inf")):  # NaN/Inf 不可作键
+        # int 保持原值：float() 会把 >2^53 的不同大整数（雪花/bigint id）
+        # 塌缩成同一键；Python 数值相等/哈希语义仍保证 1 == 1.0。
+        if value != value or value in (float("inf"), float("-inf")):  # NaN/Inf
             return None
-        return ("n", f)
+        return ("n", value)
     if isinstance(value, str):
         s = _apply_transform(value, spec)
         # 空串是合法字符串值（与 null/missing 区分）—— 不折叠。

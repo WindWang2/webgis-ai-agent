@@ -407,5 +407,6 @@ def run_quality_checks(
         checks_run=checks_run,
         checks_not_run=checks_not_run,
     )
-    report.status = compose_status(issues)
+    # 没查到任何证据 = 未检查，绝不静默判 VALID（FAILED 分支同口径）。
+    report.status = compose_status(issues) if checks_run else QualityStatus.UNCHECKED
     return report

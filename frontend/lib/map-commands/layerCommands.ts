@@ -157,12 +157,20 @@ export const layerCommands: Record<string, CommandEntry> = {
         }
       }
 
+      // Resolve every runtime target before touching the map/store: a batch
+      // must not half-apply when a later layer is missing from the runtime.
+      const matchedByLayer = new Map<string, string[]>();
       for (const patch of patches) {
-        const desired = patch.desired ?? {};
         const matched = matchMapLayers(ctx.map, patch.layer_id);
         if (matched.length === 0) {
           return { status: 'failed', error: 'target_not_found' };
         }
+        matchedByLayer.set(patch.layer_id, matched);
+      }
+
+      for (const patch of patches) {
+        const desired = patch.desired ?? {};
+        const matched = matchedByLayer.get(patch.layer_id) ?? [];
         for (const id of matched) {
           renderer.updateLayerStyle(ctx.map, id, {
             visibility: typeof desired.visible === 'boolean'
@@ -922,7 +930,9 @@ export const layerCommands: Record<string, CommandEntry> = {
           beforeAnchor = undefined; // moveLayer with no anchor -> top
         } else if (position === 'bottom') {
           const bottomCandidate = customIds.find((id: string) => !customMatched.includes(id));
-          beforeAnchor = bottomCandidate;
+          // 组已覆盖整个 custom 栈（无下方异组层）：终态本就成立 —— null
+          // 保持原位；undefined 会被 moveLayer 读成「移到最顶层」。
+          beforeAnchor = bottomCandidate ?? null;
         } else if (position === 'up') {
           // 向顶层移动一格：插到「上方第一个异组层」的再上方，即该层后面那一层
           // 之前（它就是 i+1；i 已是末层时 i+1 为 undefined = 置顶，语义正确）。

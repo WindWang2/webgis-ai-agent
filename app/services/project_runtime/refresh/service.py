@@ -479,16 +479,27 @@ class ProjectDataRefreshService:
                         "version_adoption": "unchanged",
                     }}
         if cancel:
-            if existing:
-                existing.cancelled = True
-                existing.status = CandidateStatus.CANCELLED
-                existing.updated_at = time.time()
-                existing.last_error = "cancelled by owner"
-                await self.store.save_candidate(existing)
-            return {"candidate": existing, "replayed": False,
-                    "receipt": {"tool_execution": "ok", "task_execution": "failed",
-                                "map_observation": "unverified",
-                                "version_adoption": "unchanged"}}
+            # cancel 必须与 execute 竞争同一把 exec lease：否则 execute 持锁
+            # 期间的 cancel 先写 CANCELLED，随后被 execute 的 save_candidate
+            # 覆盖成 SUCCEEDED/PARTIAL，取消静默丢失。
+            lease_key = f"g10p-{proposal_id}-exec"
+            acquired, holder = self.store.acquire_lease(project_id, lease_key)
+            if not acquired:
+                raise RefreshError("execution_in_progress", str(holder), status=409)
+            try:
+                existing = self.store.load_candidate(project_id, cid)
+                if existing:
+                    existing.cancelled = True
+                    existing.status = CandidateStatus.CANCELLED
+                    existing.updated_at = time.time()
+                    existing.last_error = "cancelled by owner"
+                    await self.store.save_candidate(existing)
+                return {"candidate": existing, "replayed": False,
+                        "receipt": {"tool_execution": "ok", "task_execution": "failed",
+                                    "map_observation": "unverified",
+                                    "version_adoption": "unchanged"}}
+            finally:
+                self.store.release_lease(project_id, lease_key)
 
         acquired, holder = self.store.acquire_lease(project_id, f"g10p-{proposal_id}-exec")
         if not acquired:
@@ -645,6 +656,13 @@ class ProjectDataRefreshService:
             CandidateStatus.FAILED, CandidateStatus.CANCELLED, CandidateStatus.DISCARDED
         ):
             raise RefreshError("candidate_not_ready", "execute the candidate first")
+        # execute 算出的 CRS/单位/类型硬语义错误（或未解决冲突）不得被采纳：
+        # 预检查与 commit_candidate 的拒绝面保持一致，且不把 proposal 误标为 drifted。
+        if not candidate.adoptable or candidate.hard_semantic_errors:
+            raise RefreshError(
+                "candidate_not_ready",
+                "candidate is not adoptable: unresolved conflicts or hard semantic errors",
+            )
         doc = self.store.load_candidate_doc(project_id, cid)
         if not isinstance(doc, dict):
             raise RefreshError("candidate_doc_missing", status=409)
@@ -722,6 +740,14 @@ class ProjectDataRefreshService:
     async def rollback(self, *, project_id: str, proposal_id: str,
                        user_id: str, db: Optional[Session] = None) -> AdoptionReceipt:
         proposal = self._require_proposal(project_id, proposal_id, user_id)
+        if proposal.status is not ProposalStatus.ADOPTED:
+            # 未采纳的 proposal 没有可回退的采纳事实：绝不能走 baseline
+            # snapshot 分支 resume 一个无关的 runtime snapshot 并谎报 rolled_back。
+            raise RefreshError(
+                "not_adopted",
+                "rollback requires an adopted proposal",
+                status=409,
+            )
         baseline_doc = self.store.load_doc(project_id, f"g10c-{proposal_id}-pre-adopt")
         if baseline_doc and self.port is not None:
             receipt = await forward_rollback(

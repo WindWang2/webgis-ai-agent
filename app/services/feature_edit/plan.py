@@ -527,10 +527,10 @@ def build_plan(
     if create_only:
         ids = []
     elif requested_ids:
-        ids = [str(x) for x in requested_ids][:MAX_PLAN_TARGETS]
-        ids.extend(split_wfids)
-        ids.extend(op_level_ids)
-        ids = list(dict.fromkeys(ids))[:MAX_PLAN_TARGETS]
+        ids = list(dict.fromkeys([str(x) for x in requested_ids] + split_wfids + op_level_ids))
+        if len(ids) > MAX_PLAN_TARGETS:
+            findings.append(finding("target_limit_exceeded", "too many target features", limit=MAX_PLAN_TARGETS))
+        ids = ids[:MAX_PLAN_TARGETS]
     elif selection and isinstance(selection.get("feature_id"), str):
         ids = [str(selection["feature_id"])]
         extra = selection.get("selected_ids")
@@ -538,7 +538,10 @@ def build_plan(
             ids.extend(str(x) for x in extra if isinstance(x, str))
         ids.extend(split_wfids)
         ids.extend(op_level_ids)
-        ids = list(dict.fromkeys(ids))[:MAX_PLAN_TARGETS]
+        ids = list(dict.fromkeys(ids))
+        if len(ids) > MAX_PLAN_TARGETS:
+            findings.append(finding("target_limit_exceeded", "too many target features", limit=MAX_PLAN_TARGETS))
+        ids = ids[:MAX_PLAN_TARGETS]
     elif split_wfids or op_level_ids:
         ids = list(dict.fromkeys(split_wfids + op_level_ids))[:MAX_PLAN_TARGETS]
     else:

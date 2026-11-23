@@ -79,6 +79,13 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
   const sessionTokensRef = useRef<Map<string, string>>(new Map());
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const sessionLoadAbortRef = useRef<AbortController | null>(null);
+  // P2：恢复附件缩略图时创建的 blob URL 从不 revoke —— 反复恢复/切会话会
+  // 每次新分配并钉住 blob。按批次记录，transcript 被替换/新会话/卸载时回收。
+  const attachmentThumbUrlsRef = useRef<string[]>([]);
+  const revokeAttachmentThumbUrls = useCallback(() => {
+    for (const url of attachmentThumbUrlsRef.current) URL.revokeObjectURL(url);
+    attachmentThumbUrlsRef.current = [];
+  }, []);
 
   // FE-07：用单字段 selector 订阅，避免订阅整个 store。
   // 这里订阅的都是 actions（Zustand 中为稳定引用），选择它们本身零开销。
@@ -145,8 +152,9 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
     return () => {
       sessionsFetchAbortRef.current?.abort();
       sessionLoadAbortRef.current?.abort();
+      revokeAttachmentThumbUrls();
     };
-  }, [refreshSessions]);
+  }, [refreshSessions, revokeAttachmentThumbUrls]);
 
   // #392: 历史列表之前只在 mount 拉一次 —— 页面存活期内新建的会话
   // 永远不出现在 History 抽屉、顶栏一直显示"新会话"直到整页刷新。
@@ -294,6 +302,7 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
               .then((blob) => {
                 if (signal.aborted) return;
                 const url = URL.createObjectURL(blob);
+                attachmentThumbUrlsRef.current.push(url);
                 useChatStore.getState().setMessages((prev) => prev.map((msg) => {
                   if (msg.id !== m.id || msg.role !== 'user') return msg;
                   const atts = msg.attachments;
@@ -319,6 +328,8 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
             timestamp: new Date(),
           });
         }
+        // transcript 即将被替换：上一批附件缩略图 blob URL 不再被引用，回收。
+        revokeAttachmentThumbUrls();
         onRestoreMessages(restored);
         messagesRestored = true;
         // W11：恢复成功 → 写会话锚（刷新自动恢复指针；仅指针不存内容）。
@@ -394,6 +405,7 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
         // 聊天残留屏幕、下一条消息延续旧 transcript），并附错误提示，
         // 不再静默吞掉失败。
         if (!messagesRestored) {
+          revokeAttachmentThumbUrls();
           onRestoreMessages([], sessionLoadErrorNotice(err));
         } else {
           // #736: messages already swapped but map-state restore failed —
@@ -406,7 +418,7 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
         }
       }
     },
-    [clearLayers, clearAnnotations, clearOpsLog, clearCausalChain, clearProcessLayers, setCartographyTitle, focusLayer, clearExplorerTasks, clearResults, setSelectedFeature, setAiStatus, dispatchAction]
+    [clearLayers, clearAnnotations, clearOpsLog, clearCausalChain, clearProcessLayers, setCartographyTitle, focusLayer, clearExplorerTasks, clearResults, setSelectedFeature, setAiStatus, dispatchAction, revokeAttachmentThumbUrls]
   );
 
   const startNewSession = useCallback(
@@ -472,9 +484,10 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       resetClientSeq();
       // FE-15：移除死代码 localStorage.removeItem('webgis_session_id')
       // (session ID 从未写入 localStorage，此 removeItem 是 no-op)
+      revokeAttachmentThumbUrls();
       onClearMessages();
     },
-    [clearLayers, clearAnnotations, clearOpsLog, clearCausalChain, clearProcessLayers, setCartographyTitle, focusLayer, setSelectedFeature, setAiStatus, clearExplorerTasks, clearResults]
+    [clearLayers, clearAnnotations, clearOpsLog, clearCausalChain, clearProcessLayers, setCartographyTitle, focusLayer, setSelectedFeature, setAiStatus, clearExplorerTasks, clearResults, revokeAttachmentThumbUrls]
   );
 
   const rememberSessionToken = useCallback((sid: string, token: string) => {

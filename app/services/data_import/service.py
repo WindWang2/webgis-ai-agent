@@ -651,11 +651,13 @@ class DataImportService:
         """
         state = await self._load_owned(batch_id, session_id)
         active = self._active_commit_job(state) if state.status == BatchStatus.COMMITTING else None
-        if active is not None and state.active_job_id:
+        # 以探测到的活跃 job 为准（扫描兜底可能补到状态文件缺失/过期的
+        # job_id）；仅 DB 不可达且无 id 时（job_id=0）退回本地取消路径。
+        if active is not None and (active.get("job_id") or state.active_job_id):
             from app.core.database import async_db_session
             from app.services.jobs.store import DurableJobStore
 
-            job_id = int(state.active_job_id)
+            job_id = int(active.get("job_id") or state.active_job_id)
             async with async_db_session() as db:
                 changed, current = await DurableJobStore.request_cancel(db, job_id)
                 await db.commit()

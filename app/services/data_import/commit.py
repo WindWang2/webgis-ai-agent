@@ -151,7 +151,9 @@ async def commit_member(
                 from app.services.data_import.preview import _zipset_shp_path
 
                 read_path = _zipset_shp_path(member, source, extract_root)
-            kwargs: Dict[str, Any] = {}
+            # 有界读取：先按行预算 +1 截断，再交给 interpret_vector 判超限，
+            # 避免超大图层整读撑爆内存（preview 同款上界）。
+            kwargs: Dict[str, Any] = {"max_features": budgets.COMMIT_ROW_LIMIT + 1}
             if layer is not None:
                 kwargs["layer"] = layer
             try:

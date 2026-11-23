@@ -171,6 +171,30 @@ class TestCoalesce:
         stats = ledger.coalesce_pending(org_id="org-a")
         assert stats["coalesced"] == 0
 
+    @pytest.mark.parametrize(
+        "kind,subject_type,subject_key",
+        [
+            ("map.mutation_applied", "project", "project:p1"),
+            ("artifact.revision_committed", "artifact", "artifact:a1"),
+            ("mapproduct.version_recorded", "product", "product:pr1"),
+            ("dataset.version_changed", "dataset", "dataset:ndvi-hubei"),
+        ],
+    )
+    def test_coalesce_covers_eventkind_vocabulary(
+        self, ledger, kind, subject_type, subject_key
+    ):
+        """回归：coalesce 词表必须与 EventKind 实际值一致。"""
+        for i in range(3):
+            ledger.append(
+                _evt(kind=kind, subject_type=subject_type,
+                     subject_key=subject_key, payload={"revision": f"v{i}"})
+            )
+        stats = ledger.coalesce_pending(org_id="org-a")
+        assert stats["coalesced"] == 2
+        pending = ledger.list_events(
+            org_id="org-a", after_id=0, limit=10, status="pending")
+        assert len(pending) == 1
+
 
 class TestWatchStore:
     def _watch(self, **over):

@@ -2,7 +2,41 @@
 from __future__ import annotations
 
 
-from app.services.raster_sampling.publish import build_display_curves, thin_series
+from app.services.raster_sampling.publish import (
+    build_display_curves,
+    load_rows_for_curves,
+    thin_series,
+)
+
+
+def test_load_rows_for_curves_streams_row_groups(tmp_path, monkeypatch):
+    """P2 perf：曲线原料按行组分批读，不再 read_table 整表载入。"""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    table = pa.table({
+        "sample_id": [f"s{i}" for i in range(5)],
+        "source_ref": ["ref:x"] * 5,
+        "band": [1, 1, 1, 2, 2],
+        "chainage_m": [0.0, 1.0, 2.0, 0.0, 1.0],
+        "station_index": [0, 1, 2, 3, 4],
+        "physical_value": [10.0, 11.0, 12.0, 20.0, 21.0],
+        "interpolated_value": [None] * 5,
+        "raw_value": [10.0, 11.0, 12.0, 20.0, 21.0],
+        "valid": [True] * 5,
+        "part_id": ["p0"] * 5,
+    })
+    path = tmp_path / "curves.parquet"
+    pq.write_table(table, path, row_group_size=2)
+
+    def _whole_table_read(*args, **kwargs):
+        raise AssertionError(
+            "load_rows_for_curves must stream row groups, not read_table")
+
+    monkeypatch.setattr(pq, "read_table", _whole_table_read)
+    rows = load_rows_for_curves(str(path))
+    assert [r["sample_id"] for r in rows] == ["s0", "s1", "s2", "s3", "s4"]
+    assert rows[3]["band"] == 2
 
 
 def test_thin_series_keeps_endpoints_gaps_extrema():

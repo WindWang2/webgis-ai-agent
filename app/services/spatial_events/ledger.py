@@ -406,7 +406,7 @@ class SpatialEventLedger:
                 select(SpatialEventRow)
                 .where(
                     SpatialEventRow.status == "pending",
-                    SpatialEventRow.kind.in_(("map.mutation", "dataset.version_changed", "artifact.revision_changed", "mapproduct.version_changed")),
+                    SpatialEventRow.kind.in_(("map.mutation_applied", "dataset.version_changed", "artifact.revision_committed", "mapproduct.version_recorded")),
                     (
                         SpatialEventRow.next_attempt_at.is_(None)
                         | (SpatialEventRow.next_attempt_at <= now)

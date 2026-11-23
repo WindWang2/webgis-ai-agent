@@ -505,3 +505,130 @@ async def test_gc_outputs_background_submit_does_not_spin(
     assert state["job"]["status"] == "completed"
     assert state["latest_receipt"] is not None
     assert state["outputs_alive"]["sample_table"] is True
+
+
+# ── P2 perf：status 的同步 DB 查询不得阻塞事件循环 ──────────────────
+
+async def test_latest_job_sync_query_runs_off_event_loop(monkeypatch):
+    import threading
+
+    from app.services.data_operations import runner
+
+    seen = {}
+
+    class _Result:
+        def scalars(self):
+            return self
+
+        def all(self):
+            return []
+
+    class _FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, *args, **kwargs):
+            seen["thread"] = threading.get_ident()
+            return _Result()
+
+        def commit(self):
+            pass
+
+    monkeypatch.setattr(runner, "_sync_session", lambda: _FakeSession())
+    out = await rs_service._latest_job("sess-thread", "plan-thread")
+    assert out is None
+    assert seen["thread"] != threading.get_ident()  # 不在事件循环线程同步查库
+
+
+# ── P2 api-contract：status/results 读取复核 owner_token ────────────
+
+async def test_status_results_recheck_owner_token(rs_env, raster_factory,
+                                                  seed_points_ref):
+    from app.models.db_model import Conversation
+
+    out = await _make_point_plan(rs_env, raster_factory, seed_points_ref)
+    plan_id = out["plan"]["plan_id"]
+    await rs_service.execute(
+        session_id=SESS, plan_id=plan_id, owner_token=None,
+        background=False, trusted_dispatch=True)
+    with rs_env["sync_factory"]() as db:
+        db.add(Conversation(id=SESS, owner_token="owner-secret"))
+        db.commit()
+
+    with pytest.raises(RasterSamplingError) as ei:
+        await rs_service.status(session_id=SESS, plan_id=plan_id,
+                                owner_token="wrong")
+    assert ei.value.code == "UNAUTHORIZED"
+    assert ei.value.status_code == 404
+    with pytest.raises(RasterSamplingError) as ei2:
+        await rs_service.results(session_id=SESS, plan_id=plan_id,
+                                 owner_token="wrong")
+    assert ei2.value.code == "UNAUTHORIZED"
+    ok_status = await rs_service.status(session_id=SESS, plan_id=plan_id,
+                                        owner_token="owner-secret")
+    assert ok_status["success"] is True
+    ok_results = await rs_service.results(
+        session_id=SESS, plan_id=plan_id, owner_token="owner-secret",
+        include_curves=False)
+    assert ok_results["success"] is True
+
+
+# ── P2 perf：results(include_curves) 只读样本表一次 ────────────────
+
+async def test_results_include_curves_reads_table_once(
+        rs_env, raster_factory, seed_points_ref, monkeypatch):
+    out = await _make_point_plan(rs_env, raster_factory, seed_points_ref)
+    plan_id = out["plan"]["plan_id"]
+    await rs_service.execute(
+        session_id=SESS, plan_id=plan_id, owner_token=None,
+        background=False, trusted_dispatch=True)
+
+    import pyarrow.parquet as pq
+
+    reads = {"n": 0}
+    orig_read_table = pq.read_table
+    orig_parquet_file = pq.ParquetFile
+
+    def _counting_read_table(*args, **kwargs):
+        reads["n"] += 1
+        return orig_read_table(*args, **kwargs)
+
+    def _counting_parquet_file(*args, **kwargs):
+        reads["n"] += 1
+        return orig_parquet_file(*args, **kwargs)
+
+    monkeypatch.setattr(pq, "read_table", _counting_read_table)
+    monkeypatch.setattr(pq, "ParquetFile", _counting_parquet_file)
+    res = await rs_service.results(
+        session_id=SESS, plan_id=plan_id, owner_token=None,
+        page=1, per_page=50, include_curves=True)
+    assert res["curves"]["bands"]
+    assert res["pagination"]["total_rows"] == 3
+    assert reads["n"] == 1
+
+
+async def test_results_streamed_filters_preserve_facts(
+        rs_env, raster_factory, seed_points_ref):
+    """分页/过滤改为 Arrow 批流后，过滤计数与页切片语义保持不变。"""
+    out = await _make_point_plan(rs_env, raster_factory, seed_points_ref)
+    plan_id = out["plan"]["plan_id"]
+    ref_id = out["plan"]["sources"][0]["ref_id"]
+    await rs_service.execute(
+        session_id=SESS, plan_id=plan_id, owner_token=None,
+        background=False, trusted_dispatch=True)
+
+    page = await rs_service.results(
+        session_id=SESS, plan_id=plan_id, owner_token=None,
+        page=2, per_page=2, include_curves=False,
+        source_ref=ref_id, band=1, valid=True)
+    assert page["pagination"]["total_rows"] == 3
+    assert page["pagination"]["filtered_rows"] == 3
+    assert len(page["rows"]) == 1
+    empty = await rs_service.results(
+        session_id=SESS, plan_id=plan_id, owner_token=None,
+        include_curves=False, band=999)
+    assert empty["pagination"]["filtered_rows"] == 0
+    assert empty["rows"] == []

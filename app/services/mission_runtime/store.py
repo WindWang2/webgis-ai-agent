@@ -205,7 +205,7 @@ class MissionStore:
 
     def list_unfinished(
         self, *, org_id: Optional[str] = None, limit: int = 100,
-        user_id: Optional[str] = None,
+        user_id: Optional[str] = None, newest_first: bool = False,
     ) -> List[C.MissionRecord]:
         active = [s.value for s in C.ACTIVE_STATES]
         try:
@@ -216,8 +216,13 @@ class MissionStore:
                     q = q.filter(GISMissionRow.org_id == str(org_id))
                 if user_id is not None:
                     q = q.filter(GISMissionRow.user_id == str(user_id))
+                order = (
+                    GISMissionRow.updated_at.desc()
+                    if newest_first
+                    else GISMissionRow.updated_at.asc()
+                )
                 rows = (
-                    q.order_by(GISMissionRow.updated_at.asc())
+                    q.order_by(order)
                     .limit(max(1, min(int(limit), 500)))
                     .all()
                 )

@@ -148,6 +148,22 @@ class TestProfileFromFieldSchema:
         vp, _ = profile_from_field_schema({"a": {"type": "string"}}, complete=False, row_count=5)
         assert vp.fields_truncated
 
+    def test_bbox_projected_to_extent(self):
+        vp, _ = profile_from_field_schema(
+            {"a": {"type": "number"}}, row_count=1, bbox=[116, 39, 117, 40]
+        )
+        assert vp.extent == [116.0, 39.0, 117.0, 40.0]
+
+    def test_numeric_samples_do_not_imply_temporal(self):
+        vp, _ = profile_from_field_schema(
+            {"elevation": {"type": "number", "sampleValues": [2000, 2010]},
+             "when": {"type": "string", "sampleValues": ["2024-01-01"]}},
+            row_count=2,
+        )
+        assert vp.fields["elevation"].temporal_hint is False
+        assert vp.fields["when"].temporal_hint is True
+        assert vp.temporal_fields == ["when"]
+
 
 class TestDatasetProfileV3:
     def test_summary_bounded(self):

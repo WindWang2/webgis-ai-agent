@@ -324,3 +324,99 @@ class TestP1JsonCarrierVerifyFrozen:
             freeze.verify_frozen(run_dir, dict(evidence, carrier="avro"))
         assert ei.value.error_code == "internal_error"
         assert "载体" in ei.value.reason
+
+
+class TestDisplayFabricCleanup:
+    """P2：显示副本 fabric parquet 的临时文件/孤儿 blob 清理。"""
+
+    @staticmethod
+    def _fc() -> dict:
+        return {"type": "FeatureCollection", "features": [{
+            "type": "Feature", "properties": {"name": "显示"},
+            "geometry": {"type": "Point", "coordinates": [116.0, 40.0]}}]}
+
+    def _patch_common(self, monkeypatch):
+        from app.services.coordinate_operations import outputs as out_mod
+
+        monkeypatch.setattr(out_mod, "load_output_fc", lambda rid: self._fc())
+
+        async def fake_mint(session_id, fc, *, label):
+            return {"display_ref": "ref:session-data/display-x",
+                    "rows": len(fc["features"]), "label": label}
+
+        monkeypatch.setattr(out_mod, "mint_display_ref", fake_mint)
+        return out_mod
+
+    def test_temp_parquet_unlinked_when_fabric_register_fails(
+            self, co_env, monkeypatch):
+        out_mod = self._patch_common(monkeypatch)
+        captured = {}
+
+        def boom(session_id, parquet_path, **kw):  # noqa: ARG001
+            captured["tmp"] = str(parquet_path)
+            assert parquet_path.is_file()  # write_table 已完成
+            raise RuntimeError("注入：fabric 登记失败")
+
+        monkeypatch.setattr(out_mod, "register_fabric_parquet", boom)
+        result = _run(service._mint_display_copy(
+            service._NullHandle(), SESSION, "run-x", "EPSG:32650",
+            {"title": "显示"}))
+        assert result["state"] == "failed"
+        from pathlib import Path
+
+        assert not Path(captured["tmp"]).exists()
+
+    def test_copied_blob_removed_when_artifact_registration_fails(
+            self, co_env, monkeypatch, tmp_path):
+        out_mod = self._patch_common(monkeypatch)
+        blob = tmp_path / "fabric-copy.parquet"
+        blob.write_bytes(b"parquet")
+
+        def fake_register(session_id, parquet_path, **kw):  # noqa: ARG001
+            return {"artifact_ref": "ref:fabric-parquet/deadbeef",
+                    "path": str(blob), "title": kw.get("title", ""),
+                    "crs": kw.get("crs"), "rows": kw.get("rows"),
+                    "content_sha256": "0" * 64, "run_id": kw.get("run_id")}
+
+        monkeypatch.setattr(out_mod, "register_fabric_parquet", fake_register)
+
+        async def boom(*a, **k):  # noqa: ARG001
+            raise RuntimeError("注入：台账登记失败")
+
+        import app.services.artifact_registry as ar_mod
+
+        monkeypatch.setattr(ar_mod, "register_artifact", boom)
+        result = _run(service._mint_display_copy(
+            service._NullHandle(), SESSION, "run-y", "EPSG:32650",
+            {"title": "显示"}))
+        assert result["state"] == "failed"
+        assert not blob.exists()
+
+
+class TestRecoverAllStagingSweep:
+    """P2：>1h staging 清扫不得删除在飞 run 的目录。"""
+
+    def test_active_run_staging_not_swept(self, co_env, seed_fc_ref):
+        import os
+        import time
+
+        from app.core.database import SessionLocal
+        from app.models.coordinate_operations import CoordinateOperationRun
+        from app.services.coordinate_operations import outputs as out_mod
+
+        src = seed_fc_ref(SESSION, make_point_features(2), crs="EPSG:4326")
+        plan = _run(service.create_plan(SESSION, _plan(src), actor=ACTOR))
+        run_id = "run-active-staging"
+        with SessionLocal() as db:
+            db.add(CoordinateOperationRun(
+                id=run_id, plan_id=plan["plan_id"], session_id=SESSION,
+                plan_revision=plan["revision"], plan_digest="0" * 64,
+                status="running"))
+            db.commit()
+        staging = out_mod.staging_dir(run_id)
+        (staging / "output.geojson").write_text(
+            '{"type":"FeatureCollection","features":[]}', encoding="utf-8")
+        old = time.time() - 2 * 3600
+        os.utime(staging, (old, old))  # 目录 mtime 不随 append 更新
+        _run(service.recover_all())
+        assert staging.is_dir()

@@ -18,14 +18,18 @@ DateStr = Annotated[str, Field(pattern=r"^\d{4}-\d{2}-\d{2}$")]
 # VNext 工具内联数组的规模闸（JSON 通道的实用上界；SAR 栈的科学规模
 # 上限由 sar_temporal.SAR_SCALE_LIMIT_* 语义层执行）。
 _TOOL_ARRAY_MAX_VALUES = 4_000_000
+# 多角色字典入参的总量闸（与 3D 栈工具宣称的 n_bands·H·W ≤ 16M 同包络）：
+# 单角色 4M 上限挡不住角色累加（如 30 角色 × 4M ≈ 120M 值 ≈ 1GB float64）。
+_TOOL_TOTAL_MAX_VALUES = 4 * _TOOL_ARRAY_MAX_VALUES
 
 
 def _bands_to_arrays(bands: Dict[str, List[List[float]]]) -> Dict[str, np.ndarray]:
-    """角色 → 2D 数组（形状一致性校验 + 规模闸）。"""
+    """角色 → 2D 数组（形状一致性校验 + 单角色/总量规模闸）。"""
     if not isinstance(bands, dict) or not bands:
         raise ValueError("bands 必须是非空 {role: 2D array} 字典（角色显式命名）")
     arrays: Dict[str, np.ndarray] = {}
     shape = None
+    total = 0
     for role, data in bands.items():
         arr = np.asarray(data, dtype=float)
         if arr.ndim != 2:
@@ -38,6 +42,17 @@ def _bands_to_arrays(bands: Dict[str, List[List[float]]]) -> Dict[str, np.ndarra
                 f"{_TOOL_ARRAY_MAX_VALUES}",
                 estimated=f"{arr.size} values (~{arr.size * 8 / 1e6:.1f} MB float64)",
                 limit=f"≤{_TOOL_ARRAY_MAX_VALUES} values per band",
+                correction_hint="改用栅格工件路径（raster_calculator/窗口化底座）",
+            )
+        total += int(arr.size)
+        if total > _TOOL_TOTAL_MAX_VALUES:
+            from app.lib.gis.scientific_errors import ResourceScaleMismatch
+
+            raise ResourceScaleMismatch(
+                f"bands 各角色像元总数 {total} 超过内联数组工具总量上界 "
+                f"{_TOOL_TOTAL_MAX_VALUES}",
+                estimated=f"{total} values (~{total * 8 / 1e6:.1f} MB float64)",
+                limit=f"≤{_TOOL_TOTAL_MAX_VALUES} values across all bands",
                 correction_hint="改用栅格工件路径（raster_calculator/窗口化底座）",
             )
         if shape is None:
@@ -700,7 +715,20 @@ def register_rs_tools(registry: ToolRegistry):
             lut_source = "incidence_map"
         if inc_map is not None:
             if inc_map.size > _TOOL_ARRAY_MAX_VALUES:
-                raise ValueError("入射角 LUT 超过内联数组工具上界")
+                from app.lib.gis.scientific_errors import ResourceScaleMismatch
+
+                raise ResourceScaleMismatch(
+                    f"入射角 LUT 像元数 {inc_map.size} 超过内联数组工具上界 "
+                    f"{_TOOL_ARRAY_MAX_VALUES}",
+                    estimated=f"{inc_map.size} values "
+                             f"(~{inc_map.size * 8 / 1e6:.1f} MB float64)",
+                    limit=f"≤{_TOOL_ARRAY_MAX_VALUES}",
+                    correction_hint="降采样 LUT，或改用标量 incidence_deg",
+                )
+            if inc_map.ndim != 2 or inc_map.shape != arr.shape:
+                raise ValueError(
+                    f"入射角 LUT 形状 {inc_map.shape} 与 array 网格 "
+                    f"{arr.shape} 不一致（须为同形 2D）")
         res = calibrate_sar(
             arr,
             calibration_constant=params["calibration_constant"],
@@ -924,7 +952,8 @@ def register_rs_tools(registry: ToolRegistry):
                 round(v, 6) for v in res["explained_variance"]],
             "loadings": np.asarray(res["loadings"]).round(6).tolist(),
             "component_rasters": [
-                r.round(6).tolist() for r in res["component_rasters"]],
+                _bounded_sample(r.astype(float))
+                for r in res["component_rasters"]],
             "scores_preview_rows": int(res["scores_preview"].shape[0]),
             "n_valid_pixels": res["n_valid_pixels"],
             "common_valid_fraction": round(res["common_valid_fraction"], 6),
@@ -1207,7 +1236,8 @@ def register_rs_tools(registry: ToolRegistry):
             "loadings_original": np.asarray(
                 res["loadings_original"]).round(6).tolist(),
             "component_rasters": [
-                r.round(6).tolist() for r in res["component_rasters"]],
+                _bounded_sample(r.astype(float))
+                for r in res["component_rasters"]],
             "n_components_rasters": res["meta"]["n_components_rasters"],
             "n_valid_pixels": res["n_valid_pixels"],
             "common_valid_fraction": round(res["common_valid_fraction"], 6),
@@ -1277,7 +1307,8 @@ def register_rs_tools(registry: ToolRegistry):
             "n_iter": res["n_iter"],
             "mixing_matrix": np.asarray(res["mixing_matrix"]).round(6).tolist(),
             "component_rasters": [
-                r.round(6).tolist() for r in res["component_rasters"]],
+                _bounded_sample(r.astype(float))
+                for r in res["component_rasters"]],
             "n_valid_pixels": res["n_valid_pixels"],
             "common_valid_fraction": round(res["common_valid_fraction"], 6),
             "disclosure": res["meta"]["disclosure"],

@@ -420,16 +420,21 @@ def thin_series(
              "kept": len(final), "total": n})
 
 
+CURVE_COLUMNS = ["sample_id", "source_ref", "band", "chainage_m",
+                 "station_index", "physical_value", "interpolated_value",
+                 "raw_value", "valid", "part_id"]
+
+
 def load_rows_for_curves(parquet_path: str) -> List[Dict[str, Any]]:
-    """长表 → 曲线原料（仅曲线列；分页读，行组流式）。"""
+    """长表 → 曲线原料（仅曲线列；按行组分批流式读取）。"""
     import pyarrow.parquet as pq
 
-    table = pq.read_table(
-        parquet_path,
-        columns=["sample_id", "source_ref", "band", "chainage_m",
-                 "station_index", "physical_value", "interpolated_value",
-                 "raw_value", "valid", "part_id"])
-    return table.to_pylist()
+    rows: List[Dict[str, Any]] = []
+    parquet = pq.ParquetFile(parquet_path)
+    for batch in parquet.iter_batches(columns=CURVE_COLUMNS,
+                                      use_threads=False):
+        rows.extend(batch.to_pylist())
+    return rows
 
 
 def _part_sort_key(part: str) -> Tuple[str, int]:

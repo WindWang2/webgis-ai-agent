@@ -192,6 +192,38 @@ class TestContract:
         )
         assert len(s2.source_bindings) == SOURCE_BINDING_LIMIT
 
+    def test_plan_projection_is_bounded(self, monkeypatch):
+        from pydantic import ValidationError
+
+        from app.services.project_runtime import contract
+        from app.services.project_runtime.contract import (
+            CAPABILITY_LIMIT,
+            PROGRESS_LIMIT,
+            PlanProjectionRef,
+        )
+
+        projection = PlanProjectionRef(
+            progress=[{"capability": f"c{i}"}
+                      for i in range(PROGRESS_LIMIT + 24)],
+            capability_statuses={
+                f"cap{i}": "ready" for i in range(CAPABILITY_LIMIT + 8)
+            },
+        )
+        assert len(projection.progress) == PROGRESS_LIMIT
+        assert len(projection.capability_statuses) == CAPABILITY_LIMIT
+
+        # 不可信 manifest / 巨型 plan 的 restorable_chapter 必须 fail-closed
+        monkeypatch.setattr(contract, "MAPSPEC_DOC_MAX_BYTES", 64)
+        with pytest.raises(ValidationError):
+            PlanProjectionRef(restorable_chapter={"goal": "x" * 256})
+        # freeze 走属性赋值（_plan_projection），赋值同样不得绕过有界校验
+        assigning = PlanProjectionRef()
+        with pytest.raises(ValidationError):
+            assigning.restorable_chapter = {"goal": "x" * 256}
+        assert PlanProjectionRef(
+            restorable_chapter={"goal": "ok"}
+        ).restorable_chapter == {"goal": "ok"}
+
 
 class TestStore:
     async def test_save_load_roundtrip_and_invalid_ids(self):

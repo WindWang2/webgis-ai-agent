@@ -142,6 +142,10 @@ export function useWorkflowWorkspace(): UseWorkflowWorkspaceResult {
   const selectedWorkflow = workflows.find((w) => w.id === selectedWorkflowId) ?? null;
 
   const selectProject = useCallback((id: string) => {
+    // P2：同值 setState 会被 React bailout，[selectedProjectId] 数据 effect
+    // 不会重跑；而下面会清空 runs/revisions 并递增 detailGen —— 在途的项目
+    // 明细请求被丢弃后也可能永远不再拉取（列表空置）。同项目再选 = no-op。
+    if (id === selectedProjectIdRef.current) return;
     detailGen.current += 1;
     workflowGen.current += 1;
     runGen.current += 1;

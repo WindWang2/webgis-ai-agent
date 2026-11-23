@@ -118,6 +118,44 @@ describe('cartographic runtime repair command', () => {
     expect(renderer.updateLayerStyle).not.toHaveBeenCalled();
     expect(updateLayer).not.toHaveBeenCalled();
   });
+
+  it('validates every runtime target before mutating (a later missing layer must not leave a half-applied batch)', () => {
+    const updateLayer = vi.fn();
+    const hud = {
+      layers: [
+        { id: 'lay-a', visible: false, _mapspecFingerprint: 'carto-sha256:current' },
+        { id: 'lay-b', visible: false, _mapspecFingerprint: 'carto-sha256:current' },
+      ],
+      updateLayer,
+    };
+    const map = makeMockMaplibreMap();
+    map.addLayer({ id: 'lay-a__point', type: 'circle' });
+    // lay-b 只存在于 HUD，运行时图层缺失（异步 reconcile 未落图）
+    const ctx = {
+      map,
+      popAction: () => {},
+      setDeferredPop: () => {},
+      safePop: () => {},
+      getHudState: () => hud,
+      setSelectedBaseLayer: () => {},
+      command: 'cartographic_runtime_repair',
+      actionId: 'ma-carto-2',
+      params: {
+        mapspec_fingerprint: 'carto-sha256:current',
+        observation_sequence: 5,
+        repair_patches: [
+          { layer_id: 'lay-a', before: { visible: false }, desired: { visible: true } },
+          { layer_id: 'lay-b', before: { visible: false }, desired: { visible: true } },
+        ],
+      },
+    } as unknown as MapCommandContext;
+
+    const result = layerCommands.cartographic_runtime_repair.run(ctx);
+
+    expect(result).toEqual({ status: 'failed', error: 'target_not_found' });
+    expect(renderer.updateLayerStyle).not.toHaveBeenCalled();
+    expect(updateLayer).not.toHaveBeenCalled();
+  });
 });
 
 // ─── Issue #393: legacy imperative map commands must not silently no-op ───
@@ -469,6 +507,25 @@ describe('reorder_layer (issue #393: MapSpec `${id}__` layers reorder durably)',
         'custom-target',
         'custom-target-outline',
         'custom-top',
+      ]);
+    });
+
+    it('bottom when the group already spans the whole custom stack keeps it in place (no top yank)', () => {
+      const { map, ctx } = customStack([
+        'custom-target',
+        'custom-target-outline',
+      ]);
+      ctx.command = 'reorder_layer';
+      ctx.params = { layer_id: 'target', position: 'bottom' };
+
+      const result = layerCommands.reorder_layer.run(ctx);
+
+      expect(result).toEqual({ status: 'succeeded', result: { confirmed: true } });
+      // 组已在 custom 栈底部：终态成立，绝不能把省略锚点的 moveLayer 当置顶
+      expect(map.moveLayer).not.toHaveBeenCalled();
+      expect(orderOf(map)).toEqual([
+        'custom-target',
+        'custom-target-outline',
       ]);
     });
   });

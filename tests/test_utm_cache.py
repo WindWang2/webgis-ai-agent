@@ -1,4 +1,4 @@
-"""Tests for to_utm_gdf content-based memoization (Phase 4 perf)."""
+"""Tests for to_utm_gdf identity-based memoization (Phase 4 perf)."""
 from app.lib.geo_processor.core import (
     to_utm_gdf,
     clear_utm_cache,
@@ -44,13 +44,61 @@ def test_cache_returns_copy_not_alias():
     assert "extra_col" not in g2.columns
 
 
-def test_equal_content_objects_share_one_entry():
+def test_different_objects_get_different_entries():
     clear_utm_cache()
     fc_a = _sample_fc()
     fc_b = _sample_fc()  # same content, different identity
     to_utm_gdf(fc_a)
     to_utm_gdf(fc_b)
+    assert get_utm_cache_info()["size"] == 2
+
+
+def test_cache_hit_does_not_reserialize(monkeypatch):
+    """Regression: identity keying must keep cache hits O(1).
+
+    Keying by a content hash made every call — including hits — json.dumps
+    the whole FeatureCollection.
+    """
+    import app.lib.geo_processor.core as core
+
+    clear_utm_cache()
+    fc = _sample_fc()
+    to_utm_gdf(fc)
+
+    def _fail_serialize(*args, **kwargs):
+        raise AssertionError("cache hit re-serialized the FeatureCollection")
+
+    monkeypatch.setattr(core.json, "dumps", _fail_serialize)
+    g, crs = to_utm_gdf(fc)
+    assert g is not None and crs
+
+
+def test_byte_budget_eviction_uses_running_total(monkeypatch):
+    """Regression: byte-budget eviction must not rescan every cached entry.
+
+    _utm_cache_bytes must track the running total so eviction stays O(1) per
+    evicted entry instead of deep-scanning all entries on every insert.
+    """
+    import app.lib.geo_processor.core as core
+
+    clear_utm_cache()
+    fc_a = _sample_fc()
+    assert to_utm_gdf(fc_a)[0] is not None
+    with core._utm_cache_lock:
+        one_entry_bytes = core._utm_cache_bytes
+    assert one_entry_bytes > 0
+
+    # Budget fits exactly one entry: inserting a second must evict the first.
+    monkeypatch.setattr(core, "_UTM_CACHE_BYTES_MAX", one_entry_bytes)
+    fc_b = _sample_fc()
+    assert to_utm_gdf(fc_b)[0] is not None
     assert get_utm_cache_info()["size"] == 1
+    with core._utm_cache_lock:
+        remaining = list(core._utm_cache.values())
+        assert core._utm_cache_bytes == sum(
+            core._entry_nbytes(entry) for entry in remaining
+        )
+    assert remaining[0][0] is fc_b
 
 
 def test_original_crs_preserved_on_hit():

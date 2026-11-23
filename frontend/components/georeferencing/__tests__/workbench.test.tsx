@@ -517,4 +517,171 @@ describe('GeoreferencingWorkbenchPanel (G48)', () => {
     expect(mockExecuteGeorefPlan.mock.calls[0][2].idempotency_key).toBe('ui:gplan_1:r1');
     expect(mockExecuteGeorefPlan.mock.calls[1][2].idempotency_key).toBe('ui:gplan_1:r1:retry1');
   });
+
+  it('keeps unsaved GCP edits while a running job is polled', async () => {
+    const src = makeSource();
+    const plan = makePlan({
+      revision: 1,
+      active_job_id: '42',
+      gcps: [
+        { gcp_id: 'g1', label: 'P1', px: 10, py: 20, map_x: 100, map_y: 200, wgs84_lon: null, wgs84_lat: null, role: 'fit', enabled: true, note: '' },
+      ],
+    });
+    mockListGeorefSources.mockResolvedValue({ session_id: 'sess-g48-ui', sources: [src] });
+    mockListGeorefPlans.mockResolvedValue({ session_id: 'sess-g48-ui', plans: [plan] });
+    mockPollGeorefStatus.mockResolvedValue({
+      plan_id: 'gplan_1',
+      job_id: '42',
+      execution_id: 'gexec_42',
+      status: 'running',
+      stage: 'warping',
+      progress: 30,
+      error_code: null,
+      error_message: null,
+      artifact: null,
+      plan,
+    });
+
+    render(<GeoreferencingWorkbenchPanel sessionId="sess-g48-ui" ownerToken="tok-1" />);
+    await waitFor(() => expect(screen.getByTestId('georef-gcp-row-0')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByTestId('georef-job-status')).toHaveTextContent('georeferencing.jobRunning'),
+    );
+
+    fireEvent.change(screen.getByLabelText('label-0'), { target: { value: 'EDITED' } });
+    expect(screen.getByText('georeferencing.dirtyBadge')).toBeInTheDocument();
+
+    // Let at least one 650ms poll tick land after the edit.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 900));
+    });
+
+    expect(mockPollGeorefStatus.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect((screen.getByLabelText('label-0') as HTMLInputElement).value).toBe('EDITED');
+    expect(screen.getByTestId('georef-undo-btn')).toBeEnabled();
+    expect(screen.getByText('georeferencing.dirtyBadge')).toBeInTheDocument();
+  });
+
+  it('clears stale running status when a status poll fails', async () => {
+    const plan = makePlan({ revision: 1, active_job_id: '42', active_execution_id: 'gexec_42' });
+    mockListGeorefSources.mockResolvedValue({ session_id: 'sess-g48-ui', sources: [makeSource()] });
+    mockListGeorefPlans.mockResolvedValue({ session_id: 'sess-g48-ui', plans: [plan] });
+    mockPollGeorefStatus
+      .mockResolvedValueOnce({
+        plan_id: 'gplan_1',
+        job_id: '42',
+        execution_id: 'gexec_42',
+        status: 'running',
+        stage: 'warping',
+        progress: 30,
+        error_code: null,
+        error_message: null,
+        artifact: null,
+        plan,
+      })
+      .mockRejectedValue(new Error('status endpoint down'));
+
+    render(<GeoreferencingWorkbenchPanel sessionId="sess-g48-ui" ownerToken="tok-1" />);
+    await waitFor(() =>
+      expect(screen.getByTestId('georef-job-status')).toHaveTextContent('georeferencing.jobRunning'),
+    );
+    expect(screen.getByTestId('georef-execute-btn')).toBeDisabled();
+
+    await waitFor(() => expect(screen.getByTestId('georef-execute-btn')).not.toBeDisabled(), {
+      timeout: 2500,
+    });
+    expect(screen.queryByTestId('georef-job-status')).not.toBeInTheDocument();
+    expect(mockAddToast).toHaveBeenCalledWith('status endpoint down', 'error');
+  });
+
+  it('drops stale delete-source completion after switching sessions', async () => {
+    const keepSource = makeSource({ source_id: 'gsrc_keep', filename: 'keep.png' });
+    const delSource = makeSource({ source_id: 'gsrc_del', filename: 'del.png' });
+    const planDel = makePlan({ source_id: 'gsrc_del', revision: 1, gcps: [] });
+    let resolveDelete: (() => void) | undefined;
+    mockDeleteGeorefSource.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveDelete = resolve;
+        }),
+    );
+    mockListGeorefSources
+      .mockResolvedValueOnce({ session_id: 'sess-g48-ui', sources: [keepSource, delSource] })
+      .mockResolvedValueOnce({ session_id: 'sess-other', sources: [] })
+      .mockResolvedValue({ session_id: 'sess-other', sources: [] });
+    mockListGeorefPlans
+      .mockResolvedValueOnce({ session_id: 'sess-g48-ui', plans: [planDel] })
+      .mockResolvedValueOnce({ session_id: 'sess-other', plans: [] })
+      .mockResolvedValue({ session_id: 'sess-other', plans: [] });
+
+    const { rerender } = render(
+      <GeoreferencingWorkbenchPanel sessionId="sess-g48-ui" ownerToken="tok-1" />,
+    );
+    await waitFor(() => expect(screen.getByTestId('georef-delete-source-btn')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('georef-delete-source-btn'));
+    await waitFor(() => expect(mockDeleteGeorefSource).toHaveBeenCalledTimes(1));
+
+    rerender(<GeoreferencingWorkbenchPanel sessionId="sess-other" ownerToken="tok-1" />);
+    await waitFor(() => expect(screen.queryByTestId('georef-source-select')).not.toBeInTheDocument());
+
+    await act(async () => {
+      resolveDelete?.();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(screen.queryByTestId('georef-source-select')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('georef-delete-source-btn')).not.toBeInTheDocument();
+  });
+
+  it('surfaces hard bind failures with error code and message', async () => {
+    const artifact = {
+      artifact_id: 'gart_hard_fail',
+      plan_id: 'gplan_1',
+      execution_id: 'gexec_hard_fail',
+      job_id: '42',
+      session_id: 'sess-g48-ui',
+      format: 'GeoTIFF',
+      cog_requested: true,
+      cog_verified: true,
+      cog_checks: {},
+      target_crs: 'EPSG:3857',
+      width: 340,
+      height: 240,
+      bands: 4,
+      dtype: 'uint8',
+      has_alpha: true,
+      nodata_mode: 'band4_alpha',
+      sha256: 'd'.repeat(64),
+      byte_size: 4096,
+      blob_key: 'georefbin-d',
+      file_path: '/tmp/out-fail.tif',
+      raster_ref: 'ref:raster_georef-fail',
+      bounds_target_crs: [0, 0, 100, 100],
+      bounds_wgs84: [120.1, 30.1, 120.2, 30.2],
+      created_at: '2026-11-15T00:02:00Z',
+    };
+    const plan = makePlan({ revision: 1, latest_artifact: artifact });
+    mockListGeorefSources.mockResolvedValue({ session_id: 'sess-g48-ui', sources: [makeSource()] });
+    mockListGeorefPlans.mockResolvedValue({ session_id: 'sess-g48-ui', plans: [plan] });
+    mockBindGeorefLayer.mockResolvedValue({
+      bound: false,
+      partial_success: false,
+      layer_id: null,
+      mapspec_revision: null,
+      current_mapspec_revision: null,
+      error_code: 'BIND_FAILED',
+      message: 'artifact missing',
+      artifact,
+      mapspec: null,
+    });
+
+    render(<GeoreferencingWorkbenchPanel sessionId="sess-g48-ui" ownerToken="tok-1" />);
+    await waitFor(() => expect(screen.getByTestId('georef-bind-layer-btn')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('georef-bind-layer-btn'));
+
+    await waitFor(() =>
+      expect(mockAddToast).toHaveBeenCalledWith('BIND_FAILED: artifact missing', 'error'),
+    );
+    expect(screen.getByText('BIND_FAILED: artifact missing')).toBeInTheDocument();
+  });
 });

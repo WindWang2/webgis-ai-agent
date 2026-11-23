@@ -198,6 +198,21 @@ describe('heatmap commands (issue #393: post-state verification, no fake success
       const layer = map.getLayer('custom-native-heatmap-pop');
       expect(JSON.stringify(layer.paint['heatmap-color'])).toContain('68,1,84'); // viridis 首色
     });
+
+    it('requiredParams 放行的 params.id 形态挂成可寻址层（不再落到 native-heatmap-default）', () => {
+      const map = makeMockMaplibreMap();
+      const legacyParams = {
+        geojson: { type: 'FeatureCollection', features: [] },
+        id: 'legacy-heat',
+      };
+      expect(heatmapCommands.add_native_heatmap.requiredParams(legacyParams)).toBe(true);
+
+      const result = heatmapCommands.add_native_heatmap.run(makeCtx(map, legacyParams));
+
+      expect(result).toEqual({ status: 'succeeded', result: { confirmed: true } });
+      expect(map.getLayer('custom-legacy-heat')).toBeTruthy();
+      expect(map.getLayer('custom-native-heatmap-default')).toBeFalsy();
+    });
   });
 
   describe('create_thematic_map', () => {

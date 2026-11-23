@@ -189,6 +189,15 @@ class TestFieldRoleAmbiguity:
                   "城市": _fp("城市", dtype="string", samples=["杭州"])}
         assert detect_field_role_ambiguity(fields, semantic_profile=sem) == []
 
+    def test_infinite_sample_does_not_crash(self):
+        # count 角色样本含 +Inf：int(inf) 曾抛 OverflowError 穿透聚合入口
+        sem = self._sem(
+            {"num": (["count_measure"],)},
+            {"num": "rule_derived"},
+        )
+        fields = {"num": _fp("num", samples=[1.0, float("inf")])}
+        assert detect_field_role_ambiguity(fields, semantic_profile=sem) == []
+
     def test_no_semantic_profile_no_issue(self):
         # 无语义画像 → 无绑定事实 → 不虚构歧义（unknown ≠ 不满足）。
         fields = {"count": _fp("count", samples=[])}

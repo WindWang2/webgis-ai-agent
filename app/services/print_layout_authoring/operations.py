@@ -387,7 +387,8 @@ def apply_operations(plan: Dict[str, Any], operations: List[Dict[str, Any]],
                 raise OperationError("INVALID_OPERATION", "operation must be an object")
             _apply_one(candidate, op, locks, skipped, changes)
         _assert_locks_preserved(original, candidate, locks)
-    except (OperationError, ValueError, TypeError, KeyError) as ex:
+    except (OperationError, template_mod.PrintTemplateError,
+            ValueError, TypeError, KeyError) as ex:
         code = getattr(ex, "code", type(ex).__name__)
         return {"ok": False, "plan": original, "changes": [], "skipped_locked": skipped,
                 "issues": [{"code": str(code), "message": str(ex)[:512]}]}

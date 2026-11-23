@@ -267,7 +267,7 @@ def apply_schema_ops_to_features(
             props = feature.get("properties") if isinstance(feature, dict) else None
             if isinstance(props, dict) and src in props:
                 nf = copy.deepcopy(feature)
-                nf["properties"] = {dst: props[src], **{k: v for k, v in props.items() if k != src}}
+                nf["properties"] = {dst: props[src], **{k: v for k, v in props.items() if k not in (src, dst)}}
                 new_out.append(nf)
                 changed = True
             else:

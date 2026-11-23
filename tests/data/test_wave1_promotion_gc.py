@@ -549,6 +549,40 @@ def test_snapshot_pointer_scan_truncation_skips_blob_deletion(
     assert store.exists(key_g) is True, "manifest 保护的 blob 完整扫描下仍不删"
 
 
+def test_snapshot_pointer_scan_cap_is_global_across_projects(monkeypatch, tmp_path):
+    """cap 是「全部项目域 manifest 合计」（docstring 契约）：项目 A 耗尽 cap
+    后不得因切换项目重置计数继续扫描 —— 截断必须终止整轮扫描。"""
+    from app.core.config import settings
+    from app.services.data_lifecycle import quota as quota_mod
+    from app.services.workspace.snapshot import (
+        SnapshotDurablePointer,
+        WorkspaceSnapshot,
+        _atomic_write_json,
+        _project_snapshots_dir,
+    )
+
+    monkeypatch.setattr(settings, "DATA_DIR", str(tmp_path / "data"))
+    entry_no = 0
+    for proj_idx, n in ((1, 3), (2, 2)):
+        pid = f"proj_cap_{proj_idx}"
+        pdir = _project_snapshots_dir(pid)
+        assert pdir is not None
+        for i in range(n):
+            entry_no += 1
+            _atomic_write_json(pdir / f"ws-{i}.json", WorkspaceSnapshot(
+                snapshot_id=f"ws-{i}", session_id="s_x", project_id=pid,
+                durable_pointers={f"ref:{i}": SnapshotDurablePointer(
+                    content_location=f"{entry_no:04d}/" + "0" * 60 + ".json",
+                    content_payload_sha256=f"{entry_no:064d}")},
+            ).model_dump(mode="json"))
+
+    monkeypatch.setattr(quota_mod, "SNAPSHOT_POINTER_SCAN_CAP", 2)
+    locations, shas, truncated = quota_mod.workspace_snapshot_protected_pointers()
+    assert truncated is True
+    assert len(locations) == 2, "cap 为跨项目合计，到达后整轮扫描立即停止"
+    assert len(shas) == 2
+
+
 @pytest.mark.parametrize(("root", "expected"), [
     ("location", "referenced by artifact_revisions"),
     ("sha", "referenced by artifact_revisions (sha)"),

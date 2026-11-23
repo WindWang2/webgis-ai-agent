@@ -351,10 +351,10 @@ def run_streaming_transform(
                     value=int(done * 100 / max(total, 1)),
                     message=f"已变换 {done}/{total} 行",
                     loop=loop)
+        crs_json = _json.dumps(target_crs, ensure_ascii=False)
         out_f.write(
-            f'],"crs":{{"type":"name","properties":{{"name":'
-            f'"{target_crs}"}}}},'
-            f'"properties":{{"schema_info":{{"crs":"{target_crs}"}}}}}}')
+            f'],"crs":{{"type":"name","properties":{{"name":{crs_json}}}}},'
+            f'"properties":{{"schema_info":{{"crs":{crs_json}}}}}}}')
         if stats.rows <= 0:
             raise CoordinateOperationError(
                 "source_unqualified",

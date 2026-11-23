@@ -6,7 +6,7 @@ import math
 
 
 from app.services.feature_edit.attr_ops import profile_fields, validate_set_fields
-from app.services.feature_edit.contracts import WFID_PROP
+from app.services.feature_edit.contracts import MAX_PLAN_TARGETS, WFID_PROP
 from app.services.feature_edit.geometry_ops import (
     geodesic_distance_m,
     move_by,
@@ -113,6 +113,22 @@ class TestJournal:
             out, invert_schema_ops([{"op": "rename_field", "from": "type", "to": "类别"}])
         )
         assert back[0]["properties"]["type"] == "小学"
+
+    def test_rename_to_existing_key_keeps_source_value(self):
+        """P2：dst 已存在时旧值不得覆盖被 rename 的 src 值（静默丢值）。"""
+        features = [
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [0, 0]},
+                "properties": {"type": "小学", "类别": "旧值"},
+            }
+        ]
+        out, changed = apply_schema_ops_to_features(
+            features, [{"op": "rename_field", "from": "type", "to": "类别"}]
+        )
+        assert changed
+        assert out[0]["properties"]["类别"] == "小学"
+        assert "type" not in out[0]["properties"]
 
 
 # ─── identity ──────────────────────────────────────────────────────────────
@@ -292,6 +308,38 @@ class TestGeometryOps:
         d = geodesic_distance_m(116.4074, 39.9042, 121.4737, 31.2304)
         assert abs(d - 1_067_000) < 5_000
 
+    def test_move_and_snap_reject_malformed_existing_geometry(self):
+        """P2：畸形既有几何（create 未声明类型时落库）不得抛未捕获异常。"""
+        bad = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "id": "bad-0",
+                    "geometry": {"type": "Polygon", "coordinates": [[[0, 0], [1, 0]]]},
+                    "properties": {"a": 1},
+                }
+            ],
+        }
+        bad, _ = materialize_wfids(bad, FP)
+        wfid = bad["features"][0]["properties"][WFID_PROP]
+        deltas, findings = move_by(bad, {wfid}, dx_m=1.0, dy_m=1.0)
+        assert not deltas
+        assert findings and findings[0]["code"] == "invalid_geometry"
+        roads = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "LineString", "coordinates": [[0.0, 0.0], [0.0, 1.0]]},
+                    "properties": {},
+                }
+            ],
+        }
+        deltas2, findings2, _ = snap_to_ref(bad, {wfid}, roads, 500.0)
+        assert not deltas2
+        assert findings2 and findings2[0]["code"] == "invalid_geometry"
+
 
 # ─── plan ──────────────────────────────────────────────────────────────────
 
@@ -352,6 +400,37 @@ class TestPlan:
         )
         assert not findings
         assert plan["target_wfids"] == sorted([wfids[0], wfids[2], wfids[4]])
+
+    def test_targets_over_limit_not_silently_truncated(self):
+        """P2：超 MAX_PLAN_TARGETS 的目标集必须出 finding，不得静默截断。"""
+        features = [
+            {
+                "type": "Feature",
+                "id": f"p-{i}",
+                "geometry": {"type": "Point", "coordinates": [116.0, 39.0]},
+                "properties": {"v": i},
+            }
+            for i in range(MAX_PLAN_TARGETS + 1)
+        ]
+        fc = {"type": "FeatureCollection", "features": features}
+        ids = [f"p-{i}" for i in range(MAX_PLAN_TARGETS + 1)]
+        plan, findings = build_plan(
+            ref_id="ref:x", payload=fc,
+            ops=[{"op": "set_fields", "fields": {"v": 1}}],
+            requested_ids=ids, selection=None,
+            dataset_fingerprint=FP, content_revision=1,
+        )
+        assert any(f["code"] == "target_limit_exceeded" for f in findings)
+        assert not plan["committable"]
+        plan2, findings2 = build_plan(
+            ref_id="ref:x", payload=fc,
+            ops=[{"op": "set_fields", "fields": {"v": 1}}],
+            requested_ids=None,
+            selection={"dataset_ref": "ref:x", "feature_id": "p-0", "selected_ids": ids[1:]},
+            dataset_fingerprint=FP, content_revision=1,
+        )
+        assert any(f["code"] == "target_limit_exceeded" for f in findings2)
+        assert not plan2["committable"]
 
     def test_derive_changes_same_path_for_commit(self):
         fc, _ = self._ctx()

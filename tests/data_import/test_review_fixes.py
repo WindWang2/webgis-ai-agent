@@ -337,3 +337,52 @@ async def test_p1_session_cap_protects_committing_batch(env, tmp_path, monkeypat
     surviving = [p.name for p in staging.batches_root().iterdir() if p.is_dir()]
     assert states[0].batch_id in surviving
     assert len(surviving) == budgets.MAX_BATCHES_PER_SESSION
+
+
+async def test_p2_commit_vector_read_is_bounded(env, tmp_path, monkeypatch):
+    """P2（perf）：提交读矢量图层必须带 max_features 上界，不得整读后才判预算。"""
+    import pyogrio
+
+    geo = make_geojson_bytes(
+        [point_feature({"n": i}, 116.3 + i * 0.001, 39.8) for i in range(3)]
+    )
+    state = await env.create_batch(SESSION, "u", [("bounded.geojson", geo)])
+    key = state.members[0].member_key
+    await env.save_plan(state.batch_id, SESSION, {key: {}}, selected=[key])
+
+    captured: dict = {}
+    orig = pyogrio.read_dataframe
+
+    def spy(*args, **kwargs):
+        if "bounded.geojson" in str(args[0]):
+            captured.update(kwargs)
+        return orig(*args, **kwargs)
+
+    monkeypatch.setattr(pyogrio, "read_dataframe", spy)
+    out = await env.start_commit(state.batch_id, SESSION, background=False)
+    assert out["receipts"][key]["status"] == "completed"
+    assert captured.get("max_features") == budgets.COMMIT_ROW_LIMIT + 1
+
+
+async def test_p2_gpkg_attribute_layer_typed_error(env, tmp_path):
+    """P2（error-handling）：GPKG 无几何图层必须 typed 拒绝，不得裸 AttributeError。"""
+    import pandas as pd
+    import pyogrio
+
+    gpkg = tmp_path / "attr.gpkg"
+    pyogrio.write_dataframe(
+        pd.DataFrame({"a": [1, 2]}), gpkg, layer="attr", driver="GPKG"
+    )
+    state = await env.create_batch(SESSION, "u", [("attr.gpkg", gpkg.read_bytes())])
+    member = next(m for m in state.members if m.container_ref == "attr")
+    await env.save_plan(
+        state.batch_id, SESSION, {member.member_key: {}}, selected=[member.member_key]
+    )
+    pv = await env.preview_members(
+        state.batch_id, SESSION, [member.member_key], row_limit=10
+    )
+    assert pv["previews"][0]["error"]["code"] == "VECTOR_GEOMETRY_MISSING"
+    out = await env.start_commit(state.batch_id, SESSION, background=False)
+    r = out["receipts"][member.member_key]
+    assert r["status"] == "failed"
+    assert r["error_code"] == "VECTOR_GEOMETRY_MISSING"

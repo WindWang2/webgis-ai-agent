@@ -5,6 +5,8 @@
 """
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from app.services.data_quality.rule_functions import (
@@ -227,6 +229,14 @@ def test_attribute_encoding_detects_mojibake():
     assert clean.status == "pass"
 
 
+def test_attribute_encoding_nordic_ring_letter_not_mojibake():
+    # 单个合法 "å" 不应被判乱码（重复标记曾令 hits>=2，推高 ratio 至 fail）
+    feats = [_feat(None, {"name": "åre"}), _feat(None, {"name": "ål"})]
+    out = RULE_FUNCTIONS["attribute_encoding"](
+        _ctx(feats, params={"max_mojibake_ratio": 0.02}))
+    assert out.status == "pass"
+
+
 def test_topology_adjacency_detects_overlap_and_bounded_skip():
     a = _feat(_poly([[0, 0], [0, 2], [2, 2], [2, 0], [0, 0]]))
     b = _feat(_poly([[1, 1], [1, 3], [3, 3], [3, 1], [1, 1]]))
@@ -238,6 +248,14 @@ def test_topology_adjacency_detects_overlap_and_bounded_skip():
     skipped = RULE_FUNCTIONS["topology_adjacency"](
         _ctx(many, params={"max_polygons": 200}))
     assert skipped.status == "skipped" and "bounded_skip" in skipped.message
+
+
+def test_topology_adjacency_honors_deadline():
+    a = _feat(_poly([[0, 0], [0, 2], [2, 2], [2, 0], [0, 0]]))
+    b = _feat(_poly([[1, 1], [1, 3], [3, 3], [3, 1], [1, 1]]))
+    out = RULE_FUNCTIONS["topology_adjacency"](RuleEvalContext(
+        features=[a, b], deadline_monotonic=time.monotonic() - 1.0))
+    assert out.status == "skipped" and "budget" in out.message
 
 
 def test_mixed_geometry_types():

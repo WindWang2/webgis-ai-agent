@@ -736,9 +736,12 @@ def _to_point(
         return None, "bad_coordinates"
     import shapely.geometry as sgeom
 
-    x, y = float(coords[0]), float(coords[1])
-    if transformer is not None:
-        x, y = transformer.transform(x, y)
+    try:
+        x, y = float(coords[0]), float(coords[1])
+        if transformer is not None:
+            x, y = transformer.transform(x, y)
+    except (TypeError, ValueError):
+        return None, "bad_coordinates"
     return sgeom.Point(x, y), None
 
 

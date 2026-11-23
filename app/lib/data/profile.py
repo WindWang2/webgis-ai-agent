@@ -756,7 +756,12 @@ def profile_from_field_schema(
             min=meta.get("min") if isinstance(meta.get("min"), (int, float)) else None,
             max=meta.get("max") if isinstance(meta.get("max"), (int, float)) else None,
             samples=list(meta.get("sampleValues") or [])[:_MAX_SAMPLES],
-            temporal_hint=looks_temporal(name, meta.get("sampleValues") or []),
+            # 与深扫口径一致：数值样本不做值级年份启发（高程/计数/ID 会
+            # 误报 temporal），只有字符串样本参与 ISO/年份判定。
+            temporal_hint=looks_temporal(
+                name,
+                [s for s in (meta.get("sampleValues") or []) if isinstance(s, str)],
+            ),
             unit_hint=unit_hint_for_field(name),
         )
         fields[name] = fp
@@ -767,6 +772,7 @@ def profile_from_field_schema(
         # 计数不做逐类型拆分（无证据）：descriptor 只给类型存在性，
         # 编造 "每类型 × row_count" 会与深扫口径冲突（诚实缺省）。
         geometry_type_counts={},
+        extent=bbox,
         fields=fields,
         fields_truncated=not complete,
         temporal_fields=[n for n, f in fields.items() if f.temporal_hint],

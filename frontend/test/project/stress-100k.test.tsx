@@ -47,7 +47,9 @@ describe('100k 行压力（ADR-0143 P8）', () => {
     const t0 = performance.now();
     render(<DatasetPreview datasetId="ds-huge" sourceRef="huge-ref" />);
     await waitFor(() => {
-      expect(screen.queryByRole('button', { name: /下一页|下页/ })).toBeDefined();
+      // 必须断言「找到」而非 toBeDefined：queryBy* 未命中返回 null 也是 defined，
+      // waitFor 会立即通过，后续 DOM 断言就与异步 fetch 竞态。
+      expect(screen.queryByRole('button', { name: /下一页|下页/ })).not.toBeNull();
     });
     const elapsed = performance.now() - t0;
     // DOM 行数有界：body 内表格行 ≪ 总行数（分页窗口）

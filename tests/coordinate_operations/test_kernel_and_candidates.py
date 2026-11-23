@@ -464,3 +464,30 @@ class TestGeometryKernel:
         with pytest.raises(CoordinateOperationError) as ei:
             execute.verify_staged_output(d, "output", "EPSG:32650", 1)
         assert ei.value.error_code == "internal_error"
+
+    def test_geojson_crs_member_escapes_quoted_crs(self, tmp_path):
+        """P2：target_crs 为含引号的 WKT 时仍产出合法 JSON（可回读核验）。"""
+        import json as _json
+
+        from pyproj import CRS
+
+        op = self._op()
+        wkt = CRS.from_epsg(32650).to_wkt()  # AXIS["..."] 含双引号
+        assert '"' in wkt
+        feats = make_point_features(2)
+        src = tmp_path / "src.json"
+        src.write_text(_json.dumps({
+            "type": "FeatureCollection", "features": feats}), encoding="utf-8")
+        frozen = {
+            "frozen_path": str(src), "carrier": "json",
+            "row_count": len(feats), "crs": "EPSG:4326",
+        }
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        execute.run_streaming_transform(frozen, out_dir, op, wkt)
+        doc = _json.loads((out_dir / "output.geojson").read_text())
+        assert doc["crs"]["properties"]["name"] == wkt
+        assert doc["properties"]["schema_info"]["crs"] == wkt
+        verified = execute.verify_staged_output(
+            out_dir, "output", wkt, len(feats))
+        assert verified["crs"] == wkt

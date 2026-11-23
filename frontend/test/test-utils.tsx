@@ -1,6 +1,6 @@
 import { render, type RenderOptions } from '@testing-library/react'
 import type { ReactElement } from 'react'
-import { vi } from 'vitest'
+import { afterEach, vi } from 'vitest'
 import { useHudStore } from '@/lib/store/useHudStore'
 import type { HudState, AiStatus, LeftTab, SettingsTab } from '@/lib/store/useHudStore'
 import type { Layer } from '@/lib/types/layer'
@@ -99,12 +99,24 @@ export function createMockStoreState(overrides?: Partial<HudState>): Record<stri
   }
 }
 
+// renderWithStore 的 getState spy 必须在用例结束后恢复：否则同文件后续用例
+// 拿到冻结的 mock 状态（setState 对组件不可见），真实 action 也会被空 vi.fn
+// 吞掉，断言可能因错误原因变绿。
+const pendingGetStateRestores: Array<() => void> = [];
+
+afterEach(() => {
+  while (pendingGetStateRestores.length) pendingGetStateRestores.pop()!();
+});
+
 export function renderWithStore(
   ui: ReactElement,
   storeState?: Partial<HudState>,
   options?: Omit<RenderOptions, 'wrapper'>
 ) {
   const fullState = createMockStoreState(storeState)
-  vi.spyOn(useHudStore, 'getState').mockReturnValue(fullState as unknown as HudState)
+  const spy = vi
+    .spyOn(useHudStore, 'getState')
+    .mockReturnValue(fullState as unknown as HudState)
+  pendingGetStateRestores.push(() => spy.mockRestore())
   return render(ui, options)
 }

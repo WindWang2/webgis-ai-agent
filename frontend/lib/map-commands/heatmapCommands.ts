@@ -71,6 +71,10 @@ export const heatmapCommands: Record<string, CommandEntry> = {
     run(ctx) {
       const { map, params } = ctx;
       const { geojson, layerId, palette, radius } = params || {};
+      // 校验器放行 params.id（传统形态）—— 缺省 layerId 时必须把它作为稳定
+      // id 的回落，否则层会被挂成 custom-native-heatmap-default（后续
+      // remove/style/ref 命令按 id 无法寻址）。
+      const paramsId = typeof params?.id === 'string' && params.id ? params.id : undefined;
       // #611: 后端模板（app/tools/templates.py apply_template heatmap variant）发射
       // 的 params 含 heatPalette/intensity/field（未列入 MapActionPayload 类型收窄）。
       const { heatPalette, intensity, field, radiusPx } = (params ?? {}) as Partial<{
@@ -91,7 +95,7 @@ export const heatmapCommands: Record<string, CommandEntry> = {
       // heatPalette 颜色数组（新后端形态）与 palette 命名键（老调用方）都读，自定义
       // 配色不再静默丢失。layerId 缺失时用 field 派生稳定 id（Date.now() 会让同模板
       // 每次应用叠加一个匿名层且无法被 layer_ref/removeOrphanCustomLayers 命中）。
-      const id = `custom-${layerId || 'native-heatmap-' + (field || 'default')}`;
+      const id = `custom-${layerId || paramsId || 'native-heatmap-' + (field || 'default')}`;
 
       renderer.addGeoJsonSource(map, id, geojson);
       renderer.addNativeHeatmap(map, {

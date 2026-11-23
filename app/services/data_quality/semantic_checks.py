@@ -18,6 +18,7 @@
 """
 from __future__ import annotations
 
+import math
 import re
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
@@ -249,7 +250,7 @@ def detect_field_role_ambiguity(
                 for v in fp.samples[:_MAX_VALUE_SAMPLES]
                 if isinstance(v, (int, float)) and not isinstance(v, bool)
             ]
-            nums = [v for v in nums if v == v]
+            nums = [v for v in nums if math.isfinite(v)]
             if nums:
                 if "count_measure" in measure_roles and any(
                     v < 0 or v != int(v) for v in nums

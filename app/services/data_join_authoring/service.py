@@ -445,9 +445,9 @@ async def preview_plan(
     executor = JoinExecutor(plan)
     try:
         if plan.mode == "attribute":
-            out_rows = executor.run_attribute(left, right)
+            out_rows = await asyncio.to_thread(executor.run_attribute, left, right)
         else:
-            out_rows = executor.run_spatial(left, right)
+            out_rows = await asyncio.to_thread(executor.run_spatial, left, right)
     except DataJoinError as exc:
         # 诊断语义：基数违规/超预算在预览面即披露（带全量计数），不落库
         diagnostics = _stats_to_diagnostics(executor.stats, plan)

@@ -769,3 +769,100 @@ def test_t27_text_over_max_lines_truncation_is_disclosed_not_silent():
     assert exported["truncated_lines"] == source_lines - MAX_LINES
     assert any(d.get("code") == "TEXT_TRUNCATED"
                for d in comp.print_layout_receipt["diagnostics"])
+
+
+# ── T34–T37：P2 回归（字体回退披露 / 模板 typed 回执 / PNG 失败 typed / 页级覆写校验）
+
+def test_t34_font_fallback_does_not_claim_unapplied_weight_style(monkeypatch):
+    """请求字体整体不可用 → 回退备用字体：未应用的 weight/style 必须如实披露。
+
+    旧实现用 ``resolve_variant(alt, "normal", "normal")`` 命中 exact=True，
+    ``weight_applied/style_applied`` 冒充满意值且没有
+    ``FONT_WEIGHT_UNAVAILABLE`` / ``FONT_STYLE_UNAVAILABLE``。
+    """
+    from app.services.print_layout_authoring import fonts
+
+    missing = str(Path("/nonexistent/g34-missing-font.ttf"))
+    monkeypatch.setattr(fonts, "FONT_RESOURCES", {
+        "req-font": {
+            "family": "Req Font", "embedded": False,
+            "variants": {("normal", "normal"): [(missing, None)],
+                         ("bold", "normal"): [(missing, None)]},
+        },
+        "alt-font": {
+            "family": "Alt Font", "embedded": True,
+            "variants": {("normal", "normal"): [(str(fonts._VENDORED_TTF), None)]},
+        },
+    })
+    monkeypatch.setattr(fonts, "FONT_IDS", ("req-font", "alt-font"))
+    res = fonts.resolve_font("req-font", "bold", "italic")
+    assert res["applied_font_id"] == "alt-font"
+    assert "FONT_RESOURCE_UNAVAILABLE" in res["issues"]
+    assert "FONT_WEIGHT_UNAVAILABLE" in res["issues"]
+    assert "FONT_STYLE_UNAVAILABLE" in res["issues"]
+    assert res["weight_applied"] == "normal"
+    assert res["style_applied"] == "normal"
+    assert res["applied"] is False
+
+
+def test_t35_template_errors_return_typed_receipts():
+    """模板操作抛 PrintTemplateError 时不得逃逸成 500；必须回 typed code。"""
+    plan = empty_print_layout()
+    cases = [
+        ([{"op": "apply_template", "template_id": "tpl:missing"}],
+         "TEMPLATE_NOT_FOUND"),
+        ([{"op": "save_template", "template_id": "bad", "name": "x"}],
+         "INVALID_TEMPLATE_ID"),
+        ([{"op": "reset_overrides", "page_id": "nope"}], "PAGE_NOT_FOUND"),
+    ]
+    for ops, code in cases:
+        res = operations.apply_operations(plan, ops)
+        assert res["ok"] is False, res
+        assert res["issues"][0]["code"] == code, res
+        assert res["plan"] == plan, "failed operation must be zero-write"
+
+
+def test_t36_png_rasterizer_failures_are_typed(monkeypatch):
+    """rsvg-convert 超时 / 启动 OSError 必须转成 PrintLayoutServiceError。"""
+    import subprocess
+
+    from app.services.print_layout_authoring import service
+
+    monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/rsvg-convert")
+    svg = "<svg xmlns='http://www.w3.org/2000/svg'/>"
+
+    def _timeout(*_a, **_k):
+        raise subprocess.TimeoutExpired(cmd="rsvg-convert", timeout=60)
+
+    monkeypatch.setattr(service.subprocess, "run", _timeout)
+    with pytest.raises(service.PrintLayoutServiceError) as timed_out:
+        service._svg_to_png(svg, 297.0, 210.0, 300)
+    assert timed_out.value.code == "PNG_RENDER_TIMEOUT"
+
+    def _oserror(*_a, **_k):
+        raise OSError("spawn failed")
+
+    monkeypatch.setattr(service.subprocess, "run", _oserror)
+    with pytest.raises(service.PrintLayoutServiceError) as failed:
+        service._svg_to_png(svg, 297.0, 210.0, 300)
+    assert failed.value.code == "PNG_RENDER_FAILED"
+
+
+def test_t37_validate_authoring_applies_page_overrides():
+    """带 page_id 校验必须用页级生效组件；收窄后的溢出不能放行。"""
+    doc = _mapspec()
+    plan = doc["layout"]["print_layout"]
+    title = next(c for c in plan["components"] if c["id"] == "title")
+    plan["atlas"] = {"pages": [{
+        "page_id": "main", "enabled": True, "order": 0,
+        "overrides": [{
+            "component_id": "title",
+            "frame": {"x": 15.0, "y": 10.0, "width": 12.0, "height": 4.0},
+            "typography": {**title["typography"], "overflow_policy": "block"},
+        }],
+    }]}
+    assert validate_authoring(doc, plan, dpi=300)["ok"] is True
+    report = validate_authoring(doc, plan, dpi=300, page_id="main")
+    assert report["ok"] is False, report
+    assert any(e["code"] == "TEXT_OVERFLOW_BLOCKED" and e["component_id"] == "title"
+               for e in report["errors"]), report
