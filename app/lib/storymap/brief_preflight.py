@@ -132,14 +132,14 @@ def run_preflight(
         items.append(PreflightItem(
             "numeric_consistency", "fail", True,
             "facts contradict authoritative/recomputed values", contradicted))
-    elif stats["warning"]:
-        items.append(PreflightItem(
-            "numeric_consistency", "pass", True,
-            f"{stats['warning']} facts with disclosure-level warnings"))
     elif unverified:
         items.append(PreflightItem(
             "numeric_consistency", "not_evaluated", True,
             "facts lack positive evidence (not verified)", unverified))
+    elif stats["warning"]:
+        items.append(PreflightItem(
+            "numeric_consistency", "pass", True,
+            f"{stats['warning']} facts with disclosure-level warnings"))
     else:
         items.append(PreflightItem(
             "numeric_consistency", "pass", True,

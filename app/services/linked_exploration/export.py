@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.services.linked_exploration import contract
 from app.services.linked_exploration.buckets import STATS_SCAN_LIMIT
@@ -122,7 +122,7 @@ async def export_exploration(
             status_code=409,
             correction_hint="先在地图上以该 ref 建立图层（或核对视图绑定的"
                             " layer_id），再导出。")
-    _inject_chart_components(doc, preview, charts, title)
+    chart_truncations = _inject_chart_components(doc, preview, charts, title)
     _inject_annotation(doc, preview, conditions, plan.anchor.ref_id, title)
 
     # 3. 编译（bounds = MapSpec.view.bounds —— 单页合成范围）
@@ -152,6 +152,7 @@ async def export_exploration(
         "filtered_layer_ids": filtered_layer_ids,
         "map_filter": combined_expr,
         "chart_scope_note": "facet（排除自身条件）口径统计印出；匹配总数为全部条件口径",
+        "chart_truncations": chart_truncations,
         "feature_count": getattr(comp, "feature_count", None),
         "diagnostics": [d for d in (comp.diagnostics or [])][:40],
     }
@@ -257,24 +258,64 @@ def _apply_layer_filters(
     return filtered
 
 
+def _chart_rows_for(statistics: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], int]:
+    """类别行有界投影 → (导出行, 统计总行数)。
+
+    硬切会丢弃排序尾部的 other 溢出桶（它汇总被并入的类别）—— 有截断时
+    用 other 行替换末行，保证合并桶与其计数始终进入导出（截断另由标题
+    与 manifest 披露）。
+    """
+    rows_all = [r for r in (statistics.get("rows") or []) if isinstance(r, dict)]
+    rows = list(rows_all[:_MAX_EXPORT_ROWS])
+    if len(rows_all) > _MAX_EXPORT_ROWS and rows_all[-1].get("is_other"):
+        rows[-1] = rows_all[-1]
+    return rows, len(rows_all)
+
+
 def _chart_payload_for(statistics: Dict[str, Any], chart: Any) -> Optional[Dict[str, Any]]:
-    """facet 统计 → chart_panel inline 数据（[{name,value}]，有界）。"""
+    """facet 统计 → chart_panel inline 数据（[{name,value}]，有界）。
+
+    聚合口径取 ``chart.aggregation``（count/sum/mean/min/max）—— 不再
+    一律投影 count（sum/mean/min/max 图此前被印成计数条形图）。
+    """
     if statistics.get("kind") == "category":
-        rows = (statistics.get("rows") or [])[:_MAX_EXPORT_ROWS]
+        agg = getattr(chart, "aggregation", "count") or "count"
+        rows, rows_total = _chart_rows_for(statistics)
         data = []
+        unplottable = 0
+        other_exported = False
         for r in rows:
             label = str(r.get("label", ""))
             if r.get("is_other"):
                 label = "other（溢出类别合并）"
-            data.append({"name": label[:64], "value": int(r.get("count") or 0)})
+            if agg == "count":
+                value = int(r.get("count") or 0)
+            else:
+                raw_value = r.get(agg)
+                if isinstance(raw_value, bool) or not isinstance(
+                        raw_value, (int, float)):
+                    # 该组无有限数值：不伪造 0（buckets 分母纪律），不绘并披露
+                    unplottable += 1
+                    continue
+                value = raw_value
+            data.append({"name": label[:64], "value": value})
+            if r.get("is_other"):
+                other_exported = True
         if not data:
             return None
+        title = f"{chart.title or chart.field}（其它条件下）"
+        if rows_total > len(rows):
+            title += f" · 截断：{rows_total} 类中保留 {len(rows)} 类"
+            if other_exported:
+                title += "（含 other 溢出桶）"
+        if unplottable:
+            title += f" · {unplottable} 类无有效数值未绘"
         return {
             "type": "bar",
-            "title": f"{chart.title or chart.field}（其它条件下）",
+            "title": title,
             "data": data,
             "x_label": chart.field,
-            "y_label": "count",
+            "y_label": agg,
         }
     bins = (statistics.get("bins") or [])[:_MAX_EXPORT_BINS]
     if not bins:
@@ -293,8 +334,11 @@ def _chart_payload_for(statistics: Dict[str, Any], chart: Any) -> Optional[Dict[
 
 def _inject_chart_components(
     doc: Dict[str, Any], preview: Dict[str, Any], charts: List[Any], title: str,
-) -> None:
-    """注入 chart_panel ×N（SVG 编译器渲染 inline chart）。"""
+) -> List[Dict[str, Any]]:
+    """注入 chart_panel ×N（SVG 编译器渲染 inline chart）。
+
+    返回图表行截断与 other 溢出桶披露（manifest 落盘，不静默丢行）。
+    """
     layout = doc.get("layout")
     if not isinstance(layout, dict):
         layout = {}
@@ -309,15 +353,33 @@ def _inject_chart_components(
         if not (isinstance(c, dict)
                 and str(c.get("id") or "").startswith("g46-export-"))
     ]
+    disclosures: List[Dict[str, Any]] = []
     for chart_preview in preview.get("charts", []):
         chart = next(
             (c for c in charts if c.chart_id == chart_preview.get("chart_id")), None)
         if chart is None:
             continue
-        payload = _chart_payload_for(
-            chart_preview.get("facet", {}).get("statistics", {}), chart)
+        statistics = (chart_preview.get("facet") or {}).get("statistics") or {}
+        payload = _chart_payload_for(statistics, chart)
         if payload is None:
             continue
+        if statistics.get("kind") == "category":
+            rows, rows_total = _chart_rows_for(statistics)
+            other = next((r for r in rows if r.get("is_other")), None)
+            if rows_total > len(rows) or statistics.get("truncated"):
+                disclosures.append({
+                    "chart_id": chart.chart_id,
+                    "field": chart.field,
+                    "aggregation": getattr(chart, "aggregation", "count") or "count",
+                    "rows_total": rows_total,
+                    "rows_exported": len(rows),
+                    "rows_dropped": max(0, rows_total - len(rows)),
+                    "other_exported": other is not None,
+                    "other_value_count": (
+                        int(other.get("other_value_count") or 0)
+                        if other else 0),
+                    "other_overflow": bool(other.get("other_overflow")) if other else False,
+                })
         components.append({
             "id": f"g46-export-chart-{chart.chart_id}",
             "type": "chart_panel",
@@ -325,6 +387,7 @@ def _inject_chart_components(
             "placement": {"mode": "floating", "position": "top-left"},
             "options": {"chart": payload},
         })
+    return disclosures
 
 
 def _inject_annotation(

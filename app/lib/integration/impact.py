@@ -26,7 +26,8 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 CACHE_DIR = Path(".agent-work/integration/cache")
-CACHE_VERSION = 1
+# 2：修正包 __init__ 内相对 import 的解析级别（旧缓存条目须失效重解析）
+CACHE_VERSION = 2
 #: 全仓扫描文件硬上限（资源纪律）
 _MAX_FILES = 20000
 #: 选择结果目标上限（超出 = 显式警告，不静默截断）
@@ -94,6 +95,8 @@ def _file_imports(path: Path, repo_root: Path) -> List[str]:
     rel = path.relative_to(repo_root).as_posix()
     own_module = module_name_for(rel) or ""
     own_parts = own_module.split(".") if own_module else []
+    # __init__.py 的 own_parts 已剥掉 "__init__" 段：模块自身即所在包。
+    own_is_package = rel == "__init__.py" or rel.endswith("/__init__.py")
     found: Set[str] = set()
 
     def _add(module: str) -> None:
@@ -117,8 +120,11 @@ def _file_imports(path: Path, repo_root: Path) -> List[str]:
                     _add_from(node.module,
                               (alias.name for alias in node.names))
             else:
-                # 相对 import：基包 = 自身所在包上溯 level-1 层
-                base = own_parts[:-(node.level)] if node.level <= len(own_parts) else []
+                # 相对 import：基包 = 自身所在包上溯 level-1 层；
+                # 包 __init__ 自身即所在包（level=1 指向自身，不能再上溯）。
+                up = (max(node.level - 1, 0) if own_is_package
+                      else node.level)
+                base = own_parts[:len(own_parts) - up]
                 module = ".".join(base + ([node.module] if node.module else []))
                 _add_from(module, (alias.name for alias in node.names))
     return sorted(found)

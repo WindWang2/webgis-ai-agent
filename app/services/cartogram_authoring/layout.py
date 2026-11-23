@@ -27,6 +27,7 @@ from app.services.cartogram_authoring.contract import (
     CITATION,
     COORDINATE_SPACE,
 )
+from app.services.cartogram_authoring.errors import AuthoringError
 from app.services.cartogram_authoring.geography import PreparedGeography
 from app.services.cartogram_authoring.quality import (
     RADIUS_DECIMALS,
@@ -34,6 +35,7 @@ from app.services.cartogram_authoring.quality import (
     QualityReport,
 )
 from app.services.cartogram_authoring.quantities import (
+    MIN_VISIBLE_RADIUS,
     AreaScale,
     QuantityScan,
     reference_circles,
@@ -164,6 +166,23 @@ def plan_circles(
     span_x = max(1e-9, max_x - min_x)
     span_y = max(1e-9, max_y - min_y)
     factor = usable / max(span_x, span_y)
+    # 可见性必须在**归一化后**复核：factor 由几何包围盒（含零值/缺失单元的
+    # 远端几何）决定，可把全部半径缩小数个数量级；只在 build_area_scale 里
+    # 按归一前量纲把关，会产出 publication_ready 但读者看不见的圆。
+    min_drawn_radius = round(min(c["radius_raw"] for c in raw) * factor,
+                             RADIUS_DECIMALS)
+    if min_drawn_radius < MIN_VISIBLE_RADIUS:
+        raise AuthoringError(
+            "EXTREME_VALUE_RANGE",
+            f"归一化后最小圆半径 {min_drawn_radius:.3e} < 可见阈值 "
+            f"{MIN_VISIBLE_RADIUS}（factor={factor:.3e}）——"
+            "逐圆放大/clamp 会破坏面积比例",
+            field="area_scale.extent",
+            details={"normalization_factor": factor,
+                     "min_radius": min_drawn_radius,
+                     "min_visible_radius": MIN_VISIBLE_RADIUS},
+            correction_hint="排除远离统计单元范围的零值/缺失单元，或换用与统计"
+                            "单元范围一致的源后重试。")
     cx = (min_x + max_x) / 2.0
     cy = (min_y + max_y) / 2.0
     offset = extent / 2.0

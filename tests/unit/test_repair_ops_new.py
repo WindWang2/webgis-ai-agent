@@ -71,6 +71,19 @@ class TestFixTopologyOverlap:
             assert data == orig
             assert evidence == [] or evidence[0]["features_affected"] == 0
 
+    def test_evidence_and_lineage_have_single_entry_per_op(self):
+        # _EVIDENCE_OP_ORDER 曾重复列入 fix_topology_overlap：该 op 一旦执行，
+        # evidence/lineage 各出现两条同 op 记录（受影响计数被双计）。
+        data = {"type": "FeatureCollection", "features": [
+            _poly(0, 0, 2, 2), _poly(1, 0, 3, 2),
+        ]}
+        repaired, logs, evidence, lineage = _run(
+            data, ["fix_topology_overlap"],
+            op_params={"fix_topology_overlap": {"mode": "flag"}},
+        )
+        assert [e["op"] for e in evidence].count("fix_topology_overlap") == 1
+        assert [e["op"] for e in lineage].count("fix_topology_overlap") == 1
+
     def test_boundary_all_overlapping_budget(self):
         # 5 个两两重叠的面：pair 预算内全部解析，重叠对消解后总体重叠消失。
         data = {"type": "FeatureCollection", "features": [
@@ -234,6 +247,28 @@ class TestRemoveEmptyZeroCoords:
         lineage_entry = next(entry for entry in lineage if entry["op"] == "remove_empty")
         assert lineage_entry["before_count"] == 2
         assert lineage_entry["after_count"] == 1
+
+
+@pytest.mark.cartography
+def test_bare_feature_input_is_repaired_as_single_feature_dataset():
+    """裸 Feature（无 features 键）不得静默跳过修复：归一为单要素数据集后
+    修复、证据、血缘必须落地，且输入不被污染。"""
+    feat = {
+        "type": "Feature", "properties": {"v": 1},
+        "geometry": {"type": "Polygon", "coordinates": [[
+            [0.0, 0.0], [2.0, 2.0], [2.0, 0.0], [0.0, 2.0], [0.0, 0.0],
+        ]]},
+    }
+    orig = copy.deepcopy(feat)
+    repaired, logs, evidence, lineage = _run(feat, ["make_valid"])
+    assert feat == orig  # 非破坏
+    assert repaired["type"] == "FeatureCollection"
+    assert len(repaired["features"]) == 1
+    # bowtie 自交面被 make_valid 修复（MultiPolygon），证明循环真的执行了。
+    assert repaired["features"][0]["geometry"]["type"] == "MultiPolygon"
+    assert evidence and evidence[0]["op"] == "make_valid"
+    assert evidence[0]["features_affected"] == 1
+    assert any(entry["op"] == "make_valid" for entry in lineage)
 
 
 @pytest.mark.cartography

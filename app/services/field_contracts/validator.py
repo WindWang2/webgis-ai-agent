@@ -265,6 +265,12 @@ def normalize_document(raw: Dict[str, Any]) -> NormalizedContract:
             errors.append(f"field {name}: min/max only apply to number/integer")
         if ftype != "string" and (rf.get("min_length") is not None or rf.get("max_length") is not None):
             errors.append(f"field {name}: min_length/max_length only apply to string")
+        for len_name, len_bound in (("min_length", rf.get("min_length")),
+                                    ("max_length", rf.get("max_length"))):
+            if len_bound is not None and (
+                isinstance(len_bound, bool) or not isinstance(len_bound, int) or len_bound < 0
+            ):
+                errors.append(f"field {name}: {len_name} must be a non-negative integer")
         es = rf.get("empty_string", "reject")
         if es not in EMPTY_STRING_POLICIES:
             errors.append(f"field {name}: empty_string must be one of {sorted(EMPTY_STRING_POLICIES)}")

@@ -43,3 +43,19 @@ def test_geodetector_dataset_contract() -> None:
 def test_geodetector_oracle_replay(case: OracleCase) -> None:
     ok, reason = run_case(case)
     assert ok, f"[{DOMAIN}::{case.case_id}] target={case.target}: {reason}"
+
+
+def test_ecological_decision_reference_matches_implementation() -> None:
+    """回归：decision 参考必须以 SSW1<SSW2（F<1）判 Y1。
+
+    旧条件 ``t0 < 0`` 对 F=SSW1/SSW2 恒假，Y1 永不产出；注释也称
+    ``t>0 → Y1``，与实现（SSW 更小者占优）相反。
+    """
+    from scripts.gen_science_oracles import build_geodetector
+    from tests.science_oracles import resolve_target
+
+    entries = {c["id"]: c for c in build_geodetector()}
+    entry = entries["ecological_decision_strong"]
+    actual = resolve_target(entry["target"])(*entry["args"])
+    assert actual["decision"] == "Y1_significantly_dominant"
+    assert entry["expect"]["value"] == actual["decision"]

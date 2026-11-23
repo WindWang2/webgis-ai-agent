@@ -356,6 +356,25 @@ describe('map action ACK delivery (fault matrix)', () => {
     sender.dispose();
   });
 
+  it('6b. a synchronous fetch throw is retried instead of wedging the action id in flight', async () => {
+    const fetchImpl = vi.fn()
+      .mockImplementationOnce(() => {
+        throw new TypeError('sync boom');
+      })
+      .mockResolvedValue(jsonResponse({ accepted: 1, duplicates: 0 }));
+    const sender = makeSender(fetchImpl);
+
+    sender.sink(ack('ma-sync'));
+    sender.flush();
+    await flushMicrotasks();
+    await vi.advanceTimersByTimeAsync(100);
+    await flushMicrotasks();
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fetchImpl.mock.calls[1][1].body as string).acks[0].action_id).toBe('ma-sync');
+    sender.dispose();
+  });
+
   it('7. a retried POST keeps the same action_id so backend first-terminal-wins sees one identity', async () => {
     const stored = new Set<string>();
     const terminals: string[] = [];

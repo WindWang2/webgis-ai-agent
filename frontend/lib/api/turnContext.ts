@@ -191,8 +191,13 @@ export async function fetchTurnReceipt(
       `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/context-receipts/${encodeURIComponent(turnId)}`,
       { label: 'turn receipt load', ownerToken },
     );
-  } catch {
-    return null; // 404/legacy → coverage limited（不伪造）
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) {
+      return null; // 404/legacy → coverage limited（不伪造）
+    }
+    // 500/超时/网络失败/abort 不是「回执不存在」，必须让调用方看见而不是
+    // 一律降级成 coverage limited。
+    throw err;
   }
 }
 

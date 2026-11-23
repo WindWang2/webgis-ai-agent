@@ -54,7 +54,6 @@ _EVIDENCE_OP_ORDER = (
     "fix_gaps",
     "drop_outliers_or_flag",
     "attribute_drop_or_flag",
-    "fix_topology_overlap",
 )
 
 #: ADR-0153 编排器（plan_repair_ops）产出的固定 op 顺序 —— 任务书 §2 P2
@@ -553,9 +552,20 @@ class SpatialRepairPipeline:
 
         # NON-DESTRUCTIVE: Deep copy input GeoJSON
         repaired_geojson = copy.deepcopy(geojson_data)
+        # 裸 Feature 输入（无 features 键）：按单要素数据集归一为
+        # FeatureCollection（本 pipeline 的输出契约即 FeatureCollection）。
+        # 旧逻辑 ``get("features", [])`` 对裸 Feature 恒得 []（本身是 list），
+        # 条件永假 → 修复循环被整体跳过，尾部还注入空 "features":[]。
+        if (
+            isinstance(repaired_geojson, dict)
+            and "features" not in repaired_geojson
+            and repaired_geojson.get("type") == "Feature"
+        ):
+            repaired_geojson = {
+                "type": "FeatureCollection",
+                "features": [repaired_geojson],
+            }
         features = repaired_geojson.get("features", [])
-        if not isinstance(features, list) and repaired_geojson.get("type") == "Feature":
-            features = [repaired_geojson]
         _input_count = len(features)
 
         # Wave-4: per-op counters — evidence must reflect what actually ran,
@@ -1024,7 +1034,12 @@ class SpatialRepairPipeline:
                         if digits.isdigit() and (len(digits) > 15 or (len(digits) > 1 and digits.startswith("0"))):
                             continue
                         if v_stripped.isdigit() or (v_stripped.startswith("-") and v_stripped[1:].isdigit()):
-                            props[k] = int(v_stripped)
+                            # 上标等 Unicode "digit"（如 "²"）isdigit() 为 True，
+                            # 但 int() 抛 ValueError；与下方 float 路径同样兜底为原串。
+                            try:
+                                props[k] = int(v_stripped)
+                            except ValueError:
+                                props[k] = v_stripped
                         else:
                             try:
                                 f_val = float(v_stripped)

@@ -13,6 +13,7 @@ from app.lib.storymap.brief_factcheck import (
     check_facts,
     resolve_field_path,
 )
+from app.lib.storymap.brief_preflight import run_preflight
 from app.lib.storymap.brief_spec import (
     BRIEF_SPEC_SCHEMA_VERSION,
     BriefBlock,
@@ -370,6 +371,45 @@ class TestFactCheck:
         assert updated[0].status == "verified"
         assert updated[1].status == "unverified"
         assert "contradicts" in updated[1].status_reason
+
+
+# ── 3.5 预检裁决（warning 不得掩盖 unverified） ──────────────────────
+
+
+class TestBriefPreflightVerdicts:
+    def test_warning_does_not_mask_unverified_facts(self):
+        """评审 #P2：warning + unverified 并存时不得判 pass/deliverable。"""
+        spec = MapBriefSpec.model_validate({
+            "chapters": [{"id": "c1", "title": "t", "narrative": "n",
+                          "arc_role": "introduction"}],
+            "blocks": [
+                {"id": "blk-map", "chapter_id": "c1", "kind": "map_view",
+                 "map_view": {"center": [116.4, 39.9], "zoom": 5.0,
+                              "mapspec_fingerprint": "fp-1"}},
+                {"id": "blk-src", "chapter_id": "c1", "kind": "source",
+                 "text": "来源：统计表"},
+            ],
+            "facts": [
+                {"fact_id": "fact-warn", "label": "学校总数",
+                 "kind": "count", "value": 142, "unit": "所",
+                 "basis": {"artifact_ref": "ref:stats-schools",
+                           "field_path": "table.rows.0.count"}},
+                {"fact_id": "fact-unver", "label": "无证据数值",
+                 "kind": "count", "value": 9},
+            ],
+        })
+        report = run_preflight(
+            spec,
+            records={"ref:stats-schools": {"status": "valid",
+                                           "metadata": {}}},
+            payloads={"ref:stats-schools": {
+                "table": {"rows": [{"count": 142}]}}},
+            widget_data={}, mapspec_available=True)
+        numeric = next(i for i in report.items
+                       if i.check == "numeric_consistency")
+        assert numeric.verdict == "not_evaluated"
+        assert numeric.refs == ["fact-unver"]
+        assert report.outcome == "draft_exportable"
 
 
 # ── 4. 草稿编译（服务壳，loader 打桩） ────────────────────────────────

@@ -117,10 +117,21 @@ def _crs_class(crs: str) -> str:
 
 
 def _bbox_overlap(a: Optional[List[float]], b: Optional[List[float]]) -> Optional[bool]:
-    """两 bbox 是否相交（None = 任一 bbox 未知 → 不可判）。"""
+    """两 bbox 是否相交（None = 任一 bbox 未知/不可判）。"""
     if not a or not b or len(a) != 4 or len(b) != 4:
         return None
-    return not (a[0] > b[2] or b[0] > a[2] or a[1] > b[3] or b[1] > a[3])
+    import math as _math
+
+    try:
+        af = [float(v) for v in a[:4]]
+        bf = [float(v) for v in b[:4]]
+    except (TypeError, ValueError):
+        return None
+    # 非 pydantic 对象直传时 NaN/±Inf 与比较恒 False 会伪 pass（与
+    # task_scope 同款防御；descriptor 校验器已关闭持久化面）。
+    if not all(_math.isfinite(v) for v in af + bf):
+        return None
+    return not (af[0] > bf[2] or bf[0] > af[2] or af[1] > bf[3] or bf[1] > af[3])
 
 
 def _coverage_point(cov: str) -> Optional[Tuple[int, Optional[int]]]:
@@ -386,7 +397,9 @@ def preflight_multi_dataset(
             temporal_result = "pass"
         if temporal_result == "pass" and temporal_partial:
             temporal_result = "unknown"
-    elif temporal_one_sided and temporal_task:
+    # 单侧证据（任务声明时间角色）与 both-sided 对并存时也必须披露
+    # unknown（review P2：elif 会在存在双方时间对时吞掉单侧证据）。
+    if temporal_one_sided and temporal_task and temporal_result != "fail":
         temporal_result = "unknown"
     report.checks.append({
         "check": "temporal_overlap", "result": temporal_result,

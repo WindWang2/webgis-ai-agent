@@ -80,6 +80,16 @@ def test_synthetic_closure_and_selection(py_repo: Path):
     assert r.complete, "有 tests 目录兜底，不该 uncovered"
 
 
+def test_relative_import_in_package_init(py_repo: Path):
+    """包 __init__ 的 from .x import y 必须解析到包内子模块（不得少一级）。"""
+    (py_repo / "app/pkg/__init__.py").write_text(
+        "from . import leaf\n", encoding="utf-8")
+    graph = build_graph(py_repo, use_cache=False)
+    assert "app.pkg.leaf" in graph.app["app/pkg/__init__.py"]
+    # 反向闭包：改 leaf，消费者包 __init__ 必须在闭包内（边不得丢）
+    assert "app.pkg" in graph.reverse_app_closure({"app.pkg.leaf"})
+
+
 def test_uncovered_when_no_tests_dir(py_repo: Path):
     """负例：合成仓库删掉 tests → import 命中仍在但映射兜底不存在；
     leaf 仍被 test 覆盖 → 不算 uncovered；孤立 app 文件算。"""

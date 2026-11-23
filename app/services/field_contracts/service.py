@@ -181,12 +181,12 @@ async def create_contract(
         revision=revision,
         status="draft",
         notes=document.get("notes"),
+        binding={
+            "ref_id": ref_id,
+            "content_revision_at_draft": dataset["content_revision"],
+            "data_digest_at_draft": dataset["fingerprint"],
+        },
     )
-    row["binding"] = {
-        "ref_id": ref_id,
-        "content_revision_at_draft": dataset["content_revision"],
-        "data_digest_at_draft": dataset["fingerprint"],
-    }
     return _contract_view(row, dataset["qualification"])
 
 

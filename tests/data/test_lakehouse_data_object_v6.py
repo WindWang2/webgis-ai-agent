@@ -54,6 +54,21 @@ def _publish_pair(store, owner):
     )
 
 
+class _NoContentFullReadStore:
+    """包装 store：记录整读调用，内容 blob 必须走流式读。"""
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.full_reads = []
+
+    def get_blob(self, key, expected_sha256=None):
+        self.full_reads.append(key)
+        return self._inner.get_blob(key, expected_sha256=expected_sha256)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
 # ── 身份确定性 / dedup ────────────────────────────────────────────────────
 
 
@@ -141,6 +156,16 @@ def test_verify_states(blob_store):
     assert verify_data_object(identity.data_object_id, store=blob_store) == (
         "blob_missing"
     )
+
+
+def test_verify_streams_content_blobs_without_full_materialization(blob_store):
+    identity = _publish_pair(blob_store, normalize_owner_scope(session_id="s1"))
+    manifest = resolve_data_object(identity.data_object_id, store=blob_store)
+    content_digests = {str(b["sha256"]) for b in manifest["content_blobs"]}
+    wrapped = _NoContentFullReadStore(blob_store)
+    assert verify_data_object(identity.data_object_id, store=wrapped) == "verified"
+    # manifest 是 KB 级 JSON，允许整读；内容 blob 必须流式校验（2GB 不驻留）。
+    assert content_digests.isdisjoint(wrapped.full_reads)
 
 
 def test_materialize_roundtrip_with_owner_and_containment(blob_store, tmp_path):

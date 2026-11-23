@@ -785,3 +785,44 @@ def test_catch_all_blank_fallback_is_not_a_successful_export(monkeypatch):
     assert 'data-export-degraded="true"' in comp.svg
     assert 'data-export-degraded-reason="svg_compile_failed"' in comp.svg
     assert comp.svg.startswith('<svg data-export-degraded="true" ')
+
+
+def test_layer_render_exception_logged_not_silent(caplog):
+    """P2 review：单图层异常不得零日志静默丢层（metadata 为非 dict 真值
+    会在标签渲染路径触发 AttributeError，此前被 except 静默 continue）。"""
+    import logging
+
+    mapspec = {
+        "sources": {
+            "s1": {
+                "type": "geojson",
+                "inlineData": {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "geometry": {"type": "Point",
+                                         "coordinates": [116.4, 39.9]},
+                            "properties": {"name": "Probe"},
+                        }
+                    ],
+                },
+            }
+        },
+        "layers": [
+            {
+                "id": "bad-meta",
+                "type": "circle",
+                "source": "s1",
+                "metadata": "not-a-dict",
+                "label": {"field": "name"},
+                "paint": {"circle-radius": 4},
+            }
+        ],
+    }
+    with caplog.at_level(logging.WARNING,
+                         logger="app.services.mapspec_to_svg"):
+        compile_mapspec_to_svg(mapspec, target_dpi=72)
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("bad-meta-label" in message and "render failed" in message
+               for message in messages), messages

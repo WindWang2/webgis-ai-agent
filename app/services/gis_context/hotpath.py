@@ -353,7 +353,8 @@ async def assemble_gis_context_card(
 
     from app.services.gis_context.invalidation import apply_changes
 
-    if goal_revision and wc.goal_revision_mirror != goal_revision:
+    goal_bumped = bool(goal_revision) and wc.goal_revision_mirror != goal_revision
+    if goal_bumped:
         # Mission goal moved (revise_goal): mirror it so the next card can
         # flag decisions accepted under an older goal revision.
         wc.goal_revision_mirror = int(goal_revision)
@@ -463,7 +464,7 @@ async def assemble_gis_context_card(
     # Write only on real transitions — read-mostly turns never touch the DB.
     # expected = the on-disk revision observed at load, for every loaded
     # context (revision 1 included); None only for a context created here.
-    if outcome.changed or created or basis_mutated or rtv_restored or graph_changed:
+    if outcome.changed or created or basis_mutated or rtv_restored or graph_changed or goal_bumped:
         expected = disk_revision if not created else None
         try:
             saved = await asyncio.to_thread(
@@ -802,8 +803,12 @@ async def request_revalidation(
         out["reason"] = "no_mission"
         return out
 
-    wc, miss, _ = await asyncio.to_thread(
-        _load_and_maybe_purge, mission_id, org_id=org)
+    try:
+        wc, miss, _ = await asyncio.to_thread(
+            _load_and_maybe_purge, mission_id, org_id=org)
+    except Exception as exc:  # noqa: BLE001 — load failure stays a typed reason
+        out["reason"] = f"load_failed:{type(exc).__name__}"[:48]
+        return out
     if wc is None:
         out["reason"] = miss or "no_context"
         return out

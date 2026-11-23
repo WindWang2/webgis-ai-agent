@@ -284,3 +284,47 @@ def test_legacy_raster_math_env_delegates():
 
     with legacy_env():
         assert get_gdal_config("GDAL_NUM_THREADS") == 1
+
+
+def test_metadata_fingerprint_reads_hold_canonical_env(tmp_path):
+    """metadata()'s fingerprint samples are pixel IO and must run under the
+    canonical rasterio_env (not in GDAL's default env)."""
+    from rasterio.env import get_gdal_config
+
+    p = str(_write_tiled(tmp_path / "env_meta.tif", np.zeros((128, 128), dtype=np.uint8)))
+    seen_timeouts = []
+    with RasterReader.open(p) as r:
+        orig_read = r.dataset.read
+
+        def read(*a, **kw):
+            seen_timeouts.append(get_gdal_config("GDAL_HTTP_TIMEOUT"))
+            return orig_read(*a, **kw)
+
+        r.dataset.read = read  # type: ignore[method-assign]
+        r.metadata()
+    assert seen_timeouts, "metadata() performed no fingerprint reads — fixture/regression"
+    assert all(v == 5 for v in seen_timeouts)
+
+
+def test_windowed_local_reads_hold_canonical_env(tmp_path):
+    """Local execute_windowed window reads must hold the canonical GDAL env
+    instead of relying on GDAL defaults (no HTTP timeout / cache cap)."""
+    from rasterio.env import get_gdal_config
+
+    p = str(_write_tiled(tmp_path / "env_win.tif", np.zeros((128, 128), dtype=np.uint8)))
+    seen_timeouts = []
+    with RasterReader.open(p) as r:
+        first = r.metadata()  # warm the metadata cache; spy only window reads
+        assert first.width == 128
+        orig_read = r.dataset.read
+
+        def read(*a, **kw):
+            seen_timeouts.append(get_gdal_config("GDAL_HTTP_TIMEOUT"))
+            return orig_read(*a, **kw)
+
+        r.dataset.read = read  # type: ignore[method-assign]
+        execute_windowed(
+            r, AlgorithmProfile(), lambda a, core, read_win: a, window_size=(32, 32),
+        )
+    assert seen_timeouts, "windowed execution performed no reads — fixture/regression"
+    assert all(v == 5 for v in seen_timeouts)

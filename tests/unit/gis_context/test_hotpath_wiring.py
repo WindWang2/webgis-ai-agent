@@ -216,3 +216,52 @@ def test_durable_binding_survives_process_local_loss(wc_store, wc, monkeypatch):
         mapspec=_mapspec(),
     ))
     assert "AOI=成都市" in _plain(text)
+
+
+def test_goal_revision_only_turn_persists_mirror(wc_store, mission_runtime, wc, monkeypatch):
+    """A turn whose only transition is the mission-goal advance persists the
+    mirror + stale marker and does not re-detect the same bump next turn
+    (review P2 hotpath:466)."""
+    monkeypatch.setattr(hp, "_store", lambda: wc_store)
+    monkeypatch.setattr(
+        "app.services.mission_runtime.service.get_mission_runtime",
+        lambda store=None: mission_runtime,
+    )
+    monkeypatch.setattr(hp, "_reconcile_step", lambda *_a, **_kw: ([], False, None))
+    rec = mission_runtime.create(org_id="org-1", user_id="u-1", root_goal="g")
+    wc.mission_id = rec.mission_id
+    wc.goal_revision_mirror = 0  # mission row starts at goal_revision=1
+    wc_store.save(wc, expected_revision=None)
+    state = {"_mission_binding": {"mission_id": rec.mission_id, "org_id": "org-1"}}
+
+    _text, receipt = _run(hp.assemble_gis_context_card(
+        "sess-goal", org_id="org-1", project_id="prj-1",
+        state=state, mapspec=_mapspec(), include_reuse=False,
+    ))
+    assert "goal_revision_bumped" in receipt.notes
+    stored = wc_store.load(rec.mission_id, org_id="org-1")
+    assert stored.goal_revision_mirror == 1
+    assert "goal" in stored.stale
+
+    _text2, receipt2 = _run(hp.assemble_gis_context_card(
+        "sess-goal", org_id="org-1", project_id="prj-1",
+        state=state, mapspec=_mapspec(), include_reuse=False,
+    ))
+    assert "goal_revision_bumped" not in receipt2.notes
+
+
+def test_request_revalidation_load_failure_is_fail_closed(monkeypatch):
+    """A store load failure (WorkingContextConflict) is a typed fail-closed
+    reason, never an exception out of the tool entry (review P2 hotpath:805)."""
+    from app.services.gis_context.store import WorkingContextConflict
+
+    class _BrokenLoadStore:
+        def load(self, mission_id, *, org_id=""):
+            raise WorkingContextConflict("working_context_unavailable")
+
+    monkeypatch.setattr(hp, "_store", lambda: _BrokenLoadStore())
+    _run(hp._persist_binding("sess-loadfail", "msn-loadfail", "org-1"))
+    out = _run(hp.request_revalidation(
+        "sess-loadfail", reaffirm_texts=["AOI 不变"], org_id="org-1"))
+    assert out["ok"] is False
+    assert out["reason"] == "load_failed:WorkingContextConflict"

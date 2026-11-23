@@ -56,3 +56,29 @@ def test_edge_cases_dataset_contract() -> None:
 def test_edge_cases_oracle_replay(case: OracleCase) -> None:
     ok, reason = run_case(case)
     assert ok, f"[{DOMAIN}::{case.case_id}] target={case.target}: {reason}"
+
+
+def test_zero_denominator_fixture_actually_produces_nan() -> None:
+    """回归：零分母 fixture 必须真的含 nir+red=0 的像元。
+
+    旧 fixture 该像元 red=0.1，分母 0.1≠0 → 无 NaN，valid_fraction 与
+    mean 都退化为普通值，NaN 传播边界路径零覆盖。
+    """
+    from scripts.gen_science_oracles import build_edge_cases
+    from tests.science_oracles import compare, resolve_target
+
+    entries = {c["id"]: c for c in build_edge_cases()}
+    frac_entry = entries["gndvi_zero_denominator_valid_fraction"]
+    mean_entry = entries["gndvi_zero_denominator_mean_null"]
+    red = frac_entry["args"][0]["red"]
+    nir = frac_entry["args"][0]["nir"]
+    assert any(
+        float(r) + float(n) == 0.0
+        for red_row, nir_row in zip(red, nir)
+        for r, n in zip(red_row, nir_row)
+    ), "fixture 必须包含 nir+red=0 的像元"
+    assert frac_entry["expect"]["value"] < 1.0
+    for entry in (frac_entry, mean_entry):
+        actual = resolve_target(entry["target"])(*entry["args"])
+        ok, reason = compare(actual, entry["expect"])
+        assert ok, f"{entry['id']}: {reason}"

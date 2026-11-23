@@ -1367,9 +1367,9 @@ def build_geodetector() -> List[Dict[str, Any]]:
     _, _, t0, p0 = _eco_refs(yv0, np.asarray(sa0_l), np.asarray(sb0_l))
     decision_ref = (
         "Y1_significantly_dominant"
-        if (p0 < 0.05 and t0 < 0)
+        if (p0 < 0.05 and t0 < 1)
         else "Y2_significantly_dominant"
-        if (p0 < 0.05 and t0 > 0)
+        if (p0 < 0.05 and t0 > 1)
         else "no_significant_difference"
     )
     cases.append(
@@ -1380,7 +1380,7 @@ def build_geodetector() -> List[Dict[str, Any]]:
             args=[np.asarray(yv0, dtype=float).tolist(), sa0_l, sb0_l],
             select="decision",
             kind="exact",
-            note="t>0 且 p<0.05 → Y1 占优（SSW 更小）",
+            note="F=SSW1/SSW2<1 且 p<0.05 → Y1 占优（SSW 更小）",
         )
     )
     cases.append(
@@ -7692,7 +7692,7 @@ def build_edge_cases() -> List[Dict[str, Any]]:
     )
 
     # --- NaN 传播不变量：光谱指数零分母 → NaN → 聚合 null -------------------
-    red_p = [[0.4, 0.2], [0.3, 0.1]]
+    red_p = [[0.4, 0.2], [0.3, 0.0]]
     nir_p = [[0.8, 0.6], [0.5, 0.0]]
     with np.errstate(invalid="ignore", divide="ignore"):
         nd = (np.asarray(nir_p) - np.asarray(red_p)) / (
@@ -7955,12 +7955,11 @@ def build_science_v5() -> List[Dict[str, Any]]:
         )
     )
     cases.append(
-        case(
+        error_case(
             "cv_temporal_forward_folds_gt_unique",
             "app.lib.geo_analysis.cv:temporal_forward_folds",
-            None,
+            "ValueError",
             args=[times, 11],
-            kind="error",
             note="folds > unique 时间值数 → 类型化拒绝",
         )
     )
@@ -8229,12 +8228,11 @@ def build_science_v5() -> List[Dict[str, Any]]:
         )
     )
     cases.append(
-        case(
+        error_case(
             "cube_over_512_slices_rejected",
             "app.lib.geo_analysis.temporal_cube:build_cube",
-            None,
+            "RESOURCE_SCALE_MISMATCH",
             args=[np.zeros((513, 2, 2)).tolist(), list(range(513))],
-            kind="error",
             note="时间片 >512 → ResourceScaleMismatch（先拒绝不 OOM）",
         )
     )

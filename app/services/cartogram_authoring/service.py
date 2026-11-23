@@ -550,6 +550,11 @@ async def apply_layout(
 
     base_ref = _base_ref(ctx)
     source = layout.get("source") or {}
+    from app.services.session_data import session_data_manager
+    # 冻结/布局记录的是 resolve_alias 后的规范 ref（snapshot.freeze_source）；
+    # 层源是别名时，未解析的 ref 与布局锚永远不等 → 恒判 STALE_SOURCE。
+    # 解析后再比对/查 descriptor，并把规范 ref 写回证据块。
+    base_ref = await session_data_manager.resolve_alias(session_id, base_ref)
     if source.get("ref_id") and source.get("ref_id") != base_ref:
         raise AuthoringError(
             "STALE_SOURCE",
@@ -563,7 +568,6 @@ async def apply_layout(
     # 布局与当前源同代，此时放行等于把"可能过期"的成果写上生产层。
     base_rev = source.get("content_revision")
     try:
-        from app.services.session_data import session_data_manager
         descriptor = await session_data_manager.get_ref_descriptor(session_id, base_ref)
     except Exception as exc:  # noqa: BLE001 - 统统一成 typed 拒绝
         raise AuthoringError(

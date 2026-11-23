@@ -202,3 +202,40 @@ def test_provenance_result_ref_still_applies_without_explicit_ref():
         source_data={"type": "FeatureCollection", "features": []})
     assert source_entry.get("ref_id") == "ref:analysis_orig"
     assert source_entry.get("ref") == "ref:analysis_orig"
+
+
+def test_new_inline_carrier_survives_stale_provenance_result_ref():
+    """UpsertLayer 以新 inline data 替换既有 ref 载体时，layer 上遗留的上一代
+    provenance.result_ref 不得把 entry 改指回旧 ref 并丢弃新数据。"""
+    new_data = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [121.0, 31.0]},
+                "properties": {"v": 2},
+            }
+        ],
+    }
+    mapspec = {
+        "sources": {
+            "s1": {
+                "type": "geojson",
+                "ref": "ref:analysis_orig",
+                "ref_id": "ref:analysis_orig",
+                "data_fingerprint": "ref-sha256:stale",
+            },
+        },
+    }
+    layer = {
+        "id": "l1", "source": "s1",
+        "provenance": {"result_ref": "ref:analysis_orig"},
+    }
+
+    _, source_entry, _ = process_layer_ingestion(mapspec, layer, source_data=new_data)
+
+    assert source_entry.get("inlineData") == new_data
+    assert "ref" not in source_entry
+    assert "ref_id" not in source_entry
+    assert not str(source_entry.get("data_fingerprint", "")).startswith("ref-sha256:")
+

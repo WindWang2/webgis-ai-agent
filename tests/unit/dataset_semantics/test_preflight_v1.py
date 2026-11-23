@@ -244,3 +244,30 @@ def test_none_descriptor_entry_skipped():
         {"subject": {"descriptor": None}, "other": a},
         expected_roles=("subject",))
     assert any(g.code == "PREFLIGHT_ROLE_MISSING" for g in rep.gaps)
+
+
+def test_non_finite_bbox_unknown_not_false_pass():
+    """P2：bbox 含 NaN/±Inf 时四比较恒 False → 不得伪 pass 相交。"""
+    for bad in (float("nan"), float("inf")):
+        a = _descriptor(key="a", bbox=[104.0, 30.6, bad, 30.8])
+        b = _descriptor(key="b", bbox=[104.0, 30.6, 104.2, 30.8])
+        rep = preflight_multi_dataset({"a": a, "b": b})
+        by_check = {c["check"]: c["result"] for c in rep.checks}
+        assert by_check["spatial_overlap"] == "unknown", bad
+        assert rep.verdict != "compatible", bad
+
+
+def test_one_sided_temporal_not_masked_by_both_sided_pairs():
+    """P2：存在双方时间对时，单侧时间证据仍须按 unknown 披露。"""
+    a = _descriptor(key="a", bbox=[104.0, 30.6, 104.2, 30.8],
+                    coverage=("2020-01", "2020-12"))
+    b = _descriptor(key="b", bbox=[104.0, 30.6, 104.2, 30.8],
+                    coverage=("2020-06", "2020-12"))
+    c = _descriptor(key="c", geometry=("Polygon",),
+                    bbox=[104.0, 30.6, 104.2, 30.8])  # 无时间证据
+    rep = preflight_multi_dataset(
+        {"baseline": a, "target_time": b, "boundary": c},
+        expected_roles=("baseline", "target_time", "boundary"))
+    by_check = {chk["check"]: chk["result"] for chk in rep.checks}
+    assert by_check["temporal_overlap"] == "unknown"
+    assert rep.verdict != "compatible"

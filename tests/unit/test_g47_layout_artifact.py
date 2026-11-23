@@ -24,7 +24,7 @@ from app.services.cartogram_authoring.publication import (
     diagram_spec_from_layout,
 )
 from app.services.cartogram_authoring.solver import SolveCancelled
-from tests.unit.g47_fixtures import frozen, grid_features, plan
+from tests.unit.g47_fixtures import frozen, grid_features, plan, square
 
 V9 = [100, 200, 300, 400, 500, 600, 700, 800, 900]
 
@@ -97,6 +97,42 @@ def test_normalised_max_radius_stays_near_the_planned_target(built):
     planned = float(plan().area_scale.max_radius)
     got = float(built.layout["area_scale"]["max_radius"])
     assert 0.5 * planned <= got <= 1.6 * planned, got
+
+
+def test_normalisation_cannot_shrink_drawn_circles_below_visibility():
+    """factor 由几何包围盒决定：远端零值单元可把全部半径缩到不可见。
+
+    归一前的可见性门（``build_area_scale``）看不出来；必须在落盘半径上复核，
+    否则会产出 ``publication_ready=True`` 却没有任何可比较圆的图面。
+    """
+    side = 0.001
+    features = [
+        square("near_a", 104.0, 30.4, side, {"name": "A", "pop": 100}),
+        square("near_b", 104.0 + side, 30.4, side, {"name": "B", "pop": 200}),
+        # 零值单元不参与求解，但它的远端几何参与了归一化 factor。
+        square("far_zero", 174.0, 30.4, side, {"name": "Z", "pop": 0}),
+    ]
+    with pytest.raises(AuthoringError) as ei:
+        _build(features)
+    assert ei.value.code == "EXTREME_VALUE_RANGE"
+    assert ei.value.details["min_radius"] < 1e-3
+
+
+def test_coincident_anchors_are_rejected_instead_of_a_giant_factor():
+    """锚点全重合：不能用 1e-9 兜底当真实跨度（factor 1e11 → 半径归零）。"""
+    geom = {"type": "Polygon", "coordinates": [[
+        [104.0, 30.4], [104.001, 30.4], [104.001, 30.401],
+        [104.0, 30.401], [104.0, 30.4],
+    ]]}
+    features = [
+        {"type": "Feature", "id": "a", "geometry": geom,
+         "properties": {"name": "A", "pop": 100}},
+        {"type": "Feature", "id": "b", "geometry": geom,
+         "properties": {"name": "B", "pop": 200}},
+    ]
+    with pytest.raises(AuthoringError) as ei:
+        _build(features)
+    assert ei.value.code == "EXTREME_VALUE_RANGE"
 
 
 # ── 面积比例 ────────────────────────────────────────────────────────────

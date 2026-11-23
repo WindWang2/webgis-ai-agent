@@ -75,17 +75,21 @@ class StoragePressureView:
                 p, ts, known = self._cached
                 if _time.monotonic() - ts <= self._ttl:
                     return (p, known)
-            try:
-                reading = self._provider()
-            except Exception:  # noqa: BLE001
-                reading = None
-            if reading is None:
-                self._cached = (0.0, _time.monotonic(), False)
-                return (0.0, False)
+        # provider 调用绝不持锁（review P2）：默认实现汇总 artifact 目录，
+        # 慢 provider 会串行阻塞所有 pressure()/level() 读取者。
+        try:
+            reading = self._provider()
+        except Exception:  # noqa: BLE001
+            reading = None
+        if reading is None:
+            result = (0.0, False)
+        else:
             used, cap = reading
             p = max(0.0, min(1.0, used / cap)) if cap > 0 else 0.0
-            self._cached = (p, _time.monotonic(), True)
-            return (p, True)
+            result = (p, True)
+        with self._lock:
+            self._cached = (result[0], _time.monotonic(), result[1])
+        return result
 
     def snapshot(self) -> dict:
         p, known = self._reading()

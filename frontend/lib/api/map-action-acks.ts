@@ -346,19 +346,30 @@ export function createMapActionAckSender(options: MapActionAckSenderOptions): Ma
       timeoutId = null;
     };
 
-    doFetch(
-      `${API_BASE}/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/map-action-ack`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'X-Session-Token': token } : {}),
-          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+    let request: Promise<Response>;
+    try {
+      request = doFetch(
+        `${API_BASE}/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/map-action-ack`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'X-Session-Token': token } : {}),
+            ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+          },
+          body: JSON.stringify({ acks }),
+          signal: controller.signal,
         },
-        body: JSON.stringify({ acks }),
-        signal: controller.signal,
-      },
-    ).then(async (response) => {
+      );
+    } catch (error: unknown) {
+      // A synchronous throw (e.g. an injected fetch or an invalid URL) must
+      // settle the batch: the action ids are already in `inFlight`, so leaving
+      // here without a retry would wedge them behind hasItem() forever.
+      finishRequest();
+      settleBatch(sessionId, items, classifyAckDelivery({ error }), gen);
+      return;
+    }
+    request.then(async (response) => {
       if (response.status === 401 && accessToken && await refreshAuthToken()) {
         finishRequest();
         settleBatch(sessionId, items, { kind: 'transient', reason: 'http_401' }, gen);

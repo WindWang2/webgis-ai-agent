@@ -23,6 +23,7 @@ from typing import Any, Dict, Iterable, List, Optional, Union
 from app.services.lakehouse.data_object import (
     DATA_OBJECT_KINDS,
     DataObjectError,
+    _stream_verify_digest,
     is_data_object_id,
     materialize_data_object,
     resolve_data_object,
@@ -253,8 +254,8 @@ def scrub_object(
         if not object_store.exists(digest):
             missing.append(digest)
             continue
-        raw = object_store.get_blob(digest, expected_sha256=digest)
-        if raw is None:
+        # 流式校验：full 模式下大对象整体驻留会 OOM（materialize 同款通道）。
+        if not _stream_verify_digest(object_store, digest):
             corrupt.append(digest)
     if etag_check and recorded_etag:
         # 比对**执行**即 etag_checked=True（成功/失配都要披露 —— R1-21）。

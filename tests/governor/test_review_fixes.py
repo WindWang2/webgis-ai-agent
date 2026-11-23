@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from app.services.governor.backpressure import QueueTimeoutError
 from app.services.governor.config import (
     GovernorConfig,
     GovernorMode,
@@ -196,3 +197,107 @@ class TestFailOpenNoLeak:
         assert dec.reasons == ["governor_fail_open"]
         # fail-open 放行但槽位已清 —— 通道不为幽灵占用
         assert gov.snapshot()["channels"]["raster"]["in_flight"] == 0
+
+
+class TestObserveQueueTimeoutNoFakeTicket:
+    @pytest.mark.asyncio
+    async def test_observe_queue_timeout_returns_no_ticket(self):
+        """P2 回归：observe 排队超时不得伪造空 channel ticket。
+
+        旧缺陷：超时后虚构的 ticket 仍被 complete 交给 bp.release；它会
+        按 session_id 找到会话闸，对从未占用的会话槽二次归还 semaphore，
+        凭空放大会话并发容量。
+        """
+        os.environ["GOVERNOR_MODE"] = "observe"
+        try:
+            reset_governor_config_for_tests()
+            config = _config(session_concurrency=1)
+            assert config.mode is GovernorMode.OBSERVE
+            gov = HarnessResourceGovernor(config, budgets=load_manifest(_MANIFEST))
+            # 占住会话唯一并发槽：LIGHT 无通道闸，排队超时发生在 session 层
+            holder = await gov.bp.acquire(
+                session_id="obs-slow", resource_class=ResourceClass.LIGHT,
+                max_wait_s=1.0)
+            demand = _demand("obs-slow").model_copy(update={"max_wait_s": 0.05})
+            dec, res, ticket = await gov.admit_and_reserve(demand)
+            assert res is not None
+            assert ticket is None            # 未获得槽位 → 无票可归还
+            await gov.complete(res, ticket)
+            # 会话容量仍被 holder 独占：再来一个必须超时（而非被放大）
+            with pytest.raises(QueueTimeoutError):
+                await gov.bp.acquire(
+                    session_id="obs-slow", resource_class=ResourceClass.LIGHT,
+                    max_wait_s=0.05)
+            await gov.bp.release(holder)
+        finally:
+            os.environ.pop("GOVERNOR_MODE", None)
+            reset_governor_config_for_tests()
+
+
+class _InjectedFatal(BaseException):
+    pass
+
+
+class TestRegistrationCleanup:
+    @pytest.mark.asyncio
+    async def test_base_exception_after_registration_leaves_no_ghost(self):
+        """P2 回归：登记录入后遭遇 BaseException 必须摘除 live 表。
+
+        旧清理路径只归还 ledger/背压，却把 reservation 留在 live 表；
+        随后 cancel_session/complete 会对同一账本与槽位二次归还，放大
+        通道容量。
+        """
+        gov = HarnessResourceGovernor(_config(), budgets=load_manifest(_MANIFEST))
+        original = gov._sync_gauges
+
+        def boom():
+            raise _InjectedFatal()
+
+        gov._sync_gauges = boom  # type: ignore[method-assign]
+        try:
+            with pytest.raises(_InjectedFatal):
+                await gov.admit_and_reserve(
+                    _demand("s1", rclass=ResourceClass.RASTER))
+        finally:
+            gov._sync_gauges = original  # type: ignore[method-assign]
+        assert gov.snapshot()["live_reservations"] == 0
+        # 无幽灵预留 → cancel_session 无可释放，通道不会二次归还
+        assert await gov.cancel_session(
+            "s1", CancelReasonLocal.USER_CANCEL) == 0
+        assert gov.snapshot()["channels"]["raster"]["in_flight"] == 0
+
+
+class TestStoragePressureReadLock:
+    def test_provider_call_does_not_hold_cache_lock(self):
+        """P2 回归：慢 provider 不得在持锁状态下调用。
+
+        provider 默认实现汇总 artifact 目录；持锁调用会让所有 pressure()/
+        level() 读取者串行阻塞，与「绝不阻塞执行路径」的承诺相悖。
+        """
+        import threading
+        import time as _time
+
+        from app.services.governor.storage_pressure import StoragePressureView
+
+        started = threading.Event()
+        release = threading.Event()
+        calls = {"n": 0}
+
+        def provider():
+            calls["n"] += 1
+            if calls["n"] == 1:
+                started.set()
+                release.wait(1.0)
+            return (1, 10)
+
+        view = StoragePressureView(provider=provider, cache_ttl_s=5.0)
+        slow = threading.Thread(target=view.pressure, daemon=True)
+        slow.start()
+        assert started.wait(1.0)
+        began = _time.monotonic()
+        try:
+            assert view.level() == "low"
+        finally:
+            release.set()
+            slow.join(2.0)
+        assert _time.monotonic() - began < 0.25

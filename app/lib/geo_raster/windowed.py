@@ -252,10 +252,17 @@ def execute_windowed(
                 Window(r_col, r_row, r_w, r_h),
                 cancel_token=None,  # 窗口间取消由 cancellable 迭代器承担
             )
-        elif bands is not None:
-            data = ds.read(band_list, window=Window(r_col, r_row, r_w, r_h))
         else:
-            data = ds.read(band, window=Window(r_col, r_row, r_w, r_h))
+            # Local reads hold the canonical GDAL env (same runtime property
+            # as RasterReader._budgeted_read); only the remote branch delegates
+            # its policy/env handling to remote_read_window.
+            from app.lib.geo_raster.env import rasterio_env
+
+            with rasterio_env():
+                if bands is not None:
+                    data = ds.read(band_list, window=Window(r_col, r_row, r_w, r_h))
+                else:
+                    data = ds.read(band, window=Window(r_col, r_row, r_w, r_h))
         core_result = fn(data, (col0, row0, w, h), (r_col, r_row, r_w, r_h))
         expected = (h, w)
         if core_result.shape != expected:

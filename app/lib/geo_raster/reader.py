@@ -163,6 +163,13 @@ class RasterReader:
             overviews = len(ds.overviews(1)) if ds.count else 0
         except Exception:  # noqa: BLE001
             overviews = 0
+        # The fingerprint samples two corner windows — pixel IO, so it must
+        # run under the canonical GDAL env (HTTP timeout / cache cap /
+        # threads), not after the open-time env has been torn down.
+        from app.lib.geo_raster.env import rasterio_env
+
+        with rasterio_env():
+            fingerprint = self._fingerprint(ds)
         self._meta = RasterMetadata(
             uri=self.uri,
             width=grid.width,
@@ -179,7 +186,7 @@ class RasterReader:
             overviews=overviews,
             is_tiled=bool(getattr(ds, "is_tiled", False)),
             is_cog=self.cog_structure_ok(ds),
-            fingerprint=self._fingerprint(ds),
+            fingerprint=fingerprint,
         )
         self._meta.grid_profile = grid
         return self._meta

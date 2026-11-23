@@ -17,6 +17,7 @@ import {
   previewFlowProduct,
   queryFlowProduct,
   fetchFlowRefGeoJSON,
+  type FlowPreviewResponse,
 } from '@/lib/flow/flow-product';
 import { commitMapSpecMutation, refreshMapSpecAfterExternalMutation } from '@/lib/mapspec/user-mutation';
 
@@ -272,6 +273,23 @@ describe('FlowProductPanel', () => {
     expect(screen.getByRole('button', { name: '应用到地图' })).toHaveProperty('disabled', true);
   });
 
+  it('预览缺少可应用字段时禁用 Apply，避免可点却无反应', async () => {
+    commitMapSpecDocument(CANDIDATE_SPEC, 5);
+    const previewWithoutCanApply: Partial<typeof PREVIEW> = { ...PREVIEW };
+    delete previewWithoutCanApply.can_apply;
+    previewMock.mockResolvedValue({
+      ...previewWithoutCanApply,
+      product_ref: '',
+      family_id: '',
+    } as unknown as FlowPreviewResponse);
+    render(<FlowProductPanel />);
+    const sourceSelect = await screen.findByLabelText('OD 表（GeoJSON 源）');
+    fireEvent.change(sourceSelect, { target: { value: 'ref:geojson-od-1' } });
+    fireEvent.click(await screen.findByRole('button', { name: '预览' }));
+    await screen.findByText(/80.0%/);
+    expect(screen.getByRole('button', { name: '应用到地图' })).toHaveProperty('disabled', true);
+  });
+
   it('预览错误真实显示', async () => {
     commitMapSpecDocument(CANDIDATE_SPEC, 5);
     previewMock.mockRejectedValue(new Error('boom'));
@@ -321,6 +339,53 @@ describe('FlowProductPanel', () => {
     fireEvent.click(screen.getByLabelText('流入'));
     await waitFor(() => expect(queryMock).toHaveBeenCalledTimes(2));
     expect(queryMock.mock.calls[1][1]).toMatchObject({ direction: 'inbound' });
+  });
+
+  it('加载更多追加新页并保留首页，不重复新页', async () => {
+    commitMapSpecDocument(APPLIED_SPEC, 5);
+    queryMock
+      .mockResolvedValueOnce({
+        success: true,
+        kind: 'node',
+        product_ref: 'ref:flow-product-abc',
+        node: { node_id: 'n1', name: '武侯区', inbound: 3, outbound: 8, net: 5 },
+        direction: 'both',
+        edges: {
+          items: [{ id: 'e1', origin_node_id: 'n1', destination_node_id: 'n2', weight: 10 }],
+          offset: 0, limit: 50, matched_count: 2, next_offset: 50,
+        },
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        kind: 'node',
+        product_ref: 'ref:flow-product-abc',
+        node: { node_id: 'n1', name: '武侯区', inbound: 3, outbound: 8, net: 5 },
+        direction: 'both',
+        edges: {
+          items: [{ id: 'e2', origin_node_id: 'n2', destination_node_id: 'n3', weight: 20 }],
+          offset: 50, limit: 50, matched_count: 2, next_offset: null,
+        },
+      });
+    render(<FlowProductPanel />);
+    act(() => {
+      publishSelection('select', {
+        source: 'map',
+        layer_id: 'flow-odf_x-nodes',
+        feature_id: 'n1',
+        selected_ids: ['n1'],
+        selected_categories: [],
+        id_field: '$id',
+        artifact_ref: 'ref:flow-product-abc',
+        properties: { flow_focus: 'node', flow_direction: 'both', name: '武侯区' },
+      });
+    });
+    expect(await screen.findByText(/n1 → n2/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '加载更多' }));
+    await waitFor(() => expect(queryMock).toHaveBeenCalledTimes(2));
+    expect(queryMock.mock.calls[1][1]).toMatchObject({ offset: 50, limit: 50 });
+    expect(await screen.findByText(/n2 → n3/)).toBeTruthy();
+    expect(screen.getByText(/n1 → n2/)).toBeTruthy();
+    expect(screen.getAllByText(/n2 → n3/)).toHaveLength(1);
   });
 
   it('焦点对象缺失（404）给具体提示，不伪造数据', async () => {

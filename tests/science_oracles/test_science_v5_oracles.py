@@ -44,3 +44,22 @@ def test_science_v5_dataset_contract() -> None:
 def test_science_v5_oracle_replay(case: OracleCase) -> None:
     ok, reason = run_case(case)
     assert ok, f"[{DOMAIN}::{case.case_id}] target={case.target}: {reason}"
+
+
+def test_error_cases_carry_expect_code() -> None:
+    """回归：error-kind case 必须写 expect.code（与 error_case 同 schema）。
+
+    旧实现用 ``case(..., kind="error")``，expect 不含 code，回放侧只验
+    “抛了错”，无法校验错误类型。
+    """
+    from scripts.gen_science_oracles import build_science_v5
+
+    entries = {c["id"]: c for c in build_science_v5()}
+    expected = {
+        "cv_temporal_forward_folds_gt_unique": "ValueError",
+        "cube_over_512_slices_rejected": "RESOURCE_SCALE_MISMATCH",
+    }
+    for case_id, code in expected.items():
+        entry = entries[case_id]
+        assert entry["expect"]["kind"] == "error"
+        assert entry["expect"].get("code") == code

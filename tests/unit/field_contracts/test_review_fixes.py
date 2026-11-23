@@ -179,3 +179,76 @@ class TestR1P2RestBigint:
 
         nc = normalize_document({"version": 1, "fields": [dumped], "cross_rules": []})
         assert nc.field_map["id"].min == 9_007_199_254_740_993
+
+
+class TestP2ContractBindingPersistence:
+    async def test_binding_survives_reread(self, _storage):
+        """P2 service.py:185 —— create 返回的 binding 必须落盘，再读一致。"""
+        from app.services.field_contracts import service as fc_service
+
+        s = sid()
+        ref = await _storage.store(s, {"geojson": FACILITIES}, prefix="data")
+        created = await fc_service.create_contract(s, ref_id=ref, document=DOC)
+        assert created["binding"]["ref_id"] == ref
+        reread = await fc_service.get_contract(s, created["contract_id"])
+        assert reread["binding"] == created["binding"]
+
+
+class TestP2SqliteLockRetryWiring:
+    def _flaky_session_factory(self, monkeypatch, failures: int):
+        import app.core.database as db_mod
+
+        real = db_mod.SessionLocal
+        calls = {"n": 0}
+
+        def flaky():
+            calls["n"] += 1
+            if calls["n"] <= failures:
+                from sqlalchemy.exc import OperationalError
+
+                raise OperationalError("SELECT 1", {}, Exception("database is locked"))
+            return real()
+
+        monkeypatch.setattr(db_mod, "SessionLocal", flaky)
+        import app.services.field_contracts.store as store_mod
+
+        monkeypatch.setattr(store_mod, "_SQLITE_LOCK_BACKOFF_S", 0.0)
+        return calls
+
+    def test_create_assessment_retries_locked(self, monkeypatch):
+        from app.services.field_contracts.store import field_contract_store
+
+        calls = self._flaky_session_factory(monkeypatch, failures=2)
+        row = field_contract_store.create_assessment(
+            contract_id="c-lock", contract_revision=1, session_id=sid(),
+            ref_id="ref-lock", status="queued", verified={}, counts={},
+        )
+        assert row["status"] == "queued"
+        assert calls["n"] == 3
+
+    def test_update_assessment_retries_locked(self, monkeypatch):
+        from app.services.field_contracts.store import field_contract_store
+
+        created = field_contract_store.create_assessment(
+            contract_id="c-lock-2", contract_revision=1, session_id=sid(),
+            ref_id="ref-lock-2", status="queued", verified={}, counts={},
+        )
+        calls = self._flaky_session_factory(monkeypatch, failures=2)
+        row = field_contract_store.update_assessment(created["id"], status="running")
+        assert row is not None and row["status"] == "running"
+        assert calls["n"] == 3
+
+
+class TestP2LengthBoundTypes:
+    @pytest.mark.parametrize("bound", ["3", 3.0, True, -1])
+    def test_non_integer_length_bounds_rejected(self, bound):
+        from app.services.field_contracts.validator import (
+            ContractDocumentError,
+            normalize_document,
+        )
+
+        doc = {"version": 1, "fields": [
+            {"field": "s", "type": "string", "min_length": bound},
+        ]}
+        with pytest.raises(ContractDocumentError):
+            normalize_document(doc)

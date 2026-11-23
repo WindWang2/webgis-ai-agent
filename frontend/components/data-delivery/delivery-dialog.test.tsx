@@ -9,17 +9,19 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DataDeliveryDialog } from './delivery-dialog';
+import { useToastStore } from '@/components/ui/toast';
 import type { DeliveryPreview } from '@/lib/api/data-delivery';
 
 const previewMock = vi.hoisted(() => vi.fn());
 const submitMock = vi.hoisted(() => vi.fn());
 const listMock = vi.hoisted(() => vi.fn());
+const getJobMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/lib/api/data-delivery', () => ({
   previewDataDelivery: previewMock,
   submitDataDelivery: submitMock,
   listDeliveryJobs: listMock,
-  getDeliveryJob: vi.fn(),
+  getDeliveryJob: getJobMock,
   fetchDeliveryCapabilities: vi.fn(),
 }));
 
@@ -65,7 +67,9 @@ beforeEach(() => {
   previewMock.mockReset();
   submitMock.mockReset();
   listMock.mockReset();
+  getJobMock.mockReset();
   listMock.mockResolvedValue([]);
+  useToastStore.setState({ toasts: [] });
 });
 
 describe('DataDeliveryDialog', () => {
@@ -135,5 +139,54 @@ describe('DataDeliveryDialog', () => {
     render(<DataDeliveryDialog open onClose={() => {}} source={source} />);
     await waitFor(() => expect(screen.getByText('历史交付')).toBeTruthy());
     expect(screen.getByText(/首都设施 · completed/)).toBeTruthy();
+  });
+
+  it('never puts a non-numeric precision (NaN) into the preview spec', async () => {
+    previewMock.mockResolvedValue(previewStub());
+    render(<DataDeliveryDialog open onClose={() => {}} source={source} />);
+    const precisionInput = screen.getByPlaceholderText('留空 = 全精度');
+    await userEvent.type(precisionInput, 'abc');
+    await userEvent.click(screen.getByText('预览交付'));
+    await waitFor(() => expect(previewMock).toHaveBeenCalled());
+    const specArg = previewMock.mock.calls[0][0] as { crs?: Record<string, unknown> };
+    expect(specArg.crs?.coordinate_precision).toBeUndefined();
+
+    // 合法整数仍应原样下发
+    await userEvent.clear(precisionInput);
+    await userEvent.type(precisionInput, '9');
+    await userEvent.click(screen.getByText('预览交付'));
+    await waitFor(() => expect(previewMock).toHaveBeenCalledTimes(2));
+    const validSpecArg = previewMock.mock.calls[1][0] as { crs?: Record<string, unknown> };
+    expect(validSpecArg.crs?.coordinate_precision).toBe(9);
+  });
+
+  it('toasts a polling failure instead of silently swallowing it', async () => {
+    previewMock.mockResolvedValue(previewStub());
+    submitMock.mockResolvedValue({
+      job_id: '7', status: 'running', idempotent_reuse: false, message: 'ok',
+    });
+    getJobMock.mockRejectedValue(new Error('boom'));
+    render(<DataDeliveryDialog open onClose={() => {}} source={source} />);
+    await userEvent.click(screen.getByText('预览交付'));
+    await waitFor(() => expect(screen.getByText('确认损失并交付')).toBeTruthy());
+    await userEvent.click(screen.getByText('确认损失并交付'));
+    await waitFor(() =>
+      expect(
+        useToastStore.getState().toasts.some(
+          (toast) => toast.type === 'error' && toast.message.includes('操作失败'),
+        ),
+      ).toBe(true));
+  });
+
+  it('invalidates a stale preview after a spec-affecting change', async () => {
+    previewMock.mockResolvedValue(previewStub({
+      required_acknowledgments: ['nested_value_json_encoded'],
+    }));
+    render(<DataDeliveryDialog open onClose={() => {}} source={source} />);
+    await userEvent.click(screen.getByText('预览交付'));
+    await waitFor(() => expect(screen.getByText('确认损失并交付')).toBeTruthy());
+    await userEvent.selectOptions(screen.getByRole('combobox'), 'gpkg');
+    await waitFor(() => expect(screen.queryByText('确认损失并交付')).toBeNull());
+    expect(previewMock).toHaveBeenCalledTimes(1);
   });
 });

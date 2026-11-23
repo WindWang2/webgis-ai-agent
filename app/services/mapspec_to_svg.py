@@ -2649,7 +2649,10 @@ def compile_mapspec_to_svg_detailed(
                         if _poly_obs:
                             _segment_obstacle_groups.append(_poly_obs)
 
-                except Exception:
+                except Exception as _layer_exc:  # noqa: BLE001 — 单图层降级留痕
+                    logger.warning(
+                        "[mapspec-to-svg] layer %s render failed: %s",
+                        _lid, _layer_exc)
                     continue
 
         # G16：覆写失效披露（有界 ≤8 条/类）。orphan = 覆写目标在当前数据
@@ -2716,6 +2719,8 @@ def compile_mapspec_to_svg_detailed(
                     _rev_ov = _ov_a.get("sourceRevision")
                     if (
                         _rev_ov is not None and _rev_a is not None
+                        and isinstance(_rev_ov, (int, float))
+                        and not isinstance(_rev_ov, bool)
                         and float(_rev_ov) != float(_rev_a)
                     ):
                         _stale_n += 1

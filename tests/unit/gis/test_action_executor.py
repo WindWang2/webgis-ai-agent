@@ -310,3 +310,26 @@ def test_unregistered_compensation_is_rejected_before_any_effect():
     compilation = compile_actions(plan, resolver=MissingUndo())
     assert compilation.blocked
     assert "COMPENSATION_UNRESOLVED" in [finding.code for finding in compilation.findings]
+
+
+async def test_projected_placeholder_params_never_dispatched_as_real_args():
+    """bind 产出的 compilation 里超预算值只剩 key__sha 摘要：默认
+    args provider 必须 fail-closed，绝不把占位摘要当真实参数 dispatch。"""
+    from app.services.gis_action.legacy_adapter import project_tool_call_to_plan
+
+    plan = project_tool_call_to_plan(
+        "t_analyze",
+        {"source_data": [{"v": i} for i in range(40)], "note": "x" * 300},
+        {"side_effect": "deterministic_compute"},
+    )
+    compilation = compile_actions(plan, resolver=_FakeResolver())
+    assert compilation.status == "compiled"
+    assert "source_data__sha" in compilation.steps[0].params
+    assert "note__sha" in compilation.steps[0].params
+
+    registry = FakeRegistry()
+    receipt = await ActionPlanExecutor(registry=registry).run(compilation)
+    assert registry.calls == []
+    assert receipt.step_receipts[0].status == "failed"
+    assert receipt.step_receipts[0].code == "ARGS_ERROR"
+    assert "source_data__sha" in receipt.step_receipts[0].detail

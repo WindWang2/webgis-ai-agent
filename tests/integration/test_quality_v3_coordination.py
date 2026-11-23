@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 import sys
 
 import pytest
@@ -135,6 +136,20 @@ def test_walk_repo_bounded_excludes_vendored_trees():
     files = ownership_mod._walk_repo_bounded(REPO)
     assert len(files) < ownership_mod._MAX_WALK_FILES
     assert not any(f.startswith("frontend/node_modules/") for f in files)
+    assert "app/main.py" in files
+
+
+def test_walk_repo_bounded_falls_back_on_git_timeout(tmp_path, monkeypatch):
+    """git ls-files 超时 → 降级手工遍历；TimeoutExpired 不得逃逸。"""
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app/main.py").write_text("x = 1\n", encoding="utf-8")
+
+    def _timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=["git", "ls-files"], timeout=10)
+
+    monkeypatch.setattr(ownership_mod.subprocess, "run", _timeout)
+    files = ownership_mod._walk_repo_bounded(tmp_path)
     assert "app/main.py" in files
 
 

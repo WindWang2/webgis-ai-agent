@@ -71,7 +71,17 @@ def _normalize_anchors(
     ys = [a[1] for a in anchors]
     minx, maxx = min(xs), max(xs)
     miny, maxy = min(ys), max(ys)
-    span = max(1e-9, max(maxx - minx, maxy - miny))
+    span = max(maxx - minx, maxy - miny)
+    if span <= 1e-9:
+        # 全重合锚点没有可表达的空间跨度：旧实现用 1e-9 兜底会把 factor
+        # 放大到 1e11 级，几何经该仿射展开后把圆半径归一成 0 —— 与其产出
+        # 不可读的布局，不如 typed 拒绝。
+        raise AuthoringError(
+            "EXTREME_VALUE_RANGE",
+            "所有统计单元的锚点重合（跨度≈0）—— 无法建立可读的示意布局",
+            field="scope",
+            correction_hint="检查几何/投影是否有效（零面积或重复几何）；"
+                            "排除退化单元后重试。")
     factor = (extent * 0.86) / span
     cx, cy = (minx + maxx) / 2.0, (miny + maxy) / 2.0
     offset = extent / 2.0
