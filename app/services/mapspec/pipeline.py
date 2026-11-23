@@ -131,9 +131,7 @@ def process_layer_ingestion(
     elif isinstance(processed_source_data, str) and processed_source_data.startswith("ref:"):
         explicit_ref = processed_source_data
     result_ref = provenance.get("result_ref")
-    # A layer dict carrying the previous generation's result_ref would
-    # otherwise overwrite the freshly supplied inline/url carrier below with
-    # the old ref (map silently renders stale data and the new data is lost).
+    # Previous-generation result_ref must not overwrite the fresh carrier.
     stale_result_ref = (
         explicit_ref is None
         and processed_source_data is not None
@@ -211,15 +209,12 @@ def process_layer_ingestion(
     # must not duplicate a 100k-feature payload merely to describe the map.
     # Only drop the new carrier when a ref actually won (explicit source ref or
     # this generation's result_ref) — a stale result_ref must leave it intact.
-    if (
-        isinstance(result_ref, str)
-        and result_ref
-        and (explicit_ref is not None or result_ref_applied)
+    if isinstance(result_ref, str) and result_ref and (
+        explicit_ref is not None or result_ref_applied
     ):
         source_entry.pop("inlineData", None)
         source_entry.pop("url", None)
-        # #1403: dataPath must not survive beside ref — mixed carrier mounts
-        # raster tiles at a non-tile URL and breaks MapLibre layer types.
+        # #1403: dataPath must not survive beside ref.
         source_entry.pop("dataPath", None)
 
     return processed_layer, source_entry, suggested_view

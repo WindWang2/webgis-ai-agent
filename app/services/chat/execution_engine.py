@@ -3325,7 +3325,9 @@ class ChatExecutionEngine:
                 # P2：delete 成功后跨副本 marker 仍在（TTL 30s）；本地 marker 也
                 # 必须保留到被取消 turn 真正排空 —— quiesce 超时后 straggler 的
                 # 清理写入仍可能复活已删会话行。turn 结束（清理完成）再清 mark。
-                straggler = self._active_turn_tasks.get(session_id)
+                # NOTE: engines built via ``__new__`` (partial stubs in tests)
+                # have no instance registry; treat that as "no straggler".
+                straggler = getattr(self, "_active_turn_tasks", {}).get(session_id)
                 if straggler is not None and not straggler.done():
                     straggler.add_done_callback(
                         lambda _t, _sid=session_id: self._clearing_sessions.discard(_sid)

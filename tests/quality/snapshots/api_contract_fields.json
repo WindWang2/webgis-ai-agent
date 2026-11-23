@@ -1961,7 +1961,7 @@
   "author_kind": "string",
   "base": "object",
   "candidate_digest": "string",
-  "created_at": "string",
+  "created_at": "number",
   "has_approval": "boolean",
   "merge": "null|object",
   "op_kinds": "array<string>",
@@ -1972,7 +1972,7 @@
   "revision": "integer",
   "status": "string",
   "title": "string",
-  "updated_at": "string"
+  "updated_at": "number"
  },
  "PATCH /api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}": {
   "__model__": "CoordinateOperationPlanView",
@@ -2317,7 +2317,7 @@
   "author_kind": "string",
   "base": "object",
   "candidate_digest": "string",
-  "created_at": "string",
+  "created_at": "number",
   "has_approval": "boolean",
   "merge": "null|object",
   "op_kinds": "array<string>",
@@ -2328,7 +2328,7 @@
   "revision": "integer",
   "status": "string",
   "title": "string",
-  "updated_at": "string"
+  "updated_at": "number"
  },
  "POST /api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/comments": {
   "__model__": "FeatureProposalCommentsResponse",
