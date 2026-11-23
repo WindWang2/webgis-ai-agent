@@ -71,6 +71,7 @@ def _attach_science_evidence(
     diag_blocks = [
         d if isinstance(d, Diagnostic) else Diagnostic(**d)
         for d in (diagnostics or [])
+        if d is not None  # additive 诊断允许失败缺席（None），不得炸掉主结果
     ]
     payload["scientific_evidence"] = build_evidence(
         descriptor,

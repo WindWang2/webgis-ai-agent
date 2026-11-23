@@ -150,13 +150,20 @@ def _rebind_sources(
                 return logical_id, token
         return None
 
-    def _token_for(layer: Dict[str, Any]) -> tuple[str, str]:
+    def _token_for(layer: Dict[str, Any]) -> Optional[tuple[str, str]]:
         binding = layer.get("data_binding")
         declared = str(binding.get("logical_id") or "") if isinstance(binding, dict) else ""
         if declared in tokens:
             return declared, tokens[declared]
         matched = _match(str(layer.get("source") or ""))
-        return matched or next(iter(tokens.items()))
+        if matched:
+            return matched
+        # P1 data-integrity：≥2 个变化源时禁止回退到「首个」变化源，
+        # 否则会把无关来源的 logical_id/version_token 写进本 layer。
+        # 仅当项目只有单一变化源时才允许回退到该唯一来源。
+        if len(tokens) == 1:
+            return next(iter(tokens.items()))
+        return None
 
     sources = doc.get("sources")
     if isinstance(sources, dict):
@@ -177,7 +184,11 @@ def _rebind_sources(
     for layer in (doc.get("layers") or [])[:64]:
         if not isinstance(layer, dict):
             continue
-        logical_id, token = _token_for(layer)
+        bound = _token_for(layer)
+        if bound is None:
+            # 匹配不到来源 → 如实跳过，不得写入无关源的证据字段
+            continue
+        logical_id, token = bound
         binding = layer.get("data_binding")
         if isinstance(binding, dict):
             binding["logical_id"] = logical_id

@@ -178,6 +178,44 @@ describe('BivariateReliabilityPanel', () => {
     });
   });
 
+  it('releases busy when the preview is cancelled mid-flight (reqGen)', async () => {
+    // 复审 P1：runPreview 的 finally 原先按 epoch/gen 相等才释放 busy，
+    // Cancel（reqGenRef+1）会使在飞快照的 busy 永为真，预览/应用按钮
+    // 永久禁用，只能重挂面板恢复。
+    let resolvePreview: (v: typeof previewReceipt) => void = () => {};
+    previewMock.mockImplementation(
+      () => new Promise((res) => { resolvePreview = res; }));
+    render(<BivariateReliabilityPanel layerId="L1" />);
+    await waitFor(() => expect(screen.getByTestId('g41-bivariate-form')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('bivariateReliability.previewBtn'));
+    const previewBtn = screen.getByText('bivariateReliability.previewBtn').closest('button');
+    await waitFor(() => expect(previewBtn).toBeDisabled());
+    fireEvent.click(screen.getByText('bivariateReliability.cancelBtn'));
+    resolvePreview(previewReceipt);
+    await waitFor(() => expect(previewBtn).not.toBeDisabled());
+    // 被作废的预览不得上屏，也不得留下可提交的候选
+    expect(screen.queryByTestId('g41-preview')).not.toBeInTheDocument();
+    expect(screen.getByText('bivariateReliability.applyBtn').closest('button')).toBeDisabled();
+  });
+
+  it('releases busy when the layer changes mid-flight (epoch)', async () => {
+    // 复审 P1：切层/liveRevision 变更推进 epochRef，在飞快照的 finally
+    // 若仍按 epoch 相等才释放 busy，新层上面板按钮同样永久禁用。
+    let resolvePreview: (v: typeof previewReceipt) => void = () => {};
+    previewMock.mockImplementation(
+      () => new Promise((res) => { resolvePreview = res; }));
+    const { rerender } = render(<BivariateReliabilityPanel layerId="L1" />);
+    await waitFor(() => expect(screen.getByTestId('g41-bivariate-form')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('bivariateReliability.previewBtn'));
+    const previewBtn = screen.getByText('bivariateReliability.previewBtn').closest('button');
+    await waitFor(() => expect(previewBtn).toBeDisabled());
+    rerender(<BivariateReliabilityPanel layerId="L2" />);
+    resolvePreview(previewReceipt);
+    await waitFor(() => expect(previewBtn).not.toBeDisabled());
+    // 迟到响应不得把旧层的候选上屏
+    expect(screen.queryByTestId('g41-preview')).not.toBeInTheDocument();
+  });
+
   it('offers the reliability mode with measure and visual controls', async () => {
     render(<BivariateReliabilityPanel layerId="L1" />);
     await waitFor(() => expect(screen.getByTestId('g41-bivariate-form')).toBeInTheDocument());

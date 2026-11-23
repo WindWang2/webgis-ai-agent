@@ -171,6 +171,24 @@ class TestAttrValidation:
         profiles = profile_fields(fc)
         assert validate_set_fields({"type": "小学", "capacity": 800}, profiles) == []
 
+    def test_high_cardinality_field_never_categorical(self):
+        # ≥26 distinct 后即便后续只回填 1-24 个新值，也不得残留词表：
+        # 超限必须永久放弃追踪，否则 is_categorical 误判为真，
+        # validate_set_fields 会对合法新值误报 enum_violation 阻断编辑。
+        features = [
+            {
+                "type": "Feature",
+                "id": f"f{i}",
+                "geometry": {"type": "Point", "coordinates": [116.0, 39.0]},
+                "properties": {"code": f"c{i:03d}"},
+            }
+            for i in range(40)
+        ]
+        profiles = profile_fields({"type": "FeatureCollection", "features": features})
+        assert profiles["code"]["types"] == {"string": 40}  # 类型面不受影响
+        assert "enum" not in profiles["code"]
+        assert validate_set_fields({"code": "c-new"}, profiles) == []
+
 
 # ─── geometry ops ──────────────────────────────────────────────────────────
 

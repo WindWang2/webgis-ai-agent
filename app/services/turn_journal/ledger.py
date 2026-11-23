@@ -61,10 +61,15 @@ class TurnEventLedger:
     # ── append ────────────────────────────────────────────────────────
 
     def _append_sync(self, record: TurnEventRecord) -> AppendResult:
+        # 判重键必须与落库键同源：``to_row_kwargs`` 把 >160 字符的
+        # event_id 收敛成确定性摘要，用原始 record.event_id 查会让超长
+        # 键的重复 append 查不到既有行 → 唯一约束冲突 → winner 亦空 →
+        # 直接 raise（幂等契约破裂，sink 整批丢弃）。
+        event_key = record._bounded_event_id()
         with self._factory() as db:
             existing = db.execute(
                 select(TurnEventRow).where(
-                    TurnEventRow.event_id == record.event_id)
+                    TurnEventRow.event_id == event_key)
             ).scalar_one_or_none()
             if existing is not None:
                 return AppendResult(existing.event_id, existing.id, "duplicate")
@@ -76,7 +81,7 @@ class TurnEventLedger:
                 db.rollback()
                 winner = db.execute(
                     select(TurnEventRow).where(
-                        TurnEventRow.event_id == record.event_id)
+                        TurnEventRow.event_id == event_key)
                 ).scalar_one_or_none()
                 if winner is not None:
                     return AppendResult(winner.event_id, winner.id, "duplicate")

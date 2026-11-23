@@ -39,6 +39,25 @@ async def _outputs_alive(receipt: Any) -> bool:
     return bool(ref) and fabric_parquet_ref_exists(receipt.session_id, ref)
 
 
+def _release_idempotency_key(job_id: int) -> None:
+    """释放终态行的幂等键，让同键重提能建新行（与 store.create_sync 对
+    不可复用终态的处理同款）。失败不阻断：重提仍会命中旧行，由调用方如实
+    报告现状，绝不谎报 running。"""
+    from app.services.data_operations.runner import _sync_session
+    from app.models.db_model import AnalysisTask
+
+    try:
+        with _sync_session() as db:
+            row = db.get(AnalysisTask, job_id)
+            if row is not None and row.idempotency_key is not None:
+                row.idempotency_key = None
+                db.commit()
+    except Exception:  # noqa: BLE001 — 释放失败由重提结果兜底
+        logger.warning(
+            "[raster-sampling] release idempotency key failed job_id=%s", job_id,
+            exc_info=True)
+
+
 async def submit_sampling_job(
     *,
     plan: Any,
@@ -127,6 +146,29 @@ async def submit_sampling_job(
             project_id=project_id or None,
         )
         if reused:
+            return {"job_id": str(job_id), "status": job_status,
+                    "plan_id": plan.plan_id, "idempotent_reuse": True}
+    elif reused and job_status == "completed":
+        # 收据短路未命中（产物已被 GC / 收据丢失）而幂等行仍是 TTL 内的
+        # completed：这一行不可能再执行（runner._claim 终态拒领 →
+        # AlreadyFinished），直接复用只会空转 —— background 吞掉异常后谎报
+        # running，内联则把 AlreadyFinished 抛给调用方。按收据短路注释的
+        # 「GC → 允许重算发布新收据」释放旧行幂等键后以同键重提，建新行真跑。
+        _release_idempotency_key(job_id)
+        job_id, job_status, reused = submit_async_job(
+            task_type=TASK_TYPE,
+            kind="raster_sampling",
+            display_name=f"栅格采样 · {plan.plan_id[:22]}",
+            params=params,
+            idempotency_key=key,
+            owner_id=owner.get("user_id"),
+            owner_token=owner.get("owner_token") or owner_token,
+            org_id=owner.get("org_id"),
+            session_id=session_id,
+            project_id=project_id or None,
+        )
+        if reused:
+            # 极端竞态（重提瞬间又被并发占位）：如实报告现状，不谎报 running
             return {"job_id": str(job_id), "status": job_status,
                     "plan_id": plan.plan_id, "idempotent_reuse": True}
 

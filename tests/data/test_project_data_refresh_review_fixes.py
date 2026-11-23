@@ -347,3 +347,40 @@ def test_r2_p2_rebind_short_logical_ids_have_no_substring_collision():
     }
     out2 = _rebind_sources(listed, diffs=diffs, source_versions=versions)
     assert out2["sources"][0]["content_revision"] == "vB"
+
+
+def test_r1_p1_rebind_multi_source_never_writes_foreign_token_to_unmatched_layer():
+    from app.services.project_runtime.refresh.contracts import SourceDiff
+    from app.services.project_runtime.refresh.service import _rebind_sources
+
+    diffs = [
+        SourceDiff(logical_id="dataset:a", change_class="content"),
+        SourceDiff(logical_id="dataset:b", change_class="content"),
+    ]
+    versions = {"dataset:a": "vA", "dataset:b": "vB"}
+    doc = {
+        "sources": {"dataset:a": {"ref": "ref://a"},
+                    "dataset:b": {"ref": "ref://b"}},
+        "layers": [
+            # 精确命中 dataset:b
+            {"id": "L-b", "source": "ref://b"},
+            # 绑到未变化的 dataset:z，source 也不含任何变化源 → 必须原样保留
+            {"id": "L-z", "source": "ref://z",
+             "data_binding": {"logical_id": "dataset:z", "version_token": "vZ"}},
+        ],
+    }
+    out = _rebind_sources(doc, diffs=diffs, source_versions=versions)
+    assert out["layers"][0]["data_binding"] == {"logical_id": "dataset:b",
+                                               "version_token": "vB"}
+    # 匹配不到的 layer 不得被回退写成「首个」变化源的 logical_id/token
+    assert out["layers"][1]["data_binding"] == {"logical_id": "dataset:z",
+                                                "version_token": "vZ"}
+
+    # 单一变化源时仍回退到唯一来源（既有行为不变）
+    single = _rebind_sources(
+        {"layers": [{"id": "L1", "source": "ref://schools-v1"}]},
+        diffs=[SourceDiff(logical_id="dataset:only", change_class="content")],
+        source_versions={"dataset:only": "vOnly"},
+    )
+    assert single["layers"][0]["data_binding"] == {"logical_id": "dataset:only",
+                                                   "version_token": "vOnly"}

@@ -397,41 +397,64 @@ class RedisSessionStore(BaseSessionStore):
         )
 
         victims: list[str] = []
-        try:
-            # Insert first. Evicting before the write used to delete live refs
-            # and then return an unavailable sentinel if the insert pipeline
-            # hit RedisError — silent data loss at capacity.
-            async with self._r.pipeline() as pipe:
-                from app.services.session_control_refs import is_control_ref
-                if is_control_ref(ref_id):
-                    from app.services.session_control_budget import prepare_redis_write, queue_redis_evictions
-                    victims, aliases = await prepare_redis_write(pipe, self, session_id, ref_id, data, payload_json)
-                    pipe.multi()
-                    queue_redis_evictions(pipe, self, session_id, victims, aliases)
-                pipe.hsetnx(
-                    self._state_key(session_id),
-                    "_started_at",
-                    # BUG-09：直接存 ISO 字符串，不再 json.dumps（旧实现双重编码：
-                    # isoformat() 已是 str，再 json.dumps 会多套一层引号）。
-                    datetime.now(timezone.utc).isoformat(),
+        # P1: control-ref 写（prepare_redis_write 的 WATCH）与并发 plan /
+        # checkpoint 写竞争时，EXEC 抛的是 WatchError —— 它是 RedisError 的子类，
+        # 落到下面的 RedisError 分支会被当成 Redis 故障，把 plan/checkpoint 写入
+        # 静默换成 ref:redis-unavailable-* 伪 ref 且不重试。乐观锁冲突只需用
+        # 全新 pipeline 重读快照后重写（prepare_redis_write 在循环内被重新调用），
+        # 必须与真正的 Redis 故障分开处理；用尽次数才按原语义降级（不抛，
+        # 保持审计 C3 的 chat turn 隔离）。
+        for _attempt in range(3):
+            if _attempt:
+                # 小退避 + 抖动：削平并发 control-ref 写风暴下的连续碰撞。
+                await asyncio.sleep(0.01 * _attempt + (random.randrange(100)) / 10000)
+            try:
+                # Insert first. Evicting before the write used to delete live refs
+                # and then return an unavailable sentinel if the insert pipeline
+                # hit RedisError — silent data loss at capacity.
+                async with self._r.pipeline() as pipe:
+                    from app.services.session_control_refs import is_control_ref
+                    if is_control_ref(ref_id):
+                        from app.services.session_control_budget import prepare_redis_write, queue_redis_evictions
+                        victims, aliases = await prepare_redis_write(pipe, self, session_id, ref_id, data, payload_json)
+                        pipe.multi()
+                        queue_redis_evictions(pipe, self, session_id, victims, aliases)
+                    pipe.hsetnx(
+                        self._state_key(session_id),
+                        "_started_at",
+                        # BUG-09：直接存 ISO 字符串，不再 json.dumps（旧实现双重编码：
+                        # isoformat() 已是 str，再 json.dumps 会多套一层引号）。
+                        datetime.now(timezone.utc).isoformat(),
+                    )
+                    pipe.expire(self._state_key(session_id), STATE_TTL)
+                    pipe.sadd(self._active_key(), session_id)
+                    pipe.set(data_key, payload_json, ex=DATA_TTL)
+                    pipe.set(descriptor_key, json.dumps(descriptor.to_dict(), ensure_ascii=False), ex=DATA_TTL)
+                    # V5-E: mint content revision 1 for the new ref identity.
+                    pipe.hset(self._ref_revisions_key(session_id), ref_id, 1)
+                    # The revision hash must not outlive the session (no orphaned
+                    # hashes after DATA_TTL) — refresh TTL alongside the state hash.
+                    pipe.expire(self._ref_revisions_key(session_id), STATE_TTL)
+                    pipe.zadd(order_key, {ref_id: time.time()})
+                    pipe.sadd(self._index_key(session_id), ref_id)
+                    self._refresh_session_ttl(pipe, session_id)
+                    await pipe.execute()
+                break
+            except aioredis.WatchError:
+                # 并发写改写了被 WATCH 的 keys —— 重读快照后重试（循环顶部
+                # 的 prepare_redis_write 重新 zrange/mget/hgetall）。
+                continue
+            except aioredis.RedisError as e:
+                logger.error(
+                    "Redis store failed for session %s (prefix=%s): %s — returning unavailable ref",
+                    session_id, prefix, e,
                 )
-                pipe.expire(self._state_key(session_id), STATE_TTL)
-                pipe.sadd(self._active_key(), session_id)
-                pipe.set(data_key, payload_json, ex=DATA_TTL)
-                pipe.set(descriptor_key, json.dumps(descriptor.to_dict(), ensure_ascii=False), ex=DATA_TTL)
-                # V5-E: mint content revision 1 for the new ref identity.
-                pipe.hset(self._ref_revisions_key(session_id), ref_id, 1)
-                # The revision hash must not outlive the session (no orphaned
-                # hashes after DATA_TTL) — refresh TTL alongside the state hash.
-                pipe.expire(self._ref_revisions_key(session_id), STATE_TTL)
-                pipe.zadd(order_key, {ref_id: time.time()})
-                pipe.sadd(self._index_key(session_id), ref_id)
-                self._refresh_session_ttl(pipe, session_id)
-                await pipe.execute()
-        except aioredis.RedisError as e:
+                return f"{UNAVAILABLE_REF_PREFIX}{uuid.uuid4().hex[:16]}"
+        else:
             logger.error(
-                "Redis store failed for session %s (prefix=%s): %s — returning unavailable ref",
-                session_id, prefix, e,
+                "Redis store gave up after 3 WatchError retries for session %s "
+                "(prefix=%s, concurrent control-ref writes) — returning unavailable ref",
+                session_id, prefix,
             )
             return f"{UNAVAILABLE_REF_PREFIX}{uuid.uuid4().hex[:16]}"
         # RUN-06: a new ref must be visible to the next get_session_metadata /

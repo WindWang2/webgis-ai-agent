@@ -904,7 +904,10 @@ def query_gd_poi(
             code = _adcode_literal(str(raw).strip())
             if not code:
                 continue
-            if len(code) == 4:  # 市级前缀
+            # 省级编码（_resolve_district_codes 把 510000 归一为 '51'）与市级
+            # 4 位前缀同样按范围展开——与 adcode 参数的 2 位处理一致；此前非
+            # 4 位一律走精确匹配，adcode='51' 恒 0 行。
+            if len(code) in (2, 4):  # 省级 2 位 / 市级 4 位前缀
                 nxt = code[:-1] + chr(ord(code[-1]) + 1)
                 d_ogr.append(f"(adcode >= '{code}' AND adcode < '{nxt}')")
                 d_sql.append("(adcode >= ? AND adcode < ?)")

@@ -81,6 +81,26 @@ class TestCategoryBuckets:
         assert other["other_overflow"] is False
         assert out["truncated"] is True
 
+    def test_other_bucket_mean_recomputed_from_raw_values(self):
+        """E09/P1-00：other 桶 mean 由原始数值重算，不可均值再平均。"""
+        feats = []
+        # 64 个 kept 组：count=5、v=10（计数最高，稳占 kept）
+        for i in range(contract.MAX_CATEGORY_GROUPS):
+            for _ in range(5):
+                feats.append(_feat({"cat": f"k{i:03d}", "v": 10}))
+        # 两个溢出组：数值个数不同（3 vs 1）、均值不同（30 vs 90）
+        for _ in range(3):
+            feats.append(_feat({"cat": "o1", "v": 30}))
+        feats.append(_feat({"cat": "o2", "v": 90}))
+        out = category_buckets(
+            feats, _chart(field="cat", aggregation="mean", value_field="v"),
+            where=None)
+        other = next(r for r in out["rows"] if r["is_other"])
+        assert out["truncated"] is True and other["count"] == 4
+        # oracle：原始值 (30,30,30,90) → 全体均值 45；
+        # 各组均值再平均会得 (30+90)/2 = 60（未加权，违反诚实规则）
+        assert other["mean"] == 45.0
+
     def test_real_other_category_name_not_confused(self):
         """E12：真实类别名 __other__ 与溢出桶分立。"""
         feats = [_feat({"cat": "__other__"}), _feat({"cat": "z"})]

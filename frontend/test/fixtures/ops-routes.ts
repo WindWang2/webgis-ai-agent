@@ -63,9 +63,13 @@ export function installOpsRoutes(stub: ApiStub): ApiStub {
     .on('GET', '/api/v1/geocompute/runs/run-cluster-400/events', stateful({
       ok: (ctx: { search: URLSearchParams }) => {
         const afterId = Number(ctx.search.get('after_id') ?? '0');
-        return afterId === 0
-          ? { run_id: 'run-cluster-400', events: runEventPages[0], after_id: 5, count: 5 }
-          : { run_id: 'run-cluster-400', events: runEventPages[1], after_id: 19, count: 14 };
+        // 游标续读：返回首个尾部 id > after_id 的页（对齐后端 id > after_id 的
+        // 有序读窗口）；越过末页后空页且游标不前移（后端 next_after 语义）。
+        // 旧实现对任意 after_id≠0 都返回第二页，第三页终态永不可达。
+        const page = runEventPages.find((events) => events[events.length - 1].id > afterId);
+        if (!page) return { run_id: 'run-cluster-400', events: [], after_id: afterId, count: 0 };
+        const last = page[page.length - 1];
+        return { run_id: 'run-cluster-400', events: page, after_id: last.id, count: page.length };
       },
       empty: { run_id: 'run-cluster-400', events: [], after_id: 0, count: 0 },
       error: clusterUnavailableErrorFixture,

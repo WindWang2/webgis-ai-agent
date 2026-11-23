@@ -3003,10 +3003,14 @@ def compile_mapspec_to_svg_detailed(
             # 作者计划编译失败必须诚实披露，不得伪装成一张空白成功图。
             _emit_diag("print_layout_compile_failed",
                        detail=f"{type(_compile_exc).__name__}: {str(_compile_exc)[:160]}")
+        # P1 review fix：整函数 catch-all 的空白占位图不得伪装成一张"成功的
+        # 空图" —— 任何路径（不止 print_layout）都以产物内
+        # data-export-degraded 标记如实披露（与 3D 透视降级、report 超时
+        # 占位同一词汇；词表内无"整链编译失败"码，故走产物内披露）。
         w_fallback = min(width, 16384) if isinstance(width, (int, float)) and width > 0 else 1200
         h_fallback = min(height, 16384) if isinstance(height, (int, float)) and height > 0 else 800
         return SvgCompilation(
-            svg=f"""<svg width="{int(w_fallback)}" height="{int(h_fallback)}" viewBox="0 0 {int(w_fallback)} {int(h_fallback)}" xmlns="http://www.w3.org/2000/svg">
+            svg=f"""<svg data-export-degraded="true" data-export-degraded-reason="svg_compile_failed" width="{int(w_fallback)}" height="{int(h_fallback)}" viewBox="0 0 {int(w_fallback)} {int(h_fallback)}" xmlns="http://www.w3.org/2000/svg">
   <rect width="100%" height="100%" fill="#ffffff" />
   <g class="mapspec-vector-layers">
   </g>

@@ -307,16 +307,30 @@ def freeze_source(snapshot: Any, run_dir: Path) -> Dict[str, Any]:
 
 
 def verify_frozen(run_dir: Path, expect: Dict[str, Any]) -> Path:
-    """执行前复核冻结件（存在 + sha256 + 行数）→ 冻结件路径。"""
-    frozen = run_dir / (contracts.FROZEN_SOURCE_NAME + ".parquet")
+    """执行前复核冻结件（存在 + sha256 + 行数）→ 冻结件路径。
+
+    载体按冻结证据 ``carrier`` 解析（parquet | json）：无 pyarrow 时 payload
+    源冻结件是 ``source-frozen.json``（freeze_source 的 json 载体；执行体
+    ``_iter_frozen_features`` 同样双载体读取）—— 只认 parquet 会把这类合法
+    冻结件误报成"冻结源缺失"。
+    """
+    carrier = expect.get("carrier") or "parquet"
+    if carrier not in ("parquet", "json"):
+        raise CoordinateOperationError(
+            "internal_error", f"未知冻结载体 {carrier!r}（run staging 不完整）")
+    frozen = run_dir / (contracts.FROZEN_SOURCE_NAME + "." + carrier)
     if not frozen.is_file():
         raise CoordinateOperationError(
             "internal_error", "冻结源缺失（run staging 不完整）")
     if _file_sha256(frozen) != expect["frozen_sha256"]:
         raise CoordinateOperationError(
             "internal_error", "冻结源 sha256 漂移（staging 被外部改动）")
-    from pyarrow import parquet as pq
+    if carrier == "parquet":
+        from pyarrow import parquet as pq
 
-    if int(pq.read_metadata(str(frozen)).num_rows) != int(expect["row_count"]):
+        n = int(pq.read_metadata(str(frozen)).num_rows)
+    else:
+        n = len(json.loads(frozen.read_text(encoding="utf-8"))["features"])
+    if n != int(expect["row_count"]):
         raise CoordinateOperationError("internal_error", "冻结源行数漂移")
     return frozen

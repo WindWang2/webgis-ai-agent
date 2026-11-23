@@ -738,6 +738,13 @@ def _shared_legend_band_svg(
     if not entries:
         return ""
     unit = str(shared.get("unit") or "")
+
+    def _esc(s: str) -> str:
+        # 与孪生 _esc_html / _render_toc_svg._esc 同链（html.escape
+        # quote=True）—— label/color/field 均来自用户 spec，未转义时
+        # 单文件 SVG 导出可被注入脚本（属性面 color 尤须 quote）。
+        return _html.escape(s, quote=True)
+
     parts: List[str] = []
     x = 24
     y = 10
@@ -745,10 +752,10 @@ def _shared_legend_band_svg(
         color = str(e.get("color") or "#cccccc")
         label = str(e.get("label") or "")
         parts.append(
-            f'<rect x="{x}" y="{y}" width="18" height="12" fill="{color}" '
+            f'<rect x="{x}" y="{y}" width="18" height="12" fill="{_esc(color)}" '
             f'fill-opacity="0.6" stroke="#94a3b8" stroke-width="0.5"/>'
             f'<text x="{x + 24}" y="{y + 10}" font-family="sans-serif" '
-            f'font-size="12" fill="#0f172a">{label}</text>'
+            f'font-size="12" fill="#0f172a">{_esc(label)}</text>'
         )
         x += 24 + 8 * min(len(label), 18) + 24
         if x > w_px - 160:
@@ -756,7 +763,7 @@ def _shared_legend_band_svg(
     field_label = str(shared.get("field") or "") + (f"（{unit}）" if unit else "")
     header = (
         f'<text x="24" y="-2" font-family="sans-serif" font-size="11" '
-        f'fill="#475569">Shared classification · {field_label}</text>'
+        f'fill="#475569">Shared classification · {_esc(field_label)}</text>'
     )
     return header + "".join(parts)
 

@@ -261,3 +261,37 @@ def test_observe_session_crs_from_profile_and_measure_fallback():
 
     empty = observe_session({}, {})
     assert empty.aoi_bbox is None and empty.datasets == []
+
+
+def _snapshot_with_viewport(bounds):
+    """Minimal gis_situation snapshot fake: geographic.viewport SitFact
+    (frontend observed — center/zoom/bearing/pitch/bounds)."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(geographic=SimpleNamespace(viewport=SimpleNamespace(
+        value={"center": [104.0, 30.6], "zoom": 9, "bounds": bounds})))
+
+
+def test_snapshot_viewport_fallback_never_reads_as_analysis_drift():
+    """The snapshot ``geographic.viewport`` is the frontend viewport, which
+    moves on every pan. It must carry ``aoi_is_viewport`` like the state /
+    MapSpec paths — otherwise each pan reads as an analysis-extent drift and
+    AOI_CHANGED stales every spatial conclusion."""
+    wc = _wc_with_finding()
+    obs = observe_session(
+        {}, {}, situation_snapshot=_snapshot_with_viewport([103.0, 30.6, 103.4, 30.9]))
+    assert obs.aoi_bbox == [103.0, 30.6, 103.4, 30.9]
+    assert obs.aoi_is_viewport is True
+    assert diff_against(wc, obs) == []          # viewport ≠ analysis extent
+
+    panned = observe_session(
+        {}, {}, situation_snapshot=_snapshot_with_viewport([103.2, 30.7, 103.6, 31.0]))
+    assert diff_against(wc, panned) == []       # a pan is not a drift
+
+    # An explicit analysis extent still wins and stays a real extent.
+    explicit = observe_session(
+        {"analysis_aoi": {"bounds": [102.9, 30.5, 104.5, 31.5]}}, {},
+        situation_snapshot=_snapshot_with_viewport([103.0, 30.6, 103.4, 30.9]))
+    assert explicit.aoi_bbox == [102.9, 30.5, 104.5, 31.5]
+    assert explicit.aoi_is_viewport is False
+    assert diff_against(wc, explicit) == []    # unchanged extent → no drift

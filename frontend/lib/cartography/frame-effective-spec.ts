@@ -332,6 +332,10 @@ export function resolveFrameEffectiveSpec(
         legend.breaks = breaks;
         if (typeof shared.method === 'string' && shared.method) legend.method = shared.method;
         legend.k = breaks.length - 1;
+        // prevPalette 必须在覆写前取：覆写后 legend.palette 恒等于
+        // shared.palette，paletteChanged 会恒 false（旧色带被留下 → 与
+        // 新 palette 同值不同色）。
+        const prevPalette = typeof legend.palette === 'string' ? legend.palette : null;
         if (typeof shared.palette === 'string' && shared.palette) legend.palette = shared.palette;
         legend.shared_scope = true; // 同域分级标记（渲染/图例可识别）
         // palette_colors 一致性（M6）：类数与既有色带不一致或 palette 变更
@@ -340,8 +344,9 @@ export function resolveFrameEffectiveSpec(
         const prevColors = Array.isArray(legend.palette_colors) ? legend.palette_colors : null;
         const paletteChanged =
           typeof shared.palette === 'string' &&
-          !!legend.palette &&
-          shared.palette !== legend.palette;
+          !!shared.palette &&
+          !!prevPalette &&
+          shared.palette !== prevPalette;
         if (!prevColors || prevColors.length !== breaks.length - 1 || paletteChanged) {
           delete legend.palette_colors;
           disclosures.push('shared_expression_palette_colors_not_recomputed');

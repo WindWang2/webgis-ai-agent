@@ -118,17 +118,20 @@ class NetworkClosestFacilityService:
         dest_labels = od["dest_labels"]
         profile_name = profile.name if profile else "driving"
 
-        # candidate pairs, keyed by the per-demand grouping key, with their OD
-        # costs — no Route objects are built here.
-        per_demand: Dict[str, List[Tuple[float, Any, Any, Facility, ODPairInfo]]] = {}
-        for dem_idx, dem in enumerate(normalized_demands):
+        # candidate pairs, keyed by the per-demand INDEX, with their OD costs —
+        # no Route objects are built here. The key must be the index, not the
+        # demand_id: two demand points may legitimately share an id (GeoJSON
+        # features with duplicate ids, directly constructed DemandPoints), and
+        # keying by id merged their candidate pools — top-K was then selected
+        # across the union (silently dropping routes) and the unmatched audit
+        # below could no longer see a demand that received no route.
+        per_demand: Dict[int, List[Tuple[float, Any, Any, Facility, ODPairInfo]]] = {}
+        for dem_idx in range(len(normalized_demands)):
             for fac_idx, fac in enumerate(normalized_facilities):
                 if travel_direction == "facility_to_incident":
                     o_label, d_label = origin_labels[fac_idx], dest_labels[dem_idx]
-                    o_id, d_id = fac.facility_id, dem.demand_id
                 else:
                     o_label, d_label = origin_labels[dem_idx], dest_labels[fac_idx]
-                    o_id, d_id = dem.demand_id, fac.facility_id
 
                 info = od["pairs"].get((o_label, d_label))
                 # Issue #456: a demand point located exactly AT a facility has
@@ -144,7 +147,7 @@ class NetworkClosestFacilityService:
                 if cutoff_cost is not None and info["cost"] > cutoff_cost:
                     continue
 
-                key = o_id if travel_direction == "incident_to_facility" else d_id
+                key = dem_idx
                 per_demand.setdefault(key, []).append(
                     (info["cost"], o_label, d_label, fac, info)
                 )
@@ -152,19 +155,20 @@ class NetworkClosestFacilityService:
         # Top-K selection per demand on costs only (stable sort: exact ties
         # keep demand×facility insertion order, same as sorting built Routes
         # by total_cost did).
-        selected: Dict[str, List[Tuple[Any, Any, Facility, ODPairInfo]]] = {}
+        selected: Dict[int, List[Tuple[Any, Any, Facility, ODPairInfo]]] = {}
         for key, candidates in per_demand.items():
             candidates.sort(key=lambda c: c[0])
             selected[key] = [(o, d, f, i) for _, o, d, f, i in candidates[:target_facility_count]]
 
         routes: List[Route] = []
         matched_pairs_count = 0
-        for key in sorted(selected):
+        for key in sorted(selected, key=lambda i: normalized_demands[i].demand_id):
+            demand_id = normalized_demands[key].demand_id
             for o_label, d_label, fac, info in selected[key]:
                 if travel_direction == "facility_to_incident":
-                    o_id, d_id = fac.facility_id, key
+                    o_id, d_id = fac.facility_id, demand_id
                 else:
-                    o_id, d_id = key, fac.facility_id
+                    o_id, d_id = demand_id, fac.facility_id
                 route = self.router.build_route_from_path(
                     od["graph_view"], info["path"],
                     origin_label=o_label, destination_label=d_label,
@@ -189,7 +193,7 @@ class NetworkClosestFacilityService:
         # 使覆盖缺口可审计（unreachable 个体报告；全图不连通仍由上层
         # DisconnectedNetwork 语义负责）。
         unmatched_demand_ids = [
-            d.demand_id for d in normalized_demands if d.demand_id not in selected
+            d.demand_id for i, d in enumerate(normalized_demands) if i not in selected
         ]
         summary["unmatched_demand_count"] = len(unmatched_demand_ids)
         summary["unmatched_demand_ids"] = unmatched_demand_ids

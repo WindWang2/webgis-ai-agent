@@ -424,3 +424,84 @@ async def test_invalid_reason_taxonomy_end_to_end(rs_env, raster_factory,
     assert reasons["ok"] is None
     assert reasons["nod"] == "nodata"
     assert reasons["nan"] == "non_finite"
+
+
+# ── P1（jobs.py:110）：产物被 GC 后不得复用 completed 幂等行空转 ───────
+
+async def test_gc_outputs_completed_job_row_reruns_and_publishes(
+        rs_env, raster_factory, seed_points_ref):
+    """产物被清掉（收据短路不命中）而幂等 job 行仍在 TTL 内 completed：
+    再次执行必须真的重跑并发布新收据，不能复用终态行空转（内联路径）。"""
+    from app.services.artifact_registry import (
+        fabric_parquet_path,
+        fabric_parquet_ref_exists,
+    )
+
+    out = await _make_point_plan(rs_env, raster_factory, seed_points_ref)
+    plan_id = out["plan"]["plan_id"]
+    first = await rs_service.execute(
+        session_id=SESS, plan_id=plan_id, owner_token=None,
+        background=False, trusted_dispatch=True)
+    first_ref = first["receipt"].outputs["sample_table_ref"]
+    assert fabric_parquet_ref_exists(SESS, first_ref)
+    first_job = (await rs_service.status(
+        session_id=SESS, plan_id=plan_id))["job"]
+    assert first_job["status"] == "completed"
+
+    # GC：产物 parquet 被清掉（收据与 completed job 行都还在复用 TTL 内）
+    os.unlink(fabric_parquet_path(SESS, first_ref))
+    assert not fabric_parquet_ref_exists(SESS, first_ref)
+
+    second = await rs_service.execute(
+        session_id=SESS, plan_id=plan_id, owner_token=None,
+        background=False, trusted_dispatch=True)
+    receipt = second.get("receipt")
+    assert receipt is not None, second
+    # 重算发布的新收据，且产物重新存活（而非复用死收据）
+    assert receipt.execution_id != first["receipt"].execution_id
+    assert fabric_parquet_ref_exists(SESS, receipt.outputs["sample_table_ref"])
+    # 新 job 行接管幂等键，旧的 completed 行不再被复用
+    second_job = (await rs_service.status(
+        session_id=SESS, plan_id=plan_id))["job"]
+    assert second_job["job_id"] != first_job["job_id"]
+    assert second_job["status"] == "completed"
+    results = await rs_service.results(
+        session_id=SESS, plan_id=plan_id, owner_token=None, page=1, per_page=50)
+    assert len(results["rows"]) == 3
+
+
+async def test_gc_outputs_background_submit_does_not_spin(
+        rs_env, raster_factory, seed_points_ref):
+    """同一 GC 场景的 background=True：不得只回一个永不执行的 running。"""
+    from app.services.artifact_registry import (
+        fabric_parquet_path,
+        fabric_parquet_ref_exists,
+    )
+
+    out = await _make_point_plan(rs_env, raster_factory, seed_points_ref)
+    plan_id = out["plan"]["plan_id"]
+    first = await rs_service.execute(
+        session_id=SESS, plan_id=plan_id, owner_token=None,
+        background=False, trusted_dispatch=True)
+    os.unlink(fabric_parquet_path(SESS, first["receipt"].outputs["sample_table_ref"]))
+    assert not fabric_parquet_ref_exists(
+        SESS, first["receipt"].outputs["sample_table_ref"])
+
+    submitted = await rs_service.execute(
+        session_id=SESS, plan_id=plan_id, owner_token=None,
+        background=True, trusted_dispatch=True)
+    assert submitted.get("job_id")
+
+    # 轮询到终态：复用的旧 completed 行会永远停在同一行上（空转）
+    deadline = asyncio.get_event_loop().time() + 30.0
+    while True:
+        state = await rs_service.status(session_id=SESS, plan_id=plan_id)
+        if state["job"]["status"] not in ("pending", "queued", "running",
+                                          "cancelling"):
+            break
+        assert asyncio.get_event_loop().time() < deadline, "background job 空转"
+        await asyncio.sleep(0.05)
+    assert state["job"]["job_id"] == submitted["job_id"]
+    assert state["job"]["status"] == "completed"
+    assert state["latest_receipt"] is not None
+    assert state["outputs_alive"]["sample_table"] is True

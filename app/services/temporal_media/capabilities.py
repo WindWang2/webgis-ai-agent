@@ -149,7 +149,8 @@ _NON_REPRODUCIBLE_SOURCES = frozenset((
 ))
 
 
-def layer_support(document: Dict[str, Any], temporal: Dict[str, Any]) -> Dict[str, Any]:
+def layer_support(document: Dict[str, Any],
+                  temporal: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """输入/层类型支持矩阵：逐层给出可冻结路径或 typed 阻断原因。
 
     - 时序绑定层必须是带 ``inlineData.features`` 的内联矢量源；MVT 瓦片样本
@@ -158,7 +159,15 @@ def layer_support(document: Dict[str, Any], temporal: Dict[str, Any]) -> Dict[st
     - ``numeric_raster`` 有已提交 ``raster_style`` 时复用 G26 冻结绑定做静态
       背景（同一冻结背景贯穿全部帧）；无表达则不可重现；
     - 外部底图 / 3D / hillshade / 时变栅格 / cube 一律不可重现。
+
+    ``temporal`` 允许为 None：``freeze_document`` 在 ``build_frozen`` 校验前
+    就会为解析静态栅格绑定而调用本函数，无绑定会话必须走 typed
+    NO_TEMPORAL_BINDING，不得在此抛 AttributeError。
     """
+    # 无 temporal 绑定时归一为空配置：绑定披露照常返回，typed 拒绝交给
+    # build_frozen 的 NO_TEMPORAL_BINDING（freeze.py:250 先于该校验调用）。
+    if not isinstance(temporal, dict):
+        temporal = {}
     sources = document.get("sources") if isinstance(document.get("sources"), dict) else {}
     layers = document.get("layers") if isinstance(document.get("layers"), list) else []
     bindings = [str(b.get("layer_id") or "") for b in (temporal.get("layers") or [])

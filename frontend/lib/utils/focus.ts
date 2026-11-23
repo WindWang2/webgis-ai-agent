@@ -2,7 +2,9 @@
  * getTabbableIn — 从 history-drawer 提取的 focus-trap 工具（UI V3 共用）。
  *
  * 返回容器内所有可 Tab 到达的元素（按 DOM 顺序），供 drawer / dialog 实现
- * focus trap 与初始聚焦。只统计可见元素（offsetParent !== null）。
+ * focus trap 与初始聚焦。只统计可见元素（有布局盒：offsetParent 非 null，
+ * 或 getClientRects 非空 —— position:fixed 元素 offsetParent 恒为 null，
+ * 不能单凭它判不可见）。
  */
 export const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -10,7 +12,10 @@ export const FOCUSABLE_SELECTOR =
 export function getTabbableIn(container: HTMLElement | null): HTMLElement[] {
   if (!container) return [];
   return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
-    (el) => el.offsetParent !== null
+    // position:fixed 元素（视口包含块）offsetParent 恒为 null 但可见可 Tab，
+    // 用 getClientRects 兜底，否则 fixed 定位的 drawer/dialog 内控件会被
+    // 误判不可见，trapTabKey 随即对每次 Tab preventDefault 且无焦点目标。
+    (el) => el.offsetParent !== null || el.getClientRects().length > 0
   );
 }
 

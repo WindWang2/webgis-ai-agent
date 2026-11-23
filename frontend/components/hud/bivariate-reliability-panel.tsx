@@ -263,7 +263,10 @@ export function BivariateReliabilityPanel({ layerId }: Props) {
       setPreview(null);
       setPreviewError(asG41Error(err));
     } finally {
-      if (epoch === epochRef.current && gen === reqGenRef.current) setBusy(false);
+      // 预览可能被 Cancel（reqGenRef+1）或切层/liveRevision（epochRef+1）作废，
+      // 但作废只意味着丢弃这次结果；busy 必须无条件释放，否则预览/应用按钮
+      // 会永久禁用，只能重挂面板恢复（复审 P1）。与 runCommit 同一原则。
+      setBusy(false);
     }
   }, [ctx, buildPlan, layerId, formKey]);
 

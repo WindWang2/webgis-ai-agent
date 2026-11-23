@@ -439,7 +439,9 @@ async def _verify(repaired: Any, verify_evaluator: Optional[Any]) -> Dict[str, A
         else:
             from app.services.data_quality.engine import evaluate_payload
 
-            report = await asyncio.to_thread(evaluate_payload, repaired)
+            # evaluate_payload 只接受 {"geojson": ...} 信封；裸 FeatureCollection
+            # 会让 _extract_inputs 恒抛 → residual 恒 error、apply 永不 verified。
+            report = await asyncio.to_thread(evaluate_payload, {"geojson": repaired})
         if isinstance(report, dict):
             overall = str(report.get("overall_status", ""))
             return {

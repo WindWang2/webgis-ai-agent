@@ -5,6 +5,7 @@
 - P3-6：strict_publish_gate 对 worker/attempt 缺失 fail-closed
 - P3-7：预览 findings 区分输入/输出非有限
 - P1-2：线程内进度上报真实落库（async handle）
+- P1（波次三）：verify_frozen 按 carrier 复核 json 冻结件（无 pyarrow 环境）
 """
 from __future__ import annotations
 
@@ -246,3 +247,80 @@ class TestP25StartupRecovery:
         out = _run(service.recover_all())
         actions = {c["run_id"]: c["action"] for c in out["converged"]}
         assert actions.get(run["run_id"]) == "receipt_finalized"
+
+
+class TestP1JsonCarrierVerifyFrozen:
+    """P1（波次三）：verify_frozen 必须按载体复核冻结件。
+
+    无 pyarrow 时 ``freeze_source`` 对 payload 源产出 carrier="json" 的
+    ``source-frozen.json``（执行体 ``_iter_frozen_features`` 双载体可读）；
+    verify_frozen 只认 parquet 会把它误报"冻结源缺失" —— session_ref 源的
+    全部坐标操作在该环境不可执行。
+    """
+
+    @staticmethod
+    def _snapshot(features):
+        import types
+
+        return types.SimpleNamespace(
+            parquet_path=None,
+            payload={"type": "FeatureCollection", "features": features,
+                     "properties": {"schema_info": {"crs": "EPSG:4326"}}},
+            row_count=len(features),
+            crs="EPSG:4326",
+            content_fingerprint="a" * 64,
+            kind="session_ref",
+            geometry={"types": ["Point"]},
+        )
+
+    def _freeze_json(self, tmp_path, monkeypatch, features):
+        import sys
+
+        from app.services.coordinate_operations import freeze
+
+        run_dir = tmp_path / "run"
+        # 无 pyarrow 环境：block 掉 pyarrow 使 freeze_source 走 json 载体
+        monkeypatch.setitem(sys.modules, "pyarrow", None)
+        return run_dir, freeze, freeze.freeze_source(
+            self._snapshot(features), run_dir)
+
+    def test_json_carrier_frozen_passes_verify(self, tmp_path, monkeypatch):
+        """carrier="json" 的合法冻结件必须通过执行前复核（parquet 仍按原名找）。"""
+        run_dir, freeze, evidence = self._freeze_json(
+            tmp_path, monkeypatch, make_point_features(3))
+        assert evidence["carrier"] == "json"
+        assert (run_dir / "source-frozen.json").is_file()
+        path = freeze.verify_frozen(run_dir, evidence)
+        assert path == run_dir / "source-frozen.json"
+        assert path.is_file()
+        # parquet 载体仍解析到 .parquet（同目录无该文件 → 缺失报错不变）
+        with pytest.raises(CoordinateOperationError) as ei:
+            freeze.verify_frozen(run_dir, dict(evidence, carrier="parquet"))
+        assert ei.value.error_code == "internal_error"
+        assert "冻结源缺失" in ei.value.reason
+
+    def test_json_carrier_drift_still_blocked(self, tmp_path, monkeypatch):
+        """json 载体的 sha256 漂移 / 行数漂移 / 未知载体仍被 typed 拒绝。"""
+        run_dir, freeze, evidence = self._freeze_json(
+            tmp_path, monkeypatch, make_point_features(3))
+        frozen = run_dir / "source-frozen.json"
+
+        # sha256 漂移（staging 被外部改动）
+        frozen.write_text('{"type":"FeatureCollection","features":[]}')
+        with pytest.raises(CoordinateOperationError) as ei:
+            freeze.verify_frozen(run_dir, evidence)
+        assert ei.value.error_code == "internal_error"
+        assert "sha256" in ei.value.reason
+
+        # 行数漂移（sha 对齐但行数与证据不符）
+        drifted = dict(evidence, frozen_sha256=freeze._file_sha256(frozen))
+        with pytest.raises(CoordinateOperationError) as ei:
+            freeze.verify_frozen(run_dir, drifted)
+        assert ei.value.error_code == "internal_error"
+        assert "行数" in ei.value.reason
+
+        # 未知载体：拒绝而非静默按 parquet 猜
+        with pytest.raises(CoordinateOperationError) as ei:
+            freeze.verify_frozen(run_dir, dict(evidence, carrier="avro"))
+        assert ei.value.error_code == "internal_error"
+        assert "载体" in ei.value.reason

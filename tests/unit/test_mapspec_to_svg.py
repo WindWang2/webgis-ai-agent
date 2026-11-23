@@ -763,3 +763,25 @@ def test_ac06_hillshade_layer_emits_diagnostic_not_silent():
     # 该层不产出矢量元素（画面只有根元素与白色底板）
     assert "<circle" not in comp.svg
     assert "<path" not in comp.svg
+
+
+def test_catch_all_blank_fallback_is_not_a_successful_export(monkeypatch):
+    """P1 review fix：整函数 catch-all 把异常转成空白占位图时，占位图必须
+    自带 data-export-degraded 披露 —— 非 print_layout 路径此前零披露，
+    调用方拿到一张看起来"成功"的空图（黑图/白板无任何降级标记）。"""
+    import app.services.flow_product.export as flow_export
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("probe: verification chain undefended call")
+
+    monkeypatch.setattr(flow_export, "verify_flow_map_spec", _boom)
+    comp = compile_mapspec_to_svg_detailed(
+        _points_mapspec(3), target_dpi=72, width=400, height=300, padding=8,
+        include_chrome=True, bounds=[104.0, 30.0, 106.0, 31.0])
+    # 占位图：白板 + 空矢量层 + 无任何数据图元
+    assert "<circle" not in comp.svg
+    assert comp.svg.count("<rect") == 1
+    # 诚实披露进入产物本身（任何路径都不得伪成功），且挂在根元素上
+    assert 'data-export-degraded="true"' in comp.svg
+    assert 'data-export-degraded-reason="svg_compile_failed"' in comp.svg
+    assert comp.svg.startswith('<svg data-export-degraded="true" ')

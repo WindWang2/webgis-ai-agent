@@ -36,6 +36,7 @@ from app.services.data_quality.repair_transaction import (
     resolve_pipeline_ops,
     run_repair_transaction,
 )
+from app.services.data_quality.repair_transaction import _verify
 
 
 @pytest.fixture(autouse=True)
@@ -225,6 +226,52 @@ class TestTransaction:
         with pytest.raises(ValueError):
             await run_repair_transaction(
                 geojson=payload, plan=plan, operations=ops, mode="rollback")
+
+
+class TestVerifyResidual:
+    """默认 verify 路径必须按 evaluate_payload 的信封契约调用。
+
+    旧实现把裸 FeatureCollection 直接传给只接受 ``{"geojson": ...}`` 信封的
+    ``evaluate_payload`` → ``_extract_inputs`` 恒抛 → ``residual_status`` 恒
+    ``error``、apply 永不 verified（未注入 verify_evaluator 时）。
+    """
+
+    @pytest.mark.asyncio
+    async def test_default_verify_returns_real_rule_verdict(self):
+        fc = {
+            "type": "FeatureCollection",
+            "crs": {"type": "name", "properties": {"name": "urn:ogc:def:crs:EPSG::4326"}},
+            "features": [
+                {"type": "Feature",
+                 "geometry": {"type": "Point", "coordinates": [1.0, 2.0]},
+                 "properties": {"id": 2}},
+            ],
+        }
+        result = await _verify(fc, None)
+        assert "verify_error" not in result, (
+            "默认 verify 不得把信封契约违例伪装成 error 残留")
+        assert result["residual_status"] == "pass"
+        assert result["failed_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_apply_reaches_verified_without_injected_evaluator(self):
+        payload = {
+            "type": "FeatureCollection",
+            "crs": {"type": "name", "properties": {"name": "urn:ogc:def:crs:EPSG::4326"}},
+            "features": [
+                {"type": "Feature", "geometry": None, "properties": {"id": 1}},
+                {"type": "Feature", "geometry": {"type": "Point", "coordinates": [1.0, 2.0]},
+                 "properties": {"id": 2, "v": 10}},
+                {"type": "Feature", "geometry": {"type": "Point", "coordinates": [1.0, 2.0]},
+                 "properties": {"id": 2, "v": 10}},
+            ],
+        }
+        plan, ops = _plan_for(payload)
+        result = await run_repair_transaction(
+            geojson=payload, plan=plan, operations=ops, mode="apply")
+        assert result["session"]["state"] == STATE_VERIFIED, (
+            "修复后复评通过时必须进 verified，不得恒 error 残留")
+        assert result["verify"]["residual_status"] == "pass"
 
 
 class TestReviewHardening:

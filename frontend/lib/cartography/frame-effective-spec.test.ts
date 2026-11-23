@@ -163,6 +163,27 @@ describe('resolveFrameEffectiveSpec', () => {
     expect(out.disclosures).toContain('shared_expression_palette_colors_not_recomputed');
   });
 
+  it('shared_expression 换 palette 但类数不变 → 旧 palette_colors 丢弃+披露（M6）', () => {
+    const s = spec();
+    // 层已有 4 类色带（Blues），与共享分级类数一致 —— 只有 palette 变了。
+    const layer = (s.layers as unknown as Array<{ legend_spec: Record<string, unknown> }>)[0];
+    layer.legend_spec.breaks = [0, 5, 10, 15, 20];
+    layer.legend_spec.palette_colors = ['#eff3ff', '#bdd7e7', '#6baed6', '#2171b5'];
+    s.frame_product!.shared_expression = {
+      field: 'per_10k', method: 'quantile', k: 4, palette: 'Viridis',
+      breaks: [0, 5, 10, 15, 20], domain_status: 'complete',
+    };
+    const out = resolveFrameEffectiveSpec(s, s.frame_product, 'f-2022');
+    const outLayer = (out.document.layers as unknown as Array<{ legend_spec?: Record<string, unknown> }>)[0];
+    expect(outLayer.legend_spec!.palette).toBe('Viridis');
+    // 旧 Blues 色带必须丢弃（thematic-paint 直消费 palette_colors ——
+    // 留下即同值不同色），并披露前端不重算。
+    expect(outLayer.legend_spec!.palette_colors).toBeUndefined();
+    expect(out.disclosures).toContain('shared_expression_palette_colors_not_recomputed');
+    // 输入不可变：原 spec 的旧色带不被就地丢弃。
+    expect(layer.legend_spec.palette_colors).toEqual(['#eff3ff', '#bdd7e7', '#6baed6', '#2171b5']);
+  });
+
   it('normalizeBoundaryValue：year_int/date_string/epoch_s + 契约时区口径', async () => {
     const { normalizeBoundaryValue } = await import('@/lib/cartography/frame-effective-spec');
     expect(normalizeBoundaryValue('2020-01-01T00:00:00Z', 'year_int')).toBe(2020);

@@ -60,6 +60,41 @@ def test_unique_constraint_race_still_dedups(ledger) -> None:
     assert result.status == "duplicate"
 
 
+def test_append_is_idempotent_for_oversized_event_id(ledger) -> None:
+    """>160 字符 event_id：判重键必须与落库键同源（review P1）。
+
+    落库侧 ``to_row_kwargs`` 把超长键收敛成 ``kind:turn_id:digest``；
+    判重若仍用原始 ``record.event_id``，重复 append 查不到既有行 →
+    唯一约束冲突 → winner 亦空 → raise（幂等契约破裂，sink 整批丢弃）。
+    """
+    import asyncio
+
+    long_id = f"{'k' * 40}:{'t' * 40}:{'c' * 260}"
+    assert len(long_id) > 160
+    first = asyncio.run(ledger.append(_rec(ledger, long_id)))
+    dup = asyncio.run(ledger.append(_rec(ledger, long_id)))
+    assert first.status == "appended"
+    assert dup.status == "duplicate"
+    assert dup.row_id == first.row_id  # 同一行——exactly-once observable
+    assert dup.event_id == first.event_id  # 摘要键一致
+
+
+def test_unique_constraint_race_still_dedups_oversized_event_id(
+    ledger, ledger_factory,
+) -> None:
+    """超长键的约束兜底路径：预查失明时 winner 回查也要用摘要键。"""
+    import asyncio
+    from tests.unit.turn_journal._blind_factory import blind_factory
+
+    long_id = f"{'k' * 40}:{'t' * 40}:{'c' * 260}"
+    asyncio.run(ledger.append(_rec(ledger, long_id)))
+    race_ledger = type(ledger)(factory=blind_factory(ledger_factory))
+    result = asyncio.run(race_ledger.append(_rec(ledger, long_id)))
+    assert result.status == "duplicate"
+    rows = asyncio.run(ledger.list_events("s-led"))
+    assert len(rows) == 1
+
+
 def test_list_events_is_bounded(ledger) -> None:
     import asyncio
 

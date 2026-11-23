@@ -351,6 +351,34 @@ def test_sar_tools_schema_and_evidence():
     assert comp["scientific_evidence"]["algorithm"] == "sar.temporal_composite"
 
 
+def test_evidence_survives_backend_diagnostic_failure(monkeypatch):
+    """backend_selection 诊断失败（additive）不得炸掉已算出的主结果。
+
+    _backend_selection_diagnostic 失败返回 None，22 处调用点以
+    ``[None]`` 传入 diagnostics=；_attach_science_evidence 曾执行
+    ``Diagnostic(**None)`` 抛 TypeError，把成功结果替换成 TOOL_ERROR。
+    """
+    import app.lib.gis.backend_selection as backend_selection
+
+    def _boom(*args, **kwargs):
+        raise KeyError("backend_selection: unknown algorithm")
+
+    monkeypatch.setattr(backend_selection, "select_backend", _boom)
+
+    registry = _make_tool_registry()
+    speckle_fn = registry._tools["sar_speckle_filter"]
+    img = np.random.RandomState(3).gamma(4.0, 25.0, size=(6, 6)).tolist()
+    payload = speckle_fn(img, filter="lee", window="3")
+
+    # 主结果完整保留 + 证据块照常挂载
+    assert payload["success"] is True
+    assert "array" in payload and payload["stats"]["total_pixels"] == 36
+    ev = payload["scientific_evidence"]
+    assert ev["algorithm"] == "sar.speckle_filter"
+    # 失败的诊断缺席，而不是 TypeError
+    assert ev["diagnostics"] == []
+
+
 def test_a6_registry_validate_and_parity():
     from app.lib.gis.algorithm_registry import get_algorithm_registry
     from app.lib.gis.capability_registry import get_capability_registry

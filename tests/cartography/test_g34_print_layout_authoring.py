@@ -711,3 +711,61 @@ def test_t26_plan_publication_pages_consumes_plan_and_paper():
     ir2 = plan_publication_pages(doc2)
     assert ir2.pages[0].paper.width_mm == 420.0
     assert ir2.pages[0].paper.height_mm == 297.0
+
+
+# ── T27：超 MAX_LINES 的换行丢弃必须被披露（不静默少行）──────────────────
+
+def test_t27_text_over_max_lines_truncation_is_disclosed_not_silent():
+    """P1 回归：``wrap_text`` 超 MAX_LINES 丢弃的行必须进回执与诊断。
+
+    触发条件：``wrap_mode="none"`` 的 MAX_LINES+8 行文字 → ``wrap_text``
+    截到 64 行；此前 ``build_draw_plan`` 丢掉 ``truncated`` 标志、诊断只看
+    ``status == "blocked"``，于是 ``serializable_receipt`` 与导出 PDF/PNG
+    都看不见这 8 行内容损失（``submit_export`` 不跑 validate_authoring）。
+    """
+    from app.services.print_layout_authoring.compile import (
+        build_draw_plan, serializable_receipt,
+    )
+    from app.services.print_layout_authoring.fonts import MAX_LINES
+
+    doc = _mapspec()
+    plan = doc["layout"]["print_layout"]
+    source_lines = MAX_LINES + 8
+    plan["components"].append({
+        "id": "notes", "kind": "text_block",
+        "frame": {"x": 15.0, "y": 150.0, "width": 120.0, "height": 40.0},
+        "typography": {"size_pt": 6.0, "line_height": 1.0, "wrap_mode": "none",
+                       "overflow_policy": "expand"},
+        "text": {"mode": "literal",
+                 "value": "\n".join(f"第{i:03d}行 说明文字"
+                                   for i in range(source_lines))},
+    })
+    draw = build_draw_plan(doc, plan, target_dpi=300,
+                           geo_bounds=[104.0, 30.0, 106.0, 31.0], page_id="main")
+    notes = next(c for c in draw["components"] if c["id"] == "notes")
+    # 内容损失如实保留在绘制计划里（不是「看起来 ok」）
+    assert notes["text"]["truncated"] is True
+    assert notes["text"]["truncated_lines"] == source_lines - MAX_LINES
+    assert len(notes["text"]["lines"]) == MAX_LINES
+    assert {"code": "TEXT_TRUNCATED", "component_id": "notes"} in draw["diagnostics"]
+    # 序列化回执（UI / Pi / 导出 manifest 消费面）同样可见
+    receipt = serializable_receipt(draw)
+    row = next(t for t in receipt["text"] if t["component_id"] == "notes")
+    assert row["truncated"] is True
+    assert row["truncated_lines"] == source_lines - MAX_LINES
+    assert any(d.get("code") == "TEXT_TRUNCATED"
+               and d.get("component_id") == "notes"
+               for d in receipt["diagnostics"])
+    # 真实导出链：SVG 只画 MAX_LINES 行 → 回执必须说明少了 8 行
+    comp = _compile(doc, dpi=300)
+    assert int(_g34_attrs(comp.svg, "notes")["data-g34-lines"]) == MAX_LINES
+    group = re.search(r'<g class="chrome-print-text" data-g34-id="notes".*?</g>',
+                      comp.svg, re.S)
+    assert group is not None
+    assert len(re.findall(r'data-g34-line="\d+"', group.group(0))) == MAX_LINES
+    exported = next(t for t in comp.print_layout_receipt["text"]
+                    if t["component_id"] == "notes")
+    assert exported["truncated"] is True
+    assert exported["truncated_lines"] == source_lines - MAX_LINES
+    assert any(d.get("code") == "TEXT_TRUNCATED"
+               for d in comp.print_layout_receipt["diagnostics"])
