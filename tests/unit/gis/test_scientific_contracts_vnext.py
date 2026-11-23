@@ -130,14 +130,29 @@ class TestCRSSafety:
         # 度数数据 vs 投影要求 → 拒
         assert not crs_class_allows("PROJECTED_REQUIRED", "geographic")
         assert not crs_class_allows("LOCAL_METRIC_REQUIRED", "geographic")
-        # 3857 是投影但不是局部度量
-        assert not crs_class_allows("PROJECTED_REQUIRED", "projected")  # generic projections may be feet/3857
+        # 3857 是投影但不是局部度量：LOCAL_METRIC_REQUIRED 拒；
+        # PROJECTED_REQUIRED 按词表接受任何投影平面坐标（含 3857，
+        # 失真进 limitations，不进硬门）
+        assert crs_class_allows("PROJECTED_REQUIRED", "projected")
         assert not crs_class_allows("LOCAL_METRIC_REQUIRED", "projected")
         assert crs_class_allows("LOCAL_METRIC_REQUIRED", "projected_local_metric")
         # 地理 OK / GEODESIC / AGNOSTIC 全放行；unknown 永远放行
         for cls in ("CRS_AGNOSTIC", "GEOGRAPHIC_OK", "GEODESIC", "RASTER_GRID"):
             assert crs_class_allows(cls, "geographic")
         assert crs_class_allows("PROJECTED_REQUIRED", "unknown")
+
+    def test_projected_required_accepts_generic_projected_crs(self):
+        """PROJECTED_REQUIRED 词表 = 任何投影平面坐标（含 3857）。
+
+        回归（review P1）：硬门曾只认 projected_local_metric，普通投影
+        CRS（classify_crs → "projected"，如 EPSG:3857）被误拒，与本模块
+        词表直接矛盾；失真问题应进 limitations，不进硬门。
+        """
+        assert classify_crs("EPSG:3857") == "projected"
+        assert crs_class_allows("PROJECTED_REQUIRED", "projected")
+        assert crs_class_allows("PROJECTED_REQUIRED", "projected_local_metric")
+        # LOCAL_METRIC_REQUIRED 仍只认局部度量（两类分支不得混同）
+        assert not crs_class_allows("LOCAL_METRIC_REQUIRED", "projected")
 
 
 # ── 科学前置条件 ─────────────────────────────────────────────────────
@@ -384,6 +399,23 @@ class TestResolverScientificGates:
             profile={"geometryTypes": ["Point"], "crs": "EPSG:32650"},
             available_tools={"spatial_stats"})
         assert res.status == "resolved"
+
+    def test_crs_class_pass_with_web_mercator(self):
+        """PROJECTED_REQUIRED × EPSG:3857（普通投影米）→ 解析成功。
+
+        回归（review P1）：硬门曾只认 projected_local_metric，3857 数据
+        （classify_crs → "projected"）触发 crs_class_mismatch 使 resolver
+        解析失败 —— 词表明确「任何投影平面坐标（含 3857）」满足该类。
+        """
+        resolver = self._resolver(AlgorithmDescriptor(
+            id="x.web_mercator_ok", name="x", capabilities=["poi_query"],
+            tool_candidates=["spatial_stats"], crs_class="PROJECTED_REQUIRED"))
+        res = resolver.resolve(
+            "poi_query",
+            profile={"geometryTypes": ["Point"], "crs": "EPSG:3857"},
+            available_tools={"spatial_stats"})
+        assert res.status == "resolved"
+        assert not any("crs_class_mismatch" in r for r in res.rejected)
 
     def test_precondition_warning_nonblocking(self):
         resolver = self._resolver(AlgorithmDescriptor(

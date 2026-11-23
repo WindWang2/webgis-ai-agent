@@ -146,4 +146,56 @@ describe('ImportWorkbench', () => {
     const opts = (useBoundedPoll as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0];
     expect(opts.enabled).toBe(false); // 无 active 批次
   });
+
+  // P1：勾选成员后 active.members[].selected 仍是陈旧 false，两个 handler
+  // 曾按它过滤，导致刚勾选成员的解释配置被整条丢弃（保存）/漏发（提交）。
+  const selectMemberAndSetMode = async () => {
+    fireEvent.click(screen.getByTestId('member-select-f:src-1'));
+    await waitFor(() => expect(api.saveImportPlan).toHaveBeenCalledWith(
+      'ib-111', 'sess-1', { selected: ['f:src-1'] }, expect.anything()
+    ));
+    fireEvent.change(screen.getByLabelText('解释模式'), { target: { value: 'points' } });
+    fireEvent.change(screen.getByLabelText('源 CRS 声明'), { target: { value: 'EPSG:32650' } });
+  };
+
+  it('P1：保存解释计划带上刚勾选成员的配置（不按陈旧 m.selected 过滤）', async () => {
+    api.listImportBatches.mockResolvedValue(listEntry('ib-111', 'inspected'));
+    api.getImportBatch.mockResolvedValue({ ...BATCH, members: [MEMBER] });
+    api.saveImportPlan.mockResolvedValue({ batch_id: 'ib-111', plan_version: 1, plan_hashes: {}, status: 'configured' });
+    render(<ImportWorkbench onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: /ib-111/ }));
+    await waitFor(() => expect(screen.getByText('table.csv')).toBeTruthy());
+
+    await selectMemberAndSetMode();
+
+    fireEvent.click(screen.getByText('保存解释计划').closest('button') as HTMLButtonElement);
+    await waitFor(() => expect(api.saveImportPlan).toHaveBeenCalledTimes(2));
+    const payload = api.saveImportPlan.mock.calls.at(-1)?.[2];
+    expect(payload.selected).toEqual(['f:src-1']);
+    expect(payload.member_configs['f:src-1']).toMatchObject({
+      mode: 'points',
+      source_crs_declared: 'EPSG:32650',
+    });
+  });
+
+  it('P1：提交前落计划包含刚勾选成员的配置（解释不静默丢失）', async () => {
+    api.listImportBatches.mockResolvedValue(listEntry('ib-111', 'inspected'));
+    api.getImportBatch.mockResolvedValue({ ...BATCH, members: [MEMBER] });
+    api.saveImportPlan.mockResolvedValue({ batch_id: 'ib-111', plan_version: 1, plan_hashes: {}, status: 'configured' });
+    api.commitImportBatch.mockResolvedValue({ status: 'committing', receipts: {} });
+    render(<ImportWorkbench onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: /ib-111/ }));
+    await waitFor(() => expect(screen.getByText('table.csv')).toBeTruthy());
+
+    await selectMemberAndSetMode();
+
+    const commitBtn = screen.getByTestId('import-commit-btn');
+    fireEvent.click(commitBtn);
+    await new Promise((r) => setTimeout(r, 300)); // ConfirmAction MIN_ARM_MS
+    fireEvent.click(commitBtn);
+    await waitFor(() => expect(api.commitImportBatch).toHaveBeenCalled());
+    const payload = api.saveImportPlan.mock.calls.at(-1)?.[2];
+    expect(payload.selected).toEqual(['f:src-1']);
+    expect(payload.member_configs['f:src-1']).toMatchObject({ mode: 'points' });
+  });
 });

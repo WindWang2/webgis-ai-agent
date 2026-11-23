@@ -1060,7 +1060,15 @@ function compileMapSpecToSvgBody(
           String(layer.id ?? ""), numericStyleId,
         );
         if (snapshot && snapshot.startsWith("data:image/")) {
-          elementsSvg += `<image x="${fmtNum(minX)}" y="${fmtNum(minY)}" width="${fmtNum(maxX - minX)}" height="${fmtNum(maxY - minY)}" href="${escapeSvgAttr(snapshot)}" opacity="${opacity}" preserveAspectRatio="none" />\n`;
+          // G20 review：放置矩形必须是**画布像素**（project 后的
+          // scaledPadding 矩形），不是经纬度值 —— minX/minY/maxX-minX 是度
+          // 数值，直接当 x/y/width/height 会把离线快照画到画布外/错尺寸
+          // （与上方瓦片分支同一投影口径：bounds + scaledPadding）。
+          const snapX = scaledPadding;
+          const snapY = scaledPadding;
+          const snapW = scaledWidth - scaledPadding * 2;
+          const snapH = scaledHeight - scaledPadding * 2;
+          elementsSvg += `<image x="${fmtNum(snapX)}" y="${fmtNum(snapY)}" width="${fmtNum(snapW)}" height="${fmtNum(snapH)}" href="${escapeSvgAttr(snapshot)}" opacity="${opacity}" preserveAspectRatio="none" />\n`;
         } else {
           // 复用既有权威词表码（layer_ref_unavailable = 未水合的层不得静默
           // 消失），detail 明确 G20 数值栅格需要离线快照。

@@ -31,7 +31,10 @@ from app.services.geocompute.plan import (
 logger = logging.getLogger(__name__)
 
 #: transform operation → (NodeCategory, geocompute op 名)。
-#: geocompute 未接线的 operation 不入表（诚实 NODE_NOT_EXECUTABLE）。
+#: geocompute 未接线的 operation 不入表（诚实 NODE_NOT_EXECUTABLE）——
+#: reproject 即属此列（ops REGISTRY 无 REPROJECT 执行体）：入表会使
+#: _input_params_for 只回传 params 不内联 features，node_params 非空时
+#: op 节点无任何输入数据仍"成功"执行（静默空/错误结果）。
 _TRANSFORM_OPS: Dict[str, Tuple[NodeCategory, str]] = {
     "buffer": (NodeCategory.VECTOR_OPERATION, "buffer"),
     "clip": (NodeCategory.VECTOR_OPERATION, "clip"),
@@ -39,7 +42,6 @@ _TRANSFORM_OPS: Dict[str, Tuple[NodeCategory, str]] = {
     "overlay": (NodeCategory.VECTOR_OPERATION, "overlay"),
     "filter": (NodeCategory.FILTER, ""),
     "aggregate": (NodeCategory.AGGREGATE, ""),
-    "reproject": (NodeCategory.REPROJECT, ""),
 }
 
 #: 适配器内联输入的行数硬上界（无 budget 时的兜底；正常走 plan budget）。

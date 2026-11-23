@@ -89,6 +89,67 @@ async def test_parse_csv_with_nulls():
     assert structured.fields[1].nullable_ratio == 0.5
 
 
+def _xlsx_bytes_without_dimension(rows) -> bytes:
+    """Build an .xlsx whose <dimension> element is removed.
+
+    openpyxl read-only mode sizes every row to ``max_column``, which normally
+    hides ragged rows. Producers that omit <dimension> leave it None, so rows
+    keep their real, ragged lengths — the only shape in which the old
+    ``zip(headers, row, strict=True)`` raised and aborted the whole dataset.
+    """
+    import io
+    import re
+    import zipfile
+
+    import openpyxl
+
+    workbook = openpyxl.Workbook()
+    for row in rows:
+        workbook.active.append(row)
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+    source = zipfile.ZipFile(io.BytesIO(buffer.getvalue()))
+    stripped = io.BytesIO()
+    with zipfile.ZipFile(stripped, "w", zipfile.ZIP_DEFLATED) as target:
+        for item in source.infolist():
+            data = source.read(item.filename)
+            if item.filename.startswith("xl/worksheets/sheet"):
+                data = re.sub(rb"<dimension[^>]*/>", b"", data)
+            target.writestr(item, data)
+    return stripped.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_parse_excel_ragged_rows_do_not_abort_dataset():
+    """Rows whose cell count differs from the header row must be tolerated.
+
+    ``dict(zip(headers, row, strict=True))`` raised ValueError on the first
+    such row and killed the entire dataset; ``_parse_csv`` (csv.DictReader)
+    already tolerates ragged rows, so the Excel path must behave the same:
+    short rows are padded with None, surplus cells land under the None rest key.
+    """
+    data = _xlsx_bytes_without_dimension([
+        ["name", "address"],
+        ["A", "addr"],            # exact width
+        ["B", "addr2", "note"],   # surplus cell
+        ["C"],                    # truncated row
+    ])
+    raw = RawContent(
+        data=data,
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        encoding="utf-8",
+    )
+
+    structured = await GovDataAdapter().parse(raw)
+    assert structured.rows == [
+        {"name": "A", "address": "addr"},
+        {"name": "B", "address": "addr2", None: ["note"]},
+        {"name": "C", "address": None},
+    ]
+    assert [f.name for f in structured.fields] == ["name", "address"]
+
+
 # ─── Issue #482: naive vs aware publish_time must not crash discover ───────
 
 def test_parse_date_returns_utc_aware():

@@ -155,6 +155,12 @@ class JoinExecutor:
         self.sample_limit = sample_limit
         self.stats = JoinStats()
         self._point_transformer: Any = None
+        # 每 run 一次的缓存（_emit_row 逐行调用）：字段映射 + 计划 digest。
+        # 左/右源在同一 run 内不变（快照冻结），按对象身份缓存。
+        self._field_map_cache: Optional[
+            Tuple[LoadedSource, LoadedSource, List[Tuple[str, str, str]]]
+        ] = None
+        self._digest_cache: Optional[str] = None
 
     # ───────────────────── 属性路径 ─────────────────────
 
@@ -583,6 +589,27 @@ class JoinExecutor:
 
     # ───────────────────── 行装配 ─────────────────────
 
+    def _cached_field_map(
+        self, left: LoadedSource, right: LoadedSource
+    ) -> List[Tuple[str, str, str]]:
+        """字段映射按 (left, right) 解析一次。
+
+        每输出行重算 = 每行重放映射校验；declared_fields 空且字段不在前
+        500 行时还连带 _field_present 全表扫 → N 行输出 O(N×M)。
+        """
+        cache = self._field_map_cache
+        if cache is not None and cache[0] is left and cache[1] is right:
+            return cache[2]
+        entries = _resolved_field_map(self.plan, left, right)
+        self._field_map_cache = (left, right, entries)
+        return entries
+
+    def _cached_digest(self) -> str:
+        """normalized_digest 每 run 一次（整计划 json.dumps + sha256）。"""
+        if self._digest_cache is None:
+            self._digest_cache = self.plan.normalized_digest()
+        return self._digest_cache
+
     def _emit_row(
         self,
         left: LoadedSource,
@@ -597,7 +624,7 @@ class JoinExecutor:
         agg_source: Optional[Tuple[List[int], List[Dict[str, Any]]]] = None,
     ) -> Dict[str, Any]:
         plan = self.plan
-        mapping = _resolved_field_map(plan, left, right)
+        mapping = self._cached_field_map(left, right)
         row: Dict[str, Any] = {"_join_status": status, "_join_left_ref": left_ref}
         for side, field_name, out_name in mapping:
             if side == "left":
@@ -646,7 +673,7 @@ class JoinExecutor:
             if wid:
                 row["_join_left_wfid"] = wid
             row["_wfid"] = wfid_for_created(
-                plan.normalized_digest(), left_ord, child_ordinal
+                self._cached_digest(), left_ord, child_ordinal
             )
         else:
             row["_wfid"] = wid if isinstance(wid, str) and wid else None

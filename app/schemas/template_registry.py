@@ -555,7 +555,7 @@ class TemplateRegistry:
             for kind_list in self._by_kind.values():
                 if entry in kind_list:
                     kind_list.remove(entry)
-            for tag, tag_list in self._by_tag.items():
+            for tag, tag_list in list(self._by_tag.items()):
                 if entry in tag_list:
                     tag_list.remove(entry)
                     if not tag_list:

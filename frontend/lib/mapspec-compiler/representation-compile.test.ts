@@ -454,6 +454,47 @@ describe("compileMapSpec：g) heatmap 表达窗子层 paint 与 live 对齐（#1
     expect(rep1.paint["heatmap-radius"]).toBeDefined();
     expect((rep1.paint["heatmap-radius"] as unknown[])[0]).toBe("interpolate");
   });
+
+  it("circle 层带原生 heatmap-* paint：色带穿透 __rep 子层，主层不带 heatmap-* 键", () => {
+    // #1747 项 1（circle 主层侧）：circle 分支此前没有原生 heatmap-* paint
+    // 的透传收纳 —— visual_heatmap 窗子层只拿到符号律兜底的 heatmap-radius，
+    // 密度色带掉回 MapLibre 默认蓝色色带（导出降级）。原生键不得落主层
+    // paint（MapLibre 拒绝 circle 层上的 heatmap-* 键），只透给窗子层。
+    const nativeColor = [
+      "interpolate", ["linear"], ["heatmap-density"],
+      0, "rgba(0,0,0,0)", 0.5, "#ff8800", 1, "#ff0000",
+    ] as unknown as StyleMethod;
+    const r = compileMapSpec(
+      specWith({
+        windows,
+        layer: {
+          type: "circle",
+          paint: {
+            color: "#3388aa",
+            radius: 4,
+            "heatmap-color": nativeColor,
+            "heatmap-intensity": 1.2,
+            "heatmap-opacity": 0.9,
+            "heatmap-radius": 18,
+          },
+        },
+      }),
+    );
+    expect(r.report.success).toBe(true);
+    const main = layerOf(r, "L");
+    expect(main.type).toBe("circle");
+    expect(Object.keys(main.paint).some((k) => k.startsWith("heatmap-"))).toBe(false);
+    const rep1 = layerOf(r, "L__rep1");
+    expect(rep1.type).toBe("heatmap");
+    // 密度色带不得掉回 MapLibre 默认蓝
+    expect(rep1.paint["heatmap-color"]).toEqual(nativeColor);
+    expect(rep1.paint["heatmap-intensity"]).toBe(1.2);
+    expect(rep1.paint["heatmap-opacity"]).toBe(0.9);
+    // 显式半径优先（符号律兜底只在缺省时介入 —— 与 live 同规）
+    expect(rep1.paint["heatmap-radius"]).toBe(18);
+    // 非 heatmap-* 键不得残留（MapLibre 会拒绝整层）
+    expect(Object.keys(rep1.paint).every((k) => k.startsWith("heatmap-"))).toBe(true);
+  });
 });
 
 // ── 版本协商门（疑似实现漏洞，测试报告 #1）───────────────────────────────

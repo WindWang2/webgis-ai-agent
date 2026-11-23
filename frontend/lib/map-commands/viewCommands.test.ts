@@ -301,6 +301,19 @@ describe('viewCommands camera commands (V3 Promise<MapCommandResult> contract)',
     expect(requiredParams({ opacity: 0.5 })).toBe(false);
   });
 
+  it('validator rejects malformed center (length != 2) — no fake success ack', () => {
+    // {center:[116]} / {center:[]} 曾通过校验器（只查 Array.isArray）→ run 内
+    // hasCenter=false 且无其他维度 → 早退 ack succeeded 把未动的当前相机当
+    // actual（假成功）。现在与 fly_to/fly_camera 同宽：center 必须是 [lng, lat]。
+    const { requiredParams } = viewCommands.set_map_view;
+    expect(requiredParams({ center: [116] })).toBe(false);
+    expect(requiredParams({ center: [] })).toBe(false);
+    expect(requiredParams({ center: [116, 39, 40] })).toBe(false);
+    expect(requiredParams({ center: 'x' })).toBe(false);
+    // 畸形 center + 有效命名维度 → 仍由该维度放行（run body 只动命名维度）
+    expect(requiredParams({ center: [116], zoom: 5 })).toBe(true);
+  });
+
   it('run #534: bearing-only actually flies to the requested bearing and converges', async () => {
     const map = makeMockMaplibreMap({ center: [100, 20], zoom: 5, bearing: 10, pitch: 20 });
     const promise = viewCommands.set_map_view.run(makeCtx(map, { bearing: 30 }));

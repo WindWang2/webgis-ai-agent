@@ -214,6 +214,9 @@ def register_goal_repair_tools(registry: ToolRegistry) -> None:
         )
 
         sid = session_id or _runtime_ids()[0]
+        if not sid:
+            return {"success": False, "code": "SOURCE_UNAVAILABLE",
+                    "message": "Missing session_id context"}
         if attempt_id:
             # 归属校验先于 get_attempt_status（其惰性对账会写他方会话状态
             # —— review P2：跨会话 attempt 一律 404 语义拒绝，零副作用）。
@@ -222,16 +225,13 @@ def register_goal_repair_tools(registry: ToolRegistry) -> None:
                     import ensure_attempt as _ensure
 
                 pre = _ensure(attempt_id)
-                if sid and str(pre.get("session_id") or "") != sid:
+                if str(pre.get("session_id") or "") != sid:
                     return {"success": False, "code": "ATTEMPT_NOT_FOUND",
                             "message": "attempt 不属于当前会话"}
                 view = await get_attempt_status(attempt_id)
             except Exception as e:  # noqa: BLE001
                 return _typed_error(e)
             return {"success": True, **view}
-        if not sid:
-            return {"success": False, "code": "SOURCE_UNAVAILABLE",
-                    "message": "Missing session_id context"}
         attempts = find_attempts(sid, limit=1)
         if not attempts:
             return {"success": False, "code": "ATTEMPT_NOT_FOUND",
@@ -270,6 +270,9 @@ def register_goal_repair_tools(registry: ToolRegistry) -> None:
         )
 
         sid = session_id or _runtime_ids()[0]
+        if not sid:
+            return {"success": False, "code": "SOURCE_UNAVAILABLE",
+                    "message": "Missing session_id context"}
         if not attempt_id:
             from app.services.gis_harness.goal_repair_execution.store import (
                 find_attempts,
@@ -286,7 +289,7 @@ def register_goal_repair_tools(registry: ToolRegistry) -> None:
                 import ensure_attempt as _ensure
 
             pre = _ensure(attempt_id)
-            if sid and str(pre.get("session_id") or "") != sid:
+            if str(pre.get("session_id") or "") != sid:
                 return {"success": False, "code": "ATTEMPT_NOT_FOUND",
                         "message": "attempt 不属于当前会话"}
             view = await cancel_repair_attempt(

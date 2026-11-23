@@ -871,6 +871,13 @@ export function compileMapSpec(
       }
     }
 
+    // #1747 项 1：circle 层 spec 上的原生 heatmap-* paint（授权链路
+    // analysis_cartography_converter 发的是 MapLibre 原生表达式）的收纳处。
+    // 它们不能进主层 paint（MapLibre 拒绝 circle 层上的 heatmap-* 键），但
+    // visual_heatmap 表达窗子层的密度色带来自它们 —— heatmapOnlyPaint 只收
+    // heatmap-* 键，主层 paint 里没有就掉回 MapLibre 默认蓝色色带（导出降级）。
+    // 由下方 heatmap 窗分支透出（与 live runtime 同一口径）。
+    const heatmapNativePaint: Record<string, unknown> = {};
     if (layer.paint) {
       if (layerType === "circle") {
         if (layer.paint.color !== undefined)
@@ -890,6 +897,23 @@ export function compileMapSpec(
           maplibreLayer.paint["circle-translate"] = compileStyleMethod(layer.paint.translate);
         if (layer.paint.translateAnchor !== undefined)
           maplibreLayer.paint["circle-translate-anchor"] = compileStyleMethod(layer.paint.translateAnchor);
+        // #1747 项 1：原生 heatmap-* paint 透传收纳（方言桥接产物 —— 与
+        // 下方 heatmap 分支同款，优先级低于高级键；此处 circle 层无 heatmap
+        // 高级键可冲突）。只进 heatmapNativePaint，不落主层 paint。
+        for (const rawKey of [
+          "heatmap-weight",
+          "heatmap-intensity",
+          "heatmap-color",
+          "heatmap-radius",
+          "heatmap-opacity",
+        ] as const) {
+          const rawValue = (layer.paint as Record<string, unknown>)[rawKey];
+          if (rawValue !== undefined) {
+            heatmapNativePaint[rawKey] = isStyleMethodObject(rawValue)
+              ? (compileStyleMethod(rawValue) ?? null)
+              : asPaintValue(rawValue);
+          }
+        }
       } else if (layerType === "line") {
         if (layer.paint.color !== undefined)
           maplibreLayer.paint["line-color"] = compileStyleMethod(layer.paint.color);
@@ -1309,12 +1333,15 @@ export function compileMapSpec(
           // 单一实现 —— 原生 heatmap paint（heatmap-color 密度色带 /
           // intensity / weight / opacity）必须穿透到子层，否则带原生色带
           // 的层在导出里掉回 MapLibre 默认蓝色色带（导出降级）。
+          // circle 主层的原生 heatmap paint 收纳在 heatmapNativePaint
+          // （主层自身不能带 heatmap-* 键 —— MapLibre 会拒绝整层），此处
+          // 与主层 paint 合并后过 heatmapOnlyPaint。
           const heatSub: CompiledLayer & { layout: MapLibrePaint } = {
             id: representationSublayerId(layer.id, w.index),
             type: "heatmap",
             source: layer.source,
             ...(subNoneLayout ?? { layout: {} }),
-            paint: heatmapOnlyPaint(maplibreLayer.paint, featureCount),
+            paint: heatmapOnlyPaint({ ...heatmapNativePaint, ...maplibreLayer.paint }, featureCount),
             minzoom: wMin,
             maxzoom: wMax,
           };

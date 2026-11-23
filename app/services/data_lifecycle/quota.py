@@ -87,7 +87,8 @@ def workspace_snapshot_protected_pointers() -> Tuple[set, set, bool]:
     """全部工作空间快照 manifest 引用的持久指针集合（只读，有界）。
 
     Returns ``(locations, shas, truncated)``：``content_location`` 集合、
-    ``content_payload_sha256`` 集合与**截断标志**。调用方（promotion GC /
+    ``content_payload_sha256`` 集合与**截断标志**（cap 截断**或扫描失败**
+    —— 二者同义：保护面可能不完整）。调用方（promotion GC /
     retention 的 plan 与 execute）把它们交给单一保护谓词
     ``promotion_blob_protection``，凡是 location 或 sha 命中的 blob 一律
     PROTECTED。超过 ``SNAPSHOT_POINTER_SCAN_CAP`` 条**去重后条目**即停止
@@ -105,14 +106,22 @@ def workspace_snapshot_protected_pointers() -> Tuple[set, set, bool]:
     shas: set = set()
     try:
         root = _workspaces_root()
-    except Exception:  # noqa: BLE001 — 配置漂移按空保护面（调用方如实降级）
-        return locations, shas, False
+    except Exception:  # noqa: BLE001 — 扫描失败 = 保护面未知（fail-closed）
+        logger.exception(
+            "[quota] workspace snapshot pointer scan: _workspaces_root() "
+            "failed — protection surface unknown, marking scan truncated"
+        )
+        return locations, shas, True
     if not root.is_dir():
         return locations, shas, False
     try:
         project_dirs = sorted(p for p in root.iterdir() if p.is_dir())
     except OSError:
-        return locations, shas, False
+        logger.exception(
+            "[quota] workspace snapshot pointer scan: root iterdir() failed "
+            "— protection surface unknown, marking scan truncated"
+        )
+        return locations, shas, True
     seen_entries: set = set()
     truncated = False
     for proj_dir in project_dirs:
@@ -933,16 +942,47 @@ def execute_orphan_revision_cleanup(plan: Dict[str, Any], *, db=None) -> Dict[st
                     "pinned_shas": set(pinned_content_sha256s(db)),
                     "snapshot_locations": locations, "snapshot_shas": shas,
                 }
-                result["deleted_blobs"] = []
-                for key, location in removed_blobs.items():
-                    path = (store.root / location).resolve()
-                    if not path.is_relative_to(store.root.resolve()):
-                        continue
-                    if promotion_blob_protection(
-                        key, location, store.blob_mtime(path), now=time.time(),
-                        grace_hours=RetentionPolicy.from_env().grace_hours, **snap,
-                    ) is None and store.delete_blob(key):
-                        result["deleted_blobs"].append(key)
+                # 域侧持有面（R 审计 round-2）：G40 资产版本行 + G48 georef 会话
+                # refcount —— 与 retention execute / promotion GC 同一保护谓词、
+                # 同一保护集来源；任一扫描失败/截断 ⇒ 本轮跳过 blob 删除
+                #（fail-closed：保护面残缺时绝不删除）。
+                from app.services.artifact_lifecycle import (
+                    _georef_live_blob_keys,
+                    _symbol_version_blob_keys,
+                )
+
+                domain_scan_failed = False
+                try:
+                    snap["symbol_version_blob_keys"] = _symbol_version_blob_keys(db)
+                    georef_keys, georef_truncated = _georef_live_blob_keys()
+                    snap["georef_blob_keys"] = georef_keys
+                except Exception:
+                    logger.exception(
+                        "[quota] orphan revision cleanup: domain blob "
+                        "protection scan failed — skipping blob-deletion "
+                        "phase this cycle"
+                    )
+                    snap["symbol_version_blob_keys"] = set()
+                    snap["georef_blob_keys"] = set()
+                    georef_truncated = True
+                    domain_scan_failed = True
+                if georef_truncated or domain_scan_failed:
+                    result["blob_cleanup_deferred"] = (
+                        "georef protection scan truncated"
+                        if georef_truncated else
+                        "domain blob protection scan failed"
+                    )
+                else:
+                    result["deleted_blobs"] = []
+                    for key, location in removed_blobs.items():
+                        path = (store.root / location).resolve()
+                        if not path.is_relative_to(store.root.resolve()):
+                            continue
+                        if promotion_blob_protection(
+                            key, location, store.blob_mtime(path), now=time.time(),
+                            grace_hours=RetentionPolicy.from_env().grace_hours, **snap,
+                        ) is None and store.delete_blob(key):
+                            result["deleted_blobs"].append(key)
 
     finally:
         if owned:

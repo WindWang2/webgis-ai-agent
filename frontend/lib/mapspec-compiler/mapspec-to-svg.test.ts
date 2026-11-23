@@ -674,3 +674,79 @@ describe('sampled label-field evidence is not authoritative absence', () => {
     expect(svg).toContain('late real label');
   });
 });
+
+// ── G20：数值栅格离线快照（data:image）的放置矩形 ────────────────────────
+// review P1：此前 <image> 直接把经纬度 minX/minY 与 maxX-minX 当像素
+// x/y/width/height —— 度数值当像素用，快照被画到画布外且尺寸是度数跨度。
+// 正确形状 = project 后的 scaledPadding 内接矩形（与瓦片分支同一投影口径）。
+describe('G20: numeric raster offline snapshot placement rect', () => {
+  function rasterSpec() {
+    return {
+      version: '1.1',
+      sources: {
+        s1: {
+          type: 'geojson',
+          data: {
+            type: 'FeatureCollection',
+            features: [
+              { type: 'Feature', geometry: { type: 'Point', coordinates: [116.4, 39.9] }, properties: {} },
+              { type: 'Feature', geometry: { type: 'Point', coordinates: [116.5, 40.0] }, properties: {} },
+            ],
+          },
+        },
+      },
+      layers: [
+        {
+          id: 'grid',
+          type: 'raster',
+          source: 's1',
+          raster_style: { style_id: 'g20-snapshot' },
+          paint: { 'raster-opacity': 0.6 },
+        },
+      ],
+    };
+  }
+
+  function imageTag(svg: string): string {
+    const m = /<image [^>]*\/>/.exec(svg);
+    expect(m, 'offline snapshot <image> should be emitted').toBeTruthy();
+    return m![0];
+  }
+
+  function attr(tag: string, name: string): string | undefined {
+    return new RegExp(`${name}="([^"]*)"`).exec(tag)?.[1];
+  }
+
+  it('data:image 快照落在画布像素矩形（1200×800@72dpi padding40 → 40,40,1120,720）', () => {
+    const svg = compileMapSpecToSvg(rasterSpec(), {
+      targetDpi: 72,
+      width: 1200,
+      height: 800,
+      padding: 40,
+      numericRasterSnapshot: () => 'data:image/png;base64,AAAA',
+    });
+    const tag = imageTag(svg);
+    expect(attr(tag, 'href')).toBe('data:image/png;base64,AAAA');
+    // 经纬度值（116.4/39.9）不得出现在 x/y 上；度数跨度不得当 width/height
+    expect(attr(tag, 'x')).toBe('40');
+    expect(attr(tag, 'y')).toBe('40');
+    expect(attr(tag, 'width')).toBe('1120');
+    expect(attr(tag, 'height')).toBe('720');
+    expect(attr(tag, 'opacity')).toBe('0.6');
+  });
+
+  it('DPI 缩放后矩形随 dpiScale 走（144dpi → 80,80,2240,1440）', () => {
+    const svg = compileMapSpecToSvg(rasterSpec(), {
+      targetDpi: 144,
+      width: 1200,
+      height: 800,
+      padding: 40,
+      numericRasterSnapshot: () => 'data:image/png;base64,AAAA',
+    });
+    const tag = imageTag(svg);
+    expect(attr(tag, 'x')).toBe('80');
+    expect(attr(tag, 'y')).toBe('80');
+    expect(attr(tag, 'width')).toBe('2240');
+    expect(attr(tag, 'height')).toBe('1440');
+  });
+});

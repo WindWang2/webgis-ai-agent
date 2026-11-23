@@ -262,9 +262,13 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
     setError(null);
     try {
       const configs: Record<string, MemberConfig> = {};
+      // P1：用当前生效选择（乐观覆盖/服务器事实源）而非 members[].selected ——
+      // 勾选后 selectedKeys 已更新但 active.members 仍是陈旧快照，按 m.selected
+      // 过滤会把刚勾选成员的解释配置整条丢掉。
+      const selected = new Set(selectedKeys);
       for (const m of members) {
         const d = drafts[m.member_key];
-        if (!m.selected || m.unsupported_reason || !d) continue;
+        if (!selected.has(m.member_key) || m.unsupported_reason || !d) continue;
         const c: MemberConfig = { mode: d.mode ?? 'auto' };
         if (d.x_column) c.x_column = d.x_column;
         if (d.y_column) c.y_column = d.y_column;
@@ -320,9 +324,12 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
     try {
       // 先落计划（确保提交用的解释与预览一致），再提交
       const configs: Record<string, MemberConfig> = {};
+      // P1：同 handleSavePlan —— 按当前生效选择取配置，否则刚勾选成员的
+      // member_configs 漏发，提交时按 mode=auto 导入（解释配置静默丢失）。
+      const selected = new Set(selectedKeys);
       for (const m of members) {
         const d = drafts[m.member_key];
-        if (!m.selected || m.unsupported_reason || !d) continue;
+        if (!selected.has(m.member_key) || m.unsupported_reason || !d) continue;
         configs[m.member_key] = d as MemberConfig;
       }
       await saveImportPlan(

@@ -67,6 +67,64 @@ def test_by_kind_groups_correctly():
     assert len(set(t["id"] for t in bm)) == len(bm)  # unique ids
 
 
+def test_remove_user_template_sole_tag_owner():
+    """Removing the sole holder of a keyword must not blow up the tag index.
+
+    Regression: ``remove()`` used to pop from ``self._by_tag`` while
+    iterating over ``self._by_tag.items()``, raising
+    ``RuntimeError: dictionary changed size during iteration``.
+    """
+    r = TemplateRegistry()
+    r.load_builtins()
+    r.add_user_template(
+        {
+            "id": "user_tpl_sole_tag",
+            "kind": "thematic",
+            "name": "我的模板",
+            "keywords": ["useronlykeyword", "人口"],
+        }
+    )
+    assert r.count() > 0
+
+    assert r.remove("user_tpl_sole_tag") is True
+
+    # No exception above + the id is gone from every index.
+    assert r.get("user_tpl_sole_tag") is None
+    assert "user_tpl_sole_tag" not in r
+    assert all(
+        t["id"] != "user_tpl_sole_tag" for t in r.by_kind("thematic")
+    )
+    # The sole keyword is dropped; the shared one survives (other owners).
+    assert "useronlykeyword" not in r._by_tag
+    assert "人口" in r._by_tag
+    # ...and the registry is self-consistent after the removal.
+    assert r.count() == len(r.all_ids())
+
+
+def test_remove_missing_template_returns_false():
+    r = TemplateRegistry()
+    r.load_builtins()
+    assert r.remove("__nope__") is False
+
+
+def test_remove_keeps_shared_tag_owners():
+    """Removing one of several owners of a keyword must keep the others."""
+    r = TemplateRegistry()
+    r.load_builtins()
+    r.add_user_template(
+        {"id": "user_tpl_a", "kind": "thematic", "name": "a", "keywords": ["sharedkw"]}
+    )
+    r.add_user_template(
+        {"id": "user_tpl_b", "kind": "thematic", "name": "b", "keywords": ["sharedkw"]}
+    )
+    before = len(r._by_tag["sharedkw"])
+    assert r.remove("user_tpl_a") is True
+    after = [t["id"] for t in r._by_tag["sharedkw"]]
+    assert len(after) == before - 1
+    assert "user_tpl_a" not in after
+    assert "user_tpl_b" in after
+
+
 # --------------------------------------------------------------------
 # Search
 # --------------------------------------------------------------------

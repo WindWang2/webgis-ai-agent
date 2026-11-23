@@ -9,7 +9,7 @@
   "edge_cases.json": {
    "case_count": 87,
    "domain": "edge_cases",
-   "sha256": "9710d834619184e8f3b9b8d8132cf50863f750058351458f54ceb535cef02252"
+   "sha256": "17b5a982af45c223da9ed9928bcfe420a592b93347417e033d172d3af00f5265"
   },
   "geodetector.json": {
    "case_count": 43,

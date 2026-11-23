@@ -229,8 +229,10 @@ export class MapSpecRuntime {
       resetTileMiss(this.map);
       this.tileMissSession = sessionId;
       this.sessionScope = sessionId;
-      // 切会话清空派生源账本，避免旧会话的 URL 在新会话里复用。
-      this.numericRasterApplied.clear();
+      // 账本记录「哪个派生源挂着哪个 URL」，**不随切会话清空**：清空会让
+      // 下次 sync 既发现不了 URL 变化（旧会话瓦片继续上屏），也让不再需要
+      // 的派生源失去卸载线索。旧 URL 不会被复用 —— sync 每遍都按当前
+      // sessionScope 重新解析 wanted，账本从不参与挂载。
     }
   }
 
@@ -276,15 +278,27 @@ export class MapSpecRuntime {
       }
       wanted.set(numericRasterSourceId(layer.source, layer.id), resolved);
     }
-    for (const [id, url] of Array.from(this.numericRasterApplied.entries())) {
-      if (wanted.get(id) !== url) {
+    for (const id of Array.from(this.numericRasterApplied.keys())) {
+      // 只卸「本次不再需要」的派生源（依赖层的 remove op 已先入队，源此时
+      // 可卸）。URL 变化（切会话 / style_id 变更）走下方向量换 tiles ——
+      // 层还引用着源，MapLibre 会拒绝 removeSource。
+      if (!wanted.has(id)) {
         this.removeSourceSafe(id);
         this.numericRasterApplied.delete(id);
       }
     }
     for (const [id, url] of wanted.entries()) {
       if (this.numericRasterApplied.get(id) === url && this.map.getSource(id)) continue;
-      renderer.addRasterTileSource(this.map, id, url);
+      // 已在图上但 URL 不符（切会话 / style_id 变更）：addRasterTileSource
+      // 的同 id 快路径会空转 —— 旧 URL 瓦片继续上屏。原地换 tiles 才会
+      // 真正重载（MapLibre RasterTileSource.setTiles → load(force)）。
+      const mounted = this.map.getSource(id) as
+        { setTiles?: (tiles: string[]) => unknown } | undefined;
+      if (mounted && typeof mounted.setTiles === "function") {
+        mounted.setTiles([url]);
+      } else {
+        renderer.addRasterTileSource(this.map, id, url);
+      }
       this.numericRasterApplied.set(id, url);
     }
   }

@@ -163,6 +163,150 @@ describe('workbench persistence（W3）', () => {
     expect(second.intent).toBe('patch_workbench_delta');
   });
 
+  it('V6 R1-M5b: 会话切换后迟到的 409 响应不得把旧会话 doc 写进新会话', async () => {
+    setMapSpecSessionCursor('sess-late-a', 1);
+    notifyWorkbenchSessionChanged('sess-late-a');
+    hydrateWorkbenchFromSpec(undefined);
+    // 首次提交挂起：响应回来之前切换会话
+    let resolveCommit: (value: unknown) => void = () => {};
+    commitSpy.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveCommit = resolve; }),
+    );
+    useHudStore.getState().createLayerGroup('旧会话组');
+    await tickDebounce();
+    expect(commitSpy).toHaveBeenCalledTimes(1);
+
+    // 切到新会话并完成恢复（重新武装）
+    notifyWorkbenchSessionChanged('sess-late-b');
+    setMapSpecSessionCursor('sess-late-b', 0);
+    hydrateWorkbenchFromSpec({
+      workbench: {
+        version: 5,
+        groups: [{ id: 'gb', name: '新会话组', collapsed: false, parentId: null }],
+        membership: {},
+        lockedLayerIds: [],
+        mode: 'explore',
+      },
+    });
+
+    // 迟到响应：旧会话的 superseded（携带旧会话服务端 doc）
+    resolveCommit({
+      status: 'superseded',
+      mutation_revision: 9,
+      mapspec: {
+        workbench: {
+          version: 5,
+          groups: [{ id: 'ga', name: '旧会话服务端组', collapsed: false, parentId: null }],
+          membership: {},
+          lockedLayerIds: [],
+          mode: 'explore',
+        },
+      },
+    });
+    await tickDebounce(); // 覆盖 rebase 重提交的防抖窗口
+    // 新会话 store 未被旧会话服务端 doc 水合覆盖
+    expect(useHudStore.getState().layerGroups.map((g) => g.name)).toEqual(['新会话组']);
+    // 旧会话编辑未被 rebase 提交进新会话
+    expect(commitSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('V6 R1-M5c: 迟到成功响应不得把旧会话 doc 写成新会话的提交基线', async () => {
+    setMapSpecSessionCursor('sess-late2-a', 1);
+    notifyWorkbenchSessionChanged('sess-late2-a');
+    hydrateWorkbenchFromSpec(undefined);
+    let resolveCommit: (value: unknown) => void = () => {};
+    commitSpy.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveCommit = resolve; }),
+    );
+    const staleGroupId = useHudStore.getState().createLayerGroup('旧会话组');
+    await tickDebounce();
+    expect(commitSpy).toHaveBeenCalledTimes(1);
+
+    notifyWorkbenchSessionChanged('sess-late2-b');
+    setMapSpecSessionCursor('sess-late2-b', 0);
+    hydrateWorkbenchFromSpec({
+      workbench: {
+        version: 5,
+        groups: [{ id: 'gb2', name: '新会话组', collapsed: false, parentId: null }],
+        membership: {},
+        lockedLayerIds: [],
+        mode: 'explore',
+      },
+    });
+    resolveCommit({
+      mutation_revision: 5,
+      mapspec: {
+        workbench: {
+          version: 5,
+          groups: [{ id: staleGroupId, name: '旧会话组', collapsed: false, parentId: null }],
+          membership: {},
+          lockedLayerIds: [],
+          mode: 'explore',
+          _rev: 5,
+        },
+      },
+    });
+    await tickDebounce();
+    // 新会话的编辑 → 提交 delta 只描述新会话变更（不夹带旧会话组的删除）
+    useHudStore.getState().createLayerGroup('新会话新组');
+    await tickDebounce();
+    expect(commitSpy).toHaveBeenCalledTimes(2);
+    const body = commitSpy.mock.calls[1][0] as {
+      intent: string;
+      delta?: { setGroups?: Array<{ id: string }>; removeGroupIds?: string[] };
+    };
+    expect(body.intent).toBe('patch_workbench_delta');
+    expect(body.delta?.removeGroupIds).toBeUndefined();
+    expect(body.delta?.setGroups).toHaveLength(1);
+  });
+
+  it('V6 R1-M4b: delta 通道 409 rebase 保留提交在飞期间的新编辑', async () => {
+    setMapSpecSessionCursor('sess-delta-late', 1);
+    notifyWorkbenchSessionChanged('sess-delta-late');
+    hydrateWorkbenchFromSpec({
+      workbench: {
+        version: 5,
+        groups: [{ id: 'g0', name: '基线组', collapsed: false, parentId: null }],
+        membership: {},
+        lockedLayerIds: [],
+        mode: 'explore',
+      },
+    });
+    let resolveCommit: (value: unknown) => void = () => {};
+    commitSpy.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveCommit = resolve; }),
+    );
+    useHudStore.getState().renameLayerGroup('g0', '在飞编辑');
+    await tickDebounce();
+    expect(commitSpy).toHaveBeenCalledTimes(1);
+    // 提交在飞期间用户的新编辑（本地脏态）
+    useHudStore.getState().toggleLayerLocked('layer-late');
+    // 409：服务端已收敛到另一份 doc
+    resolveCommit({
+      status: 'superseded',
+      mutation_revision: 12,
+      mapspec: {
+        workbench: {
+          version: 5,
+          groups: [{ id: 'gs', name: '服务端组', collapsed: false, parentId: null }],
+          membership: {},
+          lockedLayerIds: [],
+          mode: 'explore',
+        },
+      },
+    });
+    await tickDebounce(); // rebase 重提交经新防抖窗口
+    // 在飞期间的新编辑未被静默丢弃：store 保留 + 随 rebase 一并落库
+    expect(useHudStore.getState().lockedLayerIds).toContain('layer-late');
+    expect(commitSpy).toHaveBeenCalledTimes(2);
+    const second = commitSpy.mock.calls[1][0] as {
+      intent: string;
+      delta?: { locksAdd?: string[] };
+    };
+    expect(second.intent).toBe('patch_workbench_delta');
+    expect(second.delta?.locksAdd).toContain('layer-late');
+  });
+
   it('P3: 会话切换重置武装 —— 排队提交作废、跨会话不写', async () => {
     setMapSpecSessionCursor('sess-a', 1);
     notifyWorkbenchSessionChanged('sess-a');

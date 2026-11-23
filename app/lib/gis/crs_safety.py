@@ -207,7 +207,10 @@ def crs_class_allows(crs_class: str, data_class: CRSDataClass) -> bool:
     if crs_class == "GEODESIC":
         return True     # 内部大地测量，度/米输入都正确处理
     if crs_class == "PROJECTED_REQUIRED":
-        return data_class == "projected_local_metric"
+        # 词表：任何投影平面坐标（含 3857，失真进 limitations）——
+        # 普通投影 CRS（classify_crs → "projected"）同样是投影平面坐标，
+        # 不得误拒；与 LOCAL_METRIC_REQUIRED（只认局部度量）保持区分。
+        return data_class in ("projected", "projected_local_metric")
     if crs_class == "LOCAL_METRIC_REQUIRED":
         return data_class == "projected_local_metric"
     return True

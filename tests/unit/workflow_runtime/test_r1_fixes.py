@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 from typing import List
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -416,3 +417,128 @@ def test_m4_eligibility_rejects_absent_input_identity():
 def _get_rows(env):
     with env.svc.store._factory() as db:
         return list(db.query(WorkflowNodeReuseRow).all())
+
+
+# ── P1: reproject 未接线 geocompute 算子 → 诚实 NODE_NOT_EXECUTABLE ────────
+
+def test_p1_reproject_transform_node_not_executable():
+    """reproject 不在 _TRANSFORM_OPS（geocompute ops REGISTRY 无 REPROJECT
+    执行体）：node_params 非空也不得绕过内联输入门建出无输入数据的 op
+    节点（旧形态：reproject 登记为可执行 → op 节点无 features 仍"成功"
+    执行，静默产出空/错误结果）。"""
+    from types import SimpleNamespace
+
+    from app.services.geocompute.ops import has_operator
+    from app.services.geocompute.plan import NodeCategory
+    from app.services.workflow_runtime.adapters_geocompute import (
+        NodeNotExecutable,
+        build_node_plan,
+        node_executable_op,
+    )
+
+    assert not has_operator(NodeCategory.REPROJECT)  # 未接线事实前提
+    node = SimpleNamespace(node_id="transform:reproject:subject",
+                           kind="transform", role="subject")
+    assert node_executable_op(node) is None
+    # 携带 remediation 参数（target_crs）同样不得建计划
+    with pytest.raises(NodeNotExecutable):
+        build_node_plan(
+            node, node_params={"target_crs": "EPSG:4326"},
+            input_features=[{"type": "Feature", "properties": {},
+                             "geometry": None}],
+            input_fingerprints={"input": "f" * 32},
+            session_id="s-p1", owner_scope="u:p1")
+
+
+def test_p1_wired_transform_ops_still_inline_features():
+    """守卫：已接线 transform op（buffer）仍可执行且内联 features
+    （摘除 reproject 不误伤可执行路径）。"""
+    from types import SimpleNamespace
+
+    from app.services.workflow_runtime.adapters_geocompute import (
+        build_node_plan,
+        node_executable_op,
+    )
+
+    node = SimpleNamespace(node_id="transform:buffer:x", kind="transform")
+    assert node_executable_op(node) is not None
+    plan = build_node_plan(
+        node, node_params={"distance": 100},
+        input_features=[{"type": "Feature", "properties": {"a": 1},
+                         "geometry": {"type": "Point",
+                                      "coordinates": [116.3, 39.9]}}],
+        input_fingerprints={"input": "f" * 32},
+        session_id="s-p1", owner_scope="u:p1")
+    assert plan.nodes[0].parameters.get("features")  # 既有内联契约进门
+
+
+def test_p1_driver_reproject_node_fails_not_executable():
+    """driver 面（真实 store + 真实 engine 选择链）：reproject 节点 →
+    适配器诚实 NODE_NOT_EXECUTABLE（不可重试、留阻断证据），而非把无
+    输入数据的 op 节点发给 geocompute。"""
+    from app.services.session_data import session_data_manager
+    from app.services.workflow_runtime import contracts as C
+    from app.services.workflow_runtime.driver import Driver
+    from app.services.workflow_runtime.store import InstanceStore
+
+    dag = {
+        "nodes": [
+            {"node_id": "data:subject", "kind": "data_input",
+             "role": "subject", "optional": False,
+             "outputs": [{"name": "data"}]},
+            {"node_id": "transform:reproject:subject", "kind": "transform",
+             "optional": False, "params": {"target_crs": "EPSG:4326"},
+             "inputs": [{"name": "input"}],
+             "outputs": [{"name": "output"}]},
+            {"node_id": "output:zone", "kind": "output", "optional": False,
+             "inputs": [{"name": "product"}]},
+        ],
+        "edges": [
+            {"from": "data:subject.data",
+             "to": "transform:reproject:subject.input"},
+            {"from": "transform:reproject:subject.output",
+             "to": "output:zone.product"},
+        ],
+        "primary_output": "output:zone",
+    }
+    fc = {"type": "FeatureCollection", "features": [
+        {"type": "Feature", "properties": {"i": i},
+         "geometry": {"type": "Point", "coordinates": [116.3, 39.9]}}
+        for i in range(3)]}
+
+    async def probe(session_id, ref):
+        return {"ref_id": ref, "feature_count": 3,
+                "content_hash": "h" * 32, "content_revision": 1,
+                "geometry_types": ["Point"]}
+
+    async def scenario():
+        session = "s-p1-driver"
+        ref = await session_data_manager.store(session, fc, prefix="p1")
+        engine = create_engine(
+            "sqlite://", connect_args={"check_same_thread": False},
+            poolclass=StaticPool)
+        Base.metadata.create_all(engine)
+        store = InstanceStore(factory=sessionmaker(bind=engine))
+        inst = store.create_instance(
+            package_id="recipe-p1", package_version="1.0.0",
+            package_fingerprint="pf" * 16, owner_scope=_OWNER,
+            session_id=session,
+            node_specs=[{"node_id": n["node_id"], "optional": False}
+                        for n in dag["nodes"]])
+        iid = inst["instance_id"]
+        store.transition_node(
+            iid, "data:subject", C.NodeState.READY,
+            expected_from=C.NodeState.PENDING, reason="ROLE_BOUND",
+            event="attach", patch={"bound_ref": ref[:96]})
+        driver = Driver(store, owner_scope=_OWNER, deadline_s=10.0,
+                        descriptor_probe=probe)
+        summary = await driver.run(
+            iid, dag, node_params={}, session_id=session,
+            run_token="rt-p1", package_fingerprint="pf" * 16,
+            package_id="recipe-p1")
+        return summary, store.get_node(iid, "transform:reproject:subject")
+
+    summary, row = asyncio.run(scenario())
+    assert row["state"] == C.NodeState.FAILED
+    assert row["error_code"] == "NODE_NOT_EXECUTABLE"
+    assert (row["binding"] or {}).get("action") == "blocked"
