@@ -87,12 +87,12 @@ def _get_plan_row(db: Any, session_id: str, plan_id: str) -> Any:
 
 async def create_plan(
     session_id: str, plan_data: Dict[str, Any], *,
-    project_id: Optional[str] = None, user_id: Optional[str] = None,
     actor: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     from app.core.database import SessionLocal
     from app.models.data_fusion_authoring import DataFusionPlan
 
+    actor = actor or {}
     plan = parse_plan(plan_data)
     blob = json.dumps(plan.model_dump(mode="json"), ensure_ascii=False)
     if len(blob.encode("utf-8")) > contracts.MAX_PLAN_BLOB_BYTES:
@@ -103,8 +103,8 @@ async def create_plan(
     with SessionLocal() as db:
         row = DataFusionPlan(
             session_id=session_id,
-            project_id=project_id,
-            created_by=user_id,
+            project_id=actor.get("project_id"),
+            created_by=actor.get("user_id"),
             title=(plan.title or "")[:_MAX_TITLE],
             status="draft",
             revision=1,
@@ -150,12 +150,12 @@ async def list_plans(
 
 async def update_plan(
     session_id: str, plan_id: str, plan_data: Dict[str, Any], *,
-    expected_revision: int, project_id: Optional[str] = None,
-    user_id: Optional[str] = None,
+    expected_revision: int, actor: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     from app.core.database import SessionLocal
     from app.models.data_fusion_authoring import DataFusionPlan
 
+    actor = actor or {}
     plan = parse_plan(plan_data)
     blob = json.dumps(plan.model_dump(mode="json"), ensure_ascii=False)
     if len(blob.encode("utf-8")) > contracts.MAX_PLAN_BLOB_BYTES:
@@ -179,10 +179,10 @@ async def update_plan(
         row.plan = plan.model_dump(mode="json")
         row.normalized_digest = plan.normalized_digest()
         row.revision += 1
-        if project_id is not None:
-            row.project_id = project_id
-        if user_id is not None:
-            row.created_by = user_id
+        if actor.get("project_id") is not None:
+            row.project_id = actor["project_id"]
+        if actor.get("user_id") is not None:
+            row.created_by = actor["user_id"]
         # 计划变化 → 预览失效（digest 锚）
         row.preview = None
         row.preview_digest = None

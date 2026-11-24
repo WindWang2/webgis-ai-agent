@@ -309,6 +309,17 @@ async def lifespan(app: FastAPI):
             )
     except Exception as e:
         logger.warning(f"[lifespan] coord-ops recovery skipped: {e}")
+    # 多源实体融合：孤儿 run 收敛（pending/running 且 job 已不在活跃
+    # 集合 → typed 失败；best-effort，绝不阻断启动）。
+    try:
+        from app.services.data_fusion_authoring import service as fusion_service
+
+        converged = await asyncio.to_thread(fusion_service.recover_pending_runs)
+        if converged:
+            logger.info("[lifespan] data-fusion recovery: %s runs converged",
+                        converged)
+    except Exception as e:
+        logger.warning(f"[lifespan] data-fusion recovery skipped: {e}")
     # G48：控制点影像配准孤儿任务与 staging 清理（重启收敛，绝不阻断启动）。
     try:
         from app.services.georeferencing import recovery as georef_recovery
@@ -1185,6 +1196,9 @@ from app.api.routes import thematic_authoring as thematic_authoring_routes  # no
 app.include_router(thematic_authoring_routes.router, prefix="/api/v1", tags=["专题表达工作台"])
 from app.api.routes import data_join_authoring as data_join_authoring_routes  # noqa: E402
 app.include_router(data_join_authoring_routes.router, prefix="/api/v1", tags=["数据关联工作台 G38"])
+# 多源实体融合工作台（独立 router；UI 与 Pi 共用 data_fusion_authoring.service）
+from app.api.routes import data_fusion_authoring as data_fusion_authoring_routes  # noqa: E402
+app.include_router(data_fusion_authoring_routes.router, prefix="/api/v1", tags=["多源实体融合工作台"])
 from app.api.routes import coordinate_operations as coordinate_operations_routes  # noqa: E402
 app.include_router(coordinate_operations_routes.router, prefix="/api/v1", tags=["坐标操作工作台 G45"])
 from app.api.routes import cartographic_assets as cartographic_assets_routes  # noqa: E402
