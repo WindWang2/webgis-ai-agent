@@ -124,6 +124,12 @@ def register_science_eval_primitive_tools(registry: ToolRegistry) -> None:
             cv_cap = max(10, min(int(max_samples), _CV_MAX_SAMPLES))
         except (TypeError, ValueError):
             cv_cap = _CV_MAX_SAMPLES
+        try:
+            # max_features 语义真实化（review C-R2-P3）：作为样本上限参与
+            # cv_cap（行数预算），与 protocol.max_samples 取更紧者。
+            cv_cap = max(10, min(cv_cap, int(max_features)))
+        except (TypeError, ValueError):
+            pass
         if method == "idw":
             # 生产 IDW 契约对齐（_validate_power 同界）——无效幂 typed 拒绝，
             # 不静默按无效值计算（review C-P2）。
@@ -206,9 +212,20 @@ def register_science_eval_primitive_tools(registry: ToolRegistry) -> None:
         # ── 通用方法：cv.py 方法无关编排（fit/predict 适配器）────────────
         from app.lib.geo_analysis.cv import run_cross_validation
 
+        trend_order = None
+        if method == "trend_surface":
+            trend_order = _feasible_trend_order(n)
+            if trend_order is None:
+                return {
+                    "success": True,
+                    "method": method,
+                    "skipped_reason": "no_feasible_trend_order",
+                    "note": "1-3 阶项增长守卫均不通过——样本量不足以支撑趋势面",
+                    "n_samples": n,
+                }
         fit_predict = _cv_adapters(method, power=power, model=model,
                                    kernel=kernel, values_all=values,
-                                   coords=pts_metric)
+                                   coords=pts_metric, trend_order=trend_order)
         if fit_predict is None:
             return {
                 "success": False,
@@ -217,17 +234,8 @@ def register_science_eval_primitive_tools(registry: ToolRegistry) -> None:
                 "skipped_reason": f"no_adapter:{method}",
             }
         fit_fn, predict_fn = fit_predict
-        if method == "trend_surface":
-            order = _feasible_trend_order(n)
-            if order is None:
-                return {
-                    "success": True,
-                    "method": method,
-                    "skipped_reason": "no_feasible_trend_order",
-                    "note": "1-3 阶项增长守卫均不通过——样本量不足以支撑趋势面",
-                    "n_samples": n,
-                }
-            params_applied["order"] = order
+        if method == "trend_surface" and trend_order is not None:
+            params_applied["order"] = trend_order
 
         try:
             report = run_cross_validation(
@@ -557,9 +565,11 @@ def register_science_eval_primitive_tools(registry: ToolRegistry) -> None:
             input_cap = max(100, min(int(max_features), 50_000))
         except (TypeError, ValueError):
             input_cap = 50_000
+        cluster_subsampled = False
         if len(pts) > input_cap:
             sub_idx, _ = _stride_subsample(len(pts), input_cap)
             pts = pts[sub_idx]
+            cluster_subsampled = True
         n = len(pts)
         if n < 6:
             return {
@@ -662,6 +672,7 @@ def register_science_eval_primitive_tools(registry: ToolRegistry) -> None:
             "noise_share": round(noise_share, 6) if noise_share is not None else None,
             "k_found": k_found,
             "metric_crs": vsi.metric_crs,
+            "subsampled": cluster_subsampled,
             "note": "；".join(note_parts),
             "summary": (
                 f"{method.upper()} 稳定性（{runs} 次）：ARI={_fmt(ari_mean)}±{_fmt(ari_std)}，"
@@ -694,6 +705,7 @@ def register_science_eval_primitive_tools(registry: ToolRegistry) -> None:
 def _cv_adapters(
     method: str, *, power: float, model: str, kernel: str,
     values_all: np.ndarray, coords: np.ndarray,
+    trend_order: Optional[int] = None,
 ):
     """方法 → (fit_fn, predict_fn)。
 
@@ -749,16 +761,19 @@ def _cv_adapters(
     if method == "trend_surface":
         from app.lib.geo_analysis.trend_surface import trend_predict
 
+        # order 由工具级一次确定并经 fit 闭包写进模型（逐折同阶=同一方法
+        # 语义；折内样本不足以支撑该阶时 trend_predict typed 抛错 →
+        # 诚实 fold_failures——绝不静默降阶，review C-R2）。
+        fixed_order = trend_order or _feasible_trend_order(len(values_all)) or 1
+
         def fit_trend(train_mask, train_values):
-            return {"xy": coords[train_mask], "vals": train_values}
+            return {"xy": coords[train_mask], "vals": train_values,
+                    "order": fixed_order}
 
         def predict_trend(model, train_mask, test_mask):
-            # order 由 fit 闭包自持（逐折同阶=同一方法语义；折内样本不足以
-            # 支撑该阶时诚实折失败——绝不静默降阶，review C-P2）。
-            order = model.get("order") or _feasible_trend_order(
-                len(model["vals"])) or 1
             res = trend_predict(
-                model["xy"], model["vals"], coords[test_mask], order=order)
+                model["xy"], model["vals"], coords[test_mask],
+                order=model["order"])
             return np.asarray(res["predictions"], dtype=float), None
 
         return fit_trend, predict_trend

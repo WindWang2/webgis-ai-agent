@@ -220,8 +220,8 @@ async def test_network_experiment_loop(registry):
     async def _persist(st):
         return None
     runner = ExperimentRunner(dispatch=dispatch, persist=_persist)
-    state = await runner.run(SESSION, plan, state)
     try:
+        state = await runner.run(SESSION, plan, state)
         counts = state.counts()
         # 真实 dispatch 下全情景必须完成（review C-P0/P1 修复的回归锁：
         # args 与工具 schema 失配时这里必然暴露 failed）
@@ -259,8 +259,8 @@ async def test_autocorr_experiment_loop(registry):
     async def _persist(st):
         return None
     runner = ExperimentRunner(dispatch=dispatch, persist=_persist)
-    state = await runner.run(SESSION, plan, state)
     try:
+        state = await runner.run(SESSION, plan, state)
         counts = state.counts()
         assert counts.get("completed", 0) == 3, (
             f"自相关情景应全部完成: {counts} "

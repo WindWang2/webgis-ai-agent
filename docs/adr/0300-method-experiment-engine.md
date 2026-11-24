@@ -79,7 +79,7 @@ KDE 工具（不属本任务范围、且行为改动影响面大）；`density_e
 
 ## 测试与验收
 
-`tests/unit/gis_harness/method_experiment/`（47 项）：计划确定性/typed
+`tests/unit/gis_harness/method_experiment/`（58 项）：计划确定性/typed
 拒绝/预算钳制；runner 诚实语义（失败隔离/未评估/取消保留前缀/窗口预算/
 内容寻址复用）；评价（方向/tie-break/Pareto/弃权/采纳拒绝路径）；原语
 **独立 oracle**（测试内独立实现折分配+IDW 内核，对照 <1%）；真实

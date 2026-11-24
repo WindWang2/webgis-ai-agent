@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 from typing import Any, Dict, List, Optional, Tuple
 
+import pydantic
 from pydantic import BaseModel, Field, field_validator
 
 from app.services.gis_harness.analysis_workflows.contracts import canonical_json
@@ -55,7 +56,9 @@ MEXP_VALUE_FIELD_REQUIRED = "MEXP_VALUE_FIELD_REQUIRED"
 MEXP_EXTRA_INPUT_REQUIRED = "MEXP_EXTRA_INPUT_REQUIRED"   # + ":<role>"
 MEXP_BUDGET_EXCEEDED = "MEXP_BUDGET_EXCEEDED"
 MEXP_INVALID_PROTOCOL = "MEXP_INVALID_PROTOCOL"
+MEXP_INVALID_INPUT = "MEXP_INVALID_INPUT"
 MEXP_EMPTY_TRIALS = "MEXP_EMPTY_TRIALS"
+MEXP_EVAL_TOOL_UNREGISTERED = "MEXP_EVAL_TOOL_UNREGISTERED"
 
 
 class PlanCompileError(ValueError):
@@ -267,7 +270,7 @@ def compile_experiment_plan(
                     if live_registry.get(c.eval_tool) is None]
         if dangling:
             raise PlanCompileError(
-                "MEXP_EVAL_TOOL_UNREGISTERED",
+                MEXP_EVAL_TOOL_UNREGISTERED,
                 f"候选评价工具在注册面悬空: {dangling[:4]}")
 
     # ── 候选选择（缺省 = 卡全候选；显式子集须 ⊆ 卡；声明序不变）────────
@@ -336,9 +339,17 @@ def compile_experiment_plan(
     if not trials:
         raise PlanCompileError(MEXP_EMPTY_TRIALS, "展开后无任何试验（候选/网格为空）")
 
-    exp_input = ExperimentInput(
-        ref=input_ref, value_field=value_field, extra_inputs=extra,
-        crs_hint=crs_hint[:24], unit_hint=unit_hint[:24])
+    try:
+        exp_input = ExperimentInput(
+            ref=input_ref, value_field=value_field, extra_inputs=extra,
+            crs_hint=crs_hint[:24], unit_hint=unit_hint[:24])
+    except pydantic.ValidationError as exc:
+        # 有界校验失败 → typed 拒绝（review C-R2：裸 ValidationError 逃逸
+        # 到 REST 层会变成 500——必须在这里折成 PlanCompileError）。
+        raise PlanCompileError(
+            MEXP_INVALID_INPUT,
+            f"输入绑定校验失败: {exc.errors()[0].get('msg', str(exc))[:160]}"
+        ) from exc
     tmp = MethodExperimentPlan(
         experiment_id="pending", title=title[:80],
         family_id=family_id, input=exp_input, protocol=protocol,
