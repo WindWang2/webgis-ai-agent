@@ -306,6 +306,53 @@ def compile_paper_scale_plan(
     )
 
 
+def upsert_representation_window(
+    windows: Sequence[Any],
+    new_window: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    """在表达窗口列表中插入/覆盖一个窗口（精确裁剪重叠既有窗口）。
+
+    出版冻结语义：纸面工件窗口在其 zoom 跨度内**优先**于既有窗口（含
+    scale_profile 带窗），跨度和语义（mode/source 覆盖）对新窗原样生效；
+    被裁剪的既有窗保留原 mode/source（跨度外行为不变）。纯函数：
+    输入不被修改；输出按 min_zoom 排序。非法窗（非 dict/缺数值域）原样
+    保留不裁剪（消费方 normalize 负责拒绝 —— 本函数不复制其职责）。
+    """
+    try:
+        na = float(new_window["min_zoom"])
+        nb = float(new_window["max_zoom"])
+    except (KeyError, TypeError, ValueError):
+        return [dict(w) for w in windows if isinstance(w, dict)]
+    if not (na < nb):
+        return [dict(w) for w in windows if isinstance(w, dict)]
+
+    out: List[Dict[str, Any]] = []
+    for w in windows:
+        if not isinstance(w, dict):
+            continue
+        try:
+            wa = float(w["min_zoom"])
+            wb = float(w["max_zoom"])
+        except (KeyError, TypeError, ValueError):
+            out.append(dict(w))
+            continue
+        if wb <= na or wa >= nb or wa >= wb:
+            out.append(dict(w))     # 无重叠/非法跨度：原样
+            continue
+        # 重叠 → 裁剪出左右剩余段（同 mode/source 语义）
+        if wa < na:
+            left = dict(w)
+            left["min_zoom"], left["max_zoom"] = wa, na
+            out.append(left)
+        if wb > nb:
+            right = dict(w)
+            right["min_zoom"], right["max_zoom"] = nb, wb
+            out.append(right)
+    out.append(dict(new_window))
+    out.sort(key=lambda w: float(w.get("min_zoom", 0) or 0))
+    return out
+
+
 def plan_with_artifact_ref(
     plan: Dict[str, Any],
     *,
@@ -332,4 +379,5 @@ __all__ = [
     "PaperPlanResult",
     "compile_paper_scale_plan",
     "plan_with_artifact_ref",
+    "upsert_representation_window",
 ]
