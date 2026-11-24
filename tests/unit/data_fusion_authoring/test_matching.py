@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Tuple
 import pytest
 from shapely.geometry import Point, Polygon
 
-from app.services.data_fusion_authoring import contracts, matching
+from app.services.data_fusion_authoring import matching
 from app.services.data_fusion_authoring.errors import DataFusionError
 from app.services.data_fusion_authoring.matching import (
     SpatialContext,

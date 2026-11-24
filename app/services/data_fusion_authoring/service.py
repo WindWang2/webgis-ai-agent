@@ -154,7 +154,6 @@ async def update_plan(
     expected_revision: int, actor: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     from app.core.database import SessionLocal
-    from app.models.data_fusion_authoring import DataFusionPlan
 
     actor = actor or {}
     plan = parse_plan(plan_data)
@@ -245,7 +244,6 @@ def _probe_spec(side: str, src: Dict[str, Any]) -> FusionPlan:
     from app.services.data_fusion_authoring.plan import (
         FieldMapping,
         FusionSourceSpec,
-        MatchStrategy,
     )
 
     spec = FusionSourceSpec.model_validate({
@@ -354,7 +352,6 @@ async def preview_plan(
     候选比例估计（真实匹配运行的有界投影）与样本。结果缓存按
     digest 失效（计划或源变化 → 旧预览失效）。
     """
-    import hashlib
 
     from app.core.database import SessionLocal
 
@@ -401,7 +398,6 @@ async def preview_plan(
         blob = json.dumps(preview_payload, ensure_ascii=False, default=str)
 
     from app.core.database import SessionLocal
-    from app.models.data_fusion_authoring import DataFusionPlan
 
     with SessionLocal() as db:
         prow = _get_plan_row(db, session_id, plan_id)
@@ -759,7 +755,6 @@ async def _execute_body(
             outputs.discard_staging(run_id)
             _mark("cancelled")
             raise
-        code = getattr(exc, "code", None)
         if isinstance(exc, DataFusionError):
             _mark("failed", error_code=exc.code)
         else:
@@ -1100,12 +1095,12 @@ async def commit_run(
         src_a.rows, src_a.geoms, plan.source_a, plan), \
         matching.build_records(src_b.rows, src_b.geoms, plan.source_b, plan)
     key_by_pair: Dict[Tuple[int, int], str] = {}
-    used_keys: set = set()
     for pair in result.pairs:
         rec_a, rec_b = recs_a[pair.idx_a], recs_b[pair.idx_b]
         key = adjudication.pair_stable_key(
             rec_a, rec_b, plan, src_a.source_ref, src_b.source_ref)
         key_by_pair[(pair.idx_a, pair.idx_b)] = key
+    # decisions_by_key 只保留能挂靠到当前匹配的决定（orphan 计数披露）
 
     decisions_by_key = {
         k: v for k, v in decisions.items() if k in set(key_by_pair.values())}

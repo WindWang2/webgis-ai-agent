@@ -13,9 +13,8 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import List, Optional, Sequence
+from typing import Optional, Sequence
 
-from app.services.data_fusion_authoring import contracts
 
 _BRACKET_RE = re.compile(r"[（\(【\[〔][^）\)】\]〕]*[）\)】\]〕]")
 _PUNCT_CACHE: dict = {}

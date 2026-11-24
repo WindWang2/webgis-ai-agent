@@ -13,11 +13,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
-from app.services.data_fusion_authoring import contracts, textsim
-from app.services.data_fusion_authoring.errors import DataFusionError
+from app.services.data_fusion_authoring import contracts
 from app.services.data_fusion_authoring.matching import (
     EntityRecord,
     PairCandidate,

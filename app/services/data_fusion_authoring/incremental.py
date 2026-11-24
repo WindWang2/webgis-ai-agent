@@ -15,12 +15,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List
 
 from app.services.data_fusion_authoring import (
     adjudication,
     contracts,
-    matching,
 )
 from app.services.data_fusion_authoring.errors import DataFusionError
 from app.services.data_fusion_authoring.plan import FusionPlan

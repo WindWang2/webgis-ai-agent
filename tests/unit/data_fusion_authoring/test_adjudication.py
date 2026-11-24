@@ -1,7 +1,7 @@
 """WP4 裁决引擎测试：规则确定性、人工决定优先、来源保真、幂等组装。"""
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Dict
 
 import pytest
 from shapely.geometry import Point
@@ -23,7 +23,6 @@ from app.services.data_fusion_authoring.matching import (
 )
 from tests.unit.data_fusion_authoring.test_matching import (
     _plan,
-    _plan_with_id_space,
 )
 
 

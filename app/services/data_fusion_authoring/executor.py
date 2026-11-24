@@ -83,7 +83,6 @@ def build_source_view(
 
     非法几何按政策：exclude_count（排除并计数披露）/ block（typed）。
     """
-    import shapely
 
     crs = snapshot.crs
     if not crs and not snapshot.is_table:
@@ -125,7 +124,6 @@ def build_source_view(
                         )
                     invalid += 1
                     parsed = None
-                    reason = "invalid_excluded"
             geoms.append(parsed)
     view = FusionSourceView(
         side=side,

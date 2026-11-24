@@ -12,11 +12,10 @@ import pytest
 
 pytestmark = pytest.mark.usefixtures("db_tables")
 
-from app.services.data_fusion_authoring import outputs, review, service
+from app.services.data_fusion_authoring import outputs, service
 from app.services.data_fusion_authoring.errors import DataFusionError
 from tests.unit.data_fusion_authoring.conftest import (
     chengdu_pois_a,
-    fusion_plan,
     seed_session_source,
 )
 
@@ -207,7 +206,6 @@ async def test_execute_review_commit_full_journey(seeded_fusion_sources):
                                          limit=50)
     feats = page["features"]
     assert page["total"] == 4             # 6 行 − 2 合并对 = 4 要素
-    names = [f["properties"].get("name") for f in feats]
     # 唯一性：合并后无重复学校名（withheld 不存在 —— 全部已决）
     merged = [f for f in feats
               if f["properties"]["_fusion"]["origin"] == "merged"]

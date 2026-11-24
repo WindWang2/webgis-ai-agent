@@ -15,7 +15,6 @@ import time
 import tracemalloc
 from typing import Dict, List, Tuple
 
-import pytest
 from shapely.geometry import Point
 
 from app.services.data_fusion_authoring import matching
@@ -101,9 +100,8 @@ def test_scale_20k_recall_and_bounded_time():
                                     plan, ctx)
     elapsed = time.monotonic() - t0
     tracemalloc.start()
-    result_mem = matching.match_sources(rows_a, geoms_a, rows_b, geoms_b,
-                                        plan, ctx)
-    current, peak = tracemalloc.get_traced_memory()
+    matching.match_sources(rows_a, geoms_a, rows_b, geoms_b, plan, ctx)
+    _, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
 
     # 召回硬断言：网格一一对应 → 全部 matched（blocking 不漏关键候选）
