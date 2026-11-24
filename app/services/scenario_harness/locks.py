@@ -93,9 +93,18 @@ async def release_lock(
         lock.released_reason = (reason or "")[:MAX_REASON]
         return lock
 
-    released = await locked_registry_update(
-        session_id, REGISTRY_LOCKS, lock_id, _mutate, store=store
-    )
+    try:
+        released = await locked_registry_update(
+            session_id, REGISTRY_LOCKS, lock_id, _mutate, store=store
+        )
+    except RegistryError as exc:
+        # 公共 API 干净机器码（底层码带注册表前缀 `_scenario_locks_not_found`）。
+        if exc.code.endswith("_not_found"):
+            raise RegistryError(
+                "lock_not_found",
+                f"锁 {lock_id!r} 不存在（会话 {session_id}）",
+            ) from exc
+        raise
     assert released is not None  # must_exist=True 保证
     return released
 

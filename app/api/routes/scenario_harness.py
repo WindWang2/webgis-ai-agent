@@ -105,7 +105,6 @@ async def get_scenario_compare(
 ) -> dict[str, object]:
     """多候选结构化对比 + 基准漂移影响分级（candidate_ids 逗号分隔；空 = 全部活跃）。"""
     from app.services.scenario_harness.candidates import list_candidates
-    from app.services.scenario_harness.compare import compare_candidates
     from app.services.scenario_harness.store import RegistryError
 
     ids = [s.strip() for s in (candidate_ids or "").split(",") if s.strip()]
@@ -116,6 +115,9 @@ async def get_scenario_compare(
         ]
     if not ids:
         return {"schema_version": "scenario_compare.v1", "result": None, "reason": "no_candidates"}
+    # compare 模块按需导入（无活跃候选路径不依赖它）
+    from app.services.scenario_harness.compare import compare_candidates
+
     try:
         result = await compare_candidates(session_id, ids)
     except RegistryError as exc:
