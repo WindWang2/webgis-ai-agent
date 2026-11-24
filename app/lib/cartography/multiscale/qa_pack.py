@@ -147,39 +147,82 @@ def audit_polygon_pairwise_seams(
     except Exception:  # noqa: BLE001 — union 失败按未知保守
         gap = float("inf")
 
-    # 邻接缝隙复核（参考定义邻接对；派生序与参考序按 id 对齐，缺 id 时
-    # 退化为同序号对齐 —— 综合管线保持输入序，安全）
+    # 邻接缝隙复核（评审 R2-N1 修正：按**稳定 fid** 对齐参考/派生 —— 消除
+    # 后幸存者 id 不变，计数对齐门槛会让消除路径静默跳过审计）。参考输入
+    # 定义邻接对（外环量化顶点共享 ≥2）；两侧均在派生集合中的对做米空间
+    # 距离复核（等距换算，消除 kx-only 方向偏差 —— 评审 R2-N4）；被消除
+    # 一侧的对自然跳过（几何已并入邻居 —— 邻接关系随消除合法改变），
+    # 跳过数如实披露。
     adjacent_pairs_checked = 0
+    adjacent_pairs_skipped = 0
     gap_pairs: List[Dict[str, Any]] = []
     ref_geoms = _collect(reference_features) if reference_features else []
-    if len(ref_geoms) == len(geoms) and ref_geoms:
-        ref_q = []
-        for g in ref_geoms:
-            # 顶点采样：Polygon 取外环；MultiPolygon 取全部部件外环
-            # （洞不计入邻接判定 —— 邻接由外部边界定义）
-            exts: List[Any] = []
-            if g.geom_type == "Polygon":
-                exts = [g.exterior]
-            elif g.geom_type == "MultiPolygon":
-                exts = [part.exterior for part in g.geoms]
+    if ref_geoms:
+        from app.lib.cartography.multiscale.generalize import (
+            _dataset_origin as _orig,
+            _metric_transforms as _mt,
+        )
+
+        ref_fid_q = []
+        for ref_index, feature in enumerate(reference_features or []):
+            gd = feature.get("geometry")
+            g = None
+            if isinstance(gd, dict):
+                try:
+                    g = shape(gd)
+                except Exception:  # noqa: BLE001
+                    g = None
             qs: set = set()
-            for ext in exts:
-                for c in ext.coords:
-                    qs.add((round(c[0], 9), round(c[1], 9)))
-            ref_q.append(qs)
-        for i in range(len(geoms)):
-            for j in range(i + 1, len(geoms)):
-                shared = ref_q[i] & ref_q[j]
+            if g is not None and g.geom_type in ("Polygon", "MultiPolygon"):
+                exts: List[Any] = []
+                if g.geom_type == "Polygon":
+                    exts = [g.exterior]
+                else:
+                    exts = [part.exterior for part in g.geoms]
+                for ext in exts:
+                    for c in ext.coords:
+                        qs.add((round(c[0], 9), round(c[1], 9)))
+            ref_fid_q.append((_fid(feature, ref_index), qs))
+
+        derived_by_fid: Dict[str, Any] = {}
+        for feature in features:
+            gd = feature.get("geometry")
+            if not isinstance(gd, dict):
+                continue
+            try:
+                g = shape(gd)
+            except Exception:  # noqa: BLE001
+                continue
+            if g.geom_type in ("Polygon", "MultiPolygon") and not g.is_empty:
+                derived_by_fid[_fid(feature, len(derived_by_fid))] = g
+        lon0, lat0 = _orig(ref_geoms)
+        to_m, _to_ll = _mt(lon0, lat0)
+        derived_m: Dict[str, Any] = {}
+        for fid_key, g in derived_by_fid.items():
+            try:
+                derived_m[fid_key] = to_m(g)
+            except Exception:  # noqa: BLE001 — 换算失败不入索引（诚实少审）
+                continue
+
+        for idx_a, (fid_a, qa) in enumerate(ref_fid_q):
+            for fid_b, qb in ref_fid_q[idx_a + 1:]:
+                shared = qa & qb
                 if len(shared) < 2:
                     continue   # 非邻接对
+                ga = derived_m.get(fid_a)
+                gb = derived_m.get(fid_b)
+                if ga is None or gb is None:
+                    # 一侧被消除/聚合：邻接关系随合并合法改变（跳过并披露）
+                    adjacent_pairs_skipped += 1
+                    continue
                 adjacent_pairs_checked += 1
                 try:
-                    dist_m = geoms[i].distance(geoms[j]) * kx
+                    dist_m = float(ga.distance(gb))
                 except Exception:  # noqa: BLE001 — 距离失败按未知保守
                     dist_m = float("inf")
                 if dist_m > float(gap_distance_tolerance_m):
                     gap_pairs.append({
-                        "pair": [i, j],
+                        "pair": [fid_a, fid_b],
                         "distance_m": round(dist_m, 3),
                     })
     within = bool(
@@ -190,6 +233,7 @@ def audit_polygon_pairwise_seams(
         "max_pairwise_overlap_m2": max_overlap,
         "coverage_gap_m2": gap,
         "adjacent_pairs_checked": adjacent_pairs_checked,
+        "adjacent_pairs_skipped": adjacent_pairs_skipped,
         "gap_pairs": gap_pairs[:16],
         "within_tolerance": within,
         "evaluated": True,

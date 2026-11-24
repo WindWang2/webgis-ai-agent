@@ -43,6 +43,7 @@ from app.lib.cartography.multiscale.paper_scale import (
     ground_m_per_mm,
     keep_region_of,
     mandatory_ids_of,
+    mandatory_values_of,
     minimum_mappable_area_m2,
     minimum_mappable_length_m,
     resolve_tolerance_m,
@@ -105,14 +106,39 @@ def _kept_values_for_paper(
     model: Optional[ImportanceModel],
     purpose: str,
     explicit: Optional[Sequence[Any]],
+    contract: Optional[PublicationScaleContract] = None,
 ) -> Optional[List[Any]]:
-    """kept_values 裁决：显式 > 重要性模型按用途秩 > None（不取舍）。"""
+    """kept_values 裁决：显式 > 重要性模型按用途秩 > None（不取舍）。
+
+    硬约束 keep_values（评审 R2-N2：此前 mandatory_values_of 是孤儿，
+    用户传了 keep_values 得到 committed 计划但约束静默不生效 —— 假保障
+    比拒绝更危险）：按重要性字段匹配并入（user-wins，排序保持模型序
+    在前、强制值在尾 —— 与 generalize.kept_values_for_band 同纪律）。
+    """
     if explicit is not None:
-        return [str(v) for v in explicit]
-    if model is None:
-        return None
-    k = PAPER_KEEP_RANKS_BY_PURPOSE.get(purpose, 4)
-    return list(model.value_order[:k])
+        base = [str(v) for v in explicit]
+    elif model is not None:
+        k = PAPER_KEEP_RANKS_BY_PURPOSE.get(purpose, 4)
+        base = list(model.value_order[:k])
+    else:
+        base = None
+    # 硬约束值并入（无重要性模型但契约带 keep_values + 字段 → 也生效）
+    mandatory_by_field = mandatory_values_of(contract) if contract is not None         else {}
+    if mandatory_by_field:
+        field = model.field if model is not None else None
+        if field is None:
+            # 无模型：任一 keep_values 字段的值直接作为 kept（用户显式
+            # 字段语义优先于启发式 —— 全部字段的并集）
+            forced = [v for vals in mandatory_by_field.values() for v in vals]
+        else:
+            forced = list(mandatory_by_field.get(field, []))
+        if forced:
+            if base is None:
+                base = []
+            for v in forced:
+                if v not in base:
+                    base.append(v)
+    return base
 
 
 def _plan_fingerprint(payload: Dict[str, Any]) -> str:
@@ -196,11 +222,21 @@ def compile_paper_scale_plan(
     elif family == "line":
         model = importance.selected if importance is not None else None
         sel_values = _kept_values_for_paper(model, contract.purpose,
-                                            kept_values)
-        if sel_values and model is not None:
+                                            kept_values, contract)
+        # 重要性模型或硬约束 keep_values 至少其一在场才执行取舍
+        # （评审 R2-N2：keep_values 单独在场也必须真实生效）
+        has_field = bool(mandatory_values_of(contract)) and (
+            model is not None or any(
+                c.importance_field
+                for c in contract.hard_constraints
+                if c.kind == "keep_values"))
+        if sel_values and (model is not None or has_field):
             net = select_lines_with_connectivity(
                 artifact_features,
-                importance_field=model.field, kept_values=sel_values,
+                importance_field=(model.field if model is not None else next(
+                    c.importance_field for c in contract.hard_constraints
+                    if c.kind == "keep_values" and c.importance_field)),
+                kept_values=sel_values,
                 mandatory_ids=mandatory,
                 # 硬约束（navigation）不设桥接预算；软用途设帽超限诚实披露
                 max_bridges=(None if hints["network_connectivity_hard"]

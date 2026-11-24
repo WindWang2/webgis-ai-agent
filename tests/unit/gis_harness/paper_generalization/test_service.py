@@ -83,9 +83,11 @@ class TestInspect:
         assert report["target_denominator"] == 500_000
         assert report["page"]["format_id"] == "A4"
         assert report["page"]["orientation"] == "landscape"
-        # 等效 zoom 在 MapLibre 域内且与 1:50万@300dpi 量级一致（z≈6-8）
+        # 等效 zoom 锚定契约 page.dpi=300（评审 R2-N5 与 apply/QA 同口径）：
+        # 1:50万@300dpi → 42.3 m/px → z≈10.5（96dpi 口径下约为 8.86 ——
+        # 差 log2(300/96)≈1.64 为 dpi 语义差，非缺陷）
         z = report["equivalent_display_zoom"]
-        assert z is not None and 4.0 < z < 10.0
+        assert z is not None and 9.0 < z < 12.0
         assert report["scale_variation"]["evaluated"] is True
         assert report["source"]["feature_count"] == 3
         assert report["existing_paper_plans"] == []
@@ -299,6 +301,44 @@ class TestHardConstraintEndToEnd:
                 session, "districts", mode="commit",
                 denominator=500_000, keep_values=["国道"])
         assert "keep_values_field" in str(exc.value)
+
+
+class TestResumeAndRegionEndToEnd:
+    async def test_partial_resume_reuses_artifact_ref(self, session):
+        # 评审 R2-N6：superseded partial → 同 op_id 重放（无 stale revision）
+        # 从断点续链，工件 ref 复用（不产孤儿 ref）。
+        first = await apply_paper_scale_generalization(
+            session, "districts", mode="commit", denominator=500_000,
+            operation_id="op-res-1", expected_revision=999_999)
+        assert first["status"] == "partial"
+        stale_ref = first["artifact_ref"]
+        second = await apply_paper_scale_generalization(
+            session, "districts", mode="commit", denominator=500_000,
+            operation_id="op-res-1")
+        assert second["status"] == "committed"
+        assert second["artifact_ref"] == stale_ref, \
+            "断点续链必须复用已存工件 ref（不产孤儿）"
+        spec = await mapspec_store_instance.get_mapspec(session)
+        layer = next(lyr for lyr in spec["layers"]
+                     if lyr["id"] == "districts")
+        assert len(layer["scale_profile"]["paper_plans"]) == 1
+        # 工件源真实在 spec.sources（无悬空）
+        src_id = second["artifact_source_id"]
+        assert isinstance(spec["sources"].get(src_id), dict)
+
+    async def test_keep_region_service_e2e(self, session):
+        # 评审 R2-N6：keep_region 硬约束经服务面保护区域内小县
+        receipt = await apply_paper_scale_generalization(
+            session, "districts", mode="commit", denominator=500_000,
+            keep_region=[116.0, 39.0, 116.004, 39.004],
+            operation_id="op-region-1")
+        assert receipt["status"] == "committed"
+        spec = await mapspec_store_instance.get_mapspec(session)
+        layer = next(lyr for lyr in spec["layers"]
+                     if lyr["id"] == "districts")
+        plan = next(iter(layer["scale_profile"]["paper_plans"].values()))
+        assert plan["stats"]["artifact_count"] == 3, \
+            "区域内的要素不得被消除"
 
 
 class TestWindowUpsertPure:

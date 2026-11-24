@@ -228,8 +228,11 @@ async def inspect_paper_scale_generalization(
         keep_values=keep_values, keep_values_field=keep_values_field,
         keep_region=keep_region)
     variation = scale_variation_report(contract)
+    # 等效 zoom 锚定契约 page.dpi（评审 R2-N5：与 apply 冻结窗/QA 同口径
+    # —— 否则检查面与提交面的 zoom 相差 log2(dpi/96)）
     zoom = equivalent_display_zoom(
-        denom, float(contract.frame.scale_reference_lat)) \
+        denom, float(contract.frame.scale_reference_lat),
+        dpi=float(contract.page.dpi)) \
         if contract.projection == "web_mercator" else None
     hints = strategy_hints_of(contract) if not _contract_errors(contract) else None
     family = _geometry_family_of(ctx["descriptor"], ctx["layer"])
@@ -379,23 +382,50 @@ def _args_contract_fingerprint_basis(
         denom = parse_denominator_text(denominator_text)
     denom = denom if denom is not None else 0
     fmt, orientation, dpi_res = _resolve_page(page_text=page_text, dpi=dpi)
-    return PublicationScaleContract(
+    basis = PublicationScaleContract(
         target_denominator=max(denom, MIN_DENOMINATOR_PLACEHOLDER),
         purpose=purpose if purpose in MAP_PURPOSES else "reference",
         page=PageSpec(format_id=fmt, orientation=orientation,
                       dpi=dpi_res if dpi_res is not None else 300.0),
-        hard_constraints=[
-            HardConstraint(kind="keep_feature_ids",
-                           feature_ids=_norm_text_list(keep_feature_ids, 32,
-                                                       "kfid")),
-            HardConstraint(kind="keep_values",
-                           values=_norm_text_list(keep_values, 32, "kv"),
-                           importance_field=keep_values_field or ""),
-        ] if (keep_feature_ids or keep_values) else [],
+        hard_constraints=_basis_constraints(
+            keep_feature_ids, keep_values, keep_values_field, keep_region),
+        generated_by="fingerprint_basis",
     )
+    # kept_values/sum_fields 不属契约面 —— 挂 disclosures 开放面参与指纹
+    # （评审 R2-N3：同 op_id 换这两个参数重放须如实标注 mismatch）
+    basis.disclosures = [
+        f"kept_values={sorted(_norm_text_list(kept_values, 32, 'kv'))}",
+        f"sum_fields={sorted(_norm_text_list(sum_fields, 8, 'sf'))}",
+    ]
+    return basis
 
 
 MIN_DENOMINATOR_PLACEHOLDER = 100
+
+
+def _basis_constraints(
+    keep_feature_ids: Optional[Sequence[str]],
+    keep_values: Optional[Sequence[Any]],
+    keep_values_field: Optional[str],
+    keep_region: Optional[Sequence[float]],
+) -> List[HardConstraint]:
+    """指纹基座的硬约束（条件构造，无 None 元素）。"""
+    hard: List[HardConstraint] = []
+    ids = _norm_text_list(keep_feature_ids, 32, "kfid")
+    if ids:
+        hard.append(HardConstraint(kind="keep_feature_ids", feature_ids=ids))
+    values = _norm_text_list(keep_values, 32, "kv")
+    if values:
+        hard.append(HardConstraint(kind="keep_values", values=values,
+                                   importance_field=keep_values_field or ""))
+    if keep_region:
+        try:
+            hard.append(HardConstraint(
+                kind="keep_region",
+                region_bbox=[float(v) for v in keep_region]))
+        except (TypeError, ValueError):
+            pass
+    return hard
 
 
 def _contract_from_args(
@@ -523,7 +553,10 @@ async def apply_paper_scale_generalization(
     # 工件落新 ref（非破坏；断点续链复用已存 ref —— 不产孤儿）
     from app.services.session_data import session_data_manager
 
-    if resume_slots >= 1 and isinstance(resume_ref, str) and resume_ref \
+    # partial 回执携带工件 ref 即复用（slot0 也可能未提交 —— superseded
+    # 在首个 intent 即可触发）；编译确定性保证同参内容一致，重指旧 ref
+    # 不产生孤儿，也不写不一致内容。
+    if isinstance(resume_ref, str) and resume_ref \
             and isinstance(resume_source_id, str) and resume_source_id:
         ref_id, source_id = resume_ref, resume_source_id
     else:
