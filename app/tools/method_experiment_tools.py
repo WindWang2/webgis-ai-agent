@@ -20,9 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
-
-from pydantic import JsonValue
+from typing import Dict, List, Optional
 
 from app.services.gis_harness.method_experiment.cards import (
     EXPERIMENT_FAMILY_IDS,
@@ -30,7 +28,6 @@ from app.services.gis_harness.method_experiment.cards import (
     match_family_by_question,
 )
 from app.services.gis_harness.method_experiment.evaluate import (
-    build_adoption_receipt,
     evaluate_experiment,
 )
 from app.services.gis_harness.method_experiment.plan import (
@@ -41,21 +38,12 @@ from app.services.gis_harness.method_experiment.plan import (
     PlanCompileError,
     compile_experiment_plan,
 )
-from app.services.gis_harness.method_experiment.runner import (
-    DEFAULT_MAX_TRIALS_PER_CALL,
-    DEFAULT_WALL_GUARD_SECONDS,
-    ExperimentRunner,
-)
-from app.services.gis_harness.method_experiment.state import (
-    new_state,
-    state_alias,
-    state_from_payload,
-    state_to_payload,
-)
 from app.services.gis_harness.method_experiment.protocol import (
     CV_SCHEMES,
 )
-from app.services.session_data import session_data_manager
+from app.services.gis_harness.method_experiment.runner import (
+    DEFAULT_MAX_TRIALS_PER_CALL,
+)
 from app.tools.registry import ToolRegistry, tool
 
 logger = logging.getLogger(__name__)
@@ -64,48 +52,10 @@ logger = logging.getLogger(__name__)
 def register_method_experiment_tools(registry: ToolRegistry) -> None:
     """注册方法实验工具族（独立模块防并发冲突）。"""
 
-    # ── 内部助手（与 analysis_workflow_tools 同形状）────────────────────
-    async def _load_state(session_id: str, experiment_id: str):
-        alias = state_alias(experiment_id)
-        try:
-            ref = await session_data_manager.resolve_alias(session_id, alias)
-        except Exception:  # noqa: BLE001 — Redis 降级按无状态处理
-            ref = alias
-        payload = None
-        try:
-            payload = await session_data_manager.get(session_id, ref)
-        except Exception:  # noqa: BLE001
-            payload = None
-        return state_from_payload(payload if isinstance(payload, dict) else {})
-
-    async def _persist_state(session_id: str, state) -> None:
-        ref = await session_data_manager.store(
-            session_id, state_to_payload(state), prefix="mexp-state")
-        await session_data_manager.set_alias(
-            session_id, ref, state_alias(state.experiment_id))
-
-    def _registry_sync() -> Any:
-        from app.agent_pi_bridge import try_get_tool_registry
-        return try_get_tool_registry()
-
-    def _production_dispatch():
-        """试验分发 = 共享 ToolDispatchService（内层与 Pi 直调同一生产缝）。"""
-        import uuid as _uuid
-        from app.agent_pi_bridge import (
-            _get_shared_dispatch_service,
-            try_get_tool_registry,
-        )
-        if try_get_tool_registry() is None:
-            return None
-
-        async def _dispatch(tool_name: str, args: Dict[str, JsonValue],
-                            session_id: str):
-            service = _get_shared_dispatch_service()
-            tc = {"id": f"mexp-{_uuid.uuid4().hex[:8]}",
-                  "function": {"name": tool_name, "arguments": args}}
-            return await service.dispatch(tc, session_id, set())
-
-        return _dispatch
+    # ── 内部助手（共享服务层——与 REST 路由同链，UI 与 Agent 不分叉）──────
+    from app.services.gis_harness.method_experiment.service import (
+        load_state as _load_state,
+    )
 
     # ── 工具 1：inspect（只读）──────────────────────────────────────────
     @tool(
@@ -304,23 +254,19 @@ def register_method_experiment_tools(registry: ToolRegistry) -> None:
                     "message": str(exc),
                     "alternatives": ["webgis_method_experiment_inspect"]}
 
-        summary = plan.to_bounded_summary()
         if session_id:
-            from app.services.distributed_lock import session_lock_registry
-            async with session_lock_registry.lock(
-                    f"mexp:{plan.experiment_id}", fail_on_degraded=True):
-                existing = await _load_state(session_id, plan.experiment_id)
-                if existing is None or not existing.experiment_id:
-                    state = new_state(summary)
-                    state.log("plan_compiled", trials=len(plan.trials))
-                    await _persist_state(session_id, state)
-                elif existing.plan_fingerprint != summary.get("fingerprint"):
-                    return {"success": False, "tool": tool_name,
-                            "reason_code": "MEXP_ID_COLLISION",
-                            "message": (
-                                f"实验 id {plan.experiment_id} 已被不同内容的"
-                                "计划占用（指纹失配）——改参数/候选得到新 id"),
-                            "alternatives": ["webgis_method_experiment_status"]}
+            from app.services.gis_harness.method_experiment.service import (
+                ensure_state_for_plan,
+            )
+            _, decline = await ensure_state_for_plan(session_id, plan)
+            if decline:
+                return {"success": False, "tool": tool_name,
+                        "reason_code": decline,
+                        "message": (
+                            f"实验 id {plan.experiment_id} 已被不同内容的"
+                            "计划占用（指纹失配）——改参数/候选得到新 id"),
+                        "alternatives": ["webgis_method_experiment_status"]}
+        summary = plan.to_bounded_summary()
         return {
             "success": True,
             "tool": tool_name,
@@ -374,58 +320,30 @@ def register_method_experiment_tools(registry: ToolRegistry) -> None:
                     "message": f"实验 {experiment_id} 不存在——先 plan",
                     "alternatives": ["webgis_method_experiment_plan",
                                      "webgis_method_experiment_inspect"]}
-        registry_sync = _registry_sync()
-        dispatch_fn = _production_dispatch()
-        if registry_sync is None or dispatch_fn is None:
+        from app.services.gis_harness.method_experiment.service import (
+            run_window,
+        )
+        state, decline = await run_window(
+            session_id, experiment_id,
+            max_trials_per_call=int(max_trials_per_call),
+        )
+        if state is None:
             return {"success": False, "tool": tool_name, "declined": True,
-                    "reason_code": "MEXP_REGISTRY_UNAVAILABLE",
-                    "message": "工具注册表/分发服务不可用", "alternatives": []}
-
-        # 计划快照重建（恢复语义：状态在、进程重启后仍可续跑）
-        snapshot = state.plan_snapshot or {}
-        try:
-            from app.services.gis_harness.method_experiment.plan import (
-                MethodExperimentPlan,
-            )
-            plan = MethodExperimentPlan.model_validate(snapshot)
-        except Exception:  # noqa: BLE001 — 快照损坏 = 诚实失败
-            return {"success": False, "tool": tool_name, "declined": True,
-                    "reason_code": "MEXP_PLAN_SNAPSHOT_CORRUPT",
-                    "message": "计划快照不可解析（需重新 plan）",
-                    "alternatives": ["webgis_method_experiment_plan"]}
-        if plan.experiment_id != experiment_id:
-            return {"success": False, "tool": tool_name, "declined": True,
-                    "reason_code": "MEXP_PLAN_MISMATCH",
-                    "message": "计划快照与实验 id 不符（需重新 plan）",
-                    "alternatives": ["webgis_method_experiment_plan"]}
-
-        window = max(1, min(int(max_trials_per_call),
-                            DEFAULT_MAX_TRIALS_PER_CALL))
-        from app.lib.cancellation import is_cancelled
-        from app.services.distributed_lock import session_lock_registry
-
-        async with session_lock_registry.lock(
-                f"mexp:{experiment_id}", fail_on_degraded=True):
-            reloaded = await _load_state(session_id, experiment_id)
-            if reloaded is None or not reloaded.experiment_id:
-                return {"success": False, "tool": tool_name, "declined": True,
-                        "reason_code": "MEXP_STATE_UNREADABLE",
-                        "message": "锁内状态读取失败（不使用可能陈旧的快照）",
-                        "alternatives": ["webgis_method_experiment_status"]}
-            state = reloaded
-            if state.running_stale():
-                state.log("resume_after_stale")
-            runner = ExperimentRunner(
-                dispatch=dispatch_fn,
-                persist=lambda st: _persist_state(session_id, st),
-                max_features=int((plan.budget.max_features)),
-            )
-            state = await runner.run(
-                session_id, plan, state,
-                max_trials_per_call=window,
-                wall_guard_seconds=DEFAULT_WALL_GUARD_SECONDS,
-                cancel_check=is_cancelled,
-            )
+                    "reason_code": decline,
+                    "message": {
+                        "MEXP_EXPERIMENT_NOT_FOUND":
+                            f"实验 {experiment_id} 不存在——先 plan",
+                        "MEXP_PLAN_SNAPSHOT_CORRUPT":
+                            "计划快照不可解析（需重新 plan）",
+                        "MEXP_PLAN_MISMATCH":
+                            "计划快照与实验 id 不符（需重新 plan）",
+                        "MEXP_REGISTRY_UNAVAILABLE":
+                            "工具注册表/分发服务不可用",
+                    }.get(decline, decline),
+                    "alternatives": (
+                        ["webgis_method_experiment_plan"]
+                        if decline.startswith("MEXP_PLAN")
+                        or decline == "MEXP_EXPERIMENT_NOT_FOUND" else [])}
 
         counts = state.counts()
         return {
@@ -479,7 +397,7 @@ def register_method_experiment_tools(registry: ToolRegistry) -> None:
             return {"success": False, "message": "Missing session_id",
                     "tool": tool_name}
         state = await _load_state(session_id, experiment_id)
-        if state is None or not state.experiment_id:
+        if state is None:
             return {"success": False, "tool": tool_name, "declined": True,
                     "reason_code": "MEXP_EXPERIMENT_NOT_FOUND",
                     "message": f"实验 {experiment_id} 不存在",
@@ -544,15 +462,14 @@ def register_method_experiment_tools(registry: ToolRegistry) -> None:
                     "reason_code": "MEXP_EXPERIMENT_NOT_FOUND",
                     "message": f"实验 {experiment_id} 不存在",
                     "alternatives": ["webgis_method_experiment_plan"]}
-        try:
-            from app.services.gis_harness.method_experiment.plan import (
-                MethodExperimentPlan,
-            )
-            plan = MethodExperimentPlan.model_validate(state.plan_snapshot)
-        except Exception:  # noqa: BLE001
+        from app.services.gis_harness.method_experiment.service import (
+            rebuild_plan,
+        )
+        plan, decline = rebuild_plan(state)
+        if plan is None:
             return {"success": False, "tool": tool_name, "declined": True,
-                    "reason_code": "MEXP_PLAN_SNAPSHOT_CORRUPT",
-                    "message": "计划快照不可解析（需重新 plan）",
+                    "reason_code": decline,
+                    "message": "计划快照不可解析或与实验 id 不符（需重新 plan）",
                     "alternatives": ["webgis_method_experiment_plan"]}
         evaluation = evaluate_experiment(plan, state)
         return {
@@ -603,39 +520,24 @@ def register_method_experiment_tools(registry: ToolRegistry) -> None:
         if not session_id:
             return {"success": False, "message": "Missing session_id",
                     "tool": tool_name}
-        from app.services.distributed_lock import session_lock_registry
-
-        async with session_lock_registry.lock(
-                f"mexp:{experiment_id}", fail_on_degraded=True):
-            state = await _load_state(session_id, experiment_id)
-            if state is None or not state.experiment_id:
-                return {"success": False, "tool": tool_name, "declined": True,
-                        "reason_code": "MEXP_EXPERIMENT_NOT_FOUND",
-                        "message": f"实验 {experiment_id} 不存在",
-                        "alternatives": []}
-            try:
-                from app.services.gis_harness.method_experiment.plan import (
-                    MethodExperimentPlan,
-                )
-                plan = MethodExperimentPlan.model_validate(state.plan_snapshot)
-            except Exception:  # noqa: BLE001
-                return {"success": False, "tool": tool_name, "declined": True,
-                        "reason_code": "MEXP_PLAN_SNAPSHOT_CORRUPT",
-                        "message": "计划快照不可解析", "alternatives": []}
-            receipt, decline = build_adoption_receipt(
-                plan, state, trial_id=trial_id, reason=reason)
-            if receipt is None:
-                return {"success": False, "tool": tool_name, "declined": True,
-                        "reason_code": decline,
-                        "message": (
-                            "采纳目标试验不存在/未完成——未评估的候选绝不"
-                            "进入采纳回执"),
-                        "alternatives": ["webgis_method_experiment_status",
-                                         "webgis_method_experiment_compare"]}
-            state.adoption = receipt
-            state.log("adoption_recorded", trial_id=trial_id,
-                      candidate_id=receipt.candidate_id)
-            await _persist_state(session_id, state)
+        from app.services.gis_harness.method_experiment.service import (
+            record_adoption,
+        )
+        receipt, decline = await record_adoption(
+            session_id, experiment_id, trial_id, reason)
+        if receipt is None:
+            messages = {
+                "MEXP_EXPERIMENT_NOT_FOUND": f"实验 {experiment_id} 不存在",
+                "MEXP_PLAN_SNAPSHOT_CORRUPT": "计划快照不可解析",
+                "MEXP_TRIAL_NOT_FOUND": "采纳目标试验不存在",
+                "MEXP_TRIAL_NOT_COMPLETED":
+                    "采纳目标试验未完成——未评估的候选绝不进入采纳回执",
+            }
+            return {"success": False, "tool": tool_name, "declined": True,
+                    "reason_code": decline,
+                    "message": messages.get(decline, decline),
+                    "alternatives": ["webgis_method_experiment_status",
+                                     "webgis_method_experiment_compare"]}
         return {
             "success": True,
             "tool": tool_name,
