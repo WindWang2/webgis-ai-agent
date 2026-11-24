@@ -7,6 +7,9 @@ if not, why?* Reports, per domain, PASS / WARN / FAIL with concrete remediation.
 Checks (fail-open = WARN only; fail-closed = FAIL exit code):
   1. vendor      submodule pin vs superproject gitlink, describe/tag, protocol
                  floor (>= v1.5.0)                      → WARN on drift
+                 + WP1 版本握手：`node rpc-entry --version` 产物自报版本，
+                 三方对账（runtime vs describe vs gitlink）→ WARN on 漂移
+                 （checkout 升级 / 产物旧构建 = 忘 rebuild 的真实漂移）
   2. build       dist/bundle rpc-entry presence (+ node engine >= 22.19)
                  → FAIL when missing (Pi cannot start; bridge silently falls
                  back to ChatEngine — the #400 failure mode this tool kills)
@@ -90,15 +93,27 @@ def _live_registry() -> ToolRegistry | None:
 # ── 1. vendor identity ──────────────────────────────────────────────────────
 
 def check_vendor() -> Report:
-    from app.services.chat.pi_compat import PI_MIN_VENDOR_TAG, pi_vendor_identity
+    from app.services.chat.pi_compat import (
+        PI_MIN_VENDOR_TAG,
+        attach_runtime_version,
+        parse_vendor_version,
+        pi_vendor_identity,
+        vendor_capabilities,
+    )
 
-    ident = pi_vendor_identity()
+    # WP1 版本握手：identity 本体保持 stat-only（cheap 路径纪律），这里显式
+    # opt-in 产物自报版本探针（`node rpc-entry.js --version`，10s 上限，有
+    # mtime 缓存）。
+    ident = attach_runtime_version(pi_vendor_identity())
     facts = {
         "head": ident.head_commit,
         "describe": ident.describe,
         "expected_pin": ident.expected_pin,
         "entry": ident.entry_kind,
         "node": ident.node_version,
+        "runtime_version": ident.runtime_version,
+        "runtime_version_source": ident.runtime_version_source,
+        "capabilities": vendor_capabilities(ident.runtime_version),
     }
     # ADR-0288（W08）：期望配置代（不可逆短指纹）—— 与 /config/llm 的
     # expected_generation 及 worker spawn 锚定的生效代同一口径，可对账
@@ -109,12 +124,46 @@ def check_vendor() -> Report:
         facts["expected_config_generation"] = config_generation() or None
     except Exception:  # noqa: BLE001 — 观测面缺席不阻断诊断
         facts["expected_config_generation"] = None
+    # 三方对账：runtime probe（构建产物自报）vs describe（checkout 所在 tag）
+    # vs expected pin（superproject gitlink）。pin 漂移由下方既有 WARN 表达
+    # （describe≠pin 时 probe-vs-describe 的结论已无意义）；此处补的是
+    # probe-vs-describe：「checkout 已升级、产物还是旧构建（忘 rebuild）」
+    # —— wire 行为由产物决定，describe 说哪个 tag 都不算数。
+    runtime = ident.runtime_version
+    probe_drift = False
+    if runtime is not None and ident.describe:
+        rt = parse_vendor_version(runtime)
+        de = parse_vendor_version(ident.describe)
+        probe_drift = rt is not None and de is not None and rt != de
     if ident.matches_expected_pin is False:
+        message = (
+            f"working tree ({ident.head_commit}) drifted off recorded gitlink "
+            f"({ident.expected_pin})"
+        )
+        if probe_drift:
+            message += (
+                f"; built entry self-reports {runtime} while checkout describe "
+                f"is {ident.describe} (stale build?)"
+            )
         return Report(
             "vendor", WARN,
-            f"working tree ({ident.head_commit}) drifted off recorded gitlink "
-            f"({ident.expected_pin})",
-            "git -C vendor/pi checkout <recorded-pin>", facts,
+            message,
+            "git -C vendor/pi checkout <recorded-pin> && bash scripts/build-vendor-pi.sh",
+            facts,
+        )
+    if probe_drift:
+        return Report(
+            "vendor", WARN,
+            f"built entry self-reports {runtime} but checkout describe is "
+            f"{ident.describe} — stale build (submodule moved without rebuild?)",
+            "bash scripts/build-vendor-pi.sh", facts,
+        )
+    if ident.entry_built and runtime is None:
+        return Report(
+            "vendor", WARN,
+            "runtime version probe unavailable for a built entry — cannot "
+            "attest which version the artifact was built from",
+            "node <rpc-entry> --version；check build logs / PATH", facts,
         )
     if ident.meets_floor is False:
         return Report(
@@ -130,7 +179,8 @@ def check_vendor() -> Report:
         )
     return Report(
         "vendor", PASS,
-        f"pin ok ({ident.describe or ident.head_commit}); floor {PI_MIN_VENDOR_TAG}", "", facts,
+        f"pin ok ({ident.describe or ident.head_commit}); "
+        f"runtime {runtime or '?'}; floor {PI_MIN_VENDOR_TAG}", "", facts,
     )
 
 
