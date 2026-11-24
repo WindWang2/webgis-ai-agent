@@ -210,7 +210,7 @@
     "abandon": "放弃",
     "abandonDone": "候选已回收",
     "abandonFailed": "回收失败",
-    "adoptedAs": "已采纳（回执",
+    "adoptedAs": "已采纳 · 回执 ",
     "staleReasons": "基准漂移",
     "impact_current": "与当前基准一致，可直接采纳",
     "impact_recompute_required": "基准已漂移：建议在候选上局部重算",

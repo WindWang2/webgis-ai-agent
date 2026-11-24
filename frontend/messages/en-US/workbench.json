@@ -210,7 +210,7 @@
     "abandon": "Abandon",
     "abandonDone": "Candidate recycled",
     "abandonFailed": "Recycle failed",
-    "adoptedAs": "Adopted (receipt",
+    "adoptedAs": "Adopted · receipt ",
     "staleReasons": "Baseline drift",
     "impact_current": "Matches current baseline; ready to adopt",
     "impact_recompute_required": "Baseline moved: recompute the candidate locally",
