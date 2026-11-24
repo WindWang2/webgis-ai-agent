@@ -83,8 +83,11 @@ KDE 工具（不属本任务范围、且行为改动影响面大）；`density_e
 拒绝/预算钳制；runner 诚实语义（失败隔离/未评估/取消保留前缀/窗口预算/
 内容寻址复用）；评价（方向/tie-break/Pareto/弃权/采纳拒绝路径）；原语
 **独立 oracle**（测试内独立实现折分配+IDW 内核，对照 <1%）；真实
-`init_tools` + 内存 session store 的插值/密度/网络实验全链（幂等重跑零
-新 dispatch、跨候选同折分配公平性、网络情景覆盖单调性）。
+`init_tools` + 真实 ToolDispatchService（含 Pydantic/未知参数闸与 ref
+解引用）的插值/密度/网络/**自相关**实验全链（幂等重跑零新 dispatch、
+跨候选同折分配公平性、网络情景覆盖单调性、scenario 族推荐弃权）。
+独立审查（round 1）发现的 args/schema 失配与臆造 stats 键已修复并以
+真实 dispatch 回归锁钉住（review-fix commit c91ce30ac）。
 
 ## 兼容性
 
