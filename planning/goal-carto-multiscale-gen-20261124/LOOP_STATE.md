@@ -97,7 +97,15 @@
 - 验证状态：multiscale+paper_generalization+paper-scale-routes 221 passed；
   cartography 全量 3781 passed / 3 master 既有红灯；前端双 tsconfig 零新增
 
-### R2（待办）
-- WP6 场景 golden + heavy 性能数字（跑批中）+ EVIDENCE 记录
-- 独立 review（subagent C 只读全量 diff）两轮 + 修复
-- push + PR
+### R2 / WP6 + 独立评审 R1
+- 场景 golden（test_paper_scenarios_v1，6 用例）+ heavy 性能实测（EVIDENCE.md）
+- 独立评审 R1（subagent C，只读全量 diff + 自写脚本复现）：结论「不可合并」，
+  P0×2 + P1×4 + P2×7 + P3 若干 —— 全部 findings 见评审报告；其中 P0×2 为
+  评审员实际复现的引擎缺陷（topology 首环方向拼接、MultiLineString 幻影边）
+- R1 清偿 commit f1cefc0af：P0×2（各带回归测试）/P1×4/P2×5/P3 廉价项全做；
+  回归 multiscale+paper_generalization+scale_profile+routes 254 passed、
+  cartography 全量（跑批复核中）、面板 vitest 5、tsc 主 config 0 错误
+
+### R3（进行中）
+- 评审 R2 复审（同一评审员续，核对清偿 + 相邻路径伤害）
+- 完成后：最终门禁 → push → PR
