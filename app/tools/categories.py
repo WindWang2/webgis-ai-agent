@@ -69,6 +69,10 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     # 分析流程编排（goal-02）：plan/recompute/run/status 四工具 —— 编排层
     # 归 analysis（消费既有算子，不自建算法面）。
     "app.tools.analysis_workflow_tools": "analysis",
+    # 方法实验（02 任务）：inspect/plan/run/status/compare/adopt + 三个
+    # 评价原语 —— 科学比较编排归 analysis（消费既有算子与注册表）。
+    "app.tools.method_experiment_tools": "analysis",
+    "app.tools.science_eval_primitives": "analysis",
     # 批量图册导出（atlas-batch #1871）：export_atlas —— 出版导出面。
     "app.tools.atlas_export_tools": "export",
     # Track B（M14）：图层浏览/聚合只读工具面 —— 数据获取/检视，非突变
