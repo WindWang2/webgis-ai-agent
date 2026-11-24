@@ -38,6 +38,88 @@ _RECEIPT_BRIDGE_LIMIT = 64
 _DEFAULT_SNAP_DIGITS = 9
 
 
+def _build_feature_edges(
+    features: Sequence[Dict[str, Any]],
+    snap_digits: int,
+) -> List[List[Tuple[Tuple[float, float], Tuple[float, float]]]]:
+    """线要素集 → 图边（节点 = 端点 ∪ 共享顶点；要素路径在节点处切分）。
+
+    共享实现：``select_lines_with_connectivity`` 与 ``count_line_components``
+    同一图语义（单一事实源，防双处漂移）。非线/坏几何 → 无边（不入图）。
+    """
+    vertex_freq: Dict[Tuple[float, float], int] = {}
+    parsed_paths: List[List[Tuple[float, float]]] = []
+    for feature in features:
+        coords_raw = _feature_coords(feature)
+        if coords_raw is None:
+            parsed_paths.append([])
+            continue
+        if (coords_raw and isinstance(coords_raw[0], list) and coords_raw[0]
+                and isinstance(coords_raw[0][0], list)):
+            # MultiLineString：各段展开
+            paths: List[Tuple[float, float]] = []
+            for part in coords_raw:
+                if isinstance(part, list):
+                    paths.extend(_q(c, snap_digits) for c in part
+                                 if isinstance(c, (list, tuple))
+                                 and len(c) >= 2)
+        else:
+            paths = [_q(c, snap_digits) for c in coords_raw
+                     if isinstance(c, (list, tuple)) and len(c) >= 2]
+        parsed_paths.append(paths)
+        for qc in paths:
+            vertex_freq[qc] = vertex_freq.get(qc, 0) + 1
+
+    def _is_node(qc: Tuple[float, float], pos: int, total: int) -> bool:
+        return vertex_freq.get(qc, 0) >= 2 or pos == 0 or pos == total - 1
+
+    edges_per_feature: List[List[Tuple[Tuple[float, float], Tuple[float, float]]]] = []
+    for path in parsed_paths:
+        edges: List[Tuple[Tuple[float, float], Tuple[float, float]]] = []
+        if len(path) >= 2:
+            start = 0
+            for pos in range(1, len(path)):
+                if _is_node(path[pos], pos, len(path)):
+                    if pos > start:
+                        edges.append((path[start], path[pos]))
+                    start = pos
+        edges_per_feature.append(edges)
+    return edges_per_feature
+
+
+def count_line_components(
+    features: Sequence[Dict[str, Any]],
+    *,
+    snap_digits: int = _DEFAULT_SNAP_DIGITS,
+) -> int:
+    """线要素集合的连通分量数（QA oracle 用；全要素视作保留）。
+
+    非线/坏几何不计入分量（无边不入图）；空集 = 0。
+    """
+    edges_per_feature = _build_feature_edges(list(features), snap_digits)
+    parent: Dict[Tuple[float, float], Tuple[float, float]] = {}
+
+    def _find(x: Tuple[float, float]) -> Tuple[float, float]:
+        r = x
+        while parent.get(r, r) != r:
+            r = parent[r]
+        while parent.get(x, x) != x:
+            parent[x], x = r, parent[x]
+        return r
+
+    for edges in edges_per_feature:
+        for a, b in edges:
+            parent.setdefault(a, a)
+            parent.setdefault(b, b)
+            ra, rb = _find(a), _find(b)
+            if ra != rb:
+                if ra <= rb:
+                    parent[rb] = ra
+                else:
+                    parent[ra] = rb
+    return len({_find(n) for n in list(parent)})
+
+
 class ConnectivityResult(BaseModel):
     """连通性取舍产物：保留 FC + 回执（可序列化、确定性）。"""
 
@@ -113,45 +195,8 @@ def select_lines_with_connectivity(
         else:
             base_kept.append(False)
 
-    # ── 图构建：节点 = 端点 ∪ 共享顶点；要素路径在节点处切分 ──
-    vertex_freq: Dict[Tuple[float, float], int] = {}
-    parsed_paths: List[List[Tuple[float, float]]] = []
-    for feature in features:
-        coords_raw = _feature_coords(feature)
-        if coords_raw is None:
-            parsed_paths.append([])
-            continue
-        if (coords_raw and isinstance(coords_raw[0], list) and coords_raw[0]
-                and isinstance(coords_raw[0][0], list)):
-            # MultiLineString：各段展开
-            paths: List[Tuple[float, float]] = []
-            for part in coords_raw:
-                if isinstance(part, list):
-                    paths.extend(_q(c, snap_digits) for c in part
-                                 if isinstance(c, (list, tuple))
-                                 and len(c) >= 2)
-        else:
-            paths = [_q(c, snap_digits) for c in coords_raw
-                     if isinstance(c, (list, tuple)) and len(c) >= 2]
-        parsed_paths.append(paths)
-        for qc in paths:
-            vertex_freq[qc] = vertex_freq.get(qc, 0) + 1
-
-    def _is_node(qc: Tuple[float, float], pos: int, total: int) -> bool:
-        return vertex_freq.get(qc, 0) >= 2 or pos == 0 or pos == total - 1
-
-    # 边：feature_idx → [(node_a, node_b)]（要素可能切多段）
-    feature_edges: List[List[Tuple[Tuple[float, float], Tuple[float, float]]]] = []
-    for path in parsed_paths:
-        edges: List[Tuple[Tuple[float, float], Tuple[float, float]]] = []
-        if len(path) >= 2:
-            start = 0
-            for pos in range(1, len(path)):
-                if _is_node(path[pos], pos, len(path)):
-                    if pos > start:
-                        edges.append((path[start], path[pos]))
-                    start = pos
-        feature_edges.append(edges)
+    # ── 图构建（共享实现，见 _build_feature_edges）──
+    feature_edges = _build_feature_edges(features, snap_digits)
 
     node_degree: Dict[Tuple[float, float], int] = {}
     for edges in feature_edges:
@@ -310,5 +355,6 @@ def select_lines_with_connectivity(
 
 __all__ = [
     "ConnectivityResult",
+    "count_line_components",
     "select_lines_with_connectivity",
 ]
