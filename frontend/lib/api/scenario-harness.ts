@@ -46,6 +46,7 @@ export interface ScenarioCandidateView {
     summary: string;
   }>;
   applied_seqs: number[];
+  blocked_seqs: number[];
   created_by: 'agent' | 'user';
   adoption_id: string;
   stale_reasons: string[];

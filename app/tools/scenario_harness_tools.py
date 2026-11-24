@@ -7,7 +7,7 @@ candidate id / 组 / seq / 锁字段，任何叙事性描述不参与判定。�
 - ``webgis_scenario_inspect``：只读（候选/基准/锁定/指代解析）；
 - ``webgis_scenario_propose``：在隔离分支上开候选（零父会话突变）；
 - ``webgis_scenario_execute``：对候选分支施加干预（仍零父会话突变）；
-- ``webgis_scenario_compare``：结构化对比 + 基准漂移影响分级（只读）;
+- ``webgis_scenario_compare``：结构化对比 + 基准漂移影响分级（写回对比存证）;
 - ``webgis_scenario_adopt``：选择性采纳 → 父会话单事务（CAS + user-wins +
   锁检查 + 幂等回执）；origin="agent" 时与用户路径同链，user-wins 守卫
   仍然生效，不因 Agent 提议绕过用户权限；
@@ -105,10 +105,8 @@ class ScenarioAbandonArgs(BaseModel):
 
 class ScenarioRevertArgs(BaseModel):
     adoption_id: str = Field(min_length=1, max_length=80, description="要回退的采纳回执 id（inspect/compare 的回执面可查）。")
-    allow_drift: bool = Field(
-        default=False,
-        description="采纳后父会话又有推进时是否确认丢弃这些改动（默认拒绝并披露丢弃区间）。",
-    )
+    # review N1：工具面不提供 allow_drift —— 丢弃用户可见改动的同意必须来自
+    # 真实用户身份（工作台 HTTP 路由）；Agent 遇 revert_drift 应回复用户走工作台。
 
 
 class ScenarioLockArgs(BaseModel):
@@ -348,7 +346,7 @@ def register_scenario_harness_tools(registry: ToolRegistry):
         tier=2,
         domains=["meta"],
         description=(
-            "多候选结构化对比 + 共享基准漂移影响分级（只读）：逐候选差异行"
+            "多候选结构化对比 + 共享基准漂移影响分级（写回对比存证与失效标记）：逐候选差异行"
             "（层增删/样式字段/组件变化/指标 delta）+ 影响分级"
             "（current/recompute_required/adopt_blocked/unresolvable + 原因）。\n"
             "**纪律**：不同基准或数据版本的候选不可比时如实标注，不给虚假综合评分；"
@@ -360,7 +358,8 @@ def register_scenario_harness_tools(registry: ToolRegistry):
         side_effect="state_mutation",
         data_mutations=["session_state"],
         network=False,
-        deterministic=True,
+        # review N10：写路径含 wall-clock（updated_at），不满足确定性声明
+        deterministic=False,
         latency_class="fast",
         memory_class="light",
         scale_class="small",
@@ -587,8 +586,8 @@ def register_scenario_harness_tools(registry: ToolRegistry):
         domains=["meta"],
         description=(
             "回退一次采纳：把权威地图回滚到该次采纳前的锚点，候选回到可比较态"
-            "（保留审计）。**边界**：采纳后若有其他改动（漂移），默认拒绝并披露"
-            "丢弃区间 —— 确认丢弃需用户明确同意（allow_drift=true）。"
+            "（保留审计）。**边界**：采纳后若有其他改动（漂移），回退会被拒绝"
+            "（revert_drift）—— 丢弃用户可见改动需用户在工作台确认，Agent 无权代答。"
             "全拒绝决议（applied=0）无锚点，不可回退。"
         ),
         args_model=ScenarioRevertArgs,
@@ -607,7 +606,6 @@ def register_scenario_harness_tools(registry: ToolRegistry):
     )
     async def webgis_scenario_revert(
         adoption_id: str = "",
-        allow_drift: bool = False,
         session_id: Optional[str] = None,
     ) -> dict:
         if not session_id:
@@ -621,7 +619,7 @@ def register_scenario_harness_tools(registry: ToolRegistry):
             receipt = await revert_adoption(
                 session_id, adoption_id,
                 origin="agent", actor="agent_scenario_revert",
-                allow_drift=allow_drift,
+                allow_drift=False,
             )
             return {"ok": True, "receipt": receipt.model_dump(mode="json")}
         except RegistryError as exc:

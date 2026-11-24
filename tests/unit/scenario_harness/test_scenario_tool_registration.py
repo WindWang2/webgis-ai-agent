@@ -1,6 +1,7 @@
-"""G05 工具注册契约：7 个 webgis_scenario_* 工具在**完整装配**中注册成功。
+"""G05 工具注册契约：8 个 webgis_scenario_* 工具在**完整装配**中注册成功。
 
-（无 unlock：释放用户锁仅走 HTTP 路由 —— review P0-1，Agent 面不得解除用户显式决策。
+（无 unlock：释放用户锁仅走 HTTP 路由 —— review P0-1；有 revert：Agent 面不带
+allow_drift —— review N1，丢弃用户可见改动的同意来自真实用户身份路由。）
 
 价值：真实注册器的词表门禁（side_effect/data_mutations 等）只有全量装配才触发
 —— 单模块注册通过 ≠ 全装配通过（曾抓出 read_only/mapspec 两个非法词）。
@@ -20,6 +21,7 @@ SCENARIO_TOOLS = {
     "webgis_scenario_adopt",
     "webgis_scenario_abandon",
     "webgis_scenario_lock",
+    "webgis_scenario_revert",
 }
 
 

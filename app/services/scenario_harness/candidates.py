@@ -147,7 +147,9 @@ def base_values_for_kind(
     if kind == "PatchLayerPresentationIntent":
         # presentation 观察：与 mutation_primitives._patch_layer_presentation
         # 的真实落字段同源 —— 可见性 = layout.visibility（"visible"/"none"），
-        # 透明度 = paint.opacity。
+        # 透明度 = paint.opacity + 类型别名键（review N4：引擎双写
+        # opacity 与 fill-opacity/circle-opacity/…，只观察主键会漏掉经别名
+        # 键的改写 → 采纳静默覆盖）。
         layer = layer_of(spec, str(payload.get("layer_id") or ""))
         if not isinstance(layer, dict):
             return {"presentation.absent": True}
@@ -162,9 +164,13 @@ def base_values_for_kind(
             )
         if payload.get("opacity") is not None:
             paint = layer.get("paint")
-            out["presentation.opacity"] = (
-                paint.get("opacity") if isinstance(paint, dict) else None
-            )
+            paint = paint if isinstance(paint, dict) else {}
+            out["presentation.opacity"] = paint.get("opacity")
+            from app.services.mapspec.mutation_primitives import OPACITY_PAINT_KEYS
+
+            alias_key = OPACITY_PAINT_KEYS.get(str(layer.get("type") or ""))
+            if alias_key:
+                out[f"presentation.opacity.{alias_key}"] = paint.get(alias_key)
         return out
     if kind == "UpsertLayerIntent":
         layer = payload.get("layer")
@@ -239,6 +245,7 @@ def candidate_summary(cand: ScenarioCandidate) -> Dict[str, Any]:
             for d in cand.delta
         ],
         "applied_seqs": list(cand.applied_seqs),
+        "blocked_seqs": list(cand.blocked_seqs),
         "created_by": cand.created_by,
         "adoption_id": cand.adoption_id,
         "stale_reasons": list(cand.stale_reasons),
@@ -279,8 +286,9 @@ async def propose_candidate(
     """提议一个候选：fork 隔离分支 + 序列化 delta + 基准值观察。"""
     title = str(title or "")[:MAX_TITLE]
     hypothesis = str(hypothesis or "")[:MAX_HYPOTHESIS]
-    # 1) 序列化先行（白名单/容量校验；失败整笔拒绝，不留孤儿分支）
-    deltas = serialize_intents(list(intents or []))
+    # 1) 序列化先行（白名单/容量校验；失败整笔拒绝，不留孤儿分支）。
+    # review N3：空 intents 合法（draft 候选）—— 工具描述"先开候选后补干预"。
+    deltas = serialize_intents(list(intents)) if intents else []
     # 2) 容量预检（避免 create_branch 成功后注册表超限的孤儿分支；
     #    upsert 仍是权威检查，这里只是把常见失败前移）
     entries = await load_registry(session_id, REGISTRY_CANDIDATES, store=store)
@@ -357,17 +365,19 @@ async def apply_candidate_interventions(
         )
     existing_seqs = {d.seq for d in candidate.delta}
     if deltas is not None:
-        # review P3-6：追加干预的 seq 自动接续已有 delta（调用方不感知内部
-        # 序号）；调用方内部重复 seq 也拒绝（seq 是选择键）。
+        # review N3：先重编号（接续已有 delta）再只拒**调用方内部**重复 seq
+        # —— 工具路径 serialize_intents 固定从 1 编号，若用重编号前 seq 做
+        # 冲突检查，增量干预流第一次就必然撞车（review P3-6 的部分修复缺陷）。
         seen: set = set()
-        next_seq = (max(existing_seqs) + 1) if existing_seqs else 1
         for delta in deltas:
-            if delta.seq in existing_seqs or delta.seq in seen:
+            if delta.seq in seen:
                 raise RegistryError(
                     "delta_seq_conflict",
-                    f"delta seq {delta.seq} 已存在（seq 是选择键，不可覆写）",
+                    f"调用方传入的 delta 存在重复 seq {delta.seq}",
                 )
             seen.add(delta.seq)
+        next_seq = (max(existing_seqs) + 1) if existing_seqs else 1
+        for delta in deltas:
             delta.seq = next_seq
             next_seq += 1
     to_apply: List[DeltaIntent] = (

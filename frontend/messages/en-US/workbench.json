@@ -228,6 +228,7 @@
     "locksTitle": "User locks (operations hitting locked fields are rejected)",
     "lockGlobal": "task-level",
     "lockRelease": "Release",
-    "lockReleaseFailed": "Release failed (server rejected or lock missing)"
+    "lockReleaseFailed": "Release failed (server rejected or lock missing)",
+    "blockedCount": "user-blocked"
   }
 }

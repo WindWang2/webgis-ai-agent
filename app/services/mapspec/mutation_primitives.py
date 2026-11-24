@@ -488,6 +488,9 @@ _OPACITY_PAINT_KEYS = {
     "symbol": "icon-opacity",
 }
 
+#: 公共别名（G05 presentation 基准观察消费同一词表，不复制映射）。
+OPACITY_PAINT_KEYS = _OPACITY_PAINT_KEYS
+
 
 # layout.components 单条目载荷上限（QA-2026-08-26：LLM 直塞 FeatureCollection）
 _MAX_COMPONENT_BYTES = 96 * 1024

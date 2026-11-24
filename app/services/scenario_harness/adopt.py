@@ -197,11 +197,16 @@ async def _adjudicate_item(
 # ── 幂等键 / 回执检索 ────────────────────────────────────────────────
 
 
-def _idempotency_key(candidate_id: str, selection: AdoptSelection, cas_revision: int) -> str:
-    """sha256(candidate|mode|groups|seqs|CAS revision)[:24]（键绑定采纳锚）。"""
+def _idempotency_key(
+    candidate_id: str, selection: AdoptSelection, cas_revision: int,
+    selection_origin: str = "",
+) -> str:
+    """sha256(candidate|mode|groups|seqs|CAS revision|origin)[:24]（键绑定
+    采纳锚与 origin —— review N7a：Agent 降级采纳不得幂等挡住用户工作台的
+    同选集合法覆盖）。"""
     raw = (
         f"{candidate_id}|{selection.mode}|{sorted(selection.groups)}"
-        f"|{sorted(selection.seqs)}|{int(cas_revision)}"
+        f"|{sorted(selection.seqs)}|{int(cas_revision)}|{selection_origin}"
     )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
@@ -218,9 +223,14 @@ async def _adopted_receipt_hit(
     cand: ScenarioCandidate,
     selection: AdoptSelection,
     *,
+    origin: str = "",
     store: Any = None,
 ) -> Optional[AdoptionReceipt]:
-    """adopted 候选的幂等命中：既有回执的 base_revision 重算键比对。"""
+    """adopted 候选的幂等命中：既有回执的 (base_revision, origin) 重算键比对。
+
+    review N7a：键绑定 origin —— Agent 降级采纳的回执不会幂等挡住用户
+    工作台的同选集合法覆盖（不同 origin = 不同键 = 各自落账）。
+    """
     if not cand.adoption_id:
         return None
     receipt = await _receipt_by_id(session_id, cand.adoption_id, store=store)
@@ -228,7 +238,9 @@ async def _adopted_receipt_hit(
         return None
     if receipt.candidate_id != cand.candidate_id:
         return None
-    key = _idempotency_key(cand.candidate_id, selection, receipt.base_revision)
+    key = _idempotency_key(
+        cand.candidate_id, selection, receipt.base_revision, selection_origin=origin
+    )
     return receipt if key == receipt.idempotency_key else None
 
 
@@ -326,7 +338,9 @@ async def adopt_candidate(
             f"候选 {candidate_id!r} 不存在（会话 {session_id}）",
         )
     if cand.state == "adopted":
-        hit = await _adopted_receipt_hit(session_id, cand, selection, store=store)
+        hit = await _adopted_receipt_hit(
+            session_id, cand, selection, origin=origin, store=store
+        )
         if hit is not None:
             return hit
         raise RegistryError(
@@ -383,6 +397,10 @@ async def adopt_candidate(
         )
     selected_seqs = {d.seq for d in selected}
 
+    # review N2：revision 先于 spec 读 —— 锚点 CAS 锚定这个值，此后任何
+    # 并发落账必然 superseded，裁决所见 spec 不可能早于该读点。
+    current_rev = await _parent_revision(session_id)
+
     spec = await mapspec_store_instance.get_mapspec(session_id)
     if not isinstance(spec, dict) or not spec:
         raise RegistryError(
@@ -409,7 +427,6 @@ async def adopt_candidate(
         d for d in selected if item_by_seq[d.seq].verdict == "applied"
     ]
 
-    current_rev = await _parent_revision(session_id)
     if (
         selection.expected_revision is not None
         and int(selection.expected_revision) != current_rev
@@ -425,7 +442,7 @@ async def adopt_candidate(
 
     if not applied_deltas:
         # 全拒绝决议：合法 —— 回执照常落账；不执行 mutation、候选状态不变。
-        key = _idempotency_key(candidate_id, selection, current_rev)
+        key = _idempotency_key(candidate_id, selection, current_rev, origin)
         existing = await _scan_idempotent_receipt(session_id, key, store=store)
         if existing is not None:
             return existing
@@ -449,8 +466,8 @@ async def adopt_candidate(
 
     # 采纳前锚：checkpoint 本身是 mutation（revision+1），锚后重读 revision
     # 作为链式 CAS 基准（锚点不动 spec，失败/superseded 时无 spec 副作用）。
-    # review P1-2：锚点带 CAS（expected=裁决所读 revision）—— spec 读 →
-    # 锚点窗口内任何并发落账都会让锚点 superseded，裁决口径不可能过期生效。
+    # review P1-2/N2：锚点 CAS 锚定裁决**之前**读取的 revision —— 裁决与
+    # 锚点之间任何并发落账都会使锚点 superseded（裁决口径不可能过期生效）。
     ck_res = await apply_gis_mutation(
         session_id,
         CheckpointIntent(),
@@ -548,13 +565,15 @@ async def adopt_candidate(
             skipped_count=len(items),
             adopted_at=utc_now_iso(),
             turn_id=turn_id,
-            idempotency_key=_idempotency_key(candidate_id, selection, base_revision),
+            idempotency_key=_idempotency_key(
+                candidate_id, selection, base_revision, origin
+            ),
             pre_adopt_checkpoint_id=checkpoint_id,
         )
         await upsert_registry_entry(session_id, REGISTRY_ADOPTIONS, receipt, store=store)
         return receipt
 
-    key = _idempotency_key(candidate_id, selection, base_revision)
+    key = _idempotency_key(candidate_id, selection, base_revision, origin)
     existing = await _scan_idempotent_receipt(session_id, key, store=store)
     if existing is not None:
         # revision 单调 → 理论不可达；防御同刻竞态双写（不重放 mutation）。
@@ -634,26 +653,23 @@ async def revert_adoption(
             f"（回滚会一并丢弃这些改动）。确认丢弃请带 allow_drift=true 重试。",
         )
 
-    rb = None
-    for _ in range(3):
-        expected = await _parent_revision(session_id)
-        rb = await apply_gis_mutation(
-            session_id,
-            RollbackIntent(checkpoint_id=receipt.pre_adopt_checkpoint_id),
-            origin=origin,  # type: ignore[arg-type]
-            actor=actor,
-            expected_revision=expected,
-            turn_id=turn_id or None,
-            reason=f"revert {adoption_id}",
-        )
-        if not rb.superseded:
-            break
-    assert rb is not None  # 循环至少执行一次
+    # review N5：superseded 即失败返回（不盲重试）—— 重试间隙落账的并发
+    # mutation 会被无感知丢弃；重跑 revert 会重新评估漂移闸，语义诚实。
+    expected = await _parent_revision(session_id)
+    rb = await apply_gis_mutation(
+        session_id,
+        RollbackIntent(checkpoint_id=receipt.pre_adopt_checkpoint_id),
+        origin=origin,  # type: ignore[arg-type]
+        actor=actor,
+        expected_revision=expected,
+        turn_id=turn_id or None,
+        reason=f"revert {adoption_id}",
+    )
     if rb.is_error:
         raise RegistryError("revert_failed", f"回退执行失败: {rb.error_msg}")
     if rb.superseded:
         raise RegistryError(
-            "revert_failed", "父会话并发推进，回退未执行（已重试），请稍后重试"
+            "revert_failed", "父会话并发推进，回退未执行，请重试（将重评漂移闸）"
         )
 
     reverted_by = str(rb.mutation_id or f"rev:{rb.mutation_revision}")

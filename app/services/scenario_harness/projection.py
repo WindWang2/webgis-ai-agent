@@ -37,6 +37,7 @@ def _candidate_row(c: ScenarioCandidate) -> Dict[str, Any]:
         "groups": sorted({d.group for d in c.delta}),
         "delta_count": len(c.delta),
         "applied_count": len(c.applied_seqs),
+        "blocked_count": len(c.blocked_seqs),
         "stale_reasons": list(c.stale_reasons[:3]),
         "created_by": c.created_by,
         "adoption_id": c.adoption_id,

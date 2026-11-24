@@ -28,7 +28,6 @@ from app.services.scenario_harness.contracts import (
     REGISTRY_CANDIDATES,
     DeltaIntent,
 )
-from app.services.scenario_harness.intents_codec import DeltaCodecError
 from app.services.scenario_harness.locks import release_lock, set_lock
 from app.services.scenario_harness.store import (
     RegistryError,
@@ -183,15 +182,17 @@ async def test_propose_existing_layer_base_values_digest():
 
 
 @pytest.mark.asyncio
-async def test_propose_empty_intents_rejected_without_orphan_branch():
-    """空提案整笔拒绝（DeltaCodecError）；失败路径不留孤儿分支。"""
+async def test_propose_empty_intents_creates_draft_without_delta():
+    """review N3 契约演进：空 intents 合法（draft 候选，零 delta）——
+    工具描述「先开候选后补干预」的兑现。"""
     sid = _sid("g05-cand-empty")
     await _seed_parent(sid)
-    with pytest.raises(DeltaCodecError) as exc:
-        await propose_candidate(sid, intents=[])
-    assert exc.value.code == "delta_empty"
+    candidate = await propose_candidate(sid, intents=[])
+    assert candidate.state == "draft"
+    assert candidate.delta == []
     mgr = ScenarioBranchManager()
-    assert await mgr.list_branches(sid) == []
+    branches = await mgr.list_branches(sid)
+    assert len(branches) == 1, "空提案同样有真实分支承载（非孤儿：注册表已登记）"
 
 
 @pytest.mark.asyncio
@@ -280,16 +281,33 @@ async def test_apply_incremental_delta_merge_and_seq_conflict():
     assert updated.applied_seqs == [1, 2]
     assert updated.state == "comparable"
 
-    # seq 冲突整笔拒绝（seq 是选择键，不可覆写）
-    clash = DeltaIntent(
+    # review N3 契约演进：调用方传入 seq 只用于查重（内部重复才拒），
+    # 实际 seq 由服务端接续编号 —— seq=1 的传入值不再与已有 delta 撞车。
+    renumbered = DeltaIntent(
         seq=1,
         kind="PatchLayerStyleIntent",
         target_id="park-main",
         field_paths=["paint.opacity"],
         payload={"layer_id": "park-main", "paint": {"opacity": 1.0}},
     )
+    results = await apply_candidate_interventions(
+        sid, candidate.candidate_id, deltas=[renumbered]
+    )
+    assert [r["status"] for r in results] == ["applied"]
+    updated2 = await get_candidate(sid, candidate.candidate_id)
+    assert [d.seq for d in updated2.delta] == [1, 2, 3], "服务端接续编号"
+
+    # 调用方内部重复 seq 仍然整笔拒绝（seq 是选择键）
+    dup1 = DeltaIntent(seq=9, kind="PatchLayerStyleIntent", target_id="park-main",
+                       field_paths=["paint.opacity"],
+                       payload={"layer_id": "park-main", "paint": {"opacity": 0.9}})
+    dup2 = DeltaIntent(seq=9, kind="PatchLayerStyleIntent", target_id="park-main",
+                       field_paths=["paint.fill-opacity"],
+                       payload={"layer_id": "park-main", "paint": {"fill-opacity": 0.9}})
     with pytest.raises(RegistryError) as exc:
-        await apply_candidate_interventions(sid, candidate.candidate_id, deltas=[clash])
+        await apply_candidate_interventions(
+            sid, candidate.candidate_id, deltas=[dup1, dup2]
+        )
     assert exc.value.code == "delta_seq_conflict"
 
 

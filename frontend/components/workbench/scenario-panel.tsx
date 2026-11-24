@@ -258,6 +258,7 @@ export function ScenarioPanel() {
             {c.hypothesis && <div className="mt-1 text-meta text-ink-muted">{c.hypothesis}</div>}
             <div className="mt-1 text-meta text-ink-muted">
               {t('scenario.deltaCount')}: {c.delta.length} · {t('scenario.appliedCount')}: {c.applied_seqs.length}
+              {c.blocked_seqs.length > 0 && ` · ${t('scenario.blockedCount')}: ${c.blocked_seqs.length}`}
               {' · '}
               {t('scenario.groups')}: {[...new Set(c.delta.map((d) => d.group))].join('/') || '—'}
             </div>

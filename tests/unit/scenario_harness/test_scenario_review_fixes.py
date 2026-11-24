@@ -220,3 +220,135 @@ async def test_p2_10_lock_field_path_validation():
                           field_paths=[" paint.opacity ", "paint.fill-color"],
                           reason="ok")
     assert lock.field_paths == ["paint.opacity", "paint.fill-color"]
+
+
+def test_n1_revert_tool_has_no_allow_drift():
+    """工具面 revert 不暴露 allow_drift（丢弃同意来自真实用户身份路由）。"""
+    from app.tools.scenario_harness_tools import ScenarioRevertArgs
+
+    assert "allow_drift" not in ScenarioRevertArgs.model_fields
+    # 路由面保留（真实用户身份）
+    from app.api.routes.scenario_harness import post_scenario_revert
+    import inspect
+
+    sig = inspect.signature(post_scenario_revert)
+    assert "allow_drift" in sig.parameters
+
+
+def test_n9_registration_expects_full_tool_set():
+    from app.tools import _TOOL_MODULES
+    from app.tools.registry import ToolRegistry
+
+    registry = ToolRegistry()
+    import importlib
+
+    for mod_name, fn_name in _TOOL_MODULES:
+        getattr(importlib.import_module(mod_name), fn_name)(registry)
+    scenario_tools = {t for t in registry.tool_names() if t.startswith("webgis_scenario_")}
+    assert scenario_tools == {
+        "webgis_scenario_inspect", "webgis_scenario_propose",
+        "webgis_scenario_execute", "webgis_scenario_compare",
+        "webgis_scenario_adopt", "webgis_scenario_revert",
+        "webgis_scenario_abandon", "webgis_scenario_lock",
+    }
+
+
+@pytest.mark.asyncio
+async def test_n3_incremental_interventions_via_tool_shape():
+    """propose(1 条) → execute(追加 1 条) —— seq 自动接续不再撞车。"""
+    from app.services.scenario_harness.candidates import (
+        apply_candidate_interventions,
+        get_candidate,
+        propose_candidate,
+    )
+    from app.services.scenario_harness.intents_codec import serialize_intents
+
+    parent = _sid()
+    await _seed(parent)
+    cand = await propose_candidate(
+        parent,
+        title="基础候选",
+        intents=[PatchLayerStyleIntent(layer_id="schools", paint={"opacity": 0.8})],
+        created_by="agent",
+    )
+    assert [d.seq for d in cand.delta] == [1]
+    extra = serialize_intents([
+        PatchLayerStyleIntent(layer_id="schools", paint={"opacity": 0.6}),
+    ])
+    assert [d.seq for d in extra] == [1], "工具路径固定从 1 编号（触发过撞车的形状）"
+    # 先应用已有 delta，再增量追加（复现工具面真实两步流）
+    await apply_candidate_interventions(parent, cand.candidate_id, deltas=None)
+    results = await apply_candidate_interventions(parent, cand.candidate_id, deltas=extra)
+    assert results and results[0]["status"] == "applied"
+    final = await get_candidate(parent, cand.candidate_id)
+    assert [d.seq for d in final.delta] == [1, 2], "追加 delta 接续为 seq 2"
+    assert final.state == "comparable"
+
+
+@pytest.mark.asyncio
+async def test_n2_checkpoint_cas_superseded_path():
+    """锚点 CAS：expected 落后于真实 revision → adopt_superseded（零副作用）。"""
+    from app.services.scenario_harness.adopt import adopt_candidate
+    from app.services.scenario_harness.store import RegistryError
+
+    parent = _sid()
+    await _seed(parent)
+    cand = await propose_candidate(
+        parent,
+        title="CAS 候选",
+        intents=[PatchLayerStyleIntent(layer_id="schools", paint={"opacity": 0.5})],
+        created_by="agent",
+    )
+    await apply_candidate_interventions(parent, cand.candidate_id)
+    rev_before = await _current_rev(parent)
+    # 并发推进（在 adopt 之前）
+    drift = await apply_gis_mutation(
+        parent,
+        PatchLayerStyleIntent(layer_id="schools", paint={"opacity": 0.95}),
+        origin="agent", actor="concurrent", expected_revision=rev_before,
+    )
+    assert not drift.is_error
+    with pytest.raises(RegistryError) as ei:
+        await adopt_candidate(
+            parent, cand.candidate_id,
+            AdoptSelection(mode="all", expected_revision=rev_before),
+            origin="user", actor="user_workbench",
+        )
+    assert ei.value.code == "adopt_superseded"
+
+
+@pytest.mark.asyncio
+async def test_n7a_origin_bound_idempotency():
+    """Agent 降级采纳的回执不挡用户工作台同选集采纳（origin 进幂等键）。"""
+    parent = _sid()
+    await _seed(parent)
+    from app.contracts.mapspec_intents import PatchLayerPresentationIntent
+
+    rev = await _current_rev(parent)
+    hide = await apply_gis_mutation(
+        parent,
+        PatchLayerPresentationIntent(layer_id="schools", visible=False),
+        origin="user", actor="user_panel", expected_revision=rev,
+    )
+    assert not hide.is_error
+    cand = await propose_candidate(
+        parent,
+        title="降级候选",
+        intents=[PatchLayerPresentationIntent(layer_id="schools", visible=True)],
+        created_by="agent",
+    )
+    await apply_candidate_interventions(parent, cand.candidate_id)
+    agent_receipt = await adopt_candidate(
+        parent, cand.candidate_id, AdoptSelection(mode="all"),
+        origin="agent", actor="agent_scenario_adopt",
+    )
+    assert agent_receipt.applied_count == 0
+    assert all(i.verdict == "user_wins_skip" for i in agent_receipt.items)
+    # 用户工作台同选集采纳：不同 origin → 不幂等命中 Agent 回执。
+    # presentation 对 origin=user 是合法覆盖（守卫只拦 agent）→ applied。
+    user_receipt = await adopt_candidate(
+        parent, cand.candidate_id, AdoptSelection(mode="all"),
+        origin="user", actor="user_workbench",
+    )
+    assert user_receipt.adoption_id != agent_receipt.adoption_id
+    assert user_receipt.applied_count == 1, user_receipt.model_dump(mode="json")

@@ -228,6 +228,7 @@
     "locksTitle": "用户锁定（命中锁定字段的操作会被拒）",
     "lockGlobal": "任务级",
     "lockRelease": "释放",
-    "lockReleaseFailed": "释放失败（服务端拒绝或锁不存在）"
+    "lockReleaseFailed": "释放失败（服务端拒绝或锁不存在）",
+    "blockedCount": "用户拦截"
   }
 }
