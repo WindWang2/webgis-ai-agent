@@ -41,13 +41,13 @@
 
 - **R1**（独立只读评审员，全量 diff + 自写脚本复现）：结论「不可合并」，P0×2 + P1×4 + P2×7 + P3 若干。两处 P0 为**评审员实际复现**的引擎缺陷（topology 环起点在共享边反向遍历恒伪回退；MultiLineString part 摊平幻影边使 navigation 硬门 fail-open）。
 - **R1 清偿**（commit `f1cefc0af`）：P0×2 各带回归测试、P1×4（链式吸收 Σ守恒、纬度分母方向修正+锚点、硬约束用户面全链透传、邻接缝隙距离审计）、P2×5（stats_match 双计、缺省 CAS 基线、partial 续链复用工件 ref、米空间线长、page.dpi 锚定、preview 复用编译）、P3 廉价项（回执参数指纹、REST 兜底 500、assert 炸弹移除、dpi 保留原值交 validate、helper 收敛单源、文档漂移、面板 epoch 守卫）。
-- **R2 复审**：同一评审员重跑其复现脚本逐条核对清偿 + 相邻路径伤害复查（结论见 PR 末尾补记）。
+- **R2 复审**（同一评审员，重跑其 R1 复现脚本逐条核对）：结论「**有条件可合并**」——P0×2 与 P1-1/1-2 确认真实清偿（独立脚本复跑通过），结点切分顺带治愈了 R1 未点名的共享链空洞配对与 T 结点裂缝风险；相邻生产路径（scale_profile、intents CAS 链、导出旅程）无伤害。两项合并条件（N1 消除路径缝隙审计静默跳过、N2 keep_values 硬约束假保障）+ P3 N3-N6（指纹参数缺口、gap 距离口径、inspect dpi 一致性、resume/keep_region 测试）**已在后续 commit 全部就地清偿**（「fix(multiscale): 独立评审 R2 清偿」）。
 
 ## 本地验证（真实命令与结果）
 
 | 门禁 | 命令 | 结果 |
 |---|---|---|
-| 本任务回归 | `pytest tests/cartography/multiscale/ tests/unit/gis_harness/{paper_generalization,scale_profile}/ tests/unit/api/test_paper_scale_routes.py --no-cov` | **254 passed, 4 skipped** |
+| 本任务回归 | `pytest tests/cartography/multiscale/ tests/unit/gis_harness/{paper_generalization,scale_profile}/ tests/unit/api/test_paper_scale_routes.py --no-cov` | **254 passed, 4 skipped**（R2 清偿后 238 passed 复核） |
 | cartography 全量 | `pytest tests/cartography/ --no-cov`（deselect 4 个基线红灯） | **3843 passed** |
 | 前端单测 | `vitest run components/hud/paper-scale-panel.test.tsx components/hud/layer-style-panel*.test.tsx test/i18n/{workbench-panels,key-completeness}.test.tsx` | **19 passed** |
 | 前端 typecheck | `tsc --noEmit -p tsconfig.json` / `-p tsconfig.test.json` | 主 config **0 错误**；test config 5 错误为 master 既有（纯净基线逐字复现） |
