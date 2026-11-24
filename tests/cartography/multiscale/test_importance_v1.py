@@ -52,8 +52,10 @@ class TestTrustedFieldDerivation:
         schema = _field_schema({"admin_level": "number"})
         d = derive_importance_model(schema, dist, feature_count=14202)
         assert d.selected is not None
-        # 数值升序 = 行政级别从高到低（0 国家 … 4 村级）
-        assert d.selected.value_order == [0, 1, 2, 3, 4]
+        # 数值升序 = 行政级别从高到低（0 国家 … 4 村级）；词表 canonical
+        # 化为字符串 —— FeatureSelectionPolicy 契约 = List[str]（#2225，
+        # tests/cartography/multiscale/test_numeric_admin_level.py 权威）。
+        assert d.selected.value_order == ["0", "1", "2", "3", "4"]
 
     def test_generic_category_without_order_rejected(self):
         # 土地利用类别：无序词表 → 不伪造重要性
