@@ -459,10 +459,24 @@ def _preview_samples(
     }
 
 
+def _classify_src_crs(crs: Optional[str]) -> str:
+    from app.lib.gis.crs_safety import classify_crs
+
+    return classify_crs(crs)
+
+
 def _preview_warnings(
     plan: FusionPlan, src_a: Any, src_b: Any,
 ) -> List[Dict[str, str]]:
     warns: List[Dict[str, str]] = []
+    if plan.entity_kind == "point_poi" and \
+            _classify_src_crs(src_a.crs) == "geographic":
+        warns.append({
+            "item": "polar_grid_clamp",
+            "message": "地理帧点格网东西向邻域在 |纬度|>75.5° 钳制（cos 地板 "
+                       "0.25）：极区近距实体仍可能漏候选 —— 极区数据集建议"
+                       "先经 G45 投影到局部米制坐标帧再融合",
+        })
     if src_a.crs != src_b.crs:
         warns.append({
             "item": "crs_differs",
@@ -1071,7 +1085,7 @@ async def commit_run(
     project_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """``project_id``：调用方声明的成果归属项目（入 DataObject
-    owner_scope 与 plan.project_id —— 之前被接受但未使用，审查 P3）。"""
+    owner_scope；plan 行不动 —— 计划归属只随 CAS 修订流变，审查 P3）。"""
     """受权提交：匹配包 + 决定 → 不可变融合数据集版本。
 
     门（顺序）：
@@ -1206,6 +1220,15 @@ async def commit_run(
     receipt["fc_sha256"] = fc_sha
     outputs.write_commit_receipt(run_id, receipt)
     publish_state = outputs.atomic_publish(run_id)  # published | claimed
+    if publish_state == "claimed" and not outputs.claimed_matches_staging(run_id):
+        # 崩溃窗口内决定已变 → 旧发布内容与本次装配意图不符：
+        # typed 拒绝认领（重跑 commit 会全量重装发布）
+        raise DataFusionError(
+            "receipt_missing",
+            "存在崩溃残留的已发布内容，且与本次装配结果不一致"
+            "（期间决定可能已变更）：请清理该 run 终态包后重试 commit",
+            run_id=run_id,
+        )
 
     owner_scope = {"session_id": session_id}
     if project_id:

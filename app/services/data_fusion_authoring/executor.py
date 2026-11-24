@@ -435,18 +435,19 @@ def assemble_commit(
     # withheld_features 不可互推）。
     contested: Dict[str, List[str]] = {"a": {}, "b": {}}
     for pair in result.pairs:
-        if pair.idx_a in consumed_a and pair.idx_b in consumed_b:
-            continue
         if pair.status not in ("needs_review", "ambiguous"):
-            continue
-        if pair.idx_a in consumed_a or pair.idx_b in consumed_b:
             continue
         rec_a = recs_a[pair.idx_a]
         rec_b = recs_b[pair.idx_b]
         key = adjudication.pair_stable_key(
             rec_a, rec_b, plan, src_a.source_ref, src_b.source_ref)
-        contested["a"].setdefault(pair.idx_a, []).append(key)
-        contested["b"].setdefault(pair.idx_b, []).append(key)
+        # 混合态（一侧已与第三方 merged，另一侧仍与本对未决）：
+        # 未决侧照样 withheld（审查二轮 N2 —— 否则 outstanding 与
+        # withheld 在 allow_unresolved 下不可互推）
+        if pair.idx_a not in consumed_a:
+            contested["a"].setdefault(pair.idx_a, []).append(key)
+        if pair.idx_b not in consumed_b:
+            contested["b"].setdefault(pair.idx_b, []).append(key)
     for side, recs, view, src in (
             ("a", recs_a, consumed_a, src_a),
             ("b", recs_b, consumed_b, src_b)):
@@ -577,15 +578,27 @@ def build_quality_report(
             "licenses": {
                 "a": plan.source_a.license, "b": plan.source_b.license},
         },
-        "limitations": _quality_limitations(plan, result, counts),
+        "limitations": _quality_limitations(
+            plan, result, counts, src_a.crs),
     }
 
 
 def _quality_limitations(
-    plan: FusionPlan, result: matching.MatchResult, counts: Dict[str, int]
+    plan: FusionPlan, result: matching.MatchResult, counts: Dict[str, int],
+    src_a_crs: Optional[str] = None,
 ) -> List[Dict[str, str]]:
     """可解释的「适用/需审阅/不适用」依据（不做单一评分）。"""
     out: List[Dict[str, str]] = []
+    if plan.entity_kind == "point_poi":
+        from app.lib.gis.crs_safety import classify_crs
+
+        if classify_crs(src_a_crs) == "geographic":
+            out.append({
+                "status": "不适用",
+                "item": "polar_grid_clamp",
+                "reason": "地理帧点格网在 |纬度|>75.5° 钳制东西向邻域："
+                          "极区近距对可能漏候选（建议投影帧）",
+            })
     st = result.stats
     if st["candidate_overflow_entities_a"] + st["candidate_overflow_entities_b"]:
         out.append({

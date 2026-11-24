@@ -25,7 +25,7 @@
 | 来源资格卡 | 逐源三态（ok / unresolvable）：行数、CRS 与可比性分类、几何形态、计划声明字段存在性、时间字段可解析样本率、许可/署名声明。装载时验证事实 ≠ 来源自我声明，分项标注 |
 | 融合计划 | 版本化（revision CAS + normalized digest）：实体种类（point_poi / area_link / line_link）、两源锚与字段声明（名称、可选 id + **共享 id_space**、地址、类别词表映射、时间字段）、输出字段映射与逐字段裁决规则、五类证据权重（必须归一）、阈值/歧义边际/距离窗口、几何采纳政策、提交政策、预算（clamp 到域硬顶） |
 | 融合预览（只读） | 与执行同一内核：双源资格、覆盖对比、真实匹配运行的有界投影（自动/审阅/歧义/硬阻断/未配对计数）、样本对、预算与警告；缓存按 digest 失效 |
-| 实体匹配 | 三通道 blocking（ID 桶 / 空间格网 3×3 halo / 名称桶）→ 五类证据逐项评分（双缺失跳过重归一、单侧缺失按 0）→ 互最优 + 边际 + 阈值 + 硬阻断 + **id 钉定** → matched / needs_review / ambiguous / unmatched |
+| 实体匹配 | 三通道 blocking（ID 桶 / 空间格网：地理帧 x 键 360° 回绕 + 东西向动态 halo ±⌈1/cosφ⌉ / 名称桶）→ 五类证据逐项评分（双缺失跳过重归一、单侧缺失按 0、category 未声明字段整体跳过）→ 互最优 + 边际 + 阈值 + 硬阻断 + **id 钉定** → matched / needs_review / ambiguous / unmatched |
 | 冲突检测 | 配对内逐输出字段 identical/conflict/missing_a/missing_b/missing_both；名称字段与计划归一化同一口径；几何距离/重叠证据入档 |
 | 审阅与裁决 | 审阅队列分页（含 matched+字段冲突项）；逐对决定 accept/reject（可附人工字段值/几何侧），CAS revision 乐观并发；决定挂 plan 级、键 = 实体内容指纹（跨刷新重挂靠）；locked 锁定唯一推翻路径是显式删除 |
 | 受权提交 | require_resolved 门（未决项 typed 阻断）→ 组装 → 原子发布 → 文件字节哈希收据 → DataObject → session 台账 `ref:data-fusion/<run_id>` → 渲染投影（帽 10k） |

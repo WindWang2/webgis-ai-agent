@@ -30,11 +30,14 @@
 
 ### D2 匹配是可解释证据评分 + 歧义保护（`matching.py`）
 
-- 三通道 blocking（ID 桶 / 空间格网 3×3 halo / 名称桶）并集生成候选，
+- 三通道 blocking（ID 桶 / 空间格网（地理帧 x 键 360° 回绕 + 东西向
+  动态 halo ±⌈1/cosφ⌉，|φ|>75.5° 钳制披露）/ 名称桶）并集生成候选，
   候选总量与单实体候选数有界（溢出强制审阅，绝不静默丢弃）；
 - 证据五类（external_id/name/address/category/distance）逐项打分入档；
-  **双缺失证据跳过并重归一（记录 renormalized），单侧缺失按 0 计**
-  —— 缺数据不当零、不当满分；
+  **双缺失证据跳过并重归一（记录 renormalized），单侧缺失按 0 计**；
+  category 字段任一源未声明时整体跳过重归一，已声明但词表外按计划
+  声明的 unknown 中性系数计（comparison="unknown" 如实披露）——
+  缺数据不当零、不当满分、不算幽灵分；
 - 状态机：互最优 + 边际（ambiguous_margin）+ 阈值（review_min ≤
   auto_match_min）+ 硬阻断（id 冲突恒不自动合并）+ id 钉定（共享
   id_space 精确匹配 = 最强身份证据，优先排序、距离仍在界内可自动
@@ -98,11 +101,13 @@ orphan（悬空不应用）。锁定决定绝不无声推翻。
 ## 规模与验证证据（本地实测，2026-11-25）
 
 - 14.4k×14.4k 受控网格（±5m 抖动）：真配对 **100% 召回**（blocking
-  不漏关键候选）、wall time **2.98s**、tracemalloc 峰值 **173MB**
-  （域预算 256MB 内）；计时与内存分开测（tracemalloc 每分配追踪放大
-  wall time ~35x，不可混测）。
+  不漏关键候选）、wall time **4.55s**、tracemalloc 峰值 **260MB**
+  （=248MiB，域预算 256MiB 内；halo 动态扩展后候选 +54% 仍在界）；
+  计时与内存分开测（tracemalloc 每分配追踪放大 wall time ~35x，
+  不可混测）。
 - brute-force oracle 单测：引擎候选集必须覆盖全部 score≥review_min
-  或 id 钉定对（blocking 无关键候选丢失由 oracle 证明，非自证）。
+  或 id 钉定对（blocking 无关键候选丢失由 oracle 证明，非自证）；
+  反子午线（±180° 21.9m 近邻）与 65°N 东西向跨格对有独立回归钉。
 - 验收旅程（tests/unit/data_fusion_authoring/test_service_flows.py，
   真实 DB）：成都小学别名/括号校区/冲突地址/独有实体 → 预览 → 审阅
   （CAS/锁定）→ require_resolved 门 → commit → 唯一性可验证融合版本

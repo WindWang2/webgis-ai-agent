@@ -187,6 +187,19 @@ def atomic_publish(run_id: str) -> str:
     return "published"
 
 
+def claimed_matches_staging(run_id: str) -> bool:
+    """claimed 路径内容一致性：已发布 fc 哈希 == 本次重装 staging fc 哈希。
+
+    崩溃窗口内决定可能已变（决定挂 plan 无 run CAS）——不一致时调用方
+    必须 typed 拒绝认领，绝不把旧决定状态的内容记为本次提交（审查
+    二轮 N1：证据链窄口）。"""
+    try:
+        return (_sha256_file(final_dir(run_id) / "fused_fc.json")
+                == _sha256_file(staging_dir(run_id) / "fused_fc.json"))
+    except OSError:
+        return False
+
+
 def read_receipt(run_id: str) -> Optional[Dict[str, Any]]:
     p = final_dir(run_id) / "receipt.json"
     if not p.exists():

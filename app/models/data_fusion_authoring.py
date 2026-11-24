@@ -139,8 +139,8 @@ class DataFusionDecision(Base):
     ``pair_key`` = "fp:<fa>:<fb>"（两端实体内容指纹有序拼接）—— 与
     快照 index 无关，来源刷新后按内容重挂靠；``idx_a/idx_b`` 只是
     决定时的展示锚（decision_run 快照序）。
-    ``locked`` = True 表示人工锁定：增量重配绝不无声推翻（typed
-    lock_conflict 保护；解除锁定需显式 delete 决定）。
+    ``locked`` = True 表示人工锁定：匹配/刷新绝不无声推翻（决定按
+    pair_key 内容过滤继承；解除锁定唯一路径是显式 delete 决定）。
     """
 
     __tablename__ = "data_fusion_decisions"

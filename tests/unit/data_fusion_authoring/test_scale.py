@@ -144,7 +144,7 @@ def test_scale_dense_cluster_overflow_forces_review():
 
 
 def test_scale_partition_halo_no_miss_on_tile_boundary():
-    """分块边界（halo 语义由格网 3×3 邻域承载）：跨格候选不漏。"""
+    """跨格候选不漏（地理帧动态 halo：赤道口径 ≥3×3，高纬东西向扩展）。"""
     plan = _scale_plan()
     # A 点恰落在格网线上，B 点在相邻格 —— 3×3 邻域必须覆盖
     rows_a = [{"name": "格线点"}]

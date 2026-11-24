@@ -147,9 +147,12 @@ def adjudicate_fields(
             present = va if m.get("a") else vb
             side = "a" if m.get("a") else "b"
             if present is None or present == "":
+                # 标签与 pair.field_conflicts 同口径：仅 a 映射而 a 空 =
+                # b 侧无该字段 → missing_b（反向 missing_a）
                 out.append(FieldAdjudication(
                     output_field=field_name, outcome="resolved_rule",
-                    value=None, rule=rule, comparison="missing_both",
+                    value=None, rule=rule,
+                    comparison="missing_b" if m.get("a") else "missing_a",
                     side=None, values=values))
             else:
                 out.append(_resolved(present, side))
