@@ -144,6 +144,12 @@ class AnalysisContext(BaseModel):
     selection_scope: SitFact = Field(
         default_factory=lambda: unknown(source="map_state._interaction_ir_ledger")
     )
+    # G05：情境化多方案候选的有界投影（候选摘要行/共享基准/活跃锁定）。
+    # default_factory=unknown：旧构造方（测试/既有调用）零改动兼容 ——
+    # 未接线场景显式 unknown，不猜默认。来源 = scenario_harness 注册表。
+    scenarios: SitFact = Field(
+        default_factory=lambda: unknown(source="map_state._scenario_candidates")
+    )
 
 
 class CartographicContext(BaseModel):
