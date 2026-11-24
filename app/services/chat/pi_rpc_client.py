@@ -27,6 +27,7 @@ import atexit
 import json
 import logging
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -107,6 +108,33 @@ MAX_STDOUT_LINE_BYTES = int(os.environ.get("PI_MAX_STDOUT_LINE_BYTES", 16 * 1024
 # (blocking the reader) backpressures Pi's stdout pipe and can hang the
 # subprocess, which is worse.
 MAX_EVENT_QUEUE_SIZE = int(os.environ.get("PI_MAX_EVENT_QUEUE_SIZE", 1024))
+
+# ── v1.6.0 stderr 诊断行识别（观测面增量）────────────────────────────────
+# vendor/packages/coding-agent/src/modes/diagnostics-stderr.ts（v1.6.0）：
+# writeDiagnosticsToStderr 把 runtime 诊断写成 `Error: {message}` /
+# `Warning: {message}` / 无前缀 dim info 行。RPC 模式 rebind 后经
+# rpc-mode.ts setRebindSession 落 stderr（stdout 永远只走 RPC 协议）。
+# chalk 在管道（非 TTY）下退化为纯文本；FORCE_COLOR 存在时整行包 ANSI
+# 码 —— 匹配前先剥 ANSI，两种形态都命中。
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
+_STDERR_DIAGNOSTIC_PREFIXES = ("Error: ", "Warning: ")
+# 诊断消息可能列举多个文件/模型回退详情 —— 比普通 stderr 行给更宽的界。
+_STDERR_DIAG_LOG_CAP = 300
+
+
+def is_stderr_diagnostic_line(line: "str | bytes") -> bool:
+    """Pure predicate: does this stderr line carry a vendor runtime diagnostic?
+
+    Matches ``writeDiagnosticsToStderr``'s actual output format exactly
+    (``Error: ``/``Warning: `` prefixes after ANSI stripping). Bare info
+    lines carry no prefix in the vendor format — they stay DEBUG rather
+    than risk false positives on arbitrary stderr noise. Accepts bytes
+    (real pipes are binary) or str.
+    """
+    if isinstance(line, bytes):
+        line = line.decode("utf-8", errors="replace")
+    plain = _ANSI_ESCAPE_RE.sub("", line).strip()
+    return plain.startswith(_STDERR_DIAGNOSTIC_PREFIXES)
 
 
 # ── Config (CONFIG-04: env-tunable with safe defaults) ──────────────────────
@@ -668,6 +696,12 @@ class PiRpcClient:
         """Read and log stderr lines from Pi subprocess to prevent OS pipe deadlock.
 
         G37（世代钉扎）：与 _read_responses 同款 —— 只读自己代际的 stderr。
+
+        v1.6.0 起 RPC 模式 rebind 后运行时诊断经 ``writeDiagnosticsToStderr``
+        写 stderr（vendor/packages/coding-agent/src/modes/diagnostics-stderr.ts：
+        ``Error: {message}`` / ``Warning: {message}`` / 无前缀 info 行，chalk
+        上色在管道下退化为纯文本、FORCE_COLOR 时带 ANSI 码）——诊断行升级为
+        WARNING（模型回退/设置告警观测面），其余保持 DEBUG。
         """
         if proc is None:
             proc = self._process
@@ -678,7 +712,13 @@ class PiRpcClient:
                     break
                 line = line.strip()
                 if line:
-                    logger.debug(f"[PiStderr] {line[:200]}")
+                    # 二进制管道 → bytes；诊断匹配/日志前先解码（errors=replace
+                    # 保证坏字节不炸读循环）。
+                    text = line.decode("utf-8", errors="replace") if isinstance(line, bytes) else line
+                    if is_stderr_diagnostic_line(text):
+                        logger.warning("[PiStderrDiagnostic] %s", text[:_STDERR_DIAG_LOG_CAP])
+                    else:
+                        logger.debug("[PiStderr] %s", text[:200])
         except asyncio.CancelledError:
             raise
         except Exception as e:

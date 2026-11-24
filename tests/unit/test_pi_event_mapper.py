@@ -362,3 +362,51 @@ def test_abort_batch_end_without_start_or_cache_is_honest_step_error():
     assert "Operation aborted" in sse
     # 诚实性：cache 未命中 → 无 dispatch 分类真值，细分类不猜（tool_error）
     assert '"tool_error"' in sse
+
+
+def test_extension_error_returns_none_but_logs_warning(caplog):
+    """#11264（v1.6.0）：RPC 模式 extension runner 完整性信号事件化。
+
+    丢弃 ≠ 吞掉：不转发 SSE（宿主完整性信号，不是会话内容），但必须
+    结构化 WARNING 落盘（模型回退/扩展 hook 崩溃在观测面可见）。"""
+    import logging
+
+    event = {
+        "type": "extension_error",
+        "extensionPath": "/extensions/webgis-tools/index.ts",
+        "event": "session_start",
+        "error": "Model fallback: provider anthropic quota exhausted",
+    }
+    with caplog.at_level(logging.WARNING, logger="app.services.chat.pi_event_mapper"):
+        sse = map_event_to_sse(event, session_id="s1")
+    assert sse is None  # 绝不进 SSE 流
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert warnings, "extension_error must be visible on the WARNING observation surface"
+    msg = warnings[0].getMessage()
+    assert "extension_error" in msg
+    assert "session_start" in msg
+    assert "Model fallback" in msg
+
+
+def test_extension_error_fields_are_bounded(caplog):
+    """观测面字段有界：超长 extensionPath（~120）/error 消息（~300）截断，
+    无堆栈无路径穿越 —— 不给日志/审计面塞无界负载。"""
+    import logging
+
+    event = {
+        "type": "extension_error",
+        "extensionPath": "/very/long/path/" + "x" * 300,
+        "event": {"type": "toolcall_end"},
+        "error": "E" * 1000 + "/home/kevin/secret/data.geojson",
+    }
+    with caplog.at_level(logging.WARNING, logger="app.services.chat.pi_event_mapper"):
+        assert map_event_to_sse(event, session_id="s1") is None
+    msg = caplog.records[-1].getMessage()
+    # error 截断到 300 且路径被 redact
+    assert "E" * 300 in msg
+    assert "E" * 301 not in msg
+    assert "/home/kevin/secret" not in msg
+    # extensionPath 截断到 ~120
+    assert msg.count("x") < 150
+    # event 形状容错：dict 取 type 名
+    assert "toolcall_end" in msg
