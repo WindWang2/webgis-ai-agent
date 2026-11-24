@@ -548,5 +548,3 @@ def _bounded_basis(basis: Dict[str, Any]) -> Dict[str, Any]:
         else:
             out[k] = str(v)[:80]
     return out
-
-
