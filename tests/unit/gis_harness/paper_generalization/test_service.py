@@ -212,6 +212,64 @@ class TestApplyCommit:
         assert receipt.get("error")
 
 
+class TestMultiScaleJourneys:
+    async def test_scale_change_keeps_compatible_plan_and_supersedes_overlap(
+            self, session):
+        # 旅程 4 缩小版：1:50万 → 1:100万（等效 zoom 相邻不重叠 → 两计划
+        # 共存）；旧结果不得覆盖新 revision（CAS），新窗语义以最新为准。
+        first = await apply_paper_scale_generalization(
+            session, "districts", mode="commit", denominator=500_000,
+            page_text="A4横版", purpose="overview", operation_id="op-j4a")
+        assert first["status"] == "committed"
+        second = await apply_paper_scale_generalization(
+            session, "districts", mode="commit", denominator=1_000_000,
+            page_text="A4横版", purpose="reference", operation_id="op-j4b")
+        assert second["status"] == "committed"
+        assert second["mapspec_revision"] > first["mapspec_revision"]
+        spec = await mapspec_store_instance.get_mapspec(session)
+        layer = next(lyr for lyr in spec["layers"]
+                     if lyr["id"] == "districts")
+        plans = layer["scale_profile"]["paper_plans"]
+        assert len(plans) == 2, "相邻尺度计划共存"
+        windows = layer["representation"]["windows"]
+        paper_wins = [w for w in windows
+                      if w.get("reason_codes") == ["PSC.PAPER_FROZEN"]]
+        assert len(paper_wins) == 2
+        # 全域覆盖未被破坏（窗外 = 原始数据语义可判定）
+        from app.lib.cartography.multiscale.publication_compile import (
+            windows_cover_domain,
+        )
+        assert windows_cover_domain(windows)
+
+    async def test_overlapping_scale_supersedes_old_plan(self, session):
+        # 两个等效 zoom 重叠的尺度（1:40万 vs 1:50万 跨度重叠）→ 新冻结
+        # 裁掉旧窗 → 旧计划移除且回执披露（计划集 ↔ 窗口恒一致）
+        first = await apply_paper_scale_generalization(
+            session, "districts", mode="commit", denominator=500_000,
+            operation_id="op-j5a")
+        assert first["status"] == "committed"
+        second = await apply_paper_scale_generalization(
+            session, "districts", mode="commit", denominator=400_000,
+            operation_id="op-j5b")
+        assert second["status"] == "committed"
+        spec = await mapspec_store_instance.get_mapspec(session)
+        layer = next(lyr for lyr in spec["layers"]
+                     if lyr["id"] == "districts")
+        plans = layer["scale_profile"]["paper_plans"]
+        assert len(plans) == 1, "重叠尺度旧计划被取代移除"
+        assert first["plan_fingerprint"] not in plans
+        assert second["superseded_plans"] == [first["plan_fingerprint"]]
+        # 语义检查不因陈旧计划失败
+        from app.lib.cartography.semantic_checks import (
+            evaluate_cartography_semantics,
+        )
+        report = evaluate_cartography_semantics(spec)
+        bad = [c for c in report.checks
+               if c.rule == "carto.paper_scale_plan"
+               and c.status == "fail"]
+        assert bad == [], [c.message for c in bad]
+
+
 class TestWindowUpsertPure:
     def test_clip_and_split(self):
         windows = [

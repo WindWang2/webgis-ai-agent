@@ -427,9 +427,6 @@ async def apply_paper_scale_generalization(
     layer = dict(ctx["layer"])
     scale_profile = dict(layer.get("scale_profile") or {})
     plans = dict(scale_profile.get("paper_plans") or {})
-    plans[result.fingerprint] = frozen
-    scale_profile["paper_plans"] = plans
-    layer["scale_profile"] = scale_profile
     rep = layer.get("representation") if isinstance(
         layer.get("representation"), dict) else {}
     existing = list(rep.get("windows") or [])
@@ -445,6 +442,35 @@ async def apply_paper_scale_generalization(
             {"min_zoom": float(window["max_zoom"]), "max_zoom": 24.0,
              "mode": "raw"},
         ], window)
+
+    # 计划集 ↔ 窗口一致性：新窗裁剪掉旧冻结计划的 export_window 时，该
+    # 计划已无消费面且会触发 carto.paper_scale_plan 检查失败 —— 移除并
+    # 在回执披露（superseded_plans；同 fingerprint 重跑 = 原位覆盖不受影响）。
+    def _window_present(plan_block: Dict[str, Any]) -> bool:
+        win = plan_block.get("export_window")
+        if not isinstance(win, dict):
+            return False
+        for w in windows:
+            if not isinstance(w, dict):
+                continue
+            if (abs(float(w.get("min_zoom", -1)) - float(win.get("min_zoom", -2)))
+                    < 1e-9
+                    and abs(float(w.get("max_zoom", -1)) - float(win.get("max_zoom", -2)))
+                    < 1e-9
+                    and str(w.get("source") or "") == str(win.get("source") or "")):
+                return True
+        return False
+
+    superseded_plans: List[str] = []
+    for fp, block in list(plans.items()):
+        if fp == result.fingerprint:
+            continue
+        if isinstance(block, dict) and block.get("status") == "frozen"                 and not _window_present(block):
+            superseded_plans.append(fp)
+            plans.pop(fp)
+    plans[result.fingerprint] = frozen
+    scale_profile["paper_plans"] = plans
+    layer["scale_profile"] = scale_profile
     layer["representation"] = {**rep, "windows": windows}
 
     from app.services.mapspec.intents import (
@@ -513,6 +539,7 @@ async def apply_paper_scale_generalization(
         "artifact_source_id": source_id,
         "export_window": window,
         "qa_summary": result.plan["qa_summary"],
+        "superseded_plans": superseded_plans,
         "source_untouched": ctx["anchor"],
         "classification_basis": "original_source",
         "note": (note or "")[:160] or None,
