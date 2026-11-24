@@ -148,7 +148,16 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
          "gis_skill_job_start",
          "gis_skill_job_status",
          "webgis_requirement_compile",
-         "webgis_goal_repair_start"],
+         "webgis_goal_repair_start",
+         # 02 任务：方法实验工作台六工具（检视/计划/执行/状态/比较/采纳）
+         # —— 同一规划支撑面的科学方法比较编排（capability planned，
+         # 绑定只做工具面对账，不授予算法派发资格）。
+         "webgis_method_experiment_inspect",
+         "webgis_method_experiment_plan",
+         "webgis_method_experiment_run",
+         "webgis_method_experiment_status",
+         "webgis_method_experiment_compare",
+         "webgis_method_experiment_adopt"],
     ),
     _platform_binding(
         "scenario_simulation", "情景推演（工具面绑定契约）",
