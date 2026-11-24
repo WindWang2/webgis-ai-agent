@@ -44,6 +44,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         random_seed_policy="fixed_seed",
         deterministic=True,
         scientific_status="VALIDATED",
+        conformance_tests=[
+            "tests/unit/gis_harness/method_experiment/"
+            "test_primitives.py::test_cluster_stability_three_gaussian_clusters",
+            "tests/unit/gis_harness/method_experiment/"
+            "test_perf_and_isolation.py::test_candidate_scaling_linear_dispatch_count",
+        ],
         numerical_tolerance="1e-6",
         complexity="O(n·k·i)",
         priority=50,
@@ -71,6 +77,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         random_seed_policy="deterministic",
         deterministic=True,
         scientific_status="VALIDATED",
+        conformance_tests=[
+            "tests/unit/gis_harness/method_experiment/"
+            "test_primitives.py::test_cluster_stability_dbscan_bootstrap",
+        ],
         numerical_tolerance="1e-6",
         complexity="O(n log n)",
         priority=50,
