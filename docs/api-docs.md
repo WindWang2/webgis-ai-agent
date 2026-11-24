@@ -564,110 +564,135 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 
 | 方法 | 路径 | 说明 | 响应模型 |
 |---|---|---|---|
-| `GET` | `/api/v1/raster-authoring/refs` | List Raster Refs | object |
-| `GET` | `/api/v1/raster-authoring/descriptor/{ref_id}` | Descriptor | object |
-| `POST` | `/api/v1/raster-authoring/probe` | Probe | object |
-| `POST` | `/api/v1/raster-authoring/expression/preview` | Preview | object |
-| `POST` | `/api/v1/raster-authoring/expression/commit` | Commit | object |
+| `GET` | `/api/v1/raster-authoring/refs` | List Raster Refs | RasterRefsResponse |
+| `GET` | `/api/v1/raster-authoring/descriptor/{ref_id}` | Descriptor | RasterDescriptorResponse |
+| `POST` | `/api/v1/raster-authoring/probe` | Probe | RasterProbeResponse |
+| `POST` | `/api/v1/raster-authoring/expression/preview` | Preview | RasterExpressionReceipt |
+| `POST` | `/api/v1/raster-authoring/expression/commit` | Commit | RasterExpressionReceipt |
 | `GET` | `/api/v1/raster-authoring/tiles/{ref_id}/{z}/{x}/{y}.png` | Styled Tile | object |
-| `POST` | `/api/v1/raster-authoring/export` | Export Map | object |
+| `POST` | `/api/v1/raster-authoring/export` | Export Map | RasterExportResponse |
 
 ### 专题表达工作台
 
 | 方法 | 路径 | 说明 | 响应模型 |
 |---|---|---|---|
-| `GET` | `/api/v1/thematic-authoring/sessions/{session_id}/layers/{layer_id}/inspect` | Inspect | object |
-| `POST` | `/api/v1/thematic-authoring/sessions/{session_id}/layers/{layer_id}/preview` | Preview | object |
-| `POST` | `/api/v1/thematic-authoring/sessions/{session_id}/layers/{layer_id}/commit` | Commit | object |
+| `GET` | `/api/v1/thematic-authoring/sessions/{session_id}/layers/{layer_id}/inspect` | Inspect | ThematicInspectResponse |
+| `POST` | `/api/v1/thematic-authoring/sessions/{session_id}/layers/{layer_id}/preview` | Preview | ThematicExpressionReceipt |
+| `POST` | `/api/v1/thematic-authoring/sessions/{session_id}/layers/{layer_id}/commit` | Commit | ThematicExpressionReceipt |
 
 ### 数据关联工作台 G38
 
 | 方法 | 路径 | 说明 | 响应模型 |
 |---|---|---|---|
-| `POST` | `/api/v1/data-join-authoring/sessions/{session_id}/sources/describe` | Describe Source | object |
-| `POST` | `/api/v1/data-join-authoring/sessions/{session_id}/plans` | Create Plan | object |
-| `GET` | `/api/v1/data-join-authoring/sessions/{session_id}/plans` | List Plans | object |
-| `GET` | `/api/v1/data-join-authoring/sessions/{session_id}/plans/{plan_id}` | Get Plan | object |
-| `PATCH` | `/api/v1/data-join-authoring/sessions/{session_id}/plans/{plan_id}` | Update Plan | object |
-| `DELETE` | `/api/v1/data-join-authoring/sessions/{session_id}/plans/{plan_id}` | Archive Plan | object |
-| `POST` | `/api/v1/data-join-authoring/sessions/{session_id}/plans/{plan_id}/preview` | Preview Plan | object |
-| `POST` | `/api/v1/data-join-authoring/sessions/{session_id}/plans/{plan_id}/execute` | Execute Plan | object |
-| `GET` | `/api/v1/data-join-authoring/sessions/{session_id}/runs` | List Runs | object |
-| `GET` | `/api/v1/data-join-authoring/sessions/{session_id}/runs/{run_id}` | Inspect Run | object |
-| `GET` | `/api/v1/data-join-authoring/sessions/{session_id}/runs/{run_id}/results` | Run Results | object |
-| `POST` | `/api/v1/data-join-authoring/sessions/{session_id}/runs/{run_id}/cancel` | Cancel Run | object |
-| `POST` | `/api/v1/data-join-authoring/sessions/{session_id}/runs/{run_id}/render-ref` | Render Ref | object |
-| `POST` | `/api/v1/data-join-authoring/sessions/{session_id}/recover` | Recover | object |
+| `POST` | `/api/v1/data-join-authoring/sessions/{session_id}/sources/describe` | Describe Source | DataJoinDescribeSourceResponse |
+| `POST` | `/api/v1/data-join-authoring/sessions/{session_id}/plans` | Create Plan | DataJoinPlanView |
+| `GET` | `/api/v1/data-join-authoring/sessions/{session_id}/plans` | List Plans | DataJoinPlanListResponse |
+| `GET` | `/api/v1/data-join-authoring/sessions/{session_id}/plans/{plan_id}` | Get Plan | DataJoinPlanView |
+| `PATCH` | `/api/v1/data-join-authoring/sessions/{session_id}/plans/{plan_id}` | Update Plan | DataJoinPlanView |
+| `DELETE` | `/api/v1/data-join-authoring/sessions/{session_id}/plans/{plan_id}` | Archive Plan | DataJoinPlanView |
+| `POST` | `/api/v1/data-join-authoring/sessions/{session_id}/plans/{plan_id}/preview` | Preview Plan | DataJoinPlanPreviewResponse |
+| `POST` | `/api/v1/data-join-authoring/sessions/{session_id}/plans/{plan_id}/execute` | Execute Plan | DataJoinRunView |
+| `GET` | `/api/v1/data-join-authoring/sessions/{session_id}/runs` | List Runs | DataJoinRunListResponse |
+| `GET` | `/api/v1/data-join-authoring/sessions/{session_id}/runs/{run_id}` | Inspect Run | DataJoinRunView |
+| `GET` | `/api/v1/data-join-authoring/sessions/{session_id}/runs/{run_id}/results` | Run Results | DataJoinRunResultsResponse |
+| `POST` | `/api/v1/data-join-authoring/sessions/{session_id}/runs/{run_id}/cancel` | Cancel Run | DataJoinRunCancelResponse |
+| `POST` | `/api/v1/data-join-authoring/sessions/{session_id}/runs/{run_id}/render-ref` | Render Ref | DataJoinRenderRefResponse |
+| `POST` | `/api/v1/data-join-authoring/sessions/{session_id}/recover` | Recover | DataJoinRecoverResponse |
+
+### 多源实体融合工作台
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/api/v1/data-fusion-authoring/sessions/{session_id}/sources/describe` | Describe Sources | FusionDescribeResponse |
+| `POST` | `/api/v1/data-fusion-authoring/sessions/{session_id}/plans` | Create Plan | FusionPlanView |
+| `GET` | `/api/v1/data-fusion-authoring/sessions/{session_id}/plans` | List Plans | FusionPlanListResponse |
+| `GET` | `/api/v1/data-fusion-authoring/sessions/{session_id}/plans/{plan_id}` | Get Plan | FusionPlanView |
+| `PUT` | `/api/v1/data-fusion-authoring/sessions/{session_id}/plans/{plan_id}` | Update Plan | FusionPlanView |
+| `POST` | `/api/v1/data-fusion-authoring/sessions/{session_id}/plans/{plan_id}/archive` | Archive Plan | FusionPlanView |
+| `POST` | `/api/v1/data-fusion-authoring/sessions/{session_id}/plans/{plan_id}/preview` | Preview Plan | FusionPlanPreviewResponse |
+| `POST` | `/api/v1/data-fusion-authoring/sessions/{session_id}/plans/{plan_id}/execute` | Execute Plan | FusionRunView |
+| `GET` | `/api/v1/data-fusion-authoring/sessions/{session_id}/plans/{plan_id}/runs` | List Runs | FusionRunListResponse |
+| `GET` | `/api/v1/data-fusion-authoring/sessions/{session_id}/runs/{run_id}` | Inspect Run | FusionRunView |
+| `POST` | `/api/v1/data-fusion-authoring/sessions/{session_id}/runs/{run_id}/cancel` | Cancel Run | FusionRunCancelResponse |
+| `GET` | `/api/v1/data-fusion-authoring/sessions/{session_id}/runs/{run_id}/results` | Run Results | FusionRunResultsResponse |
+| `GET` | `/api/v1/data-fusion-authoring/sessions/{session_id}/runs/{run_id}/review-queue` | Review Queue | FusionReviewQueueResponse |
+| `GET` | `/api/v1/data-fusion-authoring/sessions/{session_id}/plans/{plan_id}/decisions` | List Decisions | FusionDecisionListResponse |
+| `POST` | `/api/v1/data-fusion-authoring/sessions/{session_id}/plans/{plan_id}/decisions` | Upsert Decision | FusionDecisionView |
+| `DELETE` | `/api/v1/data-fusion-authoring/sessions/{session_id}/plans/{plan_id}/decisions` | Delete Decision | FusionDecisionListResponse |
+| `POST` | `/api/v1/data-fusion-authoring/sessions/{session_id}/runs/{run_id}/commit` | Commit Run | FusionRunView |
+| `POST` | `/api/v1/data-fusion-authoring/sessions/{session_id}/runs/{run_id}/render-ref` | Render Ref | FusionRenderRefResponse |
+| `POST` | `/api/v1/data-fusion-authoring/sessions/{session_id}/plans/{plan_id}/refresh` | Refresh Plan | FusionRefreshResponse |
+| `POST` | `/api/v1/data-fusion-authoring/sessions/{session_id}/recover` | Recover | FusionRecoverResponse |
 
 ### 坐标操作工作台 G45
 
 | 方法 | 路径 | 说明 | 响应模型 |
 |---|---|---|---|
-| `POST` | `/api/v1/coord-ops/sessions/{session_id}/describe-source` | Describe Source | object |
-| `GET` | `/api/v1/coord-ops/crs/lookup` | Crs Lookup | object |
-| `POST` | `/api/v1/coord-ops/sessions/{session_id}/operations` | List Operations | object |
-| `POST` | `/api/v1/coord-ops/sessions/{session_id}/plans` | Create Plan | object |
-| `GET` | `/api/v1/coord-ops/sessions/{session_id}/plans` | List Plans | object |
-| `GET` | `/api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}` | Get Plan | object |
-| `PATCH` | `/api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}` | Update Plan | object |
-| `DELETE` | `/api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}` | Archive Plan | object |
-| `POST` | `/api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}/lock` | Lock Plan | object |
-| `POST` | `/api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}/preview` | Preview Plan | object |
-| `POST` | `/api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}/execute` | Execute Plan | object |
-| `GET` | `/api/v1/coord-ops/sessions/{session_id}/runs` | List Runs | object |
-| `GET` | `/api/v1/coord-ops/sessions/{session_id}/runs/{run_id}` | Inspect Run | object |
-| `GET` | `/api/v1/coord-ops/sessions/{session_id}/runs/{run_id}/results` | Run Results | object |
-| `POST` | `/api/v1/coord-ops/sessions/{session_id}/runs/{run_id}/cancel` | Cancel Run | object |
-| `POST` | `/api/v1/coord-ops/sessions/{session_id}/runs/{run_id}/display-ref` | Display Ref | object |
-| `POST` | `/api/v1/coord-ops/sessions/{session_id}/recover` | Recover | object |
+| `POST` | `/api/v1/coord-ops/sessions/{session_id}/describe-source` | Describe Source | CoordinateOpsDescribeSourceResponse |
+| `GET` | `/api/v1/coord-ops/crs/lookup` | Crs Lookup | CoordinateOpsCrsLookupResponse |
+| `POST` | `/api/v1/coord-ops/sessions/{session_id}/operations` | List Operations | CoordinateOpsListOperationsResponse |
+| `POST` | `/api/v1/coord-ops/sessions/{session_id}/plans` | Create Plan | CoordinateOperationPlanView |
+| `GET` | `/api/v1/coord-ops/sessions/{session_id}/plans` | List Plans | CoordinateOperationPlanListResponse |
+| `GET` | `/api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}` | Get Plan | CoordinateOperationPlanView |
+| `PATCH` | `/api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}` | Update Plan | CoordinateOperationPlanView |
+| `DELETE` | `/api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}` | Archive Plan | CoordinateOperationPlanArchiveResponse |
+| `POST` | `/api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}/lock` | Lock Plan | CoordinateOperationPlanView |
+| `POST` | `/api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}/preview` | Preview Plan | CoordinateOperationPlanPreviewResponse |
+| `POST` | `/api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}/execute` | Execute Plan | CoordinateOperationRunView |
+| `GET` | `/api/v1/coord-ops/sessions/{session_id}/runs` | List Runs | CoordinateOperationRunListResponse |
+| `GET` | `/api/v1/coord-ops/sessions/{session_id}/runs/{run_id}` | Inspect Run | CoordinateOperationRunView |
+| `GET` | `/api/v1/coord-ops/sessions/{session_id}/runs/{run_id}/results` | Run Results | CoordinateOperationRunResultsResponse |
+| `POST` | `/api/v1/coord-ops/sessions/{session_id}/runs/{run_id}/cancel` | Cancel Run | CoordinateOperationRunCancelResponse |
+| `POST` | `/api/v1/coord-ops/sessions/{session_id}/runs/{run_id}/display-ref` | Display Ref | CoordinateOperationDisplayRefResponse |
+| `POST` | `/api/v1/coord-ops/sessions/{session_id}/recover` | Recover | CoordinateOperationRecoverResponse |
 
 ### 制图符号资产工作台（G40）
 
 | 方法 | 路径 | 说明 | 响应模型 |
 |---|---|---|---|
-| `GET` | `/api/v1/cartographic-assets` | List Catalog | object |
-| `POST` | `/api/v1/cartographic-assets` | Create Asset | object |
-| `GET` | `/api/v1/cartographic-assets/{asset_id}` | Asset Detail | object |
-| `GET` | `/api/v1/cartographic-assets/{asset_id}/versions/{revision}/content` | Version Content | object |
-| `POST` | `/api/v1/cartographic-assets/{asset_id}/versions` | New Version | object |
-| `POST` | `/api/v1/cartographic-assets/{asset_id}/versions/{revision}/publish` | Publish | object |
-| `POST` | `/api/v1/cartographic-assets/{asset_id}/retire` | Retire | object |
-| `POST` | `/api/v1/cartographic-assets/{asset_id}/restore/{revision}` | Restore | object |
-| `DELETE` | `/api/v1/cartographic-assets/{asset_id}/versions/{revision}` | Delete Version | object |
-| `GET` | `/api/v1/cartographic-assets/sessions/{session_id}/layers/{layer_id}/inspect` | Inspect Binding | object |
-| `POST` | `/api/v1/cartographic-assets/sessions/{session_id}/layers/{layer_id}/preview` | Preview | object |
-| `POST` | `/api/v1/cartographic-assets/sessions/{session_id}/layers/{layer_id}/apply` | Apply | object |
-| `POST` | `/api/v1/cartographic-assets/sessions/{session_id}/layers/{layer_id}/unbind` | Unbind | object |
+| `GET` | `/api/v1/cartographic-assets` | List Catalog | CartographicAssetListResponse |
+| `POST` | `/api/v1/cartographic-assets` | Create Asset | CartographicAssetCreateResponse |
+| `GET` | `/api/v1/cartographic-assets/{asset_id}` | Asset Detail | CartographicAssetDetailResponse |
+| `GET` | `/api/v1/cartographic-assets/{asset_id}/versions/{revision}/content` | Version Content | CartographicAssetContentResponse |
+| `POST` | `/api/v1/cartographic-assets/{asset_id}/versions` | New Version | CartographicAssetVersionResponse |
+| `POST` | `/api/v1/cartographic-assets/{asset_id}/versions/{revision}/publish` | Publish | CartographicAssetVersionResponse |
+| `POST` | `/api/v1/cartographic-assets/{asset_id}/retire` | Retire | CartographicAssetRetireResponse |
+| `POST` | `/api/v1/cartographic-assets/{asset_id}/restore/{revision}` | Restore | CartographicAssetVersionResponse |
+| `DELETE` | `/api/v1/cartographic-assets/{asset_id}/versions/{revision}` | Delete Version | CartographicAssetDeleteVersionResponse |
+| `GET` | `/api/v1/cartographic-assets/sessions/{session_id}/layers/{layer_id}/inspect` | Inspect Binding | SymbolBindingInspectResponse |
+| `POST` | `/api/v1/cartographic-assets/sessions/{session_id}/layers/{layer_id}/preview` | Preview | SymbolBindingReceipt |
+| `POST` | `/api/v1/cartographic-assets/sessions/{session_id}/layers/{layer_id}/apply` | Apply | SymbolBindingReceipt |
+| `POST` | `/api/v1/cartographic-assets/sessions/{session_id}/layers/{layer_id}/unbind` | Unbind | SymbolBindingReceipt |
 
 ### 目标补全（G42）
 
 | 方法 | 路径 | 说明 | 响应模型 |
 |---|---|---|---|
-| `GET` | `/api/v1/goal-repair/sessions/{session_id}/preview` | Preview Goal Repair | object |
+| `GET` | `/api/v1/goal-repair/sessions/{session_id}/preview` | Preview Goal Repair | GoalRepairPreviewResponse |
 | `POST` | `/api/v1/goal-repair/sessions/{session_id}/attempts` | Start Goal Repair | — |
-| `GET` | `/api/v1/goal-repair/attempts/{attempt_id}` | Get Goal Repair Attempt | object |
-| `POST` | `/api/v1/goal-repair/attempts/{attempt_id}/cancel` | Cancel Goal Repair | object |
+| `GET` | `/api/v1/goal-repair/attempts/{attempt_id}` | Get Goal Repair Attempt | GoalRepairAttemptView |
+| `POST` | `/api/v1/goal-repair/attempts/{attempt_id}/cancel` | Cancel Goal Repair | GoalRepairAttemptView |
 
 ### 纸面版式工作台
 
 | 方法 | 路径 | 说明 | 响应模型 |
 |---|---|---|---|
-| `GET` | `/api/v1/print-layout/capabilities` | Capabilities | object |
-| `GET` | `/api/v1/print-layout/inspect` | Inspect | object |
-| `GET` | `/api/v1/print-layout/pages` | Pages | object |
-| `POST` | `/api/v1/print-layout/propose` | Propose | object |
-| `POST` | `/api/v1/print-layout/apply` | Apply | object |
-| `POST` | `/api/v1/print-layout/preview` | Preview | object |
-| `POST` | `/api/v1/print-layout/export` | Export | object |
-| `POST` | `/api/v1/print-layout/templates` | Templates | object |
+| `GET` | `/api/v1/print-layout/capabilities` | Capabilities | PrintLayoutCapabilitiesResponse |
+| `GET` | `/api/v1/print-layout/inspect` | Inspect | PrintLayoutInspectResponse |
+| `GET` | `/api/v1/print-layout/pages` | Pages | PrintLayoutPagesResponse |
+| `POST` | `/api/v1/print-layout/propose` | Propose | PrintLayoutProposalReceipt |
+| `POST` | `/api/v1/print-layout/apply` | Apply | PrintLayoutProposalReceipt |
+| `POST` | `/api/v1/print-layout/preview` | Preview | PrintLayoutPreviewResponse |
+| `POST` | `/api/v1/print-layout/export` | Export | PrintLayoutExportResponse |
+| `POST` | `/api/v1/print-layout/templates` | Templates | PrintLayoutProposalReceipt |
 
 ### 双变量与可靠性作者工作台
 
 | 方法 | 路径 | 说明 | 响应模型 |
 |---|---|---|---|
-| `GET` | `/api/v1/bivariate-reliability/sessions/{session_id}/layers/{layer_id}/inspect` | Inspect | object |
-| `POST` | `/api/v1/bivariate-reliability/sessions/{session_id}/layers/{layer_id}/preview` | Preview | object |
-| `POST` | `/api/v1/bivariate-reliability/sessions/{session_id}/layers/{layer_id}/commit` | Commit | object |
+| `GET` | `/api/v1/bivariate-reliability/sessions/{session_id}/layers/{layer_id}/inspect` | Inspect | BivariateInspectResponse |
+| `POST` | `/api/v1/bivariate-reliability/sessions/{session_id}/layers/{layer_id}/preview` | Preview | BivariateExpressionReceipt |
+| `POST` | `/api/v1/bivariate-reliability/sessions/{session_id}/layers/{layer_id}/commit` | Commit | BivariateExpressionReceipt |
 
 ### 联合探索 G46
 
@@ -688,13 +713,13 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 
 | 方法 | 路径 | 说明 | 响应模型 |
 |---|---|---|---|
-| `GET` | `/api/v1/cartogram/sessions/{session_id}/layers/{layer_id}/inspect` | Inspect | object |
-| `POST` | `/api/v1/cartogram/sessions/{session_id}/layers/{layer_id}/plan` | Plan | object |
-| `POST` | `/api/v1/cartogram/sessions/{session_id}/layers/{layer_id}/run` | Run | object |
-| `POST` | `/api/v1/cartogram/sessions/{session_id}/layers/{layer_id}/apply` | Apply | object |
-| `GET` | `/api/v1/cartogram/sessions/{session_id}/jobs/{job_id}` | Job Status | object |
-| `GET` | `/api/v1/cartogram/sessions/{session_id}/layouts` | Layouts | object |
-| `GET` | `/api/v1/cartogram/sessions/{session_id}/layouts/{layout_ref}` | Layout Detail | object |
+| `GET` | `/api/v1/cartogram/sessions/{session_id}/layers/{layer_id}/inspect` | Inspect | CartogramInspectResponse |
+| `POST` | `/api/v1/cartogram/sessions/{session_id}/layers/{layer_id}/plan` | Plan | CartogramPlanReceipt |
+| `POST` | `/api/v1/cartogram/sessions/{session_id}/layers/{layer_id}/run` | Run | CartogramPlanReceipt |
+| `POST` | `/api/v1/cartogram/sessions/{session_id}/layers/{layer_id}/apply` | Apply | CartogramApplyReceipt |
+| `GET` | `/api/v1/cartogram/sessions/{session_id}/jobs/{job_id}` | Job Status | CartogramJobStatusResponse |
+| `GET` | `/api/v1/cartogram/sessions/{session_id}/layouts` | Layouts | CartogramLayoutListResponse |
+| `GET` | `/api/v1/cartogram/sessions/{session_id}/layouts/{layout_ref}` | Layout Detail | CartogramLayoutDetailResponse |
 | `GET` | `/api/v1/cartogram/sessions/{session_id}/layouts/{layout_ref}/export` | Layout Export | object |
 
 ### 报告生成
@@ -734,20 +759,23 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/chat/sessions/{session_id}/table-artifacts/{ref_id}` | Get Session Table Artifact | TableArtifactResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/plan` | Get Session Plan | SessionPlanViewResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/plans/{plan_id}/confirm` | Confirm Destructive Plan | object |
-| `GET` | `/api/v1/chat/sessions/{session_id}/model` | Get Session Model | object |
-| `PUT` | `/api/v1/chat/sessions/{session_id}/model` | Put Session Model | object |
-| `GET` | `/api/v1/chat/sessions/{session_id}/usage` | Get Session Usage | object |
-| `GET` | `/api/v1/chat/sessions/{session_id}/context-sources` | Get Context Sources | object |
-| `GET` | `/api/v1/chat/sessions/{session_id}/context-policy` | Get Context Policy | object |
-| `PUT` | `/api/v1/chat/sessions/{session_id}/context-policy` | Put Context Policy | object |
-| `POST` | `/api/v1/chat/sessions/{session_id}/context-preview` | Post Context Preview | object |
-| `GET` | `/api/v1/chat/sessions/{session_id}/context-receipts` | Get Context Receipts | object |
-| `GET` | `/api/v1/chat/sessions/{session_id}/context-receipts/{turn_id}` | Get Context Receipt | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/model` | Get Session Model | SessionModelViewResponse |
+| `PUT` | `/api/v1/chat/sessions/{session_id}/model` | Put Session Model | SessionModelPutResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/usage` | Get Session Usage | SessionUsageResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/context-sources` | Get Context Sources | ContextSourcesResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/context-policy` | Get Context Policy | ContextPolicyResponse |
+| `PUT` | `/api/v1/chat/sessions/{session_id}/context-policy` | Put Context Policy | ContextPolicyResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/context-preview` | Post Context Preview | ContextPreviewResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/context-receipts` | Get Context Receipts | ContextReceiptsResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/context-receipts/{turn_id}` | Get Context Receipt | ContextReceiptResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/mapspec/mutations` | Apply User Mapspec Mutation | MutationApplyResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/workbench/state` | Get Workbench State | WorkbenchStateResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/workbench/artifact-status` | Get Workbench Artifact Status | WorkbenchArtifactStatusResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/scale-portrayal` | Get Scale Portrayal | object |
 | `POST` | `/api/v1/chat/sessions/{session_id}/scale-portrayal` | Apply Scale Portrayal Route | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/flow-product/inspect` | Inspect Flow | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/flow-product/preview` | Preview Flow | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/flow-product/query` | Query Flow | object |
 | `POST` | `/api/v1/chat/sessions/{session_id}/interaction-events` | Push Interaction Events | InteractionIngestResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/interaction-events/projection` | Get Interaction Projection | InteractionProjectionResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/situation` | Get Situation View | object |
@@ -765,21 +793,21 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/chat/sessions/{session_id}/feature-edits/datasets/{ref_id}/editable-copy` | Make Editable Copy | object |
 | `GET` | `/api/v1/chat/sessions/{session_id}/feature-edits/datasets/{ref_id}/qualification` | Get Edit Qualification | object |
 | `GET` | `/api/v1/chat/sessions/{session_id}/feature-edits/{ref_id}/lineage` | Get Feature Lineage | object |
-| `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals` | Create Feature Proposal | object |
-| `GET` | `/api/v1/chat/sessions/{session_id}/feature-proposals` | List Feature Proposals | object |
-| `GET` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}` | Get Feature Proposal | object |
-| `PATCH` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}` | Update Feature Proposal | object |
-| `GET` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/diff` | Get Feature Proposal Diff | object |
-| `GET` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/conflicts` | Get Feature Proposal Conflicts | object |
-| `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/resolutions` | Submit Feature Proposal Resolutions | object |
-| `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/rebase` | Rebase Feature Proposal | object |
-| `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/decisions` | Decide Feature Proposal | object |
-| `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/merge` | Merge Feature Proposal | object |
-| `GET` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/recovery` | Feature Proposal Recovery View | object |
-| `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/recovery/resolve` | Resolve Feature Proposal Recovery | object |
-| `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/comments` | Comment Feature Proposal | object |
-| `GET` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/audit` | Export Feature Proposal Audit | object |
-| `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/withdraw` | Withdraw Feature Proposal | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals` | Create Feature Proposal | FeatureProposalSummaryResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/feature-proposals` | List Feature Proposals | FeatureProposalListResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}` | Get Feature Proposal | FeatureProposalDetailResponse |
+| `PATCH` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}` | Update Feature Proposal | FeatureProposalSummaryResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/diff` | Get Feature Proposal Diff | FeatureProposalDiffResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/conflicts` | Get Feature Proposal Conflicts | FeatureProposalConflictsResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/resolutions` | Submit Feature Proposal Resolutions | FeatureProposalEnvelopeResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/rebase` | Rebase Feature Proposal | FeatureProposalEnvelopeResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/decisions` | Decide Feature Proposal | FeatureProposalEnvelopeResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/merge` | Merge Feature Proposal | FeatureProposalMergeResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/recovery` | Feature Proposal Recovery View | FeatureProposalRecoveryViewResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/recovery/resolve` | Resolve Feature Proposal Recovery | FeatureProposalEnvelopeResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/comments` | Comment Feature Proposal | FeatureProposalCommentsResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/audit` | Export Feature Proposal Audit | FeatureProposalAuditResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/withdraw` | Withdraw Feature Proposal | FeatureProposalEnvelopeResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/field-contracts` | List Contracts | object |
 | `POST` | `/api/v1/chat/sessions/{session_id}/field-contracts` | Create Contract | object |
 | `GET` | `/api/v1/chat/sessions/{session_id}/field-contracts/datasets/{ref_id}/observe` | Observe Fields | object |
@@ -841,7 +869,7 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/export` | Upload Map Export | MapExportResponse |
 | `GET` | `/api/v1/export/diagnostics/{filename}` | Get Export Diagnostics | ExportDiagnosticsResponse |
 | `POST` | `/api/v1/export/vector-pdf` | Export Map As Vector Pdf | VectorPdfExportResponse |
-| `POST` | `/api/v1/export/mixed` | Export Map As Mixed | object |
+| `POST` | `/api/v1/export/mixed` | Export Map As Mixed | MixedMapExportResponse |
 | `POST` | `/api/v1/export/pdf` | Export Map As Pdf | PdfExportResponse |
 | `GET` | `/api/v1/export/download/{filename}` | Download Map Export | object |
 | `POST` | `/api/v1/export/geojson` | Export Geojson | GeoJSONExportResponse |
@@ -864,19 +892,19 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 
 | 方法 | 路径 | 说明 | 响应模型 |
 |---|---|---|---|
-| `GET` | `/api/v1/skill-jobs/catalog` | Get Catalog | object |
-| `GET` | `/api/v1/skill-jobs/skills/{skill_id}` | Get Skill Detail | object |
-| `POST` | `/api/v1/skill-jobs/prepare` | Prepare | object |
-| `POST` | `/api/v1/skill-jobs/start` | Start | object |
-| `GET` | `/api/v1/skill-jobs/runs` | List Runs | object |
-| `GET` | `/api/v1/skill-jobs/runs/{job_id}` | Get Run | object |
-| `POST` | `/api/v1/skill-jobs/runs/{job_id}/cancel` | Cancel Run | object |
-| `GET` | `/api/v1/skill-jobs/presets` | List Presets Ep | object |
-| `POST` | `/api/v1/skill-jobs/presets` | Create Preset Ep | object |
-| `GET` | `/api/v1/skill-jobs/presets/{preset_id}` | Get Preset Ep | object |
-| `PUT` | `/api/v1/skill-jobs/presets/{preset_id}` | Update Preset Ep | object |
-| `DELETE` | `/api/v1/skill-jobs/presets/{preset_id}` | Delete Preset Ep | object |
-| `POST` | `/api/v1/skill-jobs/presets/{preset_id}/prepare` | Preset Prepare Ep | object |
+| `GET` | `/api/v1/skill-jobs/catalog` | Get Catalog | SkillJobsCatalogResponse |
+| `GET` | `/api/v1/skill-jobs/skills/{skill_id}` | Get Skill Detail | SkillJobSkillDetailResponse |
+| `POST` | `/api/v1/skill-jobs/prepare` | Prepare | SkillJobPrepareResponse |
+| `POST` | `/api/v1/skill-jobs/start` | Start | SkillJobRunView |
+| `GET` | `/api/v1/skill-jobs/runs` | List Runs | SkillJobRunsListResponse |
+| `GET` | `/api/v1/skill-jobs/runs/{job_id}` | Get Run | SkillJobRunView |
+| `POST` | `/api/v1/skill-jobs/runs/{job_id}/cancel` | Cancel Run | SkillJobCancelResponse |
+| `GET` | `/api/v1/skill-jobs/presets` | List Presets Ep | SkillJobPresetsListResponse |
+| `POST` | `/api/v1/skill-jobs/presets` | Create Preset Ep | SkillJobPresetView |
+| `GET` | `/api/v1/skill-jobs/presets/{preset_id}` | Get Preset Ep | SkillJobPresetView |
+| `PUT` | `/api/v1/skill-jobs/presets/{preset_id}` | Update Preset Ep | SkillJobPresetView |
+| `DELETE` | `/api/v1/skill-jobs/presets/{preset_id}` | Delete Preset Ep | SkillJobPresetDeleteResponse |
+| `POST` | `/api/v1/skill-jobs/presets/{preset_id}/prepare` | Preset Prepare Ep | SkillJobPresetPrepareResponse |
 
 ### 地图制图
 
@@ -942,16 +970,16 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 
 | 方法 | 路径 | 说明 | 响应模型 |
 |---|---|---|---|
-| `GET` | `/api/v1/raster-sampling/describe` | Describe | object |
-| `POST` | `/api/v1/raster-sampling/plan` | Create Plan | object |
-| `POST` | `/api/v1/raster-sampling/plan/{plan_id}/revise` | Revise Plan | object |
-| `GET` | `/api/v1/raster-sampling/plan/{plan_id}` | Get Plan | object |
-| `GET` | `/api/v1/raster-sampling/plans` | List Plans | object |
-| `POST` | `/api/v1/raster-sampling/plan/{plan_id}/preview` | Preview | object |
-| `POST` | `/api/v1/raster-sampling/plan/{plan_id}/execute` | Execute | object |
-| `GET` | `/api/v1/raster-sampling/plan/{plan_id}/status` | Status | object |
-| `GET` | `/api/v1/raster-sampling/results` | Results | object |
-| `POST` | `/api/v1/raster-sampling/plan/{plan_id}/cancel` | Cancel | object |
+| `GET` | `/api/v1/raster-sampling/describe` | Describe | RasterSamplingDescribeResponse |
+| `POST` | `/api/v1/raster-sampling/plan` | Create Plan | RasterSamplingPlanResponse |
+| `POST` | `/api/v1/raster-sampling/plan/{plan_id}/revise` | Revise Plan | RasterSamplingPlanResponse |
+| `GET` | `/api/v1/raster-sampling/plan/{plan_id}` | Get Plan | RasterSamplingPlanResponse |
+| `GET` | `/api/v1/raster-sampling/plans` | List Plans | RasterSamplingPlanListResponse |
+| `POST` | `/api/v1/raster-sampling/plan/{plan_id}/preview` | Preview | RasterSamplingPreviewResponse |
+| `POST` | `/api/v1/raster-sampling/plan/{plan_id}/execute` | Execute | RasterSamplingExecuteResponse |
+| `GET` | `/api/v1/raster-sampling/plan/{plan_id}/status` | Status | RasterSamplingStatusResponse |
+| `GET` | `/api/v1/raster-sampling/results` | Results | RasterSamplingResultsResponse |
+| `POST` | `/api/v1/raster-sampling/plan/{plan_id}/cancel` | Cancel | RasterSamplingCancelResponse |
 
 ### 控制点影像配准 (G48)
 
@@ -1165,11 +1193,11 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 
 | 方法 | 路径 | 说明 | 响应模型 |
 |---|---|---|---|
-| `POST` | `/api/v1/layers/data/{ref_id}/selection` | Create Selection Handle | object |
-| `GET` | `/api/v1/layers/data/{ref_id}/selection/{handle}` | Get Selection Handle | object |
-| `DELETE` | `/api/v1/layers/data/{ref_id}/selection/{handle}` | Release Selection Handle | object |
-| `GET` | `/api/v1/layers/data/{ref_id}/selection/{handle}/features` | Get Selection Features Page | object |
-| `POST` | `/api/v1/layers/data/{ref_id}/selection/{handle}/materialize` | Materialize Selection Handle | object |
+| `POST` | `/api/v1/layers/data/{ref_id}/selection` | Create Selection Handle | SelectionHandleResponse |
+| `GET` | `/api/v1/layers/data/{ref_id}/selection/{handle}` | Get Selection Handle | SelectionHandleResponse |
+| `DELETE` | `/api/v1/layers/data/{ref_id}/selection/{handle}` | Release Selection Handle | SelectionReleaseResponse |
+| `GET` | `/api/v1/layers/data/{ref_id}/selection/{handle}/features` | Get Selection Features Page | SelectionFeaturesPageResponse |
+| `POST` | `/api/v1/layers/data/{ref_id}/selection/{handle}/materialize` | Materialize Selection Handle | SelectionMaterializeResponse |
 
 ### 跨图层拓扑工作台 G31
 
@@ -1545,6 +1573,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `DELETE` | `/api/v1/temporal-media/jobs/{job_id}` | Cancel Job | object |
 | `GET` | `/api/v1/temporal-media/jobs/{job_id}/result` | Get Job Result | object |
 
-_端点总数：703（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：726（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->
