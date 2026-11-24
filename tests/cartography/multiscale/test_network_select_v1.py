@@ -15,10 +15,10 @@ from app.lib.cartography.multiscale.network_select import (
 
 
 def _line(fid: str, coords: List[List[float]], road_class: Optional[str],
-          ) -> Dict[str, Any]:
+          *, field: str = "道路等级") -> Dict[str, Any]:
     props: Dict[str, Any] = {}
     if road_class is not None:
-        props["道路等级"] = road_class
+        props[field] = road_class
     return {
         "type": "Feature", "id": fid,
         "geometry": {"type": "LineString", "coordinates": coords},
@@ -119,9 +119,9 @@ class TestSelectionSemantics:
         # 数值等级与字符串词表同义（generalize 同语义）：a2（等级 4）被
         # 抑制 → a1/a3 分裂为两个分量 → 连通性桥接按最短路径重加 a2
         feats = [
-            _line("a1", [[0, 0], [1, 0]], 2),
-            _line("a2", [[1, 0], [2, 0]], 4),
-            _line("a3", [[2, 0], [3, 0]], 2),
+            _line("a1", [[0, 0], [1, 0]], 2, field="admin_level"),
+            _line("a2", [[1, 0], [2, 0]], 4, field="admin_level"),
+            _line("a3", [[2, 0], [3, 0]], 2, field="admin_level"),
         ]
         out = select_lines_with_connectivity(
             feats, importance_field="admin_level", kept_values=["2"])
