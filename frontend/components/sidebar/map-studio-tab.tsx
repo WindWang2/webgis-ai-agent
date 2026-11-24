@@ -4,7 +4,7 @@ import { useState, useEffect, useId, type ReactNode } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import type { ExportItem, ExportSettings } from '@/lib/store/hud-types';
 import { useMapAction } from '@/lib/contexts/map-action-context';
-import { Layers,  Download, Printer, History, ChevronDown, Lock } from 'lucide-react';
+import { Layers,  Download, Printer, History, ChevronDown, Lock, FlaskConical } from 'lucide-react';
 import { API_BASE } from '@/lib/api/config';
 import { downloadWithAuth } from '@/lib/api/authenticated-download';
 import { submitAtlasJob } from '@/lib/api/atlas-jobs';
@@ -18,6 +18,7 @@ import { EmptyState } from '@/components/shared/empty-state';
 import { devOnly } from '@/lib/utils/logger';
 import { useT } from '@/lib/i18n/useT';
 import { FrameProductPanel } from '@/components/workbench/frame-product-panel';
+import { ScenarioPanel } from '@/components/workbench/scenario-panel';
 import { PrintLayoutPanel } from '@/components/workbench/print-layout-panel';
 import { getCommittedMapSpec } from '@/lib/mapspec/session-cursor';
 import {
@@ -95,7 +96,7 @@ const FORMAT_LABEL: Record<ExportSettings['format'], string> = {
   'vector-pdf': 'Vector PDF',
 };
 
-type SubTab = 'layout' | 'frames' | 'history';
+type SubTab = 'layout' | 'frames' | 'scenarios' | 'history';
 
 /** 制图排版表单的可折叠分区（渐进式披露）。 */
 function StudioSection({
@@ -343,7 +344,7 @@ export function MapStudioTab() {
             // 到新激活的 tab（roving tabindex 已随之更新）。
             setActiveSubTab((prev) => {
               // G15：三子页签循环（layout → frames → history → layout）。
-              const order: SubTab[] = ['layout', 'frames', 'history'];
+              const order: SubTab[] = ['layout', 'frames', 'scenarios', 'history'];
               const next = order[(order.indexOf(prev) + 1) % order.length];
               setTimeout(() => document.getElementById(`map-studio-tab-${next}`)?.focus(), 0);
               return next;
@@ -396,6 +397,29 @@ export function MapStudioTab() {
           >
             <Layers size={13} aria-hidden />
             <span>{t('workbench.frameProduct.tabTitle')}</span>
+          </button>
+          <button
+            role="tab"
+            id="map-studio-tab-scenarios"
+            aria-selected={activeSubTab === 'scenarios'}
+            aria-controls={activeSubTab === 'scenarios' ? 'map-studio-panel-scenarios' : undefined}
+            tabIndex={activeSubTab === 'scenarios' ? 0 : -1}
+            onClick={() => setActiveSubTab('scenarios')}
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-md py-1.5 font-medium transition-all"
+            style={{
+              backgroundColor: activeSubTab === 'scenarios'
+                ? 'var(--surface-raised)'
+                : 'transparent',
+              color: activeSubTab === 'scenarios'
+                ? 'var(--text-primary)'
+                : 'var(--text-muted)',
+              boxShadow: activeSubTab === 'scenarios'
+                ? '0 1px 2px var(--border-strong)'
+                : 'none',
+            }}
+          >
+            <FlaskConical size={13} aria-hidden />
+            <span>{t('workbench.scenario.tabTitle')}</span>
           </button>
           <button
             role="tab"
@@ -699,6 +723,14 @@ export function MapStudioTab() {
                 </div>
               </div>
             </StudioSection>
+          </div>
+        ) : activeSubTab === 'scenarios' ? (
+          <div
+            role="tabpanel"
+            id="map-studio-panel-scenarios"
+            aria-labelledby="map-studio-tab-scenarios"
+          >
+            <ScenarioPanel />
           </div>
         ) : (
           <div
