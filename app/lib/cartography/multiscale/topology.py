@@ -238,6 +238,21 @@ def simplify_polygon_topology(
         return seg_index.get(_seg_key(a, b), 0) >= 2
 
     # ── 3. 逐环切 run + 规范链注册 ──
+    # 结点顶点（junction）：被 ≥3 个环共享的顶点 —— 角点/T 交会处。共享
+    # run 必须在结点处切分：否则角落的 L 形 run 两侧延展不对称，canonical
+    # 键永不相等，共享边退化成各自简化的独占段（大批行政网格实测
+    # chains_shared_multi=0、一致性保证失效）。切分后链 = 结点间边界段，
+    # 两侧环的链恰好逐段配对（经典拓扑简化构图）。
+    ring_of_vertex: Dict[QCoord, set] = {}
+    for r_id, coords in enumerate(ring_coords):
+        seq = coords[:-1] if (
+            len(coords) > 1 and _q(coords[0]) == _q(coords[-1])) else coords
+        for c in seq:
+            ring_of_vertex.setdefault(_q(c), set()).add(r_id)
+
+    def _is_junction(qc: QCoord) -> bool:
+        return len(ring_of_vertex.get(qc, ())) >= 3
+
     ring_plans: List[List[_Run]] = [[] for _ in ring_refs]
     ring_id_of: Dict[int, int] = {id(r): i for i, r in enumerate(ring_refs)}
     canonical: Dict[Tuple, List[Tuple[float, float]]] = {}
@@ -249,8 +264,11 @@ def simplify_polygon_topology(
         while pos < n - 1:
             shared = _is_shared_seg(_q(coords[pos]), _q(coords[pos + 1]))
             start = pos
+            pos += 1
+            # 同性质段延伸；共享 run 额外在结点顶点处切分（run 收尾含结点）
             while pos < n - 1 and _is_shared_seg(
-                    _q(coords[pos]), _q(coords[pos + 1])) == shared:
+                    _q(coords[pos]), _q(coords[pos + 1])) == shared \
+                    and not (shared and _is_junction(_q(coords[pos]))):
                 pos += 1
             run_coords = [(float(x), float(y)) for x, y in coords[start:pos + 1]]
             if shared:

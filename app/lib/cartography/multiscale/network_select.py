@@ -20,7 +20,6 @@
 """
 from __future__ import annotations
 
-# BFS 用 deque；排序裁决替代堆（确定性并列）
 from collections import deque
 from typing import Any, Dict, FrozenSet, List, Optional, Sequence, Tuple
 
@@ -237,13 +236,20 @@ def select_lines_with_connectivity(
             comps.setdefault(_find(n), []).append(n)
         return comps
 
-    # ── 连通性桥接修复（BFS 最短桥接路径；确定性并列裁决）──
+    # ── 连通性桥接修复（全队列 BFS：每轮合并起点分量的全部可达分量）──
+    #
+    # 语义：BFS 沿被抑制要素从最小根分量扩散（全队列耗尽），凡触达的
+    # **他保留分量**按发现序重建最短路径并整要素重加 —— 每轮把起点分量
+    # 与全部可达分量一次合并（迭代轮数 = 连通超图数 × 常数，非 O(K)）。
+    # 只重加「分量到分量」的桥路径：挂空枝（free 端点不触达任何保留分量）
+    # 与既有 BFS 语义一致不会被加。
+    # 确定性：邻接按 (feature_id, node) 排序扩散、接触按发现序处理；
+    # 预算（max_bridges）按发现序截断，超限诚实披露断连。
     components_before = len(_components()) if parent else 0
     bridges: List[Dict[str, Any]] = []
     bridges_added_count = 0
     budget = max_bridges if max_bridges is not None else 10 ** 9
 
-    # 被抑制边索引：node → [(feature_idx, other_node)]
     suppressed_adj: Dict[Tuple[float, float], List[Tuple[int, Tuple[float, float]]]] = {}
     for index, edges in enumerate(feature_edges):
         if base_kept[index]:
@@ -256,17 +262,17 @@ def select_lines_with_connectivity(
         comps = _components()
         if len(comps) <= 1:
             break
-        # 桥接起点 = 最小根的分量（确定性）；BFS 沿被抑制边找最近的他分量
         roots = sorted(comps.keys())
         start_root = roots[0]
         start_nodes = set(comps[start_root])
         other_roots = set(roots[1:])
-        # BFS：state = node；记录路径边（feature_idx 序列）
+        # 全队列 BFS（不提前停）：记录每个首达节点的来路
         dist: Dict[Tuple[float, float], int] = {n: 0 for n in start_nodes}
         came_edge: Dict[Tuple[float, float], Tuple[int, Tuple[float, float]]] = {}
         queue = deque(sorted(start_nodes))
-        found: Optional[Tuple[float, float]] = None
-        while queue and found is None:
+        contacts: List[Tuple[float, float]] = []   # 首达的他分量节点（发现序）
+        seen_roots: set = set()
+        while queue:
             cur = queue.popleft()
             for fidx, nxt in sorted(suppressed_adj.get(cur, []),
                                     key=lambda t: (t[0], t[1])):
@@ -275,20 +281,22 @@ def select_lines_with_connectivity(
                 dist[nxt] = dist[cur] + 1
                 came_edge[nxt] = (fidx, cur)
                 nr = _find(nxt)
-                if nr in other_roots:
-                    found = nxt
-                    break
+                if nr in other_roots and nr not in seen_roots:
+                    seen_roots.add(nr)
+                    contacts.append(nxt)
                 queue.append(nxt)
-        if found is None or budget <= 0:
+        if not contacts or budget <= 0:
             break  # 无桥接路径或预算尽 → 诚实断连披露
-        # 回溯路径：重加路径上的被抑制要素（全部整要素保留）
+        # 按发现序重建各接触分量的路径（跨接触去重保序）
         path_fids: List[int] = []
-        cur = found
-        while cur not in start_nodes:
-            fidx, prev = came_edge[cur]
-            path_fids.append(fidx)
-            cur = prev
-        for fidx in dict.fromkeys(path_fids):   # 去重保序
+        for contact in contacts:
+            cur = contact
+            while cur not in start_nodes and cur in came_edge:
+                fidx, prev = came_edge[cur]
+                if fidx not in path_fids:
+                    path_fids.append(fidx)
+                cur = prev
+        for fidx in path_fids:
             if budget <= 0:
                 break
             base_kept[fidx] = True
