@@ -227,6 +227,7 @@
     "noCandidatesHint": "Ask the agent to \"try another classification / palette\" to open a candidate; candidates run on an isolated branch and never touch the current map.",
     "locksTitle": "User locks (operations hitting locked fields are rejected)",
     "lockGlobal": "task-level",
-    "lockRelease": "Release"
+    "lockRelease": "Release",
+    "lockReleaseFailed": "Release failed (server rejected or lock missing)"
   }
 }

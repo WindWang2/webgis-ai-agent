@@ -331,7 +331,7 @@ export function MapStudioTab() {
           </div>
         </div>
       )}
-      {/* Segmented subtab switcher（制图排版 / 导出历史）—— PanelHeader 已提供面板标题 */}
+      {/* Segmented subtab switcher（制图排版 / 画幅 / 方案 / 导出历史）—— PanelHeader 已提供面板标题 */}
       <div className="shrink-0 border-b border-edge-subtle bg-surface-overlay p-3 pb-2.5">
         <div
           role="tablist"
@@ -343,7 +343,7 @@ export function MapStudioTab() {
             // Review P2 修复：APG activation-on-focus —— 方向键切换后焦点跟随
             // 到新激活的 tab（roving tabindex 已随之更新）。
             setActiveSubTab((prev) => {
-              // G15：三子页签循环（layout → frames → history → layout）。
+              // G15+G05：四子页签循环（layout → frames → scenarios → history → layout）。
               const order: SubTab[] = ['layout', 'frames', 'scenarios', 'history'];
               const next = order[(order.indexOf(prev) + 1) % order.length];
               setTimeout(() => document.getElementById(`map-studio-tab-${next}`)?.focus(), 0);

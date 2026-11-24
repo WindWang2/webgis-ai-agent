@@ -9,8 +9,9 @@
 - **权威状态只有一份**：父会话 MapSpec（desired）。候选只是"可重放提案 +
   隔离分支产物 refs"，采纳前永远不影响父会话；采纳经既有
   ``apply_gis_mutation*``（CAS + user-wins + provenance）落账。
-- **payload 红线**：注册表条目只存 ref/摘要/digest/有界 delta 描述；候选
-  数据永远留在分支会话，不在父会话 map_state 复制。
+- **payload 红线**：注册表条目只存 ref/摘要/digest/有界 delta 描述（单条
+  ≤32KB、整笔 ≤128KB 的最小可重放载荷内联）；候选数据体留在分支会话与
+  会话 refs，不在父会话 map_state 复制数据面。
 
 状态词表（WP2）：``draft → running → comparable → adopted``；旁路
 ``stale``（基准漂移，可恢复）/ ``failed`` / ``cancelled`` / ``archived``。
@@ -66,6 +67,7 @@ DeltaGroup = Literal["analysis", "style", "layout", "component", "data"]
 
 _GROUP_OF_KIND: Dict[str, DeltaGroup] = {
     "UpsertLayerIntent": "analysis",
+    "PatchLayerPresentationIntent": "style",
     "UpsertSourceIntent": "data",
     "PatchLayerStyleIntent": "style",
     "PatchLayerLabelAuthoringIntent": "style",
@@ -178,6 +180,9 @@ class ScenarioCandidate(BaseModel):
     state: CandidateState = "draft"
     delta: List[DeltaIntent] = Field(default_factory=list, max_length=MAX_DELTA_INTENTS)
     applied_seqs: List[int] = Field(default_factory=list, max_length=MAX_DELTA_INTENTS)
+    #: 被 user-wins 守卫拦截的干预 seq（用户所有权字段，agent 不可试验；
+    #: 采纳时同条会降级 user_wins_skip 逐项披露）。
+    blocked_seqs: List[int] = Field(default_factory=list, max_length=MAX_DELTA_INTENTS)
     created_at: str = ""
     updated_at: str = ""
     created_by: Literal["agent", "user"] = "agent"
@@ -334,6 +339,8 @@ class AdoptionReceipt(BaseModel):
     reverted_by: str = ""  # 回退采纳的 adoption id（审计链）
     #: 采纳前父会话 checkpoint（回退锚；RollbackIntent 消费）。
     pre_adopt_checkpoint_id: str = ""
+    #: 回退时被一并丢弃的采纳后 revision 数（review P2-2 披露；0 = 无漂移）。
+    discarded_revisions: int = 0
 
     def find_item(self, seq: int) -> Optional[AdoptionItem]:
         for item in self.items:

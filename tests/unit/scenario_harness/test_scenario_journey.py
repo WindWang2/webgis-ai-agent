@@ -234,7 +234,9 @@ async def test_golden_journey_lock_blocks_adopt_while_user_owns_field():
     assert receipt.applied_count == 0
     assert all(i.verdict == "lock_blocked" for i in receipt.items)
     spec = await mapspec_store_instance.get_mapspec(parent)
-    school = next(l for l in spec.get("layers", []) if l.get("id") == "schools")
+    school = next(
+        lay for lay in spec.get("layers", []) if lay.get("id") == "schools"
+    )
     assert school.get("paint", {}).get("opacity") != 0.3, "锁定字段绝不被候选覆盖"
     # 全拒绝决议：候选状态不动（仍可比较），父 revision 严格不变
     assert (await get_candidate(parent, cand.candidate_id)).state == "comparable"

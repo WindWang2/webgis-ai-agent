@@ -91,6 +91,9 @@ async def scenario_situation_value(
     )
     rows = [_candidate_row(c) for c in candidates[:MAX_CANDIDATE_ROWS]]
     if not rows:
+        if corrupt:
+            # 全损坏且无有效候选：如实披露 corrupt（不伪装成干净 unknown）。
+            return {"corrupt_entries": corrupt[:8], "total": 0}, corrupt
         return None, corrupt
 
     baseline_digests: Dict[str, int] = {}

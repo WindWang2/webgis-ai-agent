@@ -30,17 +30,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["AI对话"])
 
 
-def _http_error(exc: Exception) -> HTTPException:
-    from app.services.scenario_harness.store import RegistryError
+def _typed_error_status(code: str) -> int:
+    """机器码 → HTTP 状态（子串匹配；400 兜底）。"""
+    if "limit" in code or "superseded" in code or "conflict" in code or "exists" in code:
+        return 409
+    if "not_found" in code or "missing" in code:
+        return 404
+    if "forbidden" in code:
+        return 403
+    return 400
 
-    if isinstance(exc, RegistryError):
-        code = exc.code
-        status_code = 409 if "limit" in code or "superseded" in code or "conflict" in code or "exists" in code else (
-            404 if "not_found" in code or "missing" in code else (
-                403 if "forbidden" in code else 400
-            )
+
+def _http_error(exc: Exception) -> HTTPException:
+    # RegistryError 与 whatif BranchError 共享 (code, message) 形状 ——
+    # 统一映射，分支预算/撞车不再 500（review P2-7）。
+    if hasattr(exc, "code") and hasattr(exc, "message"):
+        code = str(exc.code)
+        return HTTPException(
+            status_code=_typed_error_status(code),
+            detail={"error": code, "message": str(exc.message)},
         )
-        return HTTPException(status_code=status_code, detail={"error": code, "message": exc.message})
     raise exc
 
 
@@ -83,8 +92,12 @@ async def get_scenario_overview(
     from app.services.scenario_harness.locks import list_active_locks
     from app.services.scenario_harness.projection import scenario_situation_value
 
+    from app.services.scenario_harness.candidates import candidate_summary
+
     value, corrupt = await scenario_situation_value(session_id)
-    candidates = [c.model_dump(mode="json") for c in await list_candidates(session_id)]
+    candidates = [
+        candidate_summary(c) for c in await list_candidates(session_id)
+    ]
     locks = [lk.model_dump(mode="json") for lk in await list_active_locks(session_id)]
     out: dict[str, object] = {
         "schema_version": "scenario_overview.v1",
@@ -205,6 +218,31 @@ async def post_scenario_adopt(
         receipt = await adopt_candidate(
             session_id, candidate_id, selection,
             origin="user", actor="user_workbench",
+        )
+    except RegistryError as exc:
+        raise _http_error(exc) from exc
+    return {"schema_version": "scenario_adoption.v1", "receipt": receipt.model_dump(mode="json")}
+
+
+@router.post(
+    "/sessions/{session_id}/scenario/adoptions/{adoption_id}/revert",
+    response_model=dict[str, object],
+)
+async def post_scenario_revert(
+    session_id: str,
+    adoption_id: str,
+    allow_drift: bool = False,
+    _conv: Any = Depends(require_owned_session),
+) -> dict[str, object]:
+    """回退采纳（用户决议；漂移默认拒绝并披露丢弃区间）。"""
+    from app.services.scenario_harness.adopt import revert_adoption
+    from app.services.scenario_harness.store import RegistryError
+
+    try:
+        receipt = await revert_adoption(
+            session_id, adoption_id,
+            origin="user", actor="user_workbench",
+            allow_drift=allow_drift,
         )
     except RegistryError as exc:
         raise _http_error(exc) from exc

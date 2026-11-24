@@ -34,6 +34,41 @@ def _short_digest(value: str) -> str:
     return hashlib.sha256(str(value or "").encode("utf-8")).hexdigest()[:16]
 
 
+import re as _re
+
+#: 字段路径形态：首段小写词表（paint/layer/labels/...）+ 点分路径，或通配 "*"。
+_FIELD_PATH_RE = _re.compile(r"^[a-z][a-z0-9_-]*(\.[A-Za-z0-9_.-]+)*$")
+
+
+def _normalize_field_paths(kind: str, field_paths: List[str]) -> List[str]:
+    """规范化 + 形态校验（review P2-10）：strip/去空/去重；词表外路径整笔拒绝。
+
+    动机：干预闭包（intents_codec）产出的是规范小写首段路径
+    （``paint.fill-color``）—— 用户登记 `` Paint.fill-color`` / ``fill-color``
+    这类变体永远锁不住任何操作（假安全）。校验在登记面挡住。
+    """
+    out: List[str] = []
+    seen = set()
+    for raw in field_paths or []:
+        path = str(raw or "").strip()
+        if not path:
+            continue
+        if path == "*":
+            norm = "*"
+        elif not _FIELD_PATH_RE.match(path):
+            raise RegistryError(
+                "lock_field_invalid",
+                f"锁定字段路径 {raw!r} 形态非法（期望点分小写路径如 "
+                f"paint.opacity / layout.margins / measure_unit，或 '*'）",
+            )
+        else:
+            norm = path
+        if norm not in seen:
+            seen.add(norm)
+            out.append(norm)
+    return out[:16]
+
+
 async def set_lock(
     session_id: str,
     *,
@@ -47,7 +82,12 @@ async def set_lock(
 ) -> ScenarioLock:
     """落一条用户锁定（重复同 (kind,target,fields) 活跃锁 → 幂等返回原锁）。"""
     reason = (reason or "")[:MAX_REASON]
-    field_paths = [str(f)[:64] for f in (field_paths or [])][:16]
+    field_paths = _normalize_field_paths(kind, field_paths)
+    if not field_paths:
+        raise RegistryError(
+            "lock_field_invalid",
+            "field_paths 至少需要一条合法路径（形如 paint.opacity / '*'）",
+        )
     existing = await list_active_locks(session_id, store=store)
     for lock in existing:
         if (

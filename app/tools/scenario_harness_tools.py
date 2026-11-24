@@ -12,8 +12,8 @@ candidate id / 组 / seq / 锁字段，任何叙事性描述不参与判定。�
   锁检查 + 幂等回执）；origin="agent" 时与用户路径同链，user-wins 守卫
   仍然生效，不因 Agent 提议绕过用户权限；
 - ``webgis_scenario_abandon``：删除/归档候选（分支级回收）；
-- ``webgis_scenario_lock`` / ``webgis_scenario_unlock``：用户显式锁定面
-  （unlock 仅 user origin —— Agent 无权解用户锁）。
+- ``webgis_scenario_lock``：用户显式锁定登记面。**释放不在 Agent 面**：
+  仅工作台 HTTP 路由（真实用户身份）可释放锁 —— Agent 不得解除用户显式决策。
 """
 
 from __future__ import annotations
@@ -103,6 +103,14 @@ class ScenarioAbandonArgs(BaseModel):
     reason: str = Field(default="", max_length=160, description="放弃原因（审计）。")
 
 
+class ScenarioRevertArgs(BaseModel):
+    adoption_id: str = Field(min_length=1, max_length=80, description="要回退的采纳回执 id（inspect/compare 的回执面可查）。")
+    allow_drift: bool = Field(
+        default=False,
+        description="采纳后父会话又有推进时是否确认丢弃这些改动（默认拒绝并披露丢弃区间）。",
+    )
+
+
 class ScenarioLockArgs(BaseModel):
     kind: str = Field(description="layer_field | component_field | analysis_param。")
     target_id: str = Field(
@@ -119,11 +127,6 @@ class ScenarioLockArgs(BaseModel):
         default="", max_length=200, description="锁定时观察值摘要（漂移可见性）。"
     )
     reason: str = Field(default="", max_length=160, description="用户原因。")
-
-
-class ScenarioUnlockArgs(BaseModel):
-    lock_id: str = Field(min_length=1, max_length=80, description="要释放的锁 id。")
-    reason: str = Field(default="", max_length=160, description="释放原因。")
 
 
 def _intents_from_dicts(raw: List[dict]) -> list:
@@ -203,13 +206,16 @@ def register_scenario_harness_tools(registry: ToolRegistry):
                         "reference_unresolvable",
                         f"指代 {reference!r} 解析不了（用 inspect 列出候选后指名 id）",
                     )
+            from app.services.scenario_harness.candidates import candidate_summary
+
             candidates = await list_candidates(session_id)
             locks = await list_active_locks(session_id)
             out: dict = {
                 "ok": True,
                 "overview": value,
                 "resolved_candidate_id": resolved,
-                "candidates": [c.model_dump(mode="json") for c in candidates],
+                # 有界摘要行：不含 delta payload/base_values（review P2-4）
+                "candidates": [candidate_summary(c) for c in candidates],
                 "active_locks": [lk.model_dump(mode="json") for lk in locks],
             }
             if corrupt:
@@ -273,6 +279,8 @@ def register_scenario_harness_tools(registry: ToolRegistry):
         except ValueError as exc:
             return _err("invalid_intents", str(exc))
         except Exception as exc:  # noqa: BLE001
+            if hasattr(exc, "code") and hasattr(exc, "message"):
+                return _err(str(exc.code), str(exc.message))
             logger.warning("[scenario] propose failed: %s", type(exc).__name__)
             return _err("tool_error", f"{type(exc).__name__}")
 
@@ -284,6 +292,8 @@ def register_scenario_harness_tools(registry: ToolRegistry):
         description=(
             "对候选**分支**施加干预（仍然零父会话突变）：样式/组件/图层 upsert/时态等"
             "白名单意图，逐条全事务应用，命中用户锁定的干预被拒并披露。\n"
+            "intents 为空 = 重放候选已声明的全部 delta（幂等）；传入新 intents 时"
+            "序号自动接续已有 delta。\n"
             "适用：候选开出后补试验参数、或在基准漂移后局部重算候选。"
         ),
         args_model=ScenarioExecuteArgs,
@@ -327,6 +337,8 @@ def register_scenario_harness_tools(registry: ToolRegistry):
         except ValueError as exc:
             return _err("invalid_intents", str(exc))
         except Exception as exc:  # noqa: BLE001
+            if hasattr(exc, "code") and hasattr(exc, "message"):
+                return _err(str(exc.code), str(exc.message))
             logger.warning("[scenario] execute failed: %s", type(exc).__name__)
             return _err("tool_error", f"{type(exc).__name__}")
 
@@ -344,7 +356,9 @@ def register_scenario_harness_tools(registry: ToolRegistry):
         ),
         args_model=ScenarioCompareArgs,
         execution_policy=ToolExecutionPolicy.INLINE,
-        side_effect="cacheable_read",
+        # review P2-5：compare 写回 compare_digest 并同步失效标记（非只读）
+        side_effect="state_mutation",
+        data_mutations=["session_state"],
         network=False,
         deterministic=True,
         latency_class="fast",
@@ -503,6 +517,8 @@ def register_scenario_harness_tools(registry: ToolRegistry):
         except RegistryError as exc:
             return _err(exc.code, str(exc))
         except Exception as exc:  # noqa: BLE001
+            if hasattr(exc, "code") and hasattr(exc, "message"):
+                return _err(str(exc.code), str(exc.message))
             logger.warning("[scenario] abandon failed: %s", type(exc).__name__)
             return _err("tool_error", f"{type(exc).__name__}")
 
@@ -565,15 +581,17 @@ def register_scenario_harness_tools(registry: ToolRegistry):
             return _err("tool_error", f"{type(exc).__name__}")
 
     @registry.tool(
-        name="webgis_scenario_unlock",
+        name="webgis_scenario_revert",
         capabilities=["gis_scenario_harness"],
         tier=2,
         domains=["meta"],
         description=(
-            "释放用户锁定：仅当用户明确要求解除时调用（Agent 无权自行解用户锁 —— "
-            "服务端校验 origin，违规拒绝并留审计）。"
+            "回退一次采纳：把权威地图回滚到该次采纳前的锚点，候选回到可比较态"
+            "（保留审计）。**边界**：采纳后若有其他改动（漂移），默认拒绝并披露"
+            "丢弃区间 —— 确认丢弃需用户明确同意（allow_drift=true）。"
+            "全拒绝决议（applied=0）无锚点，不可回退。"
         ),
-        args_model=ScenarioUnlockArgs,
+        args_model=ScenarioRevertArgs,
         execution_policy=ToolExecutionPolicy.INLINE,
         side_effect="state_mutation",
         data_mutations=["session_state"],
@@ -582,31 +600,39 @@ def register_scenario_harness_tools(registry: ToolRegistry):
         latency_class="fast",
         memory_class="light",
         scale_class="small",
-        tags=["情境", "锁定", "释放", "scenario"],
+        tags=["情境", "采纳", "回退", "scenario"],
         output_semantic_type="json",
         result_size_policy="inline_small",
-        failure_modes=["invalid_args", "missing_data", "forbidden"],
+        failure_modes=["invalid_args", "missing_data", "stale_base"],
     )
-    async def webgis_scenario_unlock(
-        lock_id: str = "",
-        reason: str = "",
+    async def webgis_scenario_revert(
+        adoption_id: str = "",
+        allow_drift: bool = False,
         session_id: Optional[str] = None,
     ) -> dict:
         if not session_id:
             return {"error": "Missing session_id context"}
-        if not lock_id:
-            return _err("invalid_args", "lock_id 必填")
+        if not adoption_id:
+            return _err("invalid_args", "adoption_id 必填")
         try:
-            from app.services.scenario_harness.locks import release_lock
+            from app.services.scenario_harness.adopt import revert_adoption
             from app.services.scenario_harness.store import RegistryError
 
-            lock = await release_lock(session_id, lock_id, reason=reason, origin="user")
-            return {"ok": True, "lock": lock.model_dump(mode="json")}
+            receipt = await revert_adoption(
+                session_id, adoption_id,
+                origin="agent", actor="agent_scenario_revert",
+                allow_drift=allow_drift,
+            )
+            return {"ok": True, "receipt": receipt.model_dump(mode="json")}
         except RegistryError as exc:
             return _err(exc.code, str(exc))
         except Exception as exc:  # noqa: BLE001
-            logger.warning("[scenario] unlock failed: %s", type(exc).__name__)
+            logger.warning("[scenario] revert failed: %s", type(exc).__name__)
             return _err("tool_error", f"{type(exc).__name__}")
+
+    # G05 review P0-1：Agent 面不提供锁释放工具 —— 释放仅走 HTTP DELETE 路由
+    # （require_owned_session 承载真实用户身份）。工具面硬编码 origin="user"
+    # 等于把"仅 user 可释放"守卫变成死代码，Agent 可静默解除用户显式决策。
 
 
 __all__ = ["register_scenario_harness_tools"]

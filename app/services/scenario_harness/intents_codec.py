@@ -28,6 +28,7 @@ from app.services.scenario_harness.contracts import (
 #: 可提议意图白名单（kind → (模块内类名, 目标字段, 分组)）。
 SUPPORTED_KINDS: Tuple[str, ...] = (
     "UpsertLayerIntent",
+    "PatchLayerPresentationIntent",
     "UpsertSourceIntent",
     "PatchLayerStyleIntent",
     "PatchLayerLabelAuthoringIntent",
@@ -89,6 +90,11 @@ def _extract_target(kind: str, payload: Dict[str, Any]) -> str:
 
 def _field_paths_of(kind: str, payload: Dict[str, Any]) -> List[str]:
     """确定性字段闭包（top-level 键粒度；样式 patch 到 paint 键）。"""
+    if kind == "PatchLayerPresentationIntent":
+        # presentation 面字段（显隐/透明度）—— user-wins 守卫族，采纳时
+        # origin=agent 命中锁定/所有权会降级 user_wins_skip（review P2-3）。
+        keys = [k for k in ("visible", "opacity") if payload.get(k) is not None]
+        return keys or ["presentation"]
     if kind == "PatchLayerStyleIntent":
         paint = payload.get("paint")
         if isinstance(paint, dict) and paint:

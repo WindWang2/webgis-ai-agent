@@ -201,7 +201,11 @@ async def compare_candidates(
         {
             "candidate_id": row.candidate_id,
             "layer_adds": len(row.layer_adds),
+            "layer_removes": len(row.layer_removes),
             "style_fields": len(row.style_fields),
+            "component_changes": len(row.component_changes),
+            "comparable": row.comparable,
+            "incomparable_reason": row.incomparable_reason,
             "metrics": sorted(
                 (key, round(value, 6)) for key, value in row.metric_deltas.items()
             ),

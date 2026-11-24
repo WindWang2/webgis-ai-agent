@@ -34,10 +34,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.services.gis_world_state import apply_gis_mutation
 from app.services.mapspec.intents import CheckpointIntent, RollbackIntent
-from app.services.mapspec.store import (
-    _should_remove_layer,
-    mapspec_store_instance,
-)
+from app.services.mapspec.store import mapspec_store_instance
 from app.services.scenario_harness.contracts import (
     MAX_REASON,
     REGISTRY_ADOPTIONS,
@@ -50,6 +47,7 @@ from app.services.scenario_harness.contracts import (
     DeltaIntent,
     ScenarioCandidate,
 )
+from app.services.scenario_harness.candidates import base_values_for_kind
 from app.services.scenario_harness.intents_codec import (
     DeltaCodecError,
     deserialize_intents,
@@ -69,25 +67,6 @@ logger = logging.getLogger(__name__)
 
 #: base_values 缺记录哨兵（区别于显式记录的 None = "观察到缺席"）。
 _ABSENT = object()
-
-#: 层目标意图（target_id = 层 id；父层族缺席可判 target_missing）。
-_LAYER_KINDS = {
-    "PatchLayerStyleIntent",
-    "PatchLayerLabelAuthoringIntent",
-    "UpsertLayerIntent",
-}
-
-#: 组件目标意图（target_id = 组件 id）。
-_COMPONENT_KINDS = {"PatchComponentIntent", "RemoveComponentIntent"}
-
-#: 全局意图 → 父 spec 顶层分支键（field compare 读该分支当前值）。
-_GLOBAL_BRANCH_OF_KIND = {
-    "SetLayoutIntent": "layout",
-    "SetBasemapIntent": "basemap",
-    "SetTimeIntent": "time",
-    "SetTemporalViewIntent": "temporal",
-    "SetScenarioModeIntent": "scenario_mode",
-}
 
 #: 可采纳状态词表（旁路 stale 可恢复后采纳）。
 _ADOPTABLE_STATES = ("comparable", "stale")
@@ -128,127 +107,60 @@ def _layer_digest(layer: Dict[str, Any]) -> str:
     return fingerprint_mapspec(layer)[:16]
 
 
-# ── 父会话读取辅助（按 spec 真实结构；模块内私有）────────────────────
+# ── 三方字段判定（统一双读：同一观察函数 × 提案/采纳两个时刻）────────
 
-
-def _find_parent_layer(spec: Dict[str, Any], target_id: str) -> Optional[Dict[str, Any]]:
-    """层族定位（与引擎 patch/删除同款谓词；含伴随标签/派生子层）。"""
-    for layer in spec.get("layers", []) or []:
-        if isinstance(layer, dict) and _should_remove_layer(layer, target_id):
-            return layer
-    return None
-
-
-def _find_parent_component(
-    spec: Dict[str, Any], component_id: str
-) -> Optional[Dict[str, Any]]:
-    for comp in (spec.get("layout") or {}).get("components", []) or []:
-        if isinstance(comp, dict) and str(comp.get("id") or "") == component_id:
-            return comp
-    return None
-
-
-def _read_parent_value(
-    spec: Dict[str, Any],
-    delta: DeltaIntent,
-    layer: Optional[Dict[str, Any]],
-    component: Optional[Dict[str, Any]],
-    field_path: str,
-) -> Any:
-    """field_path → 父会话当前值（缺席归一为 None；未覆盖路径返回 None）。
-
-    口径（与 mutation_handlers 写入面一一对应）：
-    - 层意图：``paint.<key>`` → 层 paint 顶层键；``layer.<key>`` → 层键
-      （UpsertLayerIntent 整层快照场景另有 layer.digest 规则）；
-    - 组件意图：``component`` → 组件 dict 整体；
-    - 全局意图：kind 对应的 spec 顶层分支（SetLayoutIntent 再下钻 layout 内键）。
-    """
-    kind = delta.kind
-    if kind in _LAYER_KINDS and layer is not None:
-        if field_path.startswith("paint."):
-            raw = (layer.get("paint") or {}).get(field_path[len("paint."):])
-        elif field_path.startswith("layer."):
-            raw = layer.get(field_path[len("layer."):])
-        else:
-            raw = layer.get(field_path)
-        return _norm_absent(raw)
-    if kind in _COMPONENT_KINDS:
-        if component is None:
-            return None
-        if field_path == "component":
-            return component
-        return _norm_absent(component.get(field_path))
-    if kind == "UpsertSourceIntent":
-        sources = spec.get("sources") or {}
-        key = (
-            delta.target_id
-            if field_path in ("", "source")
-            else field_path
-        )
-        return _norm_absent(sources.get(key))
-    branch = _GLOBAL_BRANCH_OF_KIND.get(kind)
-    if branch == "layout":
-        return _norm_absent((spec.get("layout") or {}).get(field_path))
-    if branch:
-        return _norm_absent(spec.get(branch))
-    return _norm_absent(spec.get(field_path))
+#: 层/组件/数据源目标意图（absent↔digest 翻转 → target_missing）。
+_TARGET_KINDS = {
+    "PatchLayerStyleIntent": "layer",
+    "PatchLayerLabelAuthoringIntent": "layer",
+    "UpsertLayerIntent": "layer",
+    "PatchComponentIntent": "component",
+    "RemoveComponentIntent": "component",
+    "UpsertSourceIntent": "source",
+}
 
 
 def _adjudicate_fields(
     spec: Dict[str, Any], delta: DeltaIntent
 ) -> Tuple[Optional[AdoptionItemVerdict], str]:
-    """三方字段判定（纯函数，读父 spec 快照）→ (阻断 verdict | None, detail)。
+    """三方字段判定（纯函数）→ (阻断 verdict | None, detail)。
 
-    - base_values 无记录 → ``agent_conflict``/``base_value_missing``
-      （诚实：未观察基线不可自动合并）；
-    - b == p（含双方缺席）→ 可重放；b != p → ``agent_conflict``，detail
-      列冲突字段（有界 ≤4）；
-    - UpsertLayerIntent 特殊：``layer.absent``=True（新增层）直接可重放；
-      ``layer.digest``=d 与父层指纹比对（层缺失 → ``target_missing``）。
+    口径（review P1-1 统一）：``base_values``（提案时刻父态观察）vs
+    ``observe``（采纳时刻父态观察，**同一函数** ``base_values_for_kind``）。
+    逐键比对 —— 值不同或键集合翻转（absent↔digest）即冲突：
+
+    - base 无记录 → ``agent_conflict``/``base_value_missing``（未观察基线
+      不可自动合并，诚实优先）；
+    - absent→digest 翻转且目标是层/组件/数据源 → ``target_missing``（分叉
+      后目标被他人删除）；
+    - digest→absent 翻转 → ``agent_conflict``（目标被他人删除，采纳语义
+      不明 —— 对 upsert 类即"重建被删目标"，保守拒绝）。
     """
     kind = delta.kind
-    target = delta.target_id
+    base = delta.base_values or {}
+    if not base:
+        return "agent_conflict", "base_value_missing:unobserved"
+    current = base_values_for_kind(kind, delta.payload, spec)
 
-    layer: Optional[Dict[str, Any]] = None
-    if kind in _LAYER_KINDS:
-        layer = _find_parent_layer(spec, target)
-        if kind == "UpsertLayerIntent":
-            if delta.base_values.get("layer.absent") is True:
-                return None, ""  # 提案时父层不存在（新增层）→ 直接可重放
-            digest = delta.base_values.get("layer.digest")
-            if digest:
-                if layer is None:
-                    return "target_missing", f"layer={target} 不在父会话"
-                if _layer_digest(layer) != str(digest):
-                    return "agent_conflict", f"layer_digest_mismatch:{target}"
-                return None, ""
-        if layer is None:
-            return "target_missing", f"layer={target} 不在父会话"
+    diffs = sorted(
+        key
+        for key in set(base) | set(current)
+        if not _values_equal(base.get(key), current.get(key))
+    )
+    if not diffs:
+        return None, ""
 
-    component: Optional[Dict[str, Any]] = None
-    if kind in _COMPONENT_KINDS:
-        component = _find_parent_component(spec, target)
-        if component is None:
-            return "target_missing", f"component={target} 不在父会话"
+    # 目标缺席翻转的精确披露（base 见过目标、现在没了）
+    target_kind = _TARGET_KINDS.get(kind)
+    if target_kind:
+        absent_key = f"{target_kind}.absent"
+        digest_key = f"{target_kind}.digest"
+        if base.get(digest_key) and current.get(absent_key) is True:
+            return "target_missing", f"{target_kind}={delta.target_id} 不在父会话"
 
-    conflicts: List[str] = []
-    missing_base = ""
-    for field_path in delta.field_paths or [""]:
-        base = delta.base_values.get(field_path, _ABSENT)
-        if base is _ABSENT:
-            if not missing_base:
-                missing_base = field_path
-            continue
-        parent_value = _read_parent_value(spec, delta, layer, component, field_path)
-        if not _values_equal(base, parent_value):
-            conflicts.append(field_path)
-    if missing_base:
-        return "agent_conflict", f"base_value_missing:{missing_base}"
-    if conflicts:
-        shown = ",".join(conflicts[:4])
-        more = f"(+{len(conflicts) - 4})" if len(conflicts) > 4 else ""
-        return "agent_conflict", f"conflict_fields={shown}{more}"
-    return None, ""
+    shown = ",".join(diffs[:4])
+    more = f"(+{len(diffs) - 4})" if len(diffs) > 4 else ""
+    return "agent_conflict", f"conflict_fields={shown}{more}"
 
 
 async def _adjudicate_item(
@@ -343,10 +255,27 @@ async def _parent_revision(session_id: str) -> int:
         return 0
 
 
+def _partial_adopt_error(
+    candidate_id: str, checkpoint_id: str, rollback_err: str
+) -> RegistryError:
+    """半采纳态的诚实错误（review P1-3）：携带恢复路径，绝不谎报已回滚。"""
+    return RegistryError(
+        "adopt_rollback_failed",
+        f"采纳中途失败且回滚也失败 —— 父会话可能处于部分采纳态。"
+        f"恢复：对父会话执行 RollbackIntent(checkpoint_id={checkpoint_id!r}) "
+        f"或人工核对（candidate={candidate_id}, rollback_err={rollback_err}）",
+    )
+
+
 async def _rollback_to_anchor(
+
     session_id: str, checkpoint_id: str, candidate_id: str, turn_id: str = ""
-) -> None:
-    """失败回滚（best-effort）：父 spec 回到采纳前锚点，绝不留半采纳。"""
+) -> Tuple[bool, str]:
+    """失败回滚：父 spec 回到采纳前锚点。返回 (是否成功, 失败原因)。
+
+    review P1-3：失败**必须如实上抛**（携带 checkpoint_id 供人工恢复），
+    不得被"已整笔回滚"话术掩盖 —— 半采纳态要可发现。
+    """
     try:
         res = await apply_gis_mutation(
             session_id,
@@ -362,8 +291,11 @@ async def _rollback_to_anchor(
                 candidate_id,
                 res.error_msg,
             )
-    except Exception:  # noqa: BLE001 — 回滚失败必须留痕，但不掩盖原错误
+            return False, res.error_msg[:120]
+        return True, ""
+    except Exception as exc:  # noqa: BLE001 — 回滚失败必须留痕，但不掩盖原错误
         logger.exception("[scenario_adopt] rollback crashed for %s", candidate_id)
+        return False, f"{type(exc).__name__}"
 
 
 # ── 主入口：采纳 ─────────────────────────────────────────────────────
@@ -415,6 +347,20 @@ async def adopt_candidate(
             "baseline_missing",
             f"候选 {candidate_id} 绑定的基准 {cand.baseline_id!r} 不存在"
             f"（会话 {session_id}）",
+        )
+
+    # review P2-6：数据版本推进的候选不可采纳（contracts.CandidateImpact
+    # "unresolvable：旧结果不可采纳"在此强制 —— 旧版本产物不得混入权威态）。
+    from app.services.scenario_harness.baseline import observe_baseline_move
+    from app.services.scenario_harness.staleness import decide_impact_level
+
+    move = await observe_baseline_move(session_id, cand.baseline_id, store=store)
+    level, reasons = decide_impact_level(move, cand)
+    if level == "unresolvable":
+        raise RegistryError(
+            "adopt_unresolvable",
+            f"候选 {candidate_id} 的基准数据版本已推进，旧结果不可采纳"
+            f"（原因: {';'.join(reasons[:3])}）。请在候选上局部重算后再采纳。",
         )
 
     deltas = sorted(cand.delta, key=lambda d: d.seq)
@@ -503,14 +449,21 @@ async def adopt_candidate(
 
     # 采纳前锚：checkpoint 本身是 mutation（revision+1），锚后重读 revision
     # 作为链式 CAS 基准（锚点不动 spec，失败/superseded 时无 spec 副作用）。
+    # review P1-2：锚点带 CAS（expected=裁决所读 revision）—— spec 读 →
+    # 锚点窗口内任何并发落账都会让锚点 superseded，裁决口径不可能过期生效。
     ck_res = await apply_gis_mutation(
         session_id,
         CheckpointIntent(),
         origin="agent",
         actor="scenario_adopt",
+        expected_revision=current_rev,
         turn_id=turn_id or None,
         reason=f"pre-adopt {candidate_id}",
     )
+    if ck_res.superseded:
+        raise RegistryError(
+            "adopt_superseded", "父会话并发推进，请重新观察后重试"
+        )
     if ck_res.is_error:
         raise RegistryError(
             "adopt_apply_failed", f"采纳前锚点创建失败: {ck_res.error_msg}"
@@ -518,8 +471,7 @@ async def adopt_candidate(
     checkpoint_id = str(ck_res.checkpoint_id or "")
     base_revision = await _parent_revision(session_id)
     if base_revision != current_rev + 1:
-        # 锚点窗口内父会话被并发推进 —— 裁决口径已过期，拒绝（调用方重跑
-        # 即得新分类；checkpoint 无 spec 副作用，无需回滚）。
+        # 防御性复核（正常路径由上面的 CAS 短路）。
         raise RegistryError(
             "adopt_superseded", "父会话并发推进，请重新观察后重试"
         )
@@ -532,8 +484,12 @@ async def adopt_candidate(
         ) from exc
 
     # 链式 CAS 重放（单事务语义：任一条失败/superseded 立即整笔回滚锚点）。
+    # review P2-3：user-wins 守卫命中（MapSpecResult.locked_*_ids 指名目标）
+    # → 该条降级 user_wins_skip 并继续其余条（工具承诺与实现一致：用户锁定
+    # 的字段逐项跳过，不是整笔失败）。
     running = base_revision
-    for intent in intents:
+    downgraded_seqs: List[int] = []
+    for delta, intent in zip(applied_deltas, intents):
         res = await apply_gis_mutation(
             session_id,
             intent,
@@ -545,17 +501,58 @@ async def adopt_candidate(
             reason=reason,
         )
         if res.superseded:
-            await _rollback_to_anchor(session_id, checkpoint_id, candidate_id, turn_id)
+            ok, rb_err = await _rollback_to_anchor(
+                session_id, checkpoint_id, candidate_id, turn_id
+            )
+            if not ok:
+                raise _partial_adopt_error(candidate_id, checkpoint_id, rb_err)
             raise RegistryError(
                 "adopt_superseded", "父会话并发推进，请重新观察后重试"
             )
         if res.is_error:
-            await _rollback_to_anchor(session_id, checkpoint_id, candidate_id, turn_id)
+            locked_ids = set(res.locked_layer_ids) | set(res.locked_component_ids)
+            guard_hit = delta.target_id in locked_ids if locked_ids else False
+            # presentation 守卫用单码契约标记（不填 locked_*_ids）
+            if res.error_code == "user_wins_presentation":
+                guard_hit = True
+            if guard_hit:
+                item_by_seq[delta.seq].verdict = "user_wins_skip"
+                item_by_seq[delta.seq].detail = (
+                    f"user_wins:{res.error_code or 'locked'}({delta.target_id})"
+                )[:MAX_REASON]
+                downgraded_seqs.append(delta.seq)
+                continue
+            ok, rb_err = await _rollback_to_anchor(
+                session_id, checkpoint_id, candidate_id, turn_id
+            )
+            if not ok:
+                raise _partial_adopt_error(candidate_id, checkpoint_id, rb_err)
             raise RegistryError(
                 "adopt_apply_failed",
                 f"采纳重放失败（已整笔回滚到采纳前锚点）: {res.error_msg}",
             )
         running = int(res.mutation_revision or running + 1)
+    applied_count = len(applied_deltas) - len(downgraded_seqs)
+    if applied_count == 0:
+        # 全部在链上被 user-wins 拦截：无 spec 副作用（锚点不动物），回执如实
+        # 记录逐项裁决；候选状态保持（仍是 comparable）。
+        receipt = AdoptionReceipt(
+            adoption_id=mint_id("ad", session_id),
+            session_id=session_id,
+            candidate_id=candidate_id,
+            base_revision=base_revision,
+            final_revision=running,
+            selected_groups=selected_groups,
+            items=items,
+            applied_count=0,
+            skipped_count=len(items),
+            adopted_at=utc_now_iso(),
+            turn_id=turn_id,
+            idempotency_key=_idempotency_key(candidate_id, selection, base_revision),
+            pre_adopt_checkpoint_id=checkpoint_id,
+        )
+        await upsert_registry_entry(session_id, REGISTRY_ADOPTIONS, receipt, store=store)
+        return receipt
 
     key = _idempotency_key(candidate_id, selection, base_revision)
     existing = await _scan_idempotent_receipt(session_id, key, store=store)
@@ -571,8 +568,8 @@ async def adopt_candidate(
         final_revision=running,
         selected_groups=selected_groups,
         items=items,
-        applied_count=len(applied_deltas),
-        skipped_count=len(items) - len(applied_deltas),
+        applied_count=applied_count,
+        skipped_count=len(items) - applied_count,
         adopted_at=utc_now_iso(),
         turn_id=turn_id,
         idempotency_key=key,
@@ -602,12 +599,17 @@ async def revert_adoption(
     origin: str = "user",
     actor: str = "user",
     turn_id: str = "",
+    allow_drift: bool = False,
     store: Any = None,
 ) -> AdoptionReceipt:
     """回退一次采纳：父会话回滚到采纳前锚点，候选回 comparable。
 
     - 回执不存在 / 已回退 → ``revert_not_available``；
     - 无采纳前锚（全拒绝决议或旧回执）→ ``revert_anchor_missing``；
+    - **采纳后有漂移**（他人 revision 推进，review P2-2）→ 默认拒绝
+      ``revert_drift``（回滚是整 spec 替换，会静默清掉采纳后所有人的改动）；
+      ``allow_drift=True`` 显式放行并把丢弃区间记入回执
+      ``discarded_revisions``；
     - 回滚经 ``RollbackIntent``（CAS 读-比对-执行，superseded 短重试）；
     - 候选 state → comparable（分支仍在）、adoption_id 保留审计；
       回退后重采纳允许（revision 已推进 → 新幂等键 → 新回执）。
@@ -622,6 +624,14 @@ async def revert_adoption(
         raise RegistryError(
             "revert_anchor_missing",
             f"回执 {adoption_id} 无采纳前锚点（全拒绝决议无 mutation 可回退）",
+        )
+    current = await _parent_revision(session_id)
+    discarded = max(0, current - int(receipt.final_revision or 0))
+    if discarded > 0 and not allow_drift:
+        raise RegistryError(
+            "revert_drift",
+            f"采纳后父会话又推进了 {discarded} 个 revision"
+            f"（回滚会一并丢弃这些改动）。确认丢弃请带 allow_drift=true 重试。",
         )
 
     rb = None
@@ -650,6 +660,7 @@ async def revert_adoption(
 
     def _mark_reverted(entry: AdoptionReceipt) -> AdoptionReceipt:
         entry.reverted_by = reverted_by
+        entry.discarded_revisions = discarded
         return entry
 
     updated = await locked_registry_update(
