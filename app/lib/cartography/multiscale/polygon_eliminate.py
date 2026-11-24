@@ -36,6 +36,7 @@ from app.lib.cartography.multiscale.generalize import (
     _dataset_origin,
     _geojson_geometry,
     _metric_transforms,
+    _stable_feature_id,
 )
 
 #: 回执 merges 明细上限（溢出只计数）。
@@ -50,13 +51,6 @@ class EliminationResult(BaseModel):
     feature_collection: Dict[str, Any]
     manifest: Dict[str, Dict[str, Any]]
     receipt: Dict[str, Any]
-
-
-def _stable_feature_id(feature: Dict[str, Any], index: int) -> str:
-    fid = feature.get("id")
-    if isinstance(fid, (str, int)):
-        return str(fid)
-    return f"__idx{index}"
 
 
 def _num(v: Any) -> Optional[float]:
@@ -216,12 +210,18 @@ def eliminate_small_polygons(
         if merged_ll is None or merged_ll.is_empty:
             isolated_kept += 1
             continue
-        # sum_fields：幸存者显示值 = Σ(自身 + 被吸收成员数值)
+        # sum_fields：幸存者显示值 = Σ(自身 + 被吸收成员数值)。链式吸收时
+        # idx 此前吸收他人的增量在其 overlay 中 —— 取「原始 ∪ overlay」的
+        # 有效值作为贡献（评审 R1-P1-1：只取原始属性会丢中间增量，
+        # 幸存链显示值 ≠ Σ成员）。
+        src_overlay = survivors_overlay_props.get(idx, {})
         src_props = features[idx].get("properties") if isinstance(
             features[idx].get("properties"), dict) else {}
         sum_delta: Dict[str, float] = {}
         for field in sum_fields:
-            v = _num(src_props.get(field))
+            v = _num(src_overlay.get(field))
+            if v is None:
+                v = _num(src_props.get(field))
             if v is not None:
                 sum_delta[field] = sum_delta.get(field, 0.0) + v
         # 非 sum_fields 的数值字段发散计数（幸存者不并值 → 显示发散披露）
@@ -249,6 +249,20 @@ def eliminate_small_polygons(
                 base = _num((features[best].get("properties") or {}).get(field))
                 base = base if base is not None else 0.0
             overlay[field] = base + delta
+        # idx 若还持有此前链式吸收的 overlay（理论上全在 sum_delta 中，
+        # 防御性转移未知键），一并迁给 best —— 链式语义：增量随几何迁移。
+        idx_overlay = survivors_overlay_props.pop(idx, None)
+        if idx_overlay:
+            for field, v in idx_overlay.items():
+                if field in sum_delta:
+                    continue
+                merged = survivors_overlay_props.setdefault(best, {})
+                base = _num(merged.get(field))
+                if base is None:
+                    base = _num((features[best].get("properties") or {})
+                                .get(field))
+                    base = base if base is not None else 0.0
+                merged[field] = base + (_num(v) or 0.0)
         # 应用合并（幸存者几何替换；被吸收者移出幸存集合）
         geoms[best] = merged_ll
         areas_m2[best] = areas_m2[best] + areas_m2[idx]

@@ -215,6 +215,34 @@ class TestInvariants:
             return [[round(x, 9), round(y, 9)] for x, y in pts]
         assert _rnd(edge_a) == _rnd(edge_b) == _rnd(expected)
 
+    def test_ring_start_on_shared_edge_reverse_traversal(self):
+        # 评审 R1-P0-1 回归：右邻格环起点恰在共享边端点 (1,1) 上、共享边
+        # 按 y 降序遍历（与左格升序方向相反）—— 此前首个 run 不做方向
+        # 纠正 → 拼接从链错误端开始 → 干净输入恒伪回退。
+        jt: Sequence[Tuple[float, float]] = ((0.3, 0.02), (0.7, -0.02))
+        lower = _square(0, 0, 1, 1, fid="lower", right_edge=jt)
+        # 右格逆时针环：tl(1,1) → 左边中点降序（共享边，反向）→ bl(1,0)
+        # → br(2,0) → tr(2,1) → 闭合
+        ring = [[1.0, 1.0]]
+        ring.extend([1.0 + b, y] for y, b in sorted(jt, reverse=True))
+        ring.extend([[1.0, 0.0], [2.0, 0.0], [2.0, 1.0]])
+        ring.append([1.0, 1.0])
+        upper = {
+            "type": "Feature", "id": "upper",
+            "geometry": {"type": "Polygon", "coordinates": [ring]},
+            "properties": {},
+        }
+        out = simplify_polygon_topology([lower, upper], tolerance_m=30_000.0,
+                                        latitude_hint=39.0)
+        assert out.receipt["geometry_fallback"] == 0, \
+            out.receipt["reason_counts"]
+        feats = out.feature_collection["features"]
+        edge_lower = _norm_edge(_edge_pts_of(feats[0]["geometry"], 1.0))
+        edge_upper = _norm_edge(_edge_pts_of(feats[1]["geometry"], 1.0))
+        assert edge_lower == edge_upper, "两侧共享边必须一致"
+        # 塌缩后只剩角点（抖动被同链简化）
+        assert len(edge_lower) == 2
+
     def test_empty_input(self):
         out = simplify_polygon_topology([], tolerance_m=TOL_M)
         assert out.feature_collection["features"] == []

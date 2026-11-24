@@ -76,12 +76,19 @@ class TestUnitConversions:
                 ground_m_per_pixel(denom, 300.0), rel=1e-9)
 
     def test_scale_denominator_at_latitude_cos_fact(self):
-        # cos(60°)=0.5 → 实际分母翻倍（独立三角学 oracle）
+        # 独立三角学 oracle：Mercator 局部放大 sec(φ) ⇒ 实际分母
+        # N·cos(φ)/cos(φ_ref)（与 profile.display_meters_per_pixel 的
+        # m/px ∝ cos(lat) 同向 —— 评审 R1-P1-2 修正方向）。
         assert scale_denominator_at_latitude(500_000, 0.0) == 500_000
-        assert scale_denominator_at_latitude(500_000, 60.0) == 1_000_000
+        assert scale_denominator_at_latitude(500_000, 60.0) == 250_000
+        # 锚点纬度生效：ref=60° 处 N'=500,000；其赤道处 = 500000·cos0/cos60
+        assert scale_denominator_at_latitude(
+            500_000, 60.0, reference_lat=60.0) == 500_000
+        assert scale_denominator_at_latitude(
+            500_000, 0.0, reference_lat=60.0) == 1_000_000
         # 85° 仍在 Web Mercator 域内（85.0511° 钳制）
-        assert scale_denominator_at_latitude(500_000, 85.0) == pytest.approx(
-            500_000 / math.cos(math.radians(85.0)), rel=0.001)
+        assert scale_denominator_at_latitude(500_000, 85.0) == int(
+            round(500_000 * math.cos(math.radians(85.0))))
         # 89° 超出 Mercator 域 → fail-honest None（不投影不存在处的比例尺）
         assert scale_denominator_at_latitude(500_000, 89.0) is None
         assert scale_denominator_at_latitude(500_000, 95.0) is None
@@ -237,9 +244,15 @@ class TestFingerprintAndPageSpec:
         assert (p.width_mm, p.height_mm) == (210.0, 297.0)
         p2 = PageSpec(format_id="A4", orientation="landscape")
         assert (p2.width_mm, p2.height_mm) == (297.0, 210.0)
-        # DPI 越域 fail-closed 回缺省
+        # DPI 越域：原值保留，由 validate_contract 报错（不静默改写）
         p3 = PageSpec(dpi=99999.0)
-        assert p3.dpi == 300.0
+        assert p3.dpi == 99999.0
+        from app.lib.cartography.multiscale.paper_scale import (
+            validate_contract as _vc,
+        )
+
+        assert any("dpi_out_of_range" in e for e in _vc(
+            PublicationScaleContract(target_denominator=500_000, page=p3)))
 
     def test_schema_version_pinned(self):
         c = _contract()

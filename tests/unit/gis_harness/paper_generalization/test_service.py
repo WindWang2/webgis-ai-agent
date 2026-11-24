@@ -270,6 +270,37 @@ class TestMultiScaleJourneys:
         assert bad == [], [c.message for c in bad]
 
 
+class TestHardConstraintEndToEnd:
+    async def test_keep_feature_ids_survives_elimination_via_service(
+            self, session):
+        # 评审 R1-P1-3 回归：用户面「别丢掉小县」经工具入参真实到达引擎
+        receipt = await apply_paper_scale_generalization(
+            session, "districts",
+            mode="commit", denominator=500_000,
+            keep_feature_ids=["tiny-county"],
+            operation_id="op-hc-1")
+        assert receipt["status"] == "committed"
+        spec = await mapspec_store_instance.get_mapspec(session)
+        layer = next(lyr for lyr in spec["layers"]
+                     if lyr["id"] == "districts")
+        plan = next(iter(layer["scale_profile"]["paper_plans"].values()))
+        assert plan["stats"]["artifact_count"] == 3, \
+            "硬约束要素不得被消除"
+        hc = plan["contract"]["hard_constraints"]
+        assert any(c["kind"] == "keep_feature_ids"
+                   and "tiny-county" in c["feature_ids"] for c in hc)
+
+    async def test_keep_values_requires_field(self, session):
+        from app.services.gis_harness.paper_generalization import (
+            PaperScaleError,
+        )
+        with pytest.raises(PaperScaleError) as exc:
+            await apply_paper_scale_generalization(
+                session, "districts", mode="commit",
+                denominator=500_000, keep_values=["国道"])
+        assert "keep_values_field" in str(exc.value)
+
+
 class TestWindowUpsertPure:
     def test_clip_and_split(self):
         windows = [

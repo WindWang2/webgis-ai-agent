@@ -22,10 +22,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 if TYPE_CHECKING:
     from app.lib.cartography.semantic_checks import CartographyReport
 
-from app.lib.cartography.representation import (
-    ARTIFACT_MODES,
-    REPRESENTATION_MODES,
-)
+from app.lib.cartography.representation import ARTIFACT_MODES
 
 _PLAN_SCHEMA_VERSIONS = ("paper_scale_plan.v1",)
 
@@ -133,7 +130,3 @@ def check_paper_scale_plan(
 
 
 __all__ = ["check_paper_scale_plan"]
-
-# REPRESENTATION_MODES 引用保留词表对齐说明：窗口 mode 的**工件**判定走
-# ARTIFACT_MODES；REPRESENTATION_MODES 用于暴露词表域（本检查不放宽）。
-assert set(ARTIFACT_MODES) <= set(REPRESENTATION_MODES)

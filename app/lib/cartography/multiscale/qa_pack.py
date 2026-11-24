@@ -12,7 +12,8 @@ evaluate_cartography_semantics 消费）：
   ≤ 容差（WP2a 无缝保证的独立复核；顶点未配齐数据在此现形）；
 - ``psc.min_display_size``：目标尺度最小可辨面斑/线长达标（消除/简化
   后残留 sub-threshold 要素计数）；
-- ``psc.count_conservation``：输入 = 幸存 + 被消除/聚合（计数守恒口径）；
+- ``psc.count_monotonic``：派生要素数 ≤ 原始（count 口径的引擎侧
+  stats_match = kept+eliminated==input 由各引擎回执承载）；
 - ``psc.sum_conservation``：sum_fields Σ(派生可显示值) == Σ(原始)
   （计数/总量专题上图对账）；
 - ``psc.network_connectivity``：线工件分量数（navigation 硬约束 fail、
@@ -88,27 +89,41 @@ def audit_polygon_pairwise_seams(
     latitude_hint: float = 0.0,
     overlap_tolerance_m2: float = DEFAULT_SEAM_TOLERANCE_M2,
     gap_tolerance_m2: float = DEFAULT_SEAM_TOLERANCE_M2,
+    reference_features: Optional[Sequence[Dict[str, Any]]] = None,
+    gap_distance_tolerance_m: float = 5.0,
 ) -> Dict[str, Any]:
-    """面集合逐对缝隙/重叠审计（shapely 独立复核，米²口径）。
+    """面集合逐对缝隙/重叠审计（shapely 独立复核，米口径）。
 
     - ``max_pairwise_overlap_m2``：任意两要素 intersection 面积最大值；
-    - ``coverage_gap_m2``：Σ面积 − union 面积（≥0；多要素重叠也计入）。
+    - ``coverage_gap_m2``：Σ面积 − union 面积（≥0；只度量多重覆盖）；
+    - **邻接缝隙**（评审 R1-P1-4）：Σ−union 数学上检不出「应邻接却分叉
+      分离」的细缝 —— 给 ``reference_features``（原始输入）时，凡原输入
+      共享 ≥2 量化顶点的邻接对，在派生输出上按 ``distance`` 复核最近距
+      离，> ``gap_distance_tolerance_m`` 记 gap 对（米）。邻接对按参考
+      索引稀疏复核（非全对 O(n²) 距离）。
     """
-    geoms = []
-    for feature in features:
-        geom_dict = feature.get("geometry")
-        if not isinstance(geom_dict, dict):
-            continue
-        try:
-            geom = shape(geom_dict)
-        except Exception:  # noqa: BLE001
-            continue
-        if geom.geom_type in ("Polygon", "MultiPolygon") and not geom.is_empty:
-            geoms.append(geom)
+    def _collect(seq: Sequence[Dict[str, Any]]):
+        out = []
+        for feature in seq:
+            geom_dict = feature.get("geometry")
+            if not isinstance(geom_dict, dict):
+                continue
+            try:
+                geom = shape(geom_dict)
+            except Exception:  # noqa: BLE001
+                continue
+            if geom.geom_type in ("Polygon", "MultiPolygon")                     and not geom.is_empty:
+                out.append(geom)
+        return out
+
+    geoms = _collect(features)
     if len(geoms) < 2:
         return {"pairs_checked": max(0, len(geoms) - 1),
                 "max_pairwise_overlap_m2": 0.0,
-                "coverage_gap_m2": 0.0, "evaluated": len(geoms) >= 1}
+                "coverage_gap_m2": 0.0,
+                "adjacent_pairs_checked": 0,
+                "gap_pairs": [],
+                "evaluated": len(geoms) >= 1}
     kx, ky = _metric_factors(latitude_hint)
     deg_to_m2 = kx * ky
     max_overlap = 0.0
@@ -130,12 +145,43 @@ def audit_polygon_pairwise_seams(
         gap = max(0.0, (total - union_area) * deg_to_m2)
     except Exception:  # noqa: BLE001 — union 失败按未知保守
         gap = float("inf")
+
+    # 邻接缝隙复核（参考定义邻接对；派生序与参考序按 id 对齐，缺 id 时
+    # 退化为同序号对齐 —— 综合管线保持输入序，安全）
+    adjacent_pairs_checked = 0
+    gap_pairs: List[Dict[str, Any]] = []
+    ref_geoms = _collect(reference_features) if reference_features else []
+    if len(ref_geoms) == len(geoms) and ref_geoms:
+        ref_q = []
+        for g in ref_geoms:
+            coords = [c for c in getattr(g, "exterior", None).coords]                 if g.geom_type == "Polygon" else []
+            ref_q.append({(round(c[0], 9), round(c[1], 9)) for c in coords})
+        deg_tol_deg = float(gap_distance_tolerance_m) / max(kx, 1.0)
+        for i in range(len(geoms)):
+            for j in range(i + 1, len(geoms)):
+                shared = ref_q[i] & ref_q[j]
+                if len(shared) < 2:
+                    continue   # 非邻接对
+                adjacent_pairs_checked += 1
+                try:
+                    dist = geoms[i].distance(geoms[j])
+                except Exception:  # noqa: BLE001 — 距离失败按未知保守
+                    dist = float("inf")
+                if dist * kx > float(gap_distance_tolerance_m) or                         dist > deg_tol_deg * 10 ** 9:
+                    gap_pairs.append({
+                        "pair": [i, j],
+                        "distance_m": round(dist * kx, 3),
+                    })
+    within = bool(
+        max_overlap <= overlap_tolerance_m2 and gap <= gap_tolerance_m2
+        and not gap_pairs)
     return {
         "pairs_checked": pairs,
         "max_pairwise_overlap_m2": max_overlap,
         "coverage_gap_m2": gap,
-        "within_tolerance": bool(
-            max_overlap <= overlap_tolerance_m2 and gap <= gap_tolerance_m2),
+        "adjacent_pairs_checked": adjacent_pairs_checked,
+        "gap_pairs": gap_pairs[:16],
+        "within_tolerance": within,
         "evaluated": True,
     }
 
@@ -170,7 +216,18 @@ def audit_min_display_size(
         if min_length_m is not None and geom.geom_type in (
                 "LineString", "MultiLineString") and not geom.is_empty:
             length_checked += 1
-            if geom.length * kx < float(min_length_m):
+            # 米空间量长（评审 R1-P2-5：度长 × kx 会把南北向线低估
+            # cos(lat) 倍 —— 等距换算后量长，与引擎族同口径）
+            from shapely.ops import transform as _shp_transform
+
+            def _to_m(xs, ys):
+                return (xs * kx, ys * ky)
+
+            try:
+                length_m = _shp_transform(_to_m, geom).length
+            except Exception:  # noqa: BLE001 — 换算失败退化 kx（诚实近似）
+                length_m = geom.length * kx
+            if length_m < float(min_length_m):
                 sub_length.append(_fid(feature, index))
     return {
         "area_checked": area_checked,
@@ -252,7 +309,8 @@ def audit_scale_consistency(contract: Any) -> Dict[str, Any]:
     if not errors:
         zoom = equivalent_display_zoom(
             int(contract.target_denominator),
-            float(contract.frame.scale_reference_lat))
+            float(contract.frame.scale_reference_lat),
+            dpi=float(contract.page.dpi))
     variation = scale_variation_report(contract)
     return {
         "contract_errors": errors,
@@ -273,6 +331,7 @@ def run_paper_scale_qa(
     artifact_features: Sequence[Dict[str, Any]],
     *,
     geometry_family: str,
+    reference_features: Optional[Sequence[Dict[str, Any]]] = None,
     sum_fields: Sequence[str] = (),
     latitude_hint: float = 0.0,
     min_area_m2: Optional[float] = None,
@@ -314,7 +373,9 @@ def run_paper_scale_qa(
         seams = audit_polygon_pairwise_seams(
             artifact_features, latitude_hint=latitude_hint,
             overlap_tolerance_m2=seam_overlap_tolerance_m2,
-            gap_tolerance_m2=seam_gap_tolerance_m2)
+            gap_tolerance_m2=seam_gap_tolerance_m2,
+            reference_features=reference_features if reference_features is not None
+            else input_features)
         rows.append({
             "check": f"{_PSC}polygon_seams",
             "status": ("pass" if seams.get("within_tolerance")

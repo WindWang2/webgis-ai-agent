@@ -47,7 +47,7 @@ def _build_feature_edges(
     同一图语义（单一事实源，防双处漂移）。非线/坏几何 → 无边（不入图）。
     """
     vertex_freq: Dict[Tuple[float, float], int] = {}
-    parsed_paths: List[List[Tuple[float, float]]] = []
+    parsed_paths: List[List[List[Tuple[float, float]]]] = []
     for feature in features:
         coords_raw = _feature_coords(feature)
         if coords_raw is None:
@@ -55,33 +55,40 @@ def _build_feature_edges(
             continue
         if (coords_raw and isinstance(coords_raw[0], list) and coords_raw[0]
                 and isinstance(coords_raw[0][0], list)):
-            # MultiLineString：各段展开
-            paths: List[Tuple[float, float]] = []
+            # MultiLineString：**每个 part 独立成路径**（评审 R1-P0-2：
+            # 摊平会在 part 末点→下 part 首点之间生成几何上不存在的幻影
+            # 边，连通性判定与 QA oracle 同步失真）。顶点频次仍全局累计
+            # —— 跨 part 的共享顶点照常建junction。
+            feature_paths: List[List[Tuple[float, float]]] = []
             for part in coords_raw:
                 if isinstance(part, list):
-                    paths.extend(_q(c, snap_digits) for c in part
-                                 if isinstance(c, (list, tuple))
-                                 and len(c) >= 2)
+                    qpart = [_q(c, snap_digits) for c in part
+                             if isinstance(c, (list, tuple)) and len(c) >= 2]
+                    if len(qpart) >= 2:
+                        feature_paths.append(qpart)
+            parsed_paths.append(feature_paths)
         else:
-            paths = [_q(c, snap_digits) for c in coords_raw
+            qpath = [_q(c, snap_digits) for c in coords_raw
                      if isinstance(c, (list, tuple)) and len(c) >= 2]
-        parsed_paths.append(paths)
-        for qc in paths:
-            vertex_freq[qc] = vertex_freq.get(qc, 0) + 1
+            parsed_paths.append([qpath] if len(qpath) >= 2 else [])
+        for path in parsed_paths[-1]:
+            for qc in path:
+                vertex_freq[qc] = vertex_freq.get(qc, 0) + 1
 
     def _is_node(qc: Tuple[float, float], pos: int, total: int) -> bool:
         return vertex_freq.get(qc, 0) >= 2 or pos == 0 or pos == total - 1
 
     edges_per_feature: List[List[Tuple[Tuple[float, float], Tuple[float, float]]]] = []
-    for path in parsed_paths:
+    for feature_paths in parsed_paths:
         edges: List[Tuple[Tuple[float, float], Tuple[float, float]]] = []
-        if len(path) >= 2:
-            start = 0
-            for pos in range(1, len(path)):
-                if _is_node(path[pos], pos, len(path)):
-                    if pos > start:
-                        edges.append((path[start], path[pos]))
-                    start = pos
+        for path in feature_paths:
+            if len(path) >= 2:
+                start = 0
+                for pos in range(1, len(path)):
+                    if _is_node(path[pos], pos, len(path)):
+                        if pos > start:
+                            edges.append((path[start], path[pos]))
+                        start = pos
         edges_per_feature.append(edges)
     return edges_per_feature
 
@@ -353,7 +360,9 @@ def select_lines_with_connectivity(
         "bridges_added": bridges_added_count,
         "bridges_truncated": truncated,
         "fully_connected": final_components <= 1,
-        "stats_match": kept_count + suppressed_count + len(parse_failures) == input_count,
+        # parse_failures 在 kept 通道透传（base_kept=True），不得再单加
+        # （评审 R1-P2-1：双计使含透传输入恒 False）
+        "stats_match": kept_count + suppressed_count == input_count,
         "bridges": bridges[:_RECEIPT_BRIDGE_LIMIT],
         "disclosures": disclosures,
     }

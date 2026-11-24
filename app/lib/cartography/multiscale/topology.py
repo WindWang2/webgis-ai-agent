@@ -45,6 +45,7 @@ from app.lib.cartography.multiscale.generalize import (
     _dataset_origin,
     _geojson_geometry,
     _metric_transforms,
+    _stable_feature_id,
 )
 
 #: 坐标量化精度（与 generalize._anchor_map 同值：1e-9）。
@@ -155,13 +156,6 @@ def _ring_signed_area(coords_m: Sequence[Tuple[float, float]]) -> float:
         x1, y1 = coords_m[i + 1]
         area += x0 * y1 - x1 * y0
     return area / 2.0
-
-
-def _stable_feature_id(feature: Dict[str, Any], index: int) -> str:
-    fid = feature.get("id")
-    if isinstance(fid, (str, int)):
-        return str(fid)
-    return f"__idx{index}"
 
 
 # ── 主入口 ────────────────────────────────────────────────────────────────
@@ -346,11 +340,14 @@ def simplify_polygon_topology(
             seq = _run_coords(run)
             if seq is None:
                 return None
+            # 方向归并对**每个** run（含首个）一致：共享链的规范方向可能
+            # 与本环遍历方向相反 —— 首个 run 不做方向纠正会从链的错误端
+            # 拼接（评审 R1-P0-1：环起点落在共享边上且反向遍历 → 恒回退）。
+            use = seq if not (run.is_shared and not run.forward) \
+                else list(reversed(seq))
             if not out:
-                out.extend(seq)
+                out.extend(use)
             else:
-                use = seq if (run.is_shared and run.forward) or (
-                    not run.is_shared) else list(reversed(seq))
                 out.extend(use[1:])
         if len(out) < 4:
             return None

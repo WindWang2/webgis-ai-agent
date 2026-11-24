@@ -1,6 +1,8 @@
 """User-origin MapSpec mutations — thin adapter over apply_mutation (#639/#640)."""
 from typing import Any, Dict, List, Literal, Optional
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
@@ -36,6 +38,8 @@ from app.schemas.mapspec_mutation_schema import (  # noqa: F401 - 模块属性�
 from app.services.mapspec.lifecycle_engine import MapSpecLifecycleEngine
 
 router = APIRouter(prefix="/chat", tags=["对话"])
+
+logger = logging.getLogger(__name__)
 _engine = MapSpecLifecycleEngine()
 
 
@@ -273,6 +277,10 @@ class PaperScaleApplyBody(BaseModel):
     dpi: Optional[float] = Field(None, gt=0, le=2400)
     kept_values: Optional[List[Any]] = Field(None, max_length=32)
     sum_fields: Optional[List[str]] = Field(None, max_length=8)
+    keep_feature_ids: Optional[List[str]] = Field(None, max_length=32)
+    keep_values: Optional[List[Any]] = Field(None, max_length=32)
+    keep_values_field: Optional[str] = Field(None, max_length=128)
+    keep_region: Optional[List[float]] = Field(None, min_length=4, max_length=4)
     mode: Literal["preview", "commit"] = "preview"
     expected_revision: Optional[int] = Field(None, ge=0)
     operation_id: Optional[str] = Field(None, max_length=64)
@@ -302,6 +310,9 @@ async def get_paper_scale_generalization(
             page_text=page_text, purpose=purpose, dpi=dpi)
     except PaperScaleError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001 — 诚实 500（不裸栈）
+        logger.exception("paper-scale inspect failed")
+        raise HTTPException(status_code=500, detail=f"inspect failed: {exc}")
 
 
 @router.post("/sessions/{session_id}/paper-scale")
@@ -326,6 +337,10 @@ async def apply_paper_scale_generalization_route(
             dpi=req.dpi,
             kept_values=req.kept_values,
             sum_fields=req.sum_fields,
+            keep_feature_ids=req.keep_feature_ids,
+            keep_values=req.keep_values,
+            keep_values_field=req.keep_values_field,
+            keep_region=req.keep_region,
             expected_revision=req.expected_revision,
             operation_id=req.operation_id,
             note=req.note or "",
@@ -333,3 +348,6 @@ async def apply_paper_scale_generalization_route(
         )
     except PaperScaleError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001 — 诚实 500（不裸栈）
+        logger.exception("paper-scale apply failed")
+        raise HTTPException(status_code=500, detail=f"apply failed: {exc}")

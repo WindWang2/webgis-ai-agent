@@ -71,6 +71,10 @@ def _args_to_kwargs(args: dict) -> dict:
         "dpi": args.get("dpi"),
         "kept_values": args.get("kept_values"),
         "sum_fields": args.get("sum_fields"),
+        "keep_feature_ids": args.get("keep_feature_ids"),
+        "keep_values": args.get("keep_values"),
+        "keep_values_field": args.get("keep_values_field"),
+        "keep_region": args.get("keep_region"),
     }
 
 
@@ -165,6 +169,10 @@ def register_paper_scale_tools(registry: ToolRegistry) -> None:
         dpi: Optional[float] = None,
         kept_values: Optional[List[Any]] = None,
         sum_fields: Optional[List[str]] = None,
+        keep_feature_ids: Optional[List[str]] = None,
+        keep_values: Optional[List[Any]] = None,
+        keep_values_field: Optional[str] = None,
+        keep_region: Optional[List[float]] = None,
         session_id: str = "",
     ) -> dict:
         if not session_id:
@@ -176,7 +184,9 @@ def register_paper_scale_tools(registry: ToolRegistry) -> None:
         kwargs = _args_to_kwargs(dict(
             denominator=denominator, denominator_text=denominator_text,
             page_text=page_text, purpose=purpose, dpi=dpi,
-            kept_values=kept_values, sum_fields=sum_fields))
+            kept_values=kept_values, sum_fields=sum_fields,
+            keep_feature_ids=keep_feature_ids, keep_values=keep_values,
+            keep_values_field=keep_values_field, keep_region=keep_region))
         try:
             return await preview_paper_scale_generalization(
                 session_id, layer, **kwargs)
@@ -234,6 +244,10 @@ def register_paper_scale_tools(registry: ToolRegistry) -> None:
         dpi: Optional[float] = None,
         kept_values: Optional[List[Any]] = None,
         sum_fields: Optional[List[str]] = None,
+        keep_feature_ids: Optional[List[str]] = None,
+        keep_values: Optional[List[Any]] = None,
+        keep_values_field: Optional[str] = None,
+        keep_region: Optional[List[float]] = None,
         operation_id: Optional[str] = None,
         expected_revision: Optional[int] = None,
         note: Optional[str] = None,
@@ -248,7 +262,9 @@ def register_paper_scale_tools(registry: ToolRegistry) -> None:
         kwargs = _args_to_kwargs(dict(
             denominator=denominator, denominator_text=denominator_text,
             page_text=page_text, purpose=purpose, dpi=dpi,
-            kept_values=kept_values, sum_fields=sum_fields))
+            kept_values=kept_values, sum_fields=sum_fields,
+            keep_feature_ids=keep_feature_ids, keep_values=keep_values,
+            keep_values_field=keep_values_field, keep_region=keep_region))
         try:
             receipt = await apply_paper_scale_generalization(
                 session_id, layer, mode=mode, operation_id=operation_id,

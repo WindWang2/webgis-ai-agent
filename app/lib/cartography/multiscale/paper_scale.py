@@ -159,23 +159,30 @@ def equivalent_display_zoom(
 
 
 def scale_denominator_at_latitude(
-    denominator: int, latitude: float
+    denominator: int, latitude: float,
+    *, reference_lat: float = 0.0,
 ) -> Optional[int]:
     """Web Mercator 真实变形：锚定分母在 latitude 处的实际分母（1:N'）。
 
-    N'(φ) = N · cos(φ_ref) / cos(φ)。纬度越域返回 None（fail-honest）。
+    N'(φ) = N · cos(φ) / cos(φ_ref)（评审 R1-P1-2 修正方向：Mercator 局部
+    放大因子 sec(φ) ⇒ 图上 1mm 覆盖的地面距离 ∝ cos(φ) —— 与同包
+    profile.display_meters_per_pixel 的 m/px ∝ cos(lat) 同向；φ=φ_ref 处
+    N'=N）。纬度越域返回 None（fail-honest）。
     """
     n = float(denominator)
     if not (MIN_DENOMINATOR <= n <= MAX_DENOMINATOR):
         return None
     lat = float(latitude)
+    ref = float(reference_lat)
     if not (-_MERCATOR_LAT_MAX <= lat <= _MERCATOR_LAT_MAX):
         return None
-    ref = 1.0
-    factor = ref / math.cos(math.radians(lat)) if abs(lat) < 89.999 else float("inf")
-    if math.isinf(factor) or factor <= 0:
+    if not (-_MERCATOR_LAT_MAX <= ref <= _MERCATOR_LAT_MAX):
         return None
-    return max(1, int(round(n * factor)))
+    cos_lat = math.cos(math.radians(lat))
+    cos_ref = math.cos(math.radians(ref))
+    if cos_lat <= 0 or cos_ref <= 0:
+        return None
+    return max(1, int(round(n * cos_lat / cos_ref)))
 
 
 # ── 契约模型 ──────────────────────────────────────────────────────────────
@@ -205,12 +212,8 @@ class PageSpec(_ContractModel):
                 self.width_mm, self.height_mm = long_, short
             else:
                 self.width_mm, self.height_mm = short, long_
-        # custom：显式 mm 保留（校验在 validate_contract）
-        dpi = float(self.dpi)
-        if not (MIN_DPI <= dpi <= MAX_DPI):
-            self.dpi = 300.0
-        else:
-            self.dpi = dpi
+        # custom：显式 mm 保留；dpi 原值保留（越域由 validate_contract
+        # 报错，不静默改写 —— 评审 R1-P3：改写后校验永远捕不到原值）
         return self
 
 
@@ -393,8 +396,11 @@ def scale_variation_report(
         north, south = float(bbox[3]), float(bbox[1])
     except (TypeError, ValueError):
         return out
-    d_n = scale_denominator_at_latitude(contract.target_denominator, north)
-    d_s = scale_denominator_at_latitude(contract.target_denominator, south)
+    ref_lat = float(contract.frame.scale_reference_lat)
+    d_n = scale_denominator_at_latitude(
+        contract.target_denominator, north, reference_lat=ref_lat)
+    d_s = scale_denominator_at_latitude(
+        contract.target_denominator, south, reference_lat=ref_lat)
     out["denominator_at_north_edge"] = d_n
     out["denominator_at_south_edge"] = d_s
     if d_n and d_s:

@@ -69,6 +69,34 @@ class TestSeamAudit:
         # 分离多边形：无重叠、无覆盖差（覆盖差只捕捉「邻接却互侵」）
         assert out["max_pairwise_overlap_m2"] < 1.0
 
+    def test_adjacent_gap_detected_with_reference(self):
+        # 评审 R1-P1-4 回归：参考输入中共享 ≥2 顶点的邻接对，派生输出
+        # 分叉分离 0.01°（≈0.86km）→ 距离审计 fail（Σ−union 检不出）。
+        ref = [
+            _poly("a", [[0, 0], [1, 0], [1, 1], [0, 1]]),
+            _poly("b", [[1, 0], [2, 0], [2, 1], [1, 1]]),
+        ]
+        derived = [
+            _poly("a", [[0, 0], [1, 0], [1, 1], [0, 1]]),
+            _poly("b", [[1.01, 0], [2, 0], [2, 1], [1.01, 1]]),   # 分叉缝隙
+        ]
+        out = audit_polygon_pairwise_seams(
+            derived, latitude_hint=39.0, reference_features=ref)
+        assert out["adjacent_pairs_checked"] == 1
+        assert out["gap_pairs"], "邻接缝隙必须被检出"
+        assert out["within_tolerance"] is False
+
+    def test_adjacent_clean_pair_passes(self):
+        ref = [
+            _poly("a", [[0, 0], [1, 0], [1, 1], [0, 1]]),
+            _poly("b", [[1, 0], [2, 0], [2, 1], [1, 1]]),
+        ]
+        out = audit_polygon_pairwise_seams(
+            ref, latitude_hint=39.0, reference_features=ref)
+        assert out["adjacent_pairs_checked"] == 1
+        assert out["gap_pairs"] == []
+        assert out["within_tolerance"] is True
+
     def test_single_polygon_not_evaluated_pairs(self):
         out = audit_polygon_pairwise_seams(
             [_poly("a", [[0, 0], [1, 0], [1, 1], [0, 1]])])

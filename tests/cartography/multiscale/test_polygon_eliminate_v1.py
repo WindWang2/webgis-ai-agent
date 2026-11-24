@@ -23,6 +23,7 @@ from app.lib.cartography.multiscale.paper_scale import (
 from app.lib.cartography.multiscale.polygon_eliminate import (
     eliminate_small_polygons,
 )
+from app.lib.cartography.multiscale.qa_pack import audit_sum_conservation
 
 #: 1:500,000 的最小可辨面斑（独立换算：2.0 mm² × (500 m/mm)²）
 THRESHOLD_M2 = 500_000.0
@@ -186,6 +187,25 @@ class TestBookkeeping:
         assert set(out.manifest) == {"s1", "s2"}
         assert out.manifest["s2"]["absorbed_into"] == "s1"
         assert out.manifest["s1"]["absorbed_into"] == "big"
+
+    def test_chain_absorption_sum_conservation(self):
+        # 评审 R1-P1-1 回归：链式吸收 big←s1←s2 时，中间层 s1 已并入的
+        # s2 增量不得丢失 —— 幸存 big 显示值 = 100+10+5 = 115。
+        s1 = _square_m2(0.004, 0.05, 0.0, fid="s1", props={"school_count": 10})
+        s2 = _square_m2(0.002, 0.054, 0.0, fid="s2", props={"school_count": 5})
+        big = _square_m2(0.05, 0.0, 0.0, fid="big",
+                         props={"school_count": 100})
+        out = eliminate_small_polygons(
+            [big, s1, s2], min_area_m2=THRESHOLD_M2,
+            sum_fields=["school_count"])
+        big_out = next(f for f in out.feature_collection["features"]
+                       if f["id"] == "big")
+        assert big_out["properties"]["school_count"] == 115
+        assert out.manifest["s1"]["sum_fields_delta"] == {"school_count": 15.0}
+        sums = audit_sum_conservation(
+            [big, s1, s2], out.feature_collection["features"],
+            sum_fields=["school_count"])
+        assert sums["conserved"] is True
 
     def test_determinism(self):
         small = _square_m2(0.004, 0.05, 0.0, fid="small",

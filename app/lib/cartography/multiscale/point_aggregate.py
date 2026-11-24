@@ -26,6 +26,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from pydantic import BaseModel, ConfigDict
 
+from app.lib.cartography.multiscale.generalize import _stable_feature_id
+
 #: 米/度换算（与 generalize 引擎同族常数）。
 _M_PER_DEG_LAT = 110_574.0
 _M_PER_DEG_LON_EQ = 111_320.0
@@ -52,13 +54,6 @@ def _num(v: Any) -> Optional[float]:
         return None
     f = float(v)
     return f if math.isfinite(f) else None
-
-
-def _stable_feature_id(feature: Dict[str, Any], index: int) -> str:
-    fid = feature.get("id")
-    if isinstance(fid, (str, int)):
-        return str(fid)
-    return f"__idx{index}"
 
 
 def _point_coord(feature: Dict[str, Any]) -> Optional[Tuple[float, float]]:
@@ -166,7 +161,8 @@ def aggregate_points(
             continue  # 代表要素已在首成员位输出
         emitted_cells.add(cell_key)
         members = cells[cell_key]
-        # 代表几何 = 成员质心（米空间均值 → 投回度；确定性）
+        # 代表几何 = 成员质心（经纬均值；格网锚定与局部等距族同口径，
+        # 小格内偏差亚米级 —— 确定性）
         lon_sum = sum(_point_coord(features[m])[0] for m in members)
         lat_sum = sum(_point_coord(features[m])[1] for m in members)
         cx, cy = lon_sum / len(members), lat_sum / len(members)
@@ -245,7 +241,9 @@ def aggregate_points(
         "stats_match": aggregated_consumed + (
             len(out_features) - representative_count) == input_count,
         "groups": groups_rows,
-        "groups_truncated": len(cells) > _RECEIPT_GROUP_LIMIT,
+        # 截断判定 = 聚合格数（groups_rows 只含聚合格；单点格直通不入明细）
+        "groups_truncated": sum(
+            1 for v in cells.values() if len(v) > 1) > _RECEIPT_GROUP_LIMIT,
         "disclosures": disclosures,
     }
     return PointAggregateResult(

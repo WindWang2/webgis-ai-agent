@@ -156,6 +156,41 @@ class TestSelectionSemantics:
         assert out.receipt["junction_nodes"] >= 1
         assert out.receipt["fully_connected"] is True
 
+    def test_multiline_parts_are_independent_paths(self):
+        # 评审 R1-P0-2 回归：MultiLineString 两段不相交 —— part 间不得
+        # 产生幻影边（此前摊平使 count=1、真值 2）。
+        ml = {"type": "Feature", "id": "ml",
+              "geometry": {"type": "MultiLineString", "coordinates": [
+                  [[0, 0], [1, 0]],
+                  [[5, 0], [6, 0]],
+              ]},
+              "properties": {}}
+        from app.lib.cartography.multiscale.network_select import (
+            count_line_components,
+        )
+        assert count_line_components([ml]) == 2
+
+    def test_multiline_phantom_bridge_rejected(self):
+        # 被抑制的两段 MultiLineString（两段各自搭上两条保留高速、彼此
+        # 分离）—— 摊平实现会把它当「桥」误判全连通（navigation 硬门
+        # fail-open）；修正后必须诚实判断连。
+        feats = [
+            _line("h1", [[0, 0], [1, 0]], "高速公路"),
+            _line("h2", [[10, 0], [11, 0]], "高速公路"),
+            {"type": "Feature", "id": "phantom",
+             "geometry": {"type": "MultiLineString", "coordinates": [
+                 [[1, 0], [2, 0]],
+                 [[9, 0], [10, 0]],
+             ]},
+             "properties": {"道路等级": "乡道"}},
+        ]
+        out = select_lines_with_connectivity(
+            feats, importance_field="道路等级", kept_values=["高速公路"])
+        ids = set(f["id"] for f in out.feature_collection["features"])
+        assert "phantom" not in ids
+        assert out.receipt["fully_connected"] is False
+        assert out.receipt["components_final"] == 2
+
     def test_determinism(self):
         o1 = select_lines_with_connectivity(
             _corridor_network(), importance_field="道路等级",

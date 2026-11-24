@@ -14,7 +14,7 @@ import { useT } from '@/lib/i18n/useT';
  * - 后端未确认时绝不显示「已冻结」；错误结构化呈现（不吞）。
  */
 import {
-  useCallback, useMemo, useState, useSyncExternalStore,
+  useCallback, useMemo, useRef, useState, useSyncExternalStore,
 } from 'react';
 import { apiFetch } from '@/lib/api/transport';
 import {
@@ -55,6 +55,8 @@ export function PaperScalePanel({ layerId }: { layerId: string }) {
   const [preview, setPreview] = useState<Record<string, unknown> | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  // epoch 守卫（G27 同款）：请求在途时图层切换，旧响应不得画进新图层
+  const epochRef = useRef(0);
 
   // 真实 committed spec：冻结计划清单来自实际 MapSpec（不自造）。
   const committedSpec = useSyncExternalStore(
@@ -68,21 +70,24 @@ export function PaperScalePanel({ layerId }: { layerId: string }) {
     const plans = ((
       (layer?.scale_profile ?? {}) as { paper_plans?: Record<string, PlanBlock> }
     ).paper_plans) ?? {};
-    return Object.entries(plans).map(([fingerprint, plan]) => ({
-      fingerprint,
-      denominator: plan.contract?.target_denominator ?? 0,
-      purpose: plan.contract?.purpose ?? '',
-      status: plan.status ?? '',
-      originalCount: plan.stats?.original_count ?? 0,
-      artifactCount: plan.stats?.artifact_count ?? 0,
-      qaBlocking: plan.qa_summary?.blocking ?? 0,
-      artifactRef: plan.artifact_ref ?? '',
-    }));
+    return Object.entries(plans)
+      .filter(([, plan]) => plan.status === 'frozen')
+      .map(([fingerprint, plan]) => ({
+        fingerprint,
+        denominator: plan.contract?.target_denominator ?? 0,
+        purpose: plan.contract?.purpose ?? '',
+        status: plan.status ?? '',
+        originalCount: plan.stats?.original_count ?? 0,
+        artifactCount: plan.stats?.artifact_count ?? 0,
+        qaBlocking: plan.qa_summary?.blocking ?? 0,
+        artifactRef: plan.artifact_ref ?? '',
+      }));
   }, [committedSpec, layerId]);
 
   const post = useCallback(async (mode: 'preview' | 'commit') => {
     const { sessionId, revision } = getMapSpecSessionCursor();
     if (!sessionId || !layerId || busy) return null;
+    const epoch = ++epochRef.current;
     setBusy(true);
     setMessage('');
     try {
@@ -102,14 +107,17 @@ export function PaperScalePanel({ layerId }: { layerId: string }) {
           label: 'Paper scale generalization',
         },
       );
+      if (epoch !== epochRef.current) return null;   // 迟到响应丢弃
       return data;
     } catch (err) {
-      setMessage(t('failed', {
-        p0: err instanceof Error ? err.message : String(err),
-      }));
+      if (epoch === epochRef.current) {
+        setMessage(t('failed', {
+          p0: err instanceof Error ? err.message : String(err),
+        }));
+      }
       return null;
     } finally {
-      setBusy(false);
+      if (epoch === epochRef.current) setBusy(false);
     }
   }, [busy, layerId, denominatorText, pageText, purpose, t]);
 

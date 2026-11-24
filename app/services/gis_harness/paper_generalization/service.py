@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.lib.cartography.multiscale.paper_scale import (
     MAP_PURPOSES,
+    HardConstraint,
     PageSpec,
     FrameViewport,
     PublicationScaleContract,
@@ -47,6 +48,7 @@ from app.lib.cartography.multiscale.publication_compile import (
     windows_cover_domain,
 )
 from app.services.gis_harness.scale_profile.service import (
+    _current_revision,
     _fc_content_fingerprint,
     _geometry_family_of,
     _latitude_hint,
@@ -129,11 +131,38 @@ def _build_contract(
     dpi: Optional[float],
     frame_width_mm: Optional[float],
     frame_height_mm: Optional[float],
+    keep_feature_ids: Optional[Sequence[str]] = None,
+    keep_values: Optional[Sequence[Any]] = None,
+    keep_values_field: Optional[str] = None,
+    keep_region: Optional[Sequence[float]] = None,
 ) -> PublicationScaleContract:
-    """会话证据（descriptor bbox / 纬度）+ 入参 → 契约。"""
+    """会话证据（descriptor bbox / 纬度）+ 入参 → 契约（硬约束透传，
+    评审 R1-P1-3：用户面「别丢掉县城」必须真实可达引擎）。"""
     if purpose not in MAP_PURPOSES:
         raise PaperScaleError(
             f"未知用途 {purpose!r}；词表：{', '.join(MAP_PURPOSES)}")
+    hard: List[HardConstraint] = []
+    ids = _norm_text_list(keep_feature_ids, 32, "keep_feature_ids")
+    if ids:
+        hard.append(HardConstraint(kind="keep_feature_ids", feature_ids=ids))
+    values = _norm_text_list(keep_values, 32, "keep_values")
+    if values:
+        field = (keep_values_field or "").strip()
+        if not field:
+            raise PaperScaleError(
+                "keep_values 需要配套 keep_values_field（重要性字段名）")
+        hard.append(HardConstraint(kind="keep_values", values=values,
+                                   importance_field=field))
+    if keep_region is not None:
+        if not (isinstance(keep_region, (list, tuple))
+                and len(keep_region) == 4):
+            raise PaperScaleError(
+                "keep_region 需为 [minx,miny,maxx,maxy]")
+        try:
+            region = [float(v) for v in keep_region]
+        except (TypeError, ValueError):
+            raise PaperScaleError("keep_region 含非数值")
+        hard.append(HardConstraint(kind="keep_region", region_bbox=region))
     bbox = ctx["descriptor"].get("bbox")
     data_bbox = [float(v) for v in bbox] if (
         isinstance(bbox, (list, tuple)) and len(bbox) == 4) else None
@@ -158,6 +187,7 @@ def _build_contract(
         purpose=purpose,
         page=page,
         frame=frame,
+        hard_constraints=hard,
         generated_by="paper_scale_service",
     )
 
@@ -181,6 +211,10 @@ async def inspect_paper_scale_generalization(
     page_text: Optional[str] = None,
     purpose: str = "reference",
     dpi: Optional[float] = None,
+    keep_feature_ids: Optional[Sequence[str]] = None,
+    keep_values: Optional[Sequence[Any]] = None,
+    keep_values_field: Optional[str] = None,
+    keep_region: Optional[Sequence[float]] = None,
 ) -> Dict[str, Any]:
     ctx = await _prepared_ctx(session_id, layer_target)
     denom = _resolve_denominator(denominator, denominator_text)
@@ -189,7 +223,10 @@ async def inspect_paper_scale_generalization(
     contract = _build_contract(
         ctx, denominator=denom, purpose=purpose, format_id=fmt,
         orientation=orientation, dpi=dpi_res,
-        frame_width_mm=None, frame_height_mm=None)
+        frame_width_mm=None, frame_height_mm=None,
+        keep_feature_ids=keep_feature_ids,
+        keep_values=keep_values, keep_values_field=keep_values_field,
+        keep_region=keep_region)
     variation = scale_variation_report(contract)
     zoom = equivalent_display_zoom(
         denom, float(contract.frame.scale_reference_lat)) \
@@ -292,11 +329,18 @@ async def preview_paper_scale_generalization(
     dpi: Optional[float] = None,
     kept_values: Optional[Sequence[Any]] = None,
     sum_fields: Optional[Sequence[Any]] = None,
+    keep_feature_ids: Optional[Sequence[str]] = None,
+    keep_values: Optional[Sequence[Any]] = None,
+    keep_values_field: Optional[str] = None,
+    keep_region: Optional[Sequence[float]] = None,
 ) -> Dict[str, Any]:
     ctx = await _prepared_ctx(session_id, layer_target)
     contract = _contract_from_args(
         ctx, denominator=denominator, denominator_text=denominator_text,
-        page_text=page_text, purpose=purpose, dpi=dpi)
+        page_text=page_text, purpose=purpose, dpi=dpi,
+        keep_feature_ids=keep_feature_ids,
+        keep_values=keep_values, keep_values_field=keep_values_field,
+        keep_region=keep_region)
     result, meta = _compile_from_ctx(
         ctx, contract=contract, kept_values=kept_values, sum_fields=sum_fields)
     return {
@@ -315,6 +359,45 @@ async def preview_paper_scale_generalization(
     }
 
 
+def _args_contract_fingerprint_basis(
+    *,
+    denominator: Optional[int],
+    denominator_text: Optional[str],
+    page_text: Optional[str],
+    purpose: str,
+    dpi: Optional[float],
+    kept_values: Optional[Sequence[Any]],
+    sum_fields: Optional[Sequence[Any]],
+    keep_feature_ids: Optional[Sequence[str]],
+    keep_values: Optional[Sequence[Any]],
+    keep_values_field: Optional[str],
+    keep_region: Optional[Sequence[float]],
+) -> PublicationScaleContract:
+    """入参 → 未锚定会话证据的最小契约（仅指纹用；不落任何面）。"""
+    denom = denominator
+    if denom is None and denominator_text:
+        denom = parse_denominator_text(denominator_text)
+    denom = denom if denom is not None else 0
+    fmt, orientation, dpi_res = _resolve_page(page_text=page_text, dpi=dpi)
+    return PublicationScaleContract(
+        target_denominator=max(denom, MIN_DENOMINATOR_PLACEHOLDER),
+        purpose=purpose if purpose in MAP_PURPOSES else "reference",
+        page=PageSpec(format_id=fmt, orientation=orientation,
+                      dpi=dpi_res if dpi_res is not None else 300.0),
+        hard_constraints=[
+            HardConstraint(kind="keep_feature_ids",
+                           feature_ids=_norm_text_list(keep_feature_ids, 32,
+                                                       "kfid")),
+            HardConstraint(kind="keep_values",
+                           values=_norm_text_list(keep_values, 32, "kv"),
+                           importance_field=keep_values_field or ""),
+        ] if (keep_feature_ids or keep_values) else [],
+    )
+
+
+MIN_DENOMINATOR_PLACEHOLDER = 100
+
+
 def _contract_from_args(
     ctx: Dict[str, Any],
     *,
@@ -325,13 +408,20 @@ def _contract_from_args(
     dpi: Optional[float],
     frame_width_mm: Optional[float] = None,
     frame_height_mm: Optional[float] = None,
+    keep_feature_ids: Optional[Sequence[str]] = None,
+    keep_values: Optional[Sequence[Any]] = None,
+    keep_values_field: Optional[str] = None,
+    keep_region: Optional[Sequence[float]] = None,
 ) -> PublicationScaleContract:
     denom = _resolve_denominator(denominator, denominator_text)
     fmt, orientation, dpi_res = _resolve_page(page_text=page_text, dpi=dpi)
     contract = _build_contract(
         ctx, denominator=denom, purpose=purpose, format_id=fmt,
         orientation=orientation, dpi=dpi_res,
-        frame_width_mm=frame_width_mm, frame_height_mm=frame_height_mm)
+        frame_width_mm=frame_width_mm, frame_height_mm=frame_height_mm,
+        keep_feature_ids=keep_feature_ids,
+        keep_values=keep_values, keep_values_field=keep_values_field,
+        keep_region=keep_region)
     errors = _contract_errors(contract)
     if errors:
         raise PaperScaleError(f"契约非法：{errors}")
@@ -353,36 +443,69 @@ async def apply_paper_scale_generalization(
     dpi: Optional[float] = None,
     kept_values: Optional[Sequence[Any]] = None,
     sum_fields: Optional[Sequence[Any]] = None,
+    keep_feature_ids: Optional[Sequence[str]] = None,
+    keep_values: Optional[Sequence[Any]] = None,
+    keep_values_field: Optional[str] = None,
+    keep_region: Optional[Sequence[float]] = None,
     operation_id: Optional[str] = None,
     expected_revision: Optional[int] = None,
     note: Optional[str] = None,
     turn_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     op_id = operation_id or f"pgen:{int(time.time() * 1000)}:{layer_target}"
+    params_fingerprint = contract_fingerprint(_args_contract_fingerprint_basis(
+        denominator=denominator, denominator_text=denominator_text,
+        page_text=page_text, purpose=purpose, dpi=dpi,
+        kept_values=kept_values, sum_fields=sum_fields,
+        keep_feature_ids=keep_feature_ids, keep_values=keep_values,
+        keep_values_field=keep_values_field, keep_region=keep_region))
     prior = await _find_receipt(session_id, op_id, statuses=("committed",))
     if prior is not None:
         prior = dict(prior)
         prior["replayed"] = True
+        # 同 id 不同参数的重放：如实标注（幂等键语义 = 参数一致性由
+        # 调用方保证；不一致回执仍返回但不静默当同参重放）
+        if prior.get("params_fingerprint") not in (None, params_fingerprint):
+            prior["replay_params_mismatch"] = True
         return prior
+    # 断点续链（评审 R1-P2-2，对齐 scale_profile 纪律）：同 op_id 的
+    # partial 回执携带已提交 slot 数与已存工件 ref —— 重放复用工件
+    # ref（不产孤儿），从断点 slot 继续。
+    partial = await _find_receipt(session_id, op_id, statuses=("partial",))
+    resume_slots = int(partial.get("committed_slots") or 0) if partial else 0
+    resume_ref = partial.get("artifact_ref") if partial else None
+    resume_source_id = partial.get("artifact_source_id") if partial else None
 
     ctx = await _prepared_ctx(session_id, layer_target)
+    # 缺省 CAS 基线 = 准备段读数时的当前 revision（评审 R1-P2-3：准备-
+    # 提交窗口内的并发推进必须被检出，旧 layer 快照不得覆盖新 revision）。
+    default_chain_rev = await _current_revision(session_id)
     contract = _contract_from_args(
         ctx, denominator=denominator, denominator_text=denominator_text,
-        page_text=page_text, purpose=purpose, dpi=dpi)
+        page_text=page_text, purpose=purpose, dpi=dpi,
+        keep_feature_ids=keep_feature_ids,
+        keep_values=keep_values, keep_values_field=keep_values_field,
+        keep_region=keep_region)
     result, meta = _compile_from_ctx(
         ctx, contract=contract, kept_values=kept_values, sum_fields=sum_fields)
 
     if mode != "commit":
-        receipt = await preview_paper_scale_generalization(
-            session_id, layer_target, denominator=denominator,
-            denominator_text=denominator_text, page_text=page_text,
-            purpose=purpose, dpi=dpi, kept_values=kept_values,
-            sum_fields=sum_fields)
-        receipt.update({
+        # 复用本次编译结果组装预览回执（评审 R1-P2-7：不再二次全量编译）
+        receipt = {
+            "status": "preview",
+            "schema_version": SERVICE_SCHEMA_VERSION,
+            "plan_schema_version": PLAN_SCHEMA_VERSION,
+            "layer_id": result.plan["layer_id"],
+            "fingerprint": result.fingerprint,
+            "pipeline": result.plan["pipeline"],
+            "stats": result.plan["stats"],
+            "qa_summary": result.plan["qa_summary"],
+            "semantic_checks": result.semantic_checks,
+            "disclosures": result.disclosures,
             "operation_id": op_id, "mode": "preview",
             "note": (note or "")[:160] or None,
             "commit_hint": "同参 + mode=commit 提交（工件将存为新 ref，源数据不动）",
-        })
+        }
         return receipt
 
     # QA fail-closed：blocking > 0 拒绝 commit（诚实门禁，不静默上版）
@@ -397,17 +520,23 @@ async def apply_paper_scale_generalization(
             "error": "QA 存在 fail 检查 —— 拒绝冻结上版（fail-closed）",
         }
 
-    # 工件落新 ref（非破坏）
+    # 工件落新 ref（非破坏；断点续链复用已存 ref —— 不产孤儿）
     from app.services.session_data import session_data_manager
 
-    ref_id = await session_data_manager.store(
-        session_id, result.artifact, prefix="pgen")
-    source_id = f"{result.plan['layer_id']}__paper@{contract.target_denominator}"
+    if resume_slots >= 1 and isinstance(resume_ref, str) and resume_ref \
+            and isinstance(resume_source_id, str) and resume_source_id:
+        ref_id, source_id = resume_ref, resume_source_id
+    else:
+        ref_id = await session_data_manager.store(
+            session_id, result.artifact, prefix="pgen")
+        source_id = (f"{result.plan['layer_id']}__paper@"
+                     f"{contract.target_denominator}")
 
     # 冻结计划 + 表达窗口（等效 zoom 跨度 ±0.5，钳制 [0,24)）
     zoom = equivalent_display_zoom(
         int(contract.target_denominator),
-        float(contract.frame.scale_reference_lat))
+        float(contract.frame.scale_reference_lat),
+        dpi=float(contract.page.dpi))
     if zoom is None:
         raise PaperScaleError("等效 zoom 换算失败（分母/DPI 越域）")
     half = 0.5
@@ -495,9 +624,18 @@ async def apply_paper_scale_generalization(
     ]
 
     chain_rev = int(expected_revision) if expected_revision is not None \
-        else None
+        else default_chain_rev
     last_res = None
-    for slot, intent in enumerate(intents):
+    intents_run = intents[resume_slots:]
+    if not intents_run:
+        return {
+            "status": "error",
+            "error": "resume produced no runnable intents（重放参数与"
+                     "原计划不一致；partial 回执基于不同 profile）",
+            "operation_id": op_id,
+            "committed_slots": resume_slots,
+        }
+    for slot, intent in enumerate(intents_run, start=resume_slots):
         res = await apply_gis_mutation(
             session_id, intent,
             origin="agent", actor="paper_scale_service",
@@ -513,6 +651,7 @@ async def apply_paper_scale_generalization(
                 "operation_id": op_id,
                 "layer_id": result.plan["layer_id"],
                 "committed_slots": slot,
+                "chain_revision": chain_rev,
                 "artifact_ref": ref_id,
                 "artifact_source_id": source_id,
                 "error": res.error_msg or (
@@ -534,6 +673,7 @@ async def apply_paper_scale_generalization(
         "operation_id": op_id,
         "layer_id": result.plan["layer_id"],
         "plan_fingerprint": result.fingerprint,
+        "params_fingerprint": params_fingerprint,
         "mapspec_revision": int(res.mutation_revision) if res else None,
         "artifact_ref": ref_id,
         "artifact_source_id": source_id,
