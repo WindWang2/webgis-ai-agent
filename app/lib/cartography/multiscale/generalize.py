@@ -529,7 +529,8 @@ def _apply_with_anchor_guard(
             return candidate, codes, obs
         tol = tol / 2.0
         codes = [f"anchor_retry_{attempt}"]
-    return geom_ll, ["anchor_lost_fallback"], obs
+    # 保留最后一次重试痕迹：失败回执必须可诊断（不能只剩兜底码）。
+    return geom_ll, [*codes, "anchor_lost_fallback"], obs
 
 
 def _anchors_present(geom: Any, anchors: Sequence[Tuple[float, float]],
@@ -558,23 +559,21 @@ def _anchors_present(geom: Any, anchors: Sequence[Tuple[float, float]],
 def _count_retained_anchors(
     features: Sequence[Dict[str, Any]], anchors: Dict[Tuple[float, float], int]
 ) -> int:
+    # 逐要素只解析一次（旧实现对每个锚点重新 shape() 全部要素 —— O(A×F)）。
+    all_coords: List[Tuple[float, float]] = []
+    for f in features:
+        geom = f.get("geometry")
+        if not geom:
+            continue
+        try:
+            all_coords.extend(_all_coords(shape(geom)))
+        except Exception as _exc:  # noqa: BLE001
+            logging.getLogger(__name__).debug("generalize: optional operation unavailable (%s)", type(_exc).__name__)
+            continue
     retained = 0
     for c in anchors:
-        found = False
-        for f in features:
-            geom = f.get("geometry")
-            if not geom:
-                continue
-            try:
-                coords = _all_coords(shape(geom))
-            except Exception as _exc:  # noqa: BLE001
-                logging.getLogger(__name__).debug("generalize: optional operation unavailable (%s)", type(_exc).__name__)
-                continue
-            if any(abs(px - c[0]) < 1e-9 and abs(py - c[1]) < 1e-9
-                   for px, py in coords):
-                found = True
-                break
-        if found:
+        if any(abs(px - c[0]) < 1e-9 and abs(py - c[1]) < 1e-9
+               for px, py in all_coords):
             retained += 1
     return retained
 

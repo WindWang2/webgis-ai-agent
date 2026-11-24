@@ -1223,3 +1223,48 @@ async def test_transient_descriptor_error_is_not_expiry(clean_session):
         sd_module.session_data_manager.get_ref_descriptor = original  # type: ignore[assignment]
     assert not any(f.code == F_ARTIFACT_EXPIRED for f in result.findings)
     assert result.status != STATUS_FAILED
+
+
+# ── 全量审查 P3：终验/兜底校验加固 ───────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_zero_max_passes_still_validates_once(clean_session):
+    """max_passes=0 表示零修复轮，不是零校验：层缺失必须落 failed，不得
+    未经任何校验就 STATUS_COMPLETE。"""
+    ref = await _store_ref(clean_session)
+    chapter = _chapter(bound_ref=ref)
+    engine = MapSpecLifecycleEngine()
+    await engine.apply_mutation(clean_session, InitProjectIntent())
+    result = await run_map_finalization(
+        clean_session, chapter=chapter, max_passes=0)
+    assert result.status != STATUS_COMPLETE
+    assert result.findings
+
+
+def test_stale_overlay_check_tolerates_unhashable_ref(monkeypatch):
+    """MapSpec source.ref 为 list/dict 时不得 TypeError 崩掉终验。"""
+    from app.services.gis_harness.completion.map_verification import (
+        _check_stale_overlays,
+    )
+
+    mapspec = {
+        "layers": [{"id": "stray", "source": "s-list"}],
+        "sources": {"s-list": {"ref": ["not", "a", "string"]}},
+    }
+    assert _check_stale_overlays({}, mapspec, {}) == []
+    mapspec["sources"]["s-list"]["ref"] = {"nested": True}
+    assert _check_stale_overlays({}, mapspec, {}) == []
+
+
+def test_execution_fallback_ignores_optional_rows(monkeypatch):
+    """无图兜底与图路径同口径：optional 行 pending/failed 不阻塞。"""
+    import app.services.gis_harness.plan_graph as pg
+
+    def _boom(_chapter):
+        raise RuntimeError("graph build failed")
+
+    monkeypatch.setattr(pg, "build_plan_graph", _boom)
+    chapter = _chapter(req_status="pending", step_status="failed",
+                       optional=True)
+    assert validate_execution(chapter) == []

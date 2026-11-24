@@ -76,10 +76,15 @@ def validate_execution(chapter: Dict[str, Any]) -> List[MapCompletionFinding]:
                 )
             )
         return findings
-    # 兜底（无图）：行状态直读（unavailable 与 failed 同为阻塞态）
-    open_rows = [r for r in rows if str(r.get("status") or "") in ("pending", "ready", "running")]
+    # 兜底（无图）：行状态直读（unavailable 与 failed 同为阻塞态）。
+    # 与图路径同口径：optional 行不阻塞（图路径只算 mandatory）。
+    mandatory_rows = [r for r in rows if not r.get("optional")]
+    open_rows = [
+        r for r in mandatory_rows
+        if str(r.get("status") or "") in ("pending", "ready", "running")]
     failed_rows = [
-        r for r in rows if str(r.get("status") or "") in ("failed", "unavailable")
+        r for r in mandatory_rows
+        if str(r.get("status") or "") in ("failed", "unavailable")
     ]
     if open_rows:
         caps = ",".join(str(r.get("capability") or "?") for r in open_rows[:4])

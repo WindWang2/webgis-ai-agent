@@ -205,7 +205,8 @@ class S3StorageSeam(GeospatialDataSourceAdapter):
         on failure an honest stub with a typed error is returned — never
         fixture metadata presented as the remote's data.
         """
-        target_uri = dataset_id if dataset_id.startswith("s3://") else f"s3://geo-data-bucket/{dataset_id}"
+        default_bucket = str(self.profile.options.get("bucket", "geo-bucket") or "geo-bucket")
+        target_uri = dataset_id if dataset_id.startswith("s3://") else f"s3://{default_bucket}/{dataset_id}"
 
         if not self.endpoint or self.endpoint.startswith("s3://"):
             fixture = SYNTHETIC_S3_FIXTURES.get(target_uri, list(SYNTHETIC_S3_FIXTURES.values())[0])
@@ -231,7 +232,8 @@ class S3StorageSeam(GeospatialDataSourceAdapter):
                 },
             )
 
-        bucket, key = "geo-data-bucket", dataset_id
+        bucket = default_bucket
+        key = dataset_id
         if target_uri.startswith("s3://"):
             try:
                 bucket, key = self.parse_s3_uri(target_uri)

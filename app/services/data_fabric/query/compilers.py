@@ -63,6 +63,12 @@ def _fmt_coord(v: float) -> str:
 
 def geojson_to_wkt(geom: Dict[str, Any]) -> str:
     """GeoJSON geometry → WKT（用于 PostGIS ST_GeomFromText 参数）。"""
+    return _geojson_to_wkt(geom, 0)
+
+
+def _geojson_to_wkt(geom: Dict[str, Any], _depth: int) -> str:
+    if _depth > _WKT_MAX_DEPTH:
+        raise PredicateError("geometry nesting too deep")
     if not isinstance(geom, dict) or "type" not in geom:
         raise PredicateError("geometry must be a GeoJSON object")
     gtype = str(geom["type"])
@@ -89,7 +95,7 @@ def geojson_to_wkt(geom: Dict[str, Any]) -> str:
             polys.append("(" + ", ".join(_ring_line(r) for r in poly) + ")")
         return "MULTIPOLYGON (" + ", ".join(polys) + ")"
     if gtype == "GeometryCollection" and isinstance(geom.get("geometries"), list):
-        parts = ", ".join(geojson_to_wkt(g) for g in geom["geometries"])
+        parts = ", ".join(_geojson_to_wkt(g, _depth + 1) for g in geom["geometries"])
         return f"GEOMETRYCOLLECTION ({parts})"
     raise PredicateError(f"unsupported GeoJSON type for WKT: {gtype}")
 
@@ -341,7 +347,9 @@ def compile_predicate_cql2(node: Any) -> str:
 
 
 def compile_bbox_cql2(bbox: Sequence[float], *, geometry_property: str = "geometry") -> str:
-    minx, miny, maxx, maxy = bbox
+    from app.services.data_fabric.query.predicates import _check_bbox
+
+    minx, miny, maxx, maxy = _check_bbox(bbox)
     property_name = '"' + geometry_property.replace('"', '""') + '"'
     return (
         f'S_INTERSECTS({property_name}, BBOX({_cql2_number(minx)}, {_cql2_number(miny)}, '

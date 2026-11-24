@@ -356,7 +356,6 @@ def verify_mapspec_dependencies(
             "reason": "恢复后章节无 mapspec 证据（图面依赖无法验证）",
             "layers": [],
         }
-    rev_map = {new: old for old, new in ref_map.items()}
     layers_out: List[Dict[str, Any]] = []
     worst = VERDICT_LIVE
     layers = mapspec_like.get("layers")
@@ -378,14 +377,10 @@ def verify_mapspec_dependencies(
         new_ref = ref_map.get(raw_ref, raw_ref)
         verdict_entry = ref_verdicts.get(new_ref)
         if verdict_entry is None:
-            if raw_ref in rev_map or raw_ref not in ref_map.values():
-                layers_out.append(
-                    {"layer_id": lid, "verdict": VERDICT_UNKNOWN,
-                     "reason": f"依赖 {raw_ref[:32]} 无验证结论（未重水合或证据缺席）"})
-                worst = _worst(worst, VERDICT_UNKNOWN)
-            else:
-                layers_out.append({"layer_id": lid, "verdict": VERDICT_LIVE,
-                                   "reason": "依赖 ref 存活"})
+            layers_out.append(
+                {"layer_id": lid, "verdict": VERDICT_UNKNOWN,
+                 "reason": f"依赖 {raw_ref[:32]} 无验证结论（未重水合或证据缺席）"})
+            worst = _worst(worst, VERDICT_UNKNOWN)
             continue
         verdict = str(verdict_entry.get("verdict") or VERDICT_UNKNOWN)
         layers_out.append({

@@ -410,10 +410,9 @@ async def resolve_interaction(
     _request: Request,
 ) -> dict[str, Any]:
     """扩展把 ctx.ui 结果交回服务端（bridge secret + turn token 校验同 execute）。"""
-    import hmac as _hmac
-
     from app.agent_pi_bridge import is_active_pi_turn
     from app.core.bridge_secret import get_bridge_secret
+    from app.core.signing import hmac_equals
     from app.services.chat.pi_interaction_envelope import consume_answer
     from app.services.chat.pi_runtime_interaction import get_interaction_service
     from app.services.chat.pi_turn_context import verify_turn_token
@@ -421,8 +420,10 @@ async def resolve_interaction(
     secret = get_bridge_secret()
     # 与 /pi-tools/execute 同款双重校验（路由层手工执行 —— 共用依赖会引入
     # Header 参数形状差异；逻辑一致：secret + 签名 turn token + 活跃 turn）。
+    # hmac_equals：非 ASCII 头按 latin-1 解出的 str 会让 compare_digest 抛
+    # TypeError（裸 500），这里统一归一为 False → 401。
     header_secret = _request.headers.get("X-Pi-Bridge-Secret", "")
-    if not header_secret or not _hmac.compare_digest(header_secret, secret):
+    if not header_secret or not hmac_equals(header_secret, secret):
         raise HTTPException(status_code=401, detail="Invalid or missing bridge secret")
     verified = verify_turn_token(secret, req.turnToken or "")
     if verified is None:

@@ -164,7 +164,7 @@ def validate_component_composition(
                     code="recommended_slot_missing", severity="warning", slot=slot.id,
                     detail=f"composition recommends {slot.id} but none present",
                 ))
-            elif len(instances) > max(slot.max_count, 1):
+            elif len(instances) > max(slot.max_count, 0):
                 result.violations.append(CompositionViolation(
                     code="cardinality_exceeded", slot=slot.id,
                     component_id=instances[0].id, component_type=instances[0].type,

@@ -137,6 +137,19 @@ class TestTimeDriverBinding:
         assert len(doc["sources"]["s1"]["inlineData"]["features"]) == 2
         assert doc["temporal"]["cursor_frame"] == "f-2022"
 
+    def test_missing_layer_window_is_disclosed_not_silent(self):
+        from app.services.gis_harness.temporal_products.time_filter import (
+            apply_time_window_to_doc,
+        )
+        doc = _temporal_doc([2021, 2022])
+        tw = {"frame_id": "f-2021", "label": "2021",
+              "start": "2021-01-01T00:00:00Z", "end": "2022-01-01T00:00:00Z",
+              "time_field": "year", "time_representation": "year_int",
+              "granularity": "year", "layer_id": "missing"}
+        out = apply_time_window_to_doc(doc, tw)
+        assert out["temporal"]["time_filter_skipped"] == "missing"
+        assert len(out["sources"]["s1"]["inlineData"]["features"]) == 2
+
     def test_writeback_hits_data_key_when_inline_data_falsy(self):
         """review P2-6：源含 falsy inlineData + 真 data 时回写 data 键。
 
@@ -185,3 +198,14 @@ class TestSvgTimeAnnotation:
             include_chrome=True,
         )
         assert "时间:" not in res.svg
+
+
+def test_long_temporal_frame_id_truncated_to_page_id_limit():
+    """超长 frame id 不得让 page_id 越界成裸 pydantic ValidationError。"""
+    doc = _temporal_doc([2021, 2022])
+    long_id = "f" * 130
+    for i, frame in enumerate(doc["temporal"]["frames"]):
+        frame["id"] = f"{long_id}{i}"
+    ir = plan_publication_pages(doc, atlas=AtlasPolicy(driver="time"))
+    content = [p for p in ir.pages if not p.cover]
+    assert content and all(len(p.page_id) <= 120 for p in content)

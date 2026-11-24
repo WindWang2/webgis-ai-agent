@@ -917,9 +917,23 @@ def _receipt_message(receipt: Dict[str, Any]) -> str:
     failed = receipt.get("failed_count", 0)
     aborted = receipt.get("aborted_count", 0)
     if status == "committed":
-        return f"地图操作已提交：{applied} 项生效" + (
-            f"，{skipped} 项保留用户决策" if skipped else ""
+        noop = sum(
+            1 for e in (receipt.get("effects") or [])
+            if isinstance(e, dict) and e.get("state") == "skipped"
+            and e.get("reason_code") == RC_NOOP
         )
+        user_wins = max(0, skipped - noop)
+        skipped_parts = []
+        if user_wins:
+            skipped_parts.append(f"{user_wins} 项保留用户决策")
+        if noop:
+            # RC_NOOP = 目标已是请求状态（非用户决策）—— 不得混入
+            # 「保留用户决策」陈述（1 applied + 1 noop 时误导用户）。
+            skipped_parts.append(f"{noop} 项已是目标状态")
+        message = f"地图操作已提交：{applied} 项生效"
+        if skipped_parts:
+            message += "，" + "、".join(skipped_parts)
+        return message
     if status == "partial":
         if receipt.get("superseded"):
             return (

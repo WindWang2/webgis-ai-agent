@@ -59,6 +59,9 @@ class HeatmapRadiusContract:
     bandwidth_m: Optional[float] = None
     # explicit | default | legacy_radius_visual_default_applied
     source: str = "default"
+    # 带宽来源：explicit | legacy_radius | default（下游据此区分显式 1000m
+    # 与缺省带宽 —— 二者数值相同但语义不同）。
+    bandwidth_source: str = ""
     warnings: List[str] = field(default_factory=list)
 
     def to_metadata(self) -> Dict[str, Any]:
@@ -69,6 +72,8 @@ class HeatmapRadiusContract:
         }
         if self.bandwidth_m is not None:
             meta["bandwidth_m"] = self.bandwidth_m
+            if self.bandwidth_source:
+                meta["bandwidth_source"] = self.bandwidth_source
         if self.warnings:
             meta["radius_warnings"] = list(self.warnings)
         return meta
@@ -131,6 +136,7 @@ def normalize_heatmap_radius(
         # legacy schema 语义为米：带宽忠实继承；视觉半径不得猜测。
         # 4–60 也曾被当像素直通 —— 已停止（#1389 C01）。
         contract.bandwidth_m = legacy
+        contract.bandwidth_source = "legacy_radius"
         contract.radius_px = DEFAULT_RADIUS_PX
         contract.source = _LEGACY_VISUAL_DEFAULT_REASON
         warnings.append(
@@ -149,10 +155,13 @@ def normalize_heatmap_radius(
 
     if explicit_bw is not None:
         contract.bandwidth_m = explicit_bw
+        contract.bandwidth_source = "explicit"
     elif contract.bandwidth_m is None:
         contract.bandwidth_m = (
             legacy if legacy is not None else DEFAULT_BANDWIDTH_M
         )
+        contract.bandwidth_source = (
+            "legacy_radius" if legacy is not None else "default")
 
     if explicit_bw is not None and legacy is not None and explicit_bw != legacy:
         warnings.append(

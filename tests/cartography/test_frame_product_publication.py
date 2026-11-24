@@ -293,3 +293,32 @@ class TestProductPdfReal:
         assert "成都每万人小学学位" in text
         for t in ("2020", "2022", "2024"):
             assert t in text
+
+
+class TestProductPageRawGuard:
+    def test_grid_overflow_is_typed_error(self):
+        """未按 schema 校验的原始文档：网格放不下 → typed 拒绝而非裸 ValidationError。"""
+        doc = _product_document()
+        doc["frame_product"]["grid"] = {"columns": 1}
+        base = doc["frame_product"]["frames"][0]
+        doc["frame_product"]["frames"] = [
+            {**base, "frame_id": f"f{i}"} for i in range(39)]
+        with pytest.raises(MapSpecSchemaError) as ei:
+            plan_publication_pages(doc, atlas=AtlasPolicy(driver="product"))
+        assert ei.value.code == "product_page_grid_overflow"
+
+    def test_invalid_frame_id_is_typed_error(self):
+        """缺 frame_id / >64 字符 → typed 拒绝而非 FrameSlotIR ValidationError。"""
+        missing = _product_document()
+        del missing["frame_product"]["frames"][0]["frame_id"]
+        with pytest.raises(MapSpecSchemaError) as ei:
+            plan_publication_pages(
+                missing, atlas=AtlasPolicy(driver="product"))
+        assert ei.value.code == "product_page_frame_id_invalid"
+
+        overlong = _product_document()
+        overlong["frame_product"]["frames"][0]["frame_id"] = "x" * 65
+        with pytest.raises(MapSpecSchemaError) as ei2:
+            plan_publication_pages(
+                overlong, atlas=AtlasPolicy(driver="product"))
+        assert ei2.value.code == "product_page_frame_id_invalid"

@@ -107,6 +107,50 @@ class TestExplicitPolicyDecision:
         assert d.selected_skill == "t_dep"
         assert "alternative=validate_spatial_data" in d.fallback_reason
 
+    def test_explicit_selection_skips_trusted_resolve(self):
+        from app.services.gis_harness.skills.loader import get_skill_library
+        from app.services.gis_harness.skills.policy import SkillPolicy
+
+        lib = get_skill_library()
+
+        class _Resolver:
+            def resolve(self, facts, **kwargs):
+                raise AssertionError("explicit path must not run resolver")
+
+            def get(self, sid):
+                return lib.get(sid)
+
+            def check_eligibility(self, skill, facts):
+                return None
+
+        facts = SelectionFacts(goal_text="x")
+        facts.explicit_skill_id = "point_distribution_analysis"
+        d = SkillPolicy(_Resolver()).resolve(facts)
+        assert d.selected_skill == "point_distribution_analysis"
+
+    def test_explicit_eligibility_failure_is_fail_closed(self):
+        from app.services.gis_harness.skills.loader import get_skill_library
+        from app.services.gis_harness.skills.policy import SkillPolicy
+
+        lib = get_skill_library()
+
+        class _Resolver:
+            def resolve(self, facts, **kwargs):
+                raise AssertionError("explicit path must not run resolver")
+
+            def get(self, sid):
+                return lib.get(sid)
+
+            def check_eligibility(self, skill, facts):
+                raise RuntimeError("eligibility backend down")
+
+        facts = SelectionFacts(goal_text="x")
+        facts.explicit_skill_id = "point_distribution_analysis"
+        d = SkillPolicy(_Resolver()).resolve(facts)
+        assert d.eligibility_ok is False
+        assert d.mode == "guide"
+        assert "ELIGIBILITY:ELIGIBILITY_CHECK_FAILED" in d.rejected_codes
+
     def test_legacy_intent_path_unchanged_without_explicit(self):
         """不带显式选择的既有路径逐位不变（回归保护）。"""
         d = resolve_for_planning(SelectionFacts(
@@ -174,3 +218,18 @@ class TestCatalogProjection:
         for guide in catalog["md_guides"]:
             assert guide["asset_type"] == "md_guide"
             assert guide["runnability"] == "guidance_only"
+
+    def test_extension_candidate_count_matches_bounded_array(self, monkeypatch):
+        import app.extensions_platform.host as host_mod
+        import app.extensions_platform.pack_catalog as pack_mod
+        from app.services.gis_harness.skill_jobs.catalog_views import build_catalog
+
+        monkeypatch.setattr(host_mod, "get_extension_host", lambda: object())
+        skills = [{"id": f"skill-{i}"} for i in range(25)]
+        monkeypatch.setattr(
+            pack_mod, "build_pack_catalog",
+            lambda host: {"namespaces": [{"packs": [{
+                "id": "pack", "surface": {"skills": skills}}]}]})
+        catalog = build_catalog()
+        assert len(catalog["extension_candidates"]) == 20
+        assert catalog["counts"]["extension_candidates"] == 20

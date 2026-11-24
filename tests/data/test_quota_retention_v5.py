@@ -870,6 +870,9 @@ def test_data_gc_endpoints_plan_and_confirm_gate(db, monkeypatch, tmp_path):
     assert store.exists(key_orphan) is True
     assert "promotion_store_gc" not in result
     assert result["orphan_revisions"]["deleted_count"] == 0
+    # P3：项目路由不做孤儿修订清理（全局 sweep 负责），必须显式披露
+    # 「未实现」，不能让 0 同时表示「无孤儿」与「没跑」。
+    assert result["orphan_revisions"]["implemented"] is False
 
 
 # ── 5. 孤儿修订行（FK-less drift）有界清理 ────────────────────────────────

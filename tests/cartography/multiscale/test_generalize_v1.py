@@ -296,3 +296,51 @@ class TestToleranceUnits:
         # 度容差（赤道换算）与米容差产物一致
         assert json.dumps(deg.feature_collection, sort_keys=True) == json.dumps(
             m.feature_collection, sort_keys=True)
+
+
+def test_anchor_retry_trace_reaches_receipt():
+    """锚点守卫失败时，重试痕迹必须随兜底码一起进入回执。"""
+    # 共线中点在任意容差下都会被 DP 简化删除 → 重试耗尽后回退原几何。
+    a = {"type": "Polygon", "coordinates": [[
+        [104.0, 30.0], [104.01, 30.0], [104.01, 30.005],
+        [104.01, 30.01], [104.0, 30.01], [104.0, 30.0]]]}
+    b = {"type": "Polygon", "coordinates": [[
+        [104.01, 30.0], [104.02, 30.0], [104.02, 30.01],
+        [104.01, 30.01], [104.01, 30.005], [104.01, 30.0]]]}
+    feats = [
+        {"type": "Feature", "id": "a", "properties": {}, "geometry": a},
+        {"type": "Feature", "id": "b", "properties": {}, "geometry": b},
+    ]
+    r = generalize_features(
+        feats,
+        geometry_policy=GeometryGeneralizationPolicy(
+            strategy="shared_boundary_protect", tolerance=10.0,
+            tolerance_units="meters_ground"),
+        selection_policy=_no_sel(), latitude_hint=30.0,
+    )
+    reasons = r.receipt["reason_counts"]
+    assert "anchor_lost_fallback" in reasons
+    assert any(code.startswith("anchor_retry_") for code in reasons)
+
+
+def test_count_retained_anchors_parses_each_feature_once(monkeypatch):
+    """集合级锚点核验不得按锚点数重复解析全部要素几何。"""
+    from app.lib.cartography.multiscale import generalize as mod
+
+    calls = []
+    real_shape = mod.shape
+
+    def _counting_shape(geom):
+        calls.append(1)
+        return real_shape(geom)
+
+    monkeypatch.setattr(mod, "shape", _counting_shape)
+    feats = [
+        {"geometry": _line(5, base_lat=30.0)},
+        {"geometry": _line(5, base_lat=30.1)},
+        {"geometry": _line(5, base_lat=30.2)},
+    ]
+    anchors = {(104.0 + i * 0.0001, 30.0 + (0.00001 if i % 2 else -0.00001)): 2
+               for i in range(10)}
+    mod._count_retained_anchors(feats, anchors)
+    assert len(calls) == len(feats)

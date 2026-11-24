@@ -492,6 +492,11 @@ def validate_candidate_graph(
             "capability": cap[:64],
             "depends_on": [str(d) for d in (n.get("depends_on") or [])[:_MAX_DEPS]],
         })
+    dupes = sorted({i for i in ids if ids.count(i) > 1})
+    if dupes:
+        # 重复 id 会让 adj/node()/diff 静默丢节点 → 显式拒绝（valid=False，
+        # 调用方回退确定性 build_goal_graph）。
+        errors.append(f"duplicate node ids: {dupes[:8]}")
     id_set = set(ids)
     for n in cleaned:
         n["depends_on"] = [d for d in n["depends_on"] if d in id_set]

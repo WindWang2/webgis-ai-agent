@@ -570,6 +570,7 @@ def estimate_for_node(node: GraphNode) -> ExecutionEstimate:
         if "celery" in str(node.extras.get("execution_policy", "")):
             est.cpu = "high"
             est.basis["cpu"] = "declared"
+            dims_with_basis += 1
 
     elif node.kind == KIND_MODEL:
         # modelops 侧的 MemoryEstimate/DeviceRequirements 是精确源 ——

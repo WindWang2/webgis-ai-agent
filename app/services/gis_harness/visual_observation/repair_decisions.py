@@ -92,30 +92,37 @@ async def record_decision(
         "reason": _clip(reason, 120),
     }
     try:
-        raw = await session_data_manager.get_map_state(session_id)
-        entries = (raw or {}).get(DECISIONS_KEY)
-        items = [e for e in entries if isinstance(e, dict)] \
-            if isinstance(entries, list) else []
-        items = [
-            e for e in items
-            if not (
-                proposal_id
-                and str(e.get("proposal_id") or "") == str(proposal_id)
-                # review P2-15：auto 收场记录不得删除同 proposal_id 的用户
-                # 裁决（approved/rejected）—— 否则拒绝记忆被抹掉，同一 patch
-                # 反复再提案（违背本模块「auto 不覆写用户裁决」的声明）。
-                # 用户改主意（新裁决仍是 approved/rejected）仍整体替换；
-                # auto 条目之间照旧按 proposal_id 去重（账本有界）。
-                and (decision in (DECISION_APPROVED, DECISION_REJECTED)
-                     or str(e.get("decision") or "") not in (
-                         DECISION_APPROVED, DECISION_REJECTED))
-            )
-        ]
-        items.append(entry)
-        while len(items) > MAX_DECISIONS:
-            items.pop(0)
-        return bool(await session_data_manager.set_map_state(
-            session_id, DECISIONS_KEY, items))
+        from app.services.session_state_atomic import atomic_update_state
+
+        def _update(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+            entries = snapshot.get(DECISIONS_KEY)
+            items = [e for e in entries if isinstance(e, dict)] \
+                if isinstance(entries, list) else []
+            items = [
+                e for e in items
+                if not (
+                    proposal_id
+                    and str(e.get("proposal_id") or "") == str(proposal_id)
+                    # review P2-15：auto 收场记录不得删除同 proposal_id 的用户
+                    # 裁决（approved/rejected）—— 否则拒绝记忆被抹掉，同一 patch
+                    # 反复再提案（违背本模块「auto 不覆写用户裁决」的声明）。
+                    # 用户改主意（新裁决仍是 approved/rejected）仍整体替换；
+                    # auto 条目之间照旧按 proposal_id 去重（账本有界）。
+                    and (decision in (DECISION_APPROVED, DECISION_REJECTED)
+                         or str(e.get("decision") or "") not in (
+                             DECISION_APPROVED, DECISION_REJECTED))
+                )
+            ]
+            items.append(entry)
+            while len(items) > MAX_DECISIONS:
+                items.pop(0)
+            return {DECISIONS_KEY: items}
+
+        # 读改写必须在存储层原子完成（同会话并发记账不得丢条目 ——
+        # 拒绝记忆丢失会让同一 patch 反复再提案）。
+        committed = await atomic_update_state(
+            session_data_manager, session_id, [DECISIONS_KEY], _update)
+        return committed is not None
     except Exception:  # noqa: BLE001 — 记账失败不阻断主链
         logger.warning("[VisualDecisions] record failed", exc_info=True)
         return False

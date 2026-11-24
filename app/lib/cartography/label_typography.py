@@ -334,6 +334,9 @@ def wrap_label_multilingual(
             cur = unit[:max_chars] if len(unit) > max_chars else unit
     if cur:
         packed.append(cur)
+    if not packed:
+        # 空串/纯空白：契约要求 1..max_lines 行（与 cjk_char 分支的 [""] 一致）。
+        return [""]
     if len(packed) <= max_lines:
         return packed
     tail = " ".join(packed[max_lines - 1:])[:max_chars]

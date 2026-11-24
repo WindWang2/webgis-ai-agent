@@ -247,7 +247,7 @@ async def preview_plan(
     # load→dry-run→save 窗口内 execute 完成时，旧副本回存会把 executed 打回
     # previewed 再被 discard（R2-3 竞态）—— 锁内重读后按终态拒绝。
     async with _exec_lock(session_id, plan.plan_hash):
-        plan = await _load_owned_plan(plan_id, session_id) or plan
+        plan = await _load_owned_plan(plan_id, session_id)
         if plan.state in ("executed", "verified", "rolled_back"):
             raise HTTPException(
                 status_code=409,

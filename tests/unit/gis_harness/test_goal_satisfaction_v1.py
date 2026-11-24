@@ -477,3 +477,51 @@ def test_no_chapter_returns_none_zero_drift():
     assert evaluate_goal_satisfaction(None) is None
     assert evaluate_goal_satisfaction({}) is None
     assert evaluate_goal_satisfaction({"foo": "bar"}) is None
+
+
+def test_frame_gate_corrupt_summary_fails_closed():
+    """伪造/损坏的 frame summary 数值不得让评估入口崩溃或静默放行。"""
+    ch = _chapter()
+    ch["map_layers"] = [{"layer_id": "l1", "role": "primary"}]
+    product = _ready_product(frame_product={
+        "status": "complete",
+        "summary": {"required": ["bad"], "verified": 0, "snapshot_only": 0},
+    })
+    report = evaluate_goal_satisfaction(ch, map_product=product)
+    map_req = next(v for v in report.requirements if v.requirement_id == "map")
+    assert map_req.verdict != RequirementState.FULFILLED
+    assert "frame_summary_unparseable" in map_req.missing
+
+
+def test_must_not_target_not_matched_in_unrelated_detail():
+    """must_not 只按证据 id 绑定能力；detail 文本（skipped=2 等）不得
+    触发无关禁令违反。"""
+    ch = _chapter()
+    ch["goal_contract"] = GoalContract(
+        goal_id="g",
+        requirements=[
+            GoalRequirement(id="map", kind=RequirementKind.MAP),
+            GoalRequirement(id="no_skip", kind=RequirementKind.ANALYSIS,
+                            polarity="must_not", capability="skip"),
+        ],
+    ).model_dump()
+    ch["analysis_steps"] = [
+        {"capability": "compute", "purpose": "计算", "status": "complete",
+         "resolved_algorithm": "skipped=2"},
+    ]
+    report = evaluate_goal_satisfaction(ch, map_product=_ready_product())
+    forbidden = next(v for v in report.requirements
+                     if v.requirement_id == "no_skip")
+    assert forbidden.verdict == RequirementState.FULFILLED
+
+
+def test_bound_receipt_rows_requires_exact_ref():
+    """短 ref 不得靠 endswith 绑定到无关回执。"""
+    from app.services.gis_harness.goal_satisfaction.receipts import (
+        bound_receipt_rows,
+    )
+
+    row = {"input_ref": "dataset:x/1", "output_ref": "res-1"}
+    bundle = {"families": {"compute": [row]}}
+    assert bound_receipt_rows(bundle, "compute", "1") == []
+    assert bound_receipt_rows(bundle, "compute", "res-1") == [row]

@@ -292,6 +292,13 @@ def apply_time_window_to_doc(
                 target_sid = layer.get("source")
                 break
     if not isinstance(target_sid, str) or target_sid not in sources:
+        if layer_id:
+            # 指定层不存在：不得静默返回全期文档（调用方无法区分
+            # 「无此层」与「已过滤」）——写入可判别的披露标记。
+            _temporal = doc.get("temporal")
+            _new_temporal = dict(_temporal) if isinstance(_temporal, dict) else {}
+            _new_temporal["time_filter_skipped"] = layer_id[:64]
+            return {**doc, "temporal": _new_temporal}
         return doc
     src = sources[target_sid]
     if not isinstance(src, dict):
@@ -318,7 +325,5 @@ def apply_time_window_to_doc(
     temporal = doc.get("temporal")
     new_temporal = dict(temporal) if isinstance(temporal, dict) else {}
     new_temporal["cursor_frame"] = time_window.get("frame_id")
-    if new_temporal.get("enabled"):
-        new_temporal["enabled"] = True
 
     return {**doc, "sources": new_sources, "temporal": new_temporal}

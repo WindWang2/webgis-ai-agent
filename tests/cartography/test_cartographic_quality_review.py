@@ -2175,3 +2175,57 @@ def test_projection_still_detects_paint_change_after_huge_source():
     before = cartographic_fingerprint(spec)
     spec["layers"][0]["paint"]["circle-color"] = "#ff0000"
     assert cartographic_fingerprint(spec) != before
+
+
+def test_apply_palette_change_tolerates_tuple_stops():
+    """Python 构造的 tuple stops/cases 不得因原地赋值抛 TypeError。"""
+    from app.lib.cartography.quality_loop import _apply_palette_change
+
+    layer = {
+        "legend_spec": {"palette_colors": ["#111111", "#222222", "#333333"]},
+        "paint": {"fill-color": {
+            "method": "step", "field": "v", "default": "#000000",
+            "stops": ((0, "#111111"), (1, "#222222")),
+        }},
+    }
+    _apply_palette_change(layer, ["#111111", "#222222", "#333333"])
+
+    match_layer = {
+        "legend_spec": {"palette_colors": ["#111111", "#222222"]},
+        "paint": {"fill-color": {
+            "method": "match", "field": "k",
+            "cases": (("a", "#111111"), ("b", "#222222")),
+        }},
+    }
+    _apply_palette_change(match_layer, ["#111111", "#222222"])
+
+
+def test_repair_patch_fingerprint_tolerates_nan_observation():
+    from app.lib.cartography.runtime_repair import repair_patch_fingerprint
+
+    fingerprint = repair_patch_fingerprint([
+        {"before": {"opacity": float("nan")}},
+    ])
+    assert fingerprint.startswith("repair-sha256:")
+
+
+def test_runtime_visibility_repair_tolerates_non_dict_layout():
+    mapspec = _plain_mapspec()
+    mapspec["layers"][0]["layout"] = "invalid"
+    observation = {
+        "layers": [{
+            "id": "result",
+            "runtime_store_id": "result",
+            "intent_generation": 3,
+        }],
+    }
+    cartography = {
+        "checks": [{
+            "rule": "RUNTIME_RESULT_VISIBILITY",
+            "status": "fail",
+            "evidence": {"layer_id": "result", "runtime_layer_id": "result"},
+        }],
+    }
+    plan = plan_runtime_repairs(mapspec, observation, cartography)
+    assert plan is not None
+    assert plan["patches"][0]["desired"]["visible"] is True

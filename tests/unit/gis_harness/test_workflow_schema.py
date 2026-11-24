@@ -311,3 +311,24 @@ def test_pack_workflows_validate_clean(recipe_id):
         precondition_exists=precondition_exists,
     )
     assert violations == []
+
+
+def test_statistics_numeric_field_role_keeps_description():
+    """P3：_NUM_FIELD_ROLE 的 name 参数不得被丢弃（note 恒空）。"""
+    from app.services.gis_harness.recipe_packs import statistics as stats
+
+    recipe = next(
+        r for r in stats.RECIPES if r.id == "global_moran_autocorrelation")
+    measure = next(
+        role for role in recipe.workflow.data_roles if role.role == "measure")
+    assert "被检验的数值字段" in measure.note
+
+
+def test_slope_units_disclosure_has_obligation():
+    """P3：TERRAIN_SLOPE_UNITS 披露码必须有对应 obligation（不得悬空）。"""
+    from app.services.gis_harness.recipes import get_recipe_registry
+
+    recipe = get_recipe_registry().get("slope_analysis_workflow")
+    assert recipe is not None and recipe.workflow is not None
+    codes = {o.warning_code for o in recipe.workflow.obligations}
+    assert "TERRAIN_SLOPE_UNITS" in codes

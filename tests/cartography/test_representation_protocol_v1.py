@@ -197,6 +197,14 @@ class TestWindowDerivation:
         # hidden 窗必带 reason codes（可审计）。
         assert with_gate.windows[0].reason_codes
 
+    def test_hidden_windows_do_not_claim_visual_aggregation(self):
+        """hidden 是可见性门而非聚合表达：纯 hidden 偏差不得置 aggregation。"""
+        d = representation_at_scale(
+            geometry="line", feature_count=90000,
+            allow_detail_visibility_hidden=True)
+        assert d.aggregation is None
+        assert VISUAL_AGGREGATION_DISCLOSURE not in d.disclosures
+
     def test_polygon_never_auto_hidden(self):
         d = representation_at_scale(
             geometry="polygon", feature_count=90000, allow_detail_visibility_hidden=True)

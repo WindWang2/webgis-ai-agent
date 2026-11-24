@@ -180,6 +180,21 @@ def _chart_kind_for_plan(plan: "MapProductPlan") -> str:
     return ""
 
 
+def _spec_identity(
+    plan_id: str, intent: Any, plan: Any, archetype: str,
+    scope: str, subject: str,
+) -> str:
+    """spec_id 身份种子：plan_id 优先；空 plan_id 时用查询/原型/范围/主体
+    兜底 —— 否则所有产品收敛为同一 spec_id（sha1("")[:12]），按 id
+    归集/去重会串产品。"""
+    if plan_id:
+        return plan_id
+    return "|".join((
+        str(getattr(intent, "query", "") or getattr(plan, "query", "") or ""),
+        str(archetype or ""), str(scope or ""), str(subject or ""),
+    ))
+
+
 def build_product_spec_from_plan(
     plan: "MapProductPlan",
     intent: "MapRequestIntent",
@@ -194,8 +209,10 @@ def build_product_spec_from_plan(
     """
     archetype = getattr(template, "archetype", "") or ""
     shape = shape_for_archetype(archetype)
-    subject = str(getattr(intent.subject, "category", "") or "")
-    scope = str(getattr(intent.scope, "name", "") or "")
+    # 契约上界（ProductView/MapProductSpec 的 max_length）：intent 字段可
+    # 超长，装配前先收敛，否则 builder 不再 total（ValidationError 抛出）。
+    subject = str(getattr(intent.subject, "category", "") or "")[:120]
+    scope = str(getattr(intent.scope, "name", "") or "")[:120]
     plan_id = str(getattr(plan, "plan_id", "") or "")
 
     views: List[ProductView] = []
@@ -243,7 +260,7 @@ def build_product_spec_from_plan(
         rel_specs.append(("comparison", "map", "comparison"))
 
     # 时间面板：intent.time 显式给出时期时（变化/时序类请求的诚实构成）
-    time_scope = str(getattr(intent, "time", "") or "")
+    time_scope = str(getattr(intent, "time", "") or "")[:120]
     if time_scope:
         views.append(ProductView(
             view_id="v-time", kind="time_panel", role="secondary",
@@ -291,13 +308,14 @@ def build_product_spec_from_plan(
 
     spec = MapProductSpec(
         spec_id="prod-" + hashlib.sha1(  # noqa: S324 — 身份摘要非安全用途
-            f"{plan_id}".encode("utf-8"), usedforsecurity=False).hexdigest()[:12],
+            _spec_identity(plan_id, intent, plan, archetype, scope, subject)
+            .encode("utf-8"), usedforsecurity=False).hexdigest()[:12],
         spec_version=PRODUCT_SPEC_VERSION,
         query=str(getattr(intent, "query", "") or getattr(plan, "query", "") or "")[:300],
         goal=shape_claims(shape, subject)[0] if shape.declared_claims else "",
-        product_type=archetype,
-        task=str(getattr(intent, "task", "") or ""),
-        scope=scope, temporal=time_scope, subject=subject,
+        product_type=archetype[:48],
+        task=str(getattr(intent, "task", "") or "")[:48],
+        scope=scope[:120], temporal=time_scope[:120], subject=subject[:120],
         claims=shape_claims(shape, subject),
         views=views, relations=relations,
         delivery=ProductDeliveryIntent(targets=raw_targets, audience=audience),

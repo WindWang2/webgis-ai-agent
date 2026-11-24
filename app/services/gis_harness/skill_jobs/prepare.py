@@ -223,6 +223,21 @@ def _resolve_args(argument_map: Dict[str, Any],
     return args
 
 
+def _collect_roles(node: Any) -> set:
+    """递归收集 $role 标记（argument_map 任意深度的 role 叶子）。"""
+    found: set = set()
+    if isinstance(node, dict):
+        role = node.get("$role")
+        if isinstance(role, str):
+            found.add(role)
+        for value in node.values():
+            found.update(_collect_roles(value))
+    elif isinstance(node, list):
+        for value in node:
+            found.update(_collect_roles(value))
+    return found
+
+
 def _get_registry(registry: Optional[Any] = Any):
     """解析工具注册表：显式注入 > bridge 单例（生产 lifespan 注入）。"""
     if registry is not None:
@@ -455,7 +470,6 @@ async def prepare_skill_job(
     # ── 能力/工具核对（阳性事实）+ 编译 ────────────────────────────────
     registry = _get_registry(registry)
     declared_caps = {r.capability_id for r in skill.capability_requirements}
-    availability: Dict[str, str] = {}
     try:
         from app.lib.gis.capability_availability_cache import (
             get_availability_snapshot,
@@ -493,7 +507,6 @@ async def prepare_skill_job(
                         f"（{status}）—— 显式选择技能不解禁能力",
                         detail={"step": st.step_id, "tool": st.tool,
                                 "status": status})
-                availability[st.tool] = status
         args = _resolve_args(st.argument_map, param_map)
         steps_out.append(PreparedStep(
             step_id=st.step_id, tool=st.tool,
@@ -519,10 +532,7 @@ async def prepare_skill_job(
             "step_id": st.step_id, "tool": st.tool,
             "capability": st.capability_id,
             "side_effect": side,
-            "reads_roles": sorted({
-                v["$role"] for v in st.args.values()
-                if isinstance(v, dict) and "$role" in v
-            }),
+            "reads_roles": sorted(_collect_roles(st.args)),
             "produces_evidence": st.produces_evidence,
             "required": st.required,
         })

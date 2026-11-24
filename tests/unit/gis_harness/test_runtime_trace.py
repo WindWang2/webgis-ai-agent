@@ -78,3 +78,23 @@ def test_projection_never_carries_unbounded_values():
     ev = t.events("s1")[0]
     assert len(ev["detail"]["blob"]) <= 96
     assert ev["detail"]["n"] == 5
+
+
+def test_events_zero_limit_returns_empty():
+    t = GISRuntimeTrace()
+    t.record("s1", STAGE_FINALIZATION, n=1)
+    assert t.events("s1", limit=0) == []
+    assert t.events("s1", limit=-3) == []
+
+
+def test_detail_projection_within_declared_byte_budget():
+    import json
+
+    from app.services.gis_harness.trace import MAX_DETAIL_BYTES
+
+    t = GISRuntimeTrace()
+    t.record("s1", STAGE_FINALIZATION,
+             **{f"k{i}": "x" * 96 for i in range(8)})
+    ev = t.events("s1")[0]
+    size = len(json.dumps(ev["detail"], ensure_ascii=False).encode("utf-8"))
+    assert size <= MAX_DETAIL_BYTES

@@ -87,6 +87,19 @@ def test_recovery_write_failure_returns_unavailable_not_fresh_retry_count(tmp_pa
     assert metrics.snapshot()["counters"]["recovery_ledger_persist_failed"] == before + 2
 
 
+def test_recovery_copy_reports_zero_when_target_ledger_unavailable(tmp_path, monkeypatch):
+    """P3：目标账本不可用（未拷贝）时不得返回非零拷贝计数。"""
+    from app.services.gis_harness import recovery_ledger
+    monkeypatch.setenv("GIS_RECOVERY_LEDGER", "1")
+    monkeypatch.setattr(
+        recovery_ledger, "_ledger_path",
+        lambda sid: tmp_path / "ledger.json" if sid == "old" else None,
+    )
+    ledger = recovery_ledger.RecoveryLedger()
+    assert ledger.record_failure("old", "read", "timeout") == 1
+    assert ledger.copy_between_sessions("old", "new") == 0
+
+
 def test_statistic_metadata_cannot_positively_prove_itself():
     from app.services.gis_harness.evidence_claim.census import project_artifact_record
     from app.services.gis_harness.evidence_claim.verify import _value_compatible

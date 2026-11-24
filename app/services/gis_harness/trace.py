@@ -19,6 +19,7 @@ artifact sweep）是确定性系统，出问题时需要**内部**追溯「决�
 """
 from __future__ import annotations
 
+import json
 import threading
 import time
 from collections import OrderedDict, deque
@@ -65,13 +66,19 @@ class TraceEvent:
     detail: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
+        detail: Dict[str, Any] = {}
+        for k, v in list(self.detail.items())[:8]:
+            key = str(k)[:32]
+            value = v if isinstance(v, (int, float, bool)) else str(v)[:96]
+            trial = {**detail, key: value}
+            size = len(json.dumps(trial, ensure_ascii=False).encode("utf-8"))
+            if size > MAX_DETAIL_BYTES:
+                break
+            detail[key] = value
         return {
             "ts": round(self.ts, 3),
             "stage": self.stage[:32],
-            "detail": {
-                str(k)[:32]: (v if isinstance(v, (int, float, bool)) else str(v)[:96])
-                for k, v in list(self.detail.items())[:8]
-            },
+            "detail": detail,
         }
 
 
@@ -122,6 +129,8 @@ class GISRuntimeTrace:
         with self._lock:
             ring = self._sessions.get(session_id)
             if not ring:
+                return []
+            if limit <= 0:
                 return []
             return [e.to_dict() for e in list(ring)[-limit:]]
 

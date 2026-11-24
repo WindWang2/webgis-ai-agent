@@ -879,7 +879,12 @@ class PMTilesAdapter(GeospatialDataSourceAdapter):
 
     def health(self) -> DataFabricHealth:
         start_time = time.time()
-        is_ok = self.probe()
+        try:
+            is_ok = self.probe()
+        except SecurityBlockedError:
+            # Section 44 守卫拒绝的是配置（不是瞬时不可达）—— health 必须
+            # 报结果而不是把 typed 异常抛给健康检查调用方。
+            is_ok = False
         latency = round((time.time() - start_time) * 1000, 2)
         if is_ok:
             return DataFabricHealth(

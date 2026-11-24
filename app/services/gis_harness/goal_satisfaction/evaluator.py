@@ -141,6 +141,14 @@ def _rows(value: Any) -> List[Dict[str, Any]]:
     return [r for r in value if isinstance(r, dict)]
 
 
+def _int_or_none(value: Any) -> Optional[int]:
+    """诚实整数读取：损坏/非数值 → None（调用方 fail-closed）。"""
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return None
+
+
 def _verdict_token(map_product: Optional[Dict[str, Any]]) -> str:
     verdict = _dict(map_product).get("product_verdict")
     return str(
@@ -161,9 +169,19 @@ def _frame_gate(map_product: Optional[Dict[str, Any]]):
             "complete", "incomplete"):
         return None
     summary = _dict(fp.get("summary"))
-    required = int(summary.get("required") or 0)
-    verified = int(summary.get("verified") or 0)
-    snapshot_only = int(summary.get("snapshot_only") or 0)
+    required = _int_or_none(summary.get("required"))
+    verified = _int_or_none(summary.get("verified"))
+    snapshot_only = _int_or_none(summary.get("snapshot_only"))
+    if required is None or verified is None or snapshot_only is None:
+        # 摘要数值不可解析（伪造/损坏）→ fail-closed，绝不越过闸。
+        def _gate_corrupt(out):
+            out.verdict = ReqState.PARTIAL
+            out.failed_rule = R_FRAME_INCOMPLETE
+            out.missing.append("frame_summary_unparseable")
+            out.next_action = "reobserve"
+            return out
+
+        return _gate_corrupt
     # G28 复审加固（fail-closed 一致性重查）：frames 行在场时以**行**为准
     # 重算 required/verified/snapshot_only，与 summary 取更严一侧 —— 伪造
     # summary（complete/全 verified/required=0）不得越过逐行事实（评审
@@ -762,8 +780,9 @@ def _eval_requirement(
             e for e in evidence
             if e.status == EvidenceStatus.PRESENT
             and e.evidence_class in PASS_CAPABLE_CLASSES
-            and (not target or target in e.id.lower()
-                 or target in e.detail.lower())
+            # 只按证据 id（row:/data:/receipt 等能力绑定键）匹配；扫 detail
+            # 会把 "skip" 命中无一相关证据的 "skipped=2" 之类文本。
+            and (not target or target in e.id.lower())
         ]
         if target and violated:
             out.verdict = ReqState.FAILED

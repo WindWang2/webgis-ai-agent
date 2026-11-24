@@ -244,7 +244,46 @@ def test_record_budget_constant_relation():
     )
     from app.services.gis_harness.interaction_ir.ingest import _MAX_RECORD_BYTES
 
-    envelope_overhead = 512  # 全 optional 字段（ids/fingerprint/refs）经验上界
+    envelope_overhead = 2048  # 全 optional 字段顶满（7×128B 字符串 + int 键）实测 ≈1500B
     assert _MAX_RECORD_BYTES >= MAX_PAYLOAD_BYTES + envelope_overhead
     assert _MAX_RECORD_BYTES >= MAX_PAYLOAD_BYTES_SELECTION
-    assert _MAX_RECORD_BYTES == MAX_PAYLOAD_BYTES_SELECTION + 512
+    assert _MAX_RECORD_BYTES == MAX_PAYLOAD_BYTES_SELECTION + 2048
+
+
+def test_max_normalized_selection_payload_fits_record_budget():
+    """P3：normalize 放行的最大 selection 载荷 + 满额信封必须能入环 ——
+    否则 accepted-but-dropped（旧 +512 余量实测 5488B > 4608 被拒）。"""
+    state = LedgerState()
+    event = {
+        "event_id": "e" * 64,
+        "client_instance_id": "t" * 64,
+        "client_seq": 1,
+        "kind": "feature_selected",
+        "payload": {
+            "layer_id": "l" * 16,
+            "feature_id": "f" * 16,
+            "field_names": ["a", "b"],
+            "geometry_digest": "g" * 16,
+            "dataset_ref": "d" * 16,
+            "selected_ids": [f"id{i:02d}-" + "x" * 64 for i in range(50)],
+            "id_field": "i" * 16,
+            "matched_count": 80,
+            "bbox": [1, 2, 3, 4],
+            "selection_handle": "h" * 16,
+        },
+        "actor": "user",
+        "causation_id": "c" * 128,
+        "correlation_id": "r" * 128,
+        "turn_id": "t" * 128,
+        "client_mutation_id": "m" * 128,
+        "mutation_outcome": "o" * 128,
+        "mapspec_fingerprint": "p" * 128,
+        "created_at": "2" * 128,
+        "expected_revision": 10 ** 18,
+        "mutation_revision": 10 ** 18,
+        "viewport_seq": 10 ** 18,
+        "render_observation_seq": 10 ** 18,
+    }
+    verdict = apply_event(state, event)
+    assert verdict.verdict == VERDICT_ACCEPTED
+    assert len(state.events) == 1

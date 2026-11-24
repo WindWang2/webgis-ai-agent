@@ -376,15 +376,15 @@ def _apply_palette_change(layer: Dict[str, Any], colors: List[Any]) -> None:
                 rest = colors
             stops = spec.get("stops") or []
             for stop, color in zip(stops, rest, strict=True):
-                if isinstance(stop, (list, tuple)) and len(stop) >= 2:
+                if isinstance(stop, list) and len(stop) >= 2:
                     stop[1] = color
         elif method == "interpolate":
             for stop, color in zip(spec.get("stops") or [], colors, strict=True):
-                if isinstance(stop, (list, tuple)) and len(stop) >= 2:
+                if isinstance(stop, list) and len(stop) >= 2:
                     stop[1] = color
         elif method == "match":
             for case, color in zip(spec.get("cases") or [], colors, strict=True):
-                if isinstance(case, (list, tuple)) and len(case) >= 2:
+                if isinstance(case, list) and len(case) >= 2:
                     case[1] = color
 
 

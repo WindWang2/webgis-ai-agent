@@ -14,6 +14,8 @@ from app.lib.cartography.verdict_summary import (
     should_inject_verdict,
 )
 
+import json
+
 FP = "carto-sha256:abc123"
 
 
@@ -219,3 +221,19 @@ class TestRenderVerdictForLlm:
     def test_empty_cartography_degrades_to_not_evaluated(self):
         block = render_verdict_for_llm({"session_id": "s1", "overall_passed": False})
         assert '"not_evaluated"' in block
+
+
+class TestBoundedJson:
+    def test_oversized_dict_suggested_fix_keeps_valid_json(self):
+        """大 dict suggested_fix 不得把 body 硬截断成非法 JSON。"""
+        review = _review()
+        review["cartography"]["checks"] = [{
+            "rule": "BIG_FIX",
+            "status": "fail",
+            "message": "oversized",
+            "suggested_fix": {"operation": "op", "payload": "z" * 5000},
+        }]
+        block = render_verdict_for_llm(review)
+        body = block.split("\n")[1]
+        parsed = json.loads(body)
+        assert parsed["verdict"] == "fail"

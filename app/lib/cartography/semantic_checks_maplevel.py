@@ -255,7 +255,7 @@ def _check_component_graph_semantics(
             severity="error",
             evidence_class="deterministic",
             evidence={"outside": unreachable[:4]},
-            repairability="auto_safe",
+            repairability="auto_safe" if fix_placements else "not_repairable",
             suggested_fix={
                 "operation": "resolve_floating_layout",
                 "placements": fix_placements,
@@ -269,7 +269,7 @@ def _check_component_graph_semantics(
             severity="warning",
             evidence_class="deterministic",
             evidence={"outside": assumed_out[:4]},
-            repairability="auto_safe",
+            repairability="auto_safe" if fix_placements else "not_repairable",
             suggested_fix={
                 "operation": "resolve_floating_layout",
                 "placements": fix_placements,

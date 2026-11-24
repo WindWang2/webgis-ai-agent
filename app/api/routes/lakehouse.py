@@ -491,6 +491,10 @@ async def search_lakehouse_catalog(
         from app.core.database import SessionLocal
         from app.services.lakehouse.catalog_service import search_catalog
 
+        # 与 STAC 姊妹端点同口径钳制：无界 limit/offset 会让目录查询
+        # 一次拉全表。
+        clamped_limit = min(max(int(limit), 1), 100)
+        clamped_offset = max(int(offset), 0)
         with SessionLocal() as sync_db:
             return search_catalog(
                 sync_db,
@@ -501,8 +505,8 @@ async def search_lakehouse_catalog(
                 time_to=time_to or None,
                 producer=producer or None,
                 include_revoked=include_revoked,
-                limit=limit,
-                offset=offset,
+                limit=clamped_limit,
+                offset=clamped_offset,
             )
 
     try:

@@ -70,7 +70,7 @@ def score_layout(
 
     # density：占用槽位数（每象限槽容量近似 3）落在舒适带
     slots_used = sum(1 for q in quadrants if q > 0) + (1 if middle else 0)
-    ratio = slots_used / 4.0
+    ratio = min(1.0, slots_used / 4.0)
     density = 1.0 if 0.5 <= ratio <= 1.0 else max(0.0, 1.0 - abs(ratio - 0.75))
 
     # whitespace：top 与 bottom 都有留白（象限空）或组件 ≤ 槽容量的 2/3

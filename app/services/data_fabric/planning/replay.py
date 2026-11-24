@@ -90,9 +90,6 @@ def replay(
             aggregates = step.params.get("aggregate")
             group_by = step.params.get("group_by")
             # aggregate-capable adapters accept the query; others fail typed
-    if plan.steps and plan.steps[-1].step_type == "sampling":
-        pass  # sampling is applied post-fetch below
-
     spec = QuerySpec(bbox=bbox, columns=columns, limit=limit or max_rows, offset=0,
                      datetime_range=datetime_range, aggregate=aggregates, group_by=group_by)
     result = adapter.query(dataset_id, spec)

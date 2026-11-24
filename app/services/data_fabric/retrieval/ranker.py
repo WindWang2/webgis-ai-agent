@@ -13,6 +13,7 @@ silently taking the first candidate.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.services.data_fabric.retrieval.cards import DatasetCard
@@ -62,6 +63,26 @@ def trust_score(card: DatasetCard) -> float:
     return 1.0 if card.verified else 0.4
 
 
+def _temporal_key(value: Optional[str], *, end_of_day: bool = False) -> Optional[datetime]:
+    """ISO-8601 bound → 可比较的 UTC naive datetime（无法解析 → None → 回退
+    原字符串比较）。日期型（YYYY-MM-DD）在作为上界时取当日结束，避免
+    ``2024-01-01T00:00:00Z`` 与 ``2024-01-01`` 混排的字典序假阴性。"""
+    if not value:
+        return None
+    text = str(value).strip()
+    try:
+        if len(text) == 10:
+            d = datetime.fromisoformat(text)
+            return d.replace(hour=23, minute=59, second=59, microsecond=999999) \
+                if end_of_day else d
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
 def coverage_score(
     card: DatasetCard,
     bbox: Optional[List[float]] = None,
@@ -82,8 +103,20 @@ def coverage_score(
         score = 0.5
     if temporal and card.temporal_start:
         q_start, q_end = temporal
-        start_ok = card.temporal_start <= (q_end or "9999")
-        end_ok = (card.temporal_end is None) or (card.temporal_end >= (q_start or "0000"))
+        card_start = _temporal_key(card.temporal_start)
+        query_end = _temporal_key(q_end, end_of_day=True) if q_end else None
+        if card_start is not None and query_end is not None:
+            start_ok = card_start <= query_end
+        else:
+            start_ok = card.temporal_start <= (q_end or "9999")
+        card_end = _temporal_key(card.temporal_end)
+        query_start = _temporal_key(q_start) if q_start else None
+        if card.temporal_end is None:
+            end_ok = True
+        elif card_end is not None and query_start is not None:
+            end_ok = card_end >= query_start
+        else:
+            end_ok = card.temporal_end >= (q_start or "0000")
         if start_ok and end_ok:
             score = min(1.0, score + 0.5)
             matched.append("temporal")

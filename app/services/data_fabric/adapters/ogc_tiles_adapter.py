@@ -460,6 +460,10 @@ class OGCTilesAdapter(GeospatialDataSourceAdapter):
             return None
         if isinstance(maxzoom, int) and z > maxzoom:
             return None
+        # z 上界先校验再计算 1 << z：未声明 maxzoom 时超大 z（如 1e9）
+        # 会触发约 125MB 的整数分配。
+        if not isinstance(z, int) or z < 0 or z > 30:
+            raise InvalidQueryError(f"tile coordinates out of matrix range: {z}/{x}/{y}")
         if x < 0 or y < 0 or x >= (1 << z) or y >= (1 << z):
             raise InvalidQueryError(f"tile coordinates out of matrix range: {z}/{x}/{y}")
 

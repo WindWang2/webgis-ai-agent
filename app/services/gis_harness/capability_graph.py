@@ -980,7 +980,10 @@ def reset_capability_graph() -> None:
     with _graph_lock:
         _graph_cache["fingerprint"] = None
         _graph_cache["graph"] = None
-        _MODEL_REGISTRY_STORE = None
+        # 与 _shared_model_registry_store 的创建写回同锁：否则并发首建
+        # 在 reset 后把旧单例写回，重置隔离失效。
+        with _MODEL_REGISTRY_LOCK:
+            _MODEL_REGISTRY_STORE = None
 
 
 def graph_build_count_for_tests() -> int:

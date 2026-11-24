@@ -722,6 +722,46 @@ def test_n3_line_coord_cap():
     assert ei.value.code == "SVG_COORD_OUT_OF_RANGE"
 
 
+@pytest.mark.parametrize("primitive", [
+    b'<line x1="100" y1="0" x2="0" y2="0" transform="scale(1000)" stroke="#000000"/>',
+    b'<circle cx="10" cy="10" r="1" transform="scale(1000)"/>',
+    b'<ellipse cx="10" cy="10" rx="5" ry="3" transform="scale(1000)"/>',
+])
+def test_transformed_coords_respect_coord_cap(primitive):
+    """变换后的 line/circle/ellipse 坐标同样受 MAX_COORD_ABS 约束。"""
+    with pytest.raises(SymbolAssetError) as ei:
+        import_svg_asset(
+            b'<svg viewBox="0 0 40 40">' + primitive + b'</svg>',
+            kind="point_symbol")
+    assert ei.value.code == "SVG_COORD_OUT_OF_RANGE"
+
+
+def test_xlink_external_href_is_rejected():
+    """ElementTree 展开的 {xlink}href 也必须走外部引用拒绝。"""
+    with pytest.raises(SymbolAssetError) as ei:
+        import_svg_asset(
+            b'<svg xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 40 40">'
+            b'<rect x="0" y="0" width="5" height="5" '
+            b'xlink:href="https://evil.test/x.png"/></svg>',
+            kind="point_symbol")
+    assert ei.value.code == "SVG_EXTERNAL_HREF"
+
+
+def test_prepare_svg_for_rasterize_rewrites_root_size_only():
+    """根 width/height 改写不得命中 stroke-width 等连字符属性。"""
+    from app.lib.cartography.symbol_asset_svg import prepare_svg_for_rasterize
+
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" stroke-width="2.5" '
+        'width="100" height="50" viewBox="0 0 10 5">'
+        '<rect width="10" height="5" fill="url(#cartoap-tex)"/></svg>'
+    )
+    out = prepare_svg_for_rasterize(svg, 300, 150)
+    assert 'stroke-width="2.5"' in out
+    assert 'width="300"' in out
+    assert 'height="150"' in out
+
+
 def test_n6_builtin_ts_twin_no_drift():
     """TS builtin 孪生与 Python 单源逐 digest 一致（生成物漂移锁）。"""
     import re
@@ -766,3 +806,22 @@ def test_r3_1_use_xy_composes_inside_ancestors():
         b'</defs><use href="#p" transform="translate(5,5)" x="10" y="20"/></svg>',
         kind="point_symbol")
     assert [float(v) for v in flat.primitives[0].d[0][1:]] == [15.0, 25.0]
+
+
+def test_symbol_asset_category_revisions_are_strict_ints():
+    """revision/other_revision 不得 lax coerce 字符串或浮点（全模块纪律）。"""
+    from pydantic import ValidationError
+    from app.lib.cartography.mapspec_schema import (
+        MapSpecLayerSymbolAssetCategoryBinding,
+        MapSpecLayerSymbolAssetCategoryRule,
+    )
+
+    for bad in ("3", 3.0, True):
+        with pytest.raises(ValidationError):
+            MapSpecLayerSymbolAssetCategoryRule(
+                key="x", asset_id="a", revision=bad, content_digest="")
+    for bad in ("3", 3.0, True):
+        with pytest.raises(ValidationError):
+            MapSpecLayerSymbolAssetCategoryBinding(
+                field="x", other_revision=bad)
+

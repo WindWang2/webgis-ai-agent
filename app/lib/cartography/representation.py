@@ -439,7 +439,9 @@ def representation_at_scale(
         min_zoom=ZOOM_DOMAIN_MIN, max_zoom=ZOOM_DOMAIN_MAX,
         mode="raw", reason_codes=["REPR.FALLBACK.NORMALIZE_FAILED"],
     )]
-    if any(w.mode != "raw" for w in normalized):
+    # hidden 是可见性门（detail-visibility），不是聚合表达 —— 纯 hidden 窗
+    # 不构成视觉聚合，不得追加聚合披露。
+    if any(w.mode not in ("raw", "hidden") for w in normalized):
         aggregation = AggregationSemantics()
         disclosures.append(VISUAL_AGGREGATION_DISCLOSURE)
 

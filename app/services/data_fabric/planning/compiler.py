@@ -124,7 +124,7 @@ class PlanCompiler:
             ))
         est_rows = self._estimate_rows(request, facts)
         if not request.aggregate and facts.requests_per_minute is not None and not facts.local \
-                and est_rows > (request.limit or 0) and est_rows > 1000 and pd.get("pagination"):
+                and est_rows > 1000 and pd.get("pagination"):
             steps.append(AcquisitionStep(
                 step_type="pagination", source_id=facts.source_id,
                 params={"page_size": 1000, "expected_rows": est_rows},

@@ -7,12 +7,12 @@ from ..contracts import F_LAYOUT_CONFLICT, MapCompletionFinding
 
 
 def validate_layout(mapspec: Dict[str, Any]) -> List[MapCompletionFinding]:
-    """第一版布局冲突检测：floating 矩形重叠 + zone 容量/exclusive 超限。
+    """第一版布局冲突检测：仅 floating 矩形重叠（:45-63）。
 
-    复用 semantic_checks 已有的 desired-state 判定（同一几何语义，不建第
-    二套碰撞模型）。修复原则：user-pinned（floating）组件不自动挪动——
-    只披露；anchor 默认组件的超限同样披露（auto 重排在导出布局引擎里处
-    理，见 ADR-0081 deferred）。
+    zone 容量 / exclusive 超限不在本 validator 范围 —— 由
+    ``semantic_checks_maplevel._check_component_layout`` 判定并以
+    LAYOUT_COLLISION 披露（不在此重复实现第二套碰撞模型）。修复原则：
+    user-pinned（floating）组件不自动挪动——只披露。
     """
     findings: List[MapCompletionFinding] = []
     components = [

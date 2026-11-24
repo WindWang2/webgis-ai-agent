@@ -556,3 +556,32 @@ def test_registry_validation_includes_component_system():
     """全库交叉校验覆盖组件体系且当前零违规."""
     from app.services.gis_harness.registry_validation import validate_gis_library
     assert validate_gis_library() == []
+
+
+def test_composition_validation_zero_max_count_rejects_instances(monkeypatch):
+    """非 forbidden 槽 max_count=0 必须拒绝任何实例（0 不是 1）。"""
+    from app.lib.cartography import composition_templates as ct
+    from app.lib.cartography.composition_validation import (
+        validate_component_composition,
+    )
+
+    tpl = ct.MapCompositionTemplate(
+        id="composition.zero_max_fixture",
+        component_slots=[
+            ct.ComponentSlot(
+                id="chart", cardinality="optional", max_count=0,
+                allowed_component_types=["chart_panel"]),
+        ],
+    )
+
+    class _Reg:
+        def get(self, template_id):
+            return tpl if template_id == tpl.id else None
+
+    monkeypatch.setattr(
+        ct, "get_composition_template_registry", lambda: _Reg())
+    comps = [CartographyComponent(
+        id="c1", type="chart_panel", position="top-left", priority=10)]
+    res = validate_component_composition(
+        comps, composition_template_id=tpl.id)
+    assert any(v.code == "cardinality_exceeded" for v in res.violations)

@@ -464,7 +464,9 @@ def enumerate_federation(ctx: EnumerationContext) -> EnumeratedPlan:
         sub = (mask - 1) & mask
         while sub > 0:
             rest = mask & ~sub
-            if rest:
+            # sub/rest 互补：只按无序划分访问一次，再显式枚举两个方向；
+            # 否则 (sub,rest) 与 (rest,sub) 会在后续迭代重复生成候选。
+            if rest and sub < rest:
                 # 两侧角色交换是**不同计划**（build 侧不同）—— 两个方向都枚举；
                 # 方向合法性（spatial/aggregate 语义）由 _join_candidate 守卫。
                 candidates.extend(_combine(dp, sub, rest, edge_between, by_id, ctx))
@@ -639,7 +641,12 @@ def _enumerate_fixed_chain(
         new_card = _join_cardinality(edge, left_cand, right_cand, by_id)
         cpu = new_card * _W_LOCAL_CPU_PER_ROW
         build = right_rows * _W_BUILD_PER_ROW
-        cost = cost + right_bytes + cpu + build + crs_cost
+        # 与 DP 路径同口径：右侧 scan 也要计不确定性乘子/限流惩罚与请求成本，
+        # 否则多跳链成本被系统性低估。
+        right_scan_cost, _right_disc = _scan_cost(
+            right_src, bytes_cost=right_bytes * _W_BYTES_TRANSFERRED
+        )
+        cost = cost + right_scan_cost + _W_REMOTE_REQUEST + cpu + build + crs_cost
         left_tree: LogicalNode = tree
         if (
             crs_meta

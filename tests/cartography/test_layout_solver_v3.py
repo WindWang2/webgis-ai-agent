@@ -160,3 +160,26 @@ def test_solution_digest_stable_for_golden() -> None:
         p.id: p.zone for p in sol.placements
     }
     assert digest == {"title": "top-center", "legend-main": "bottom-left"}
+
+
+def test_required_overflow_kept_marks_exclusive_zone() -> None:
+    """required 溢出保留后，exclusive 槽不得再被后续 optional 复用。"""
+    from app.lib.cartography.layout_solver import (
+        LayoutParticipantV3,
+        solve_layout_v3,
+    )
+
+    parts = [
+        LayoutParticipantV3(
+            id="req-wide", type="legend", requested_zone="top-center",
+            priority=10, optional=False, width_units=2),
+        LayoutParticipantV3(
+            id="opt-late", type="annotation", requested_zone="top-center",
+            priority=20, optional=True, width_units=1),
+    ]
+    sol = solve_layout_v3(
+        parts,
+        zone_capacity={"top-center": 1, "top-left": 0, "top-right": 0},
+    )
+    assert sol.zone_for("req-wide") == "top-center"
+    assert sol.zone_for("opt-late") != "top-center"

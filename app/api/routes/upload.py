@@ -302,8 +302,9 @@ async def upload_files(
         else:
             response_meta_upload = None
 
-        # 保存元信息
-        save_meta(upload_dir, meta)
+        # 保存元信息（同步写盘 → worker 线程；与上方写盘/解析同一计算隔离
+        # 不变式，慢盘/NFS 上不阻塞事件循环上的并发 SSE/WS）。
+        await asyncio.to_thread(save_meta, upload_dir, meta)
 
         # 写入数据库
         try:

@@ -43,6 +43,14 @@ def _forward_keeping_warnings(res: Dict[str, Any], out: Dict[str, Any]) -> Dict[
     return out
 
 
+def _candidate_why(candidate: Any) -> str:
+    """候选一句理由：condition 首句为空时安全回落到 reasons 首句。"""
+    condition = (candidate.condition_reasons_zh[0]
+                 if candidate.condition_reasons_zh else "")
+    reason = candidate.reasons_zh[0] if candidate.reasons_zh else ""
+    return (condition or reason)[:60]
+
+
 async def webgis_map_product(
     registry: ToolRegistry,
     query: str,
@@ -656,8 +664,7 @@ async def webgis_map_product(
         _digest_cands = [
             {"m": c.map_model_id, "f": c.expression_family,
              "s": c.suitability.value,
-             **({"why": (c.condition_reasons_zh[0]
-                         or c.reasons_zh[0])[:60]}
+             **({"why": _candidate_why(c)}
                 if (c.condition_reasons_zh or c.reasons_zh) and
                 c.suitability != "suitable" else {})}
             for c in _cand_set.candidates[:4]

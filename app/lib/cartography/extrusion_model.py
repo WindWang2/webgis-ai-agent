@@ -131,13 +131,13 @@ def build_extrusion_height_expression(
     Supports linear, sqrt, and log1p transforms with multi-stop interpolation.
     """
     field = spec.height_field
+    min_h = spec.min_visual_height_m * spec.scale_factor
+    max_h = spec.max_visual_height_m * spec.scale_factor
     if not stats.get("valid") or stats.get("is_all_zero"):
-        return spec.min_visual_height_m
+        return min_h
 
     min_v = float(stats.get("min", 0.0))
     max_v = float(stats.get("max", 1.0))
-    min_h = spec.min_visual_height_m * spec.scale_factor
-    max_h = spec.max_visual_height_m * spec.scale_factor
 
     if math.isclose(min_v, max_v, abs_tol=1e-7):
         return min_h

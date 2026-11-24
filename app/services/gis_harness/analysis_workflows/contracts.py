@@ -118,7 +118,7 @@ class AnalysisStepSpec(BaseModel):
     preconditions: Tuple[str, ...] = ()                  # scientific_preconditions id
     output_roles: Tuple[str, ...] = ()
     fallback: str = ""                                   # 显式降级名（如 buffer_proxy_disclosed）
-    optional: bool = False                               # True: 输入缺失时 typed skipped 而非 blocked
+    optional: bool = False                               # True: plan 期（orchestrator）输入缺失 → typed skipped；run 期缺失仍 blocked
     semantic_contract: Dict[str, str] = Field(default_factory=dict)
     # ^ ADR-0284 D2：param → "key:value"（key ∈ {geometry_kind, crs_class}；
     #   geometry_kind 由 executor 衔接门核验，crs_class 由工具级 preflight

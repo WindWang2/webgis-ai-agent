@@ -396,6 +396,20 @@ def test_format_instance_line_bounded_and_additive():
     assert len(line) <= 480
 
 
+def test_methodology_disclosure_requires_actual_warnings():
+    """P3：science.evaluated 只表示存在重算契约，不得把披露维虚报为 ok。"""
+    from app.services.gis_harness.workflow_instance import (
+        ScienceRecheck,
+        _derive_dimensions,
+    )
+
+    dims = _derive_dimensions({}, {}, ScienceRecheck(evaluated=True))
+    assert dims["methodology_disclosure"] == "unknown"
+    dims_warned = _derive_dimensions(
+        {"methodology_warnings": ["small_n"]}, {}, ScienceRecheck())
+    assert dims_warned["methodology_disclosure"] == "ok"
+
+
 # ── 10. 实例 id 形状 ─────────────────────────────────────────────────────
 
 def test_instance_id_and_plan_id():

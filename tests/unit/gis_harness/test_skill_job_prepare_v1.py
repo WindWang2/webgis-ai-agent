@@ -309,3 +309,15 @@ async def test_prepare_idempotency_and_provenance(registry):
     assert sources["layer_title"] == "user"
     # 未提供且无缺省的可选参数（method）不进 prepared params
     assert "method" not in {pp.name for pp in r6.prepared.params}
+
+
+def test_collect_roles_recurses_nested_argument_maps():
+    """预览 reads_roles 必须递归 argument_map 任意深度的 $role 叶子。"""
+    from app.services.gis_harness.skill_jobs.prepare import _collect_roles
+
+    roles = _collect_roles({
+        "flat": {"$role": "subject"},
+        "nested": {"layer": {"data": {"$role": "boundary"}}},
+        "list": [{"$role": "measure"}],
+    })
+    assert roles == {"subject", "boundary", "measure"}

@@ -147,13 +147,15 @@ def download_package(
         raise HTTPException(status_code=500, detail=str(exc))
     if not blob_path.is_file():
         raise HTTPException(status_code=503, detail="package blob unavailable (GC?)")
+    # 尺寸校验必须在打开流之前：iter_blob_stream 首行就 open()，先开后拒
+    # 会留下一条走异常路径的文件句柄。
+    if version_record.size_bytes > BLOB_MAX_BYTES:
+        raise HTTPException(status_code=500, detail="registry blob exceeds size cap")
     try:
         stream = store.iter_blob_stream(version_record.digest)
         first = next(stream, b"")
     except ExtensionPlatformError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
-    if version_record.size_bytes > BLOB_MAX_BYTES:
-        raise HTTPException(status_code=500, detail="registry blob exceeds size cap")
 
     def _chunks():
         yield first

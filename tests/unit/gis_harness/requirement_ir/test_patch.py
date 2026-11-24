@@ -321,3 +321,11 @@ class TestDiffAndAttribution:
         doc_b, _ = apply_patch(old, _patch(
             path="representation.palette", value="blue", op_id="x2", actor="agent"))
         assert diff_documents(doc_a, doc_b)["changes"] == []
+
+
+def test_is_default_value_does_not_treat_zero_as_default():
+    from app.services.gis_harness.requirement_ir.patch import _is_default_value
+
+    assert _is_default_value(False) is True
+    assert _is_default_value(0) is False
+    assert _is_default_value(0.0) is False

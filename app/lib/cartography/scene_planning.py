@@ -203,6 +203,12 @@ def plan_scene(intent: SceneIntent) -> SceneDecision:
     if wants_terrain and intent.exaggeration_request is not None:
         req = float(intent.exaggeration_request)
         if req <= 0:
+            reasons.append(
+                SceneReason(
+                    code="SCENE_EXAGGERATION_CLAMPED",
+                    detail=f"exaggeration request {req} <= 0 replaced by default 1.0",
+                )
+            )
             req = 1.0
         clamped = min(req, MAX_TERRAIN_EXAGGERATION)
         if clamped != req:

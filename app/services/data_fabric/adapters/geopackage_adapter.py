@@ -193,6 +193,12 @@ class GeoPackageAdapter(GeospatialDataSourceAdapter):
         offset = max(0, int(query_spec.offset or 0))
         if offset >= _MAX_QUERY_FEATURES:
             raise QueryBudgetExceededError("GeoPackage offset exceeds bounded scan budget")
+        if limit and offset + limit > _MAX_QUERY_FEATURES:
+            # 窗口被 50k 扫描预算截断会让 has_more/truncated 谎报 False
+            # （静默少取）—— 明确 typed 拒绝超出预算的页窗口。
+            raise QueryBudgetExceededError(
+                "GeoPackage page window exceeds bounded scan budget"
+            )
         columns = list(query_spec.columns or []) or None
         bbox = query_spec.bbox
         try:

@@ -955,3 +955,23 @@ def test_contradiction_one_nan_vs_value_still_hard():
     assert any(r.kind == "hard" for r in results)
     assert store.get_claim("claim:nan-a").status is ClaimStatus.CONTRADICTED
     assert store.get_claim("claim:val-b").status is ClaimStatus.CONTRADICTED
+
+
+def test_declared_scope_missing_on_proof_evidence_fails_closed():
+    """claim 声明时间/空间标签而权威证据节点无 scope → 不判 scope_ok
+    （与 units/semantics 同 fail-closed 口径）。"""
+    store = ClaimStore()
+    store.upsert_evidence(EvidenceNode(
+        evidence_id="stat:noscope", kind=EvidenceKind.STATISTIC, ref="ref:s",
+        freshness=EvidenceFreshness.FRESH, method="admin_density",
+        metadata={"stat_type": "density", "unit": "per_km2", "value": 4.7},
+    ))
+    claim = claim_from_statistic(
+        subject="武侯区", claim_type=ClaimType.DENSITY, value=4.7,
+        unit="per_km2", method="admin_density",
+        statistic_evidence_id="stat:noscope",
+        temporal_scope=Scope(temporal_label="2024"), store=store,
+    )
+    result = verify_claim(claim, store)
+    assert result.positive_proof is False
+    assert any("evidence_temporal_missing" in r for r in result.reasons)

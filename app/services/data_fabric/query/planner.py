@@ -323,7 +323,9 @@ def plan_query(
     # 排序确定性：offset/cursor 分页必须有稳定排序
     if pagination_strategy in ("offset", "cursor") and not spec.order_by:
         if pushed_sort or caps.sort_pushdown:
-            pagination_note = (pagination_note or "") + " stable order key appended"
+            pagination_note = (
+                (pagination_note + "; ") if pagination_note else ""
+            ) + "stable order key appended"
         else:
             warnings.append("source lacks sort pushdown; paginated results may not be stable across pages")
 

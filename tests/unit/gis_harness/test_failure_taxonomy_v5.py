@@ -239,3 +239,14 @@ async def test_dispatch_error_carries_typed_harness_failure(
     assert result3.raw_result["harness_failure"]["class"] == "timeout"
 
     await session_data_manager.clear_session(sid)
+
+
+def test_ledger_attempts_respects_ttl_decay():
+    """attempts() 与 record() 同 TTL 语义：过期计数读作 0，不得让陈旧
+    attempts 提前把 remediation 推成 abort_with_disclosure。"""
+    led = RemediationLedger(cap=8, ttl_s=-1.0)
+    key = ("s1", "buffer", HarnessFailureClass.TIMEOUT.value)
+    led.record(key)
+    assert led.attempts(key) == 0
+    assert remediation_for(
+        HarnessFailureClass.TIMEOUT, attempts=led.attempts(key)).retry_allowed

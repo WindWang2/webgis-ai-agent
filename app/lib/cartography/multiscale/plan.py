@@ -153,16 +153,9 @@ def _tier_decluttering(
 
 def _mandatory_ids_from_overrides(
     overrides: Sequence[UserScaleOverride],
-) -> Tuple[frozenset, List[str]]:
-    ids = {o.value for o in overrides if o.kind == "mandatory_feature"}
-    values: List[str] = []
-    for o in overrides:
-        if o.kind == "band_keep_values" and isinstance(o.detail, dict):
-            tier = o.detail.get("tier")
-            vals = o.detail.get("values")
-            if isinstance(tier, str) and isinstance(vals, list):
-                values.append(tier)
-    return frozenset(ids), values
+) -> frozenset:
+    return frozenset(
+        o.value for o in overrides if o.kind == "mandatory_feature")
 
 
 def build_scale_profile(
@@ -184,7 +177,7 @@ def build_scale_profile(
     feature_count = source.feature_count or len(features)
     model = importance.selected if importance is not None else None
     pin_raw = any(o.kind == "pin_mode" and o.value == "raw" for o in user_overrides)
-    mandatory_ids, band_keep_overrides = _mandatory_ids_from_overrides(user_overrides)
+    mandatory_ids = _mandatory_ids_from_overrides(user_overrides)
 
     bands: List[ScaleBandPlan] = []
     artifacts: Dict[str, GeneralizationResult] = {}

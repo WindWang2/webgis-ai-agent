@@ -225,6 +225,55 @@ def test_timeout_bound_is_clamped(monkeypatch):
     assert vp.provider_timeout_s() == vp.DEFAULT_TIMEOUT_S
 
 
+def test_budget_exhaustion_reason_distinct_from_timeout(monkeypatch):
+    """P3：并发预算耗尽（引擎未启动）不得谎报 provider_timeout。"""
+    class _ExhaustedSlots:
+        def acquire(self, blocking: bool = False) -> bool:
+            return False
+
+        def release(self) -> None:  # pragma: no cover — 未获取不得释放
+            raise AssertionError("released a slot that was never acquired")
+
+    monkeypatch.setenv("GIS_VISUAL_PROVIDER_MODE", "vlm")
+    monkeypatch.setattr(vp, "_VLM_SLOTS", _ExhaustedSlots())
+    monkeypatch.setattr(vp, "resolve_visual_screenshot", lambda e, **kwargs: b"png")
+    res = vp.evaluate_observation(_obs())
+    assert res.status == "not_evaluated"
+    assert res.reason == "provider_budget_exhausted"
+
+
+def test_hung_engine_reclaims_vlm_slot(monkeypatch):
+    """P3：协程挂起吞掉 finally 时，看门狗必须归还槽（否则预算永久归零）。"""
+    import threading
+
+    release = threading.Event()
+
+    class _HangingEngine:
+        async def evaluate(self, **kwargs):
+            release.wait(10)      # 同步阻塞：取消/超时都无法让它提前退出
+            return VisualJudgeReport.skipped("provider_error")
+
+    monkeypatch.setattr(
+        "app.lib.harness.visual_judge.critic_engine.build_critic_engine",
+        lambda: _HangingEngine(),
+    )
+    monkeypatch.setenv("GIS_VISUAL_PROVIDER_MODE", "vlm")
+    monkeypatch.setattr(vp, "provider_timeout_s", lambda: 0.05)
+    monkeypatch.setattr(vp, "resolve_visual_screenshot", lambda e, **kwargs: b"png")
+    slots = threading.BoundedSemaphore(2)
+    monkeypatch.setattr(vp, "_VLM_SLOTS", slots)
+    try:
+        first = vp.evaluate_observation(_obs())
+        second = vp.evaluate_observation(_obs())
+        assert first.reason == "provider_timeout"
+        assert second.reason == "provider_timeout"
+        # 两次挂起后仍必须能取得槽（旧实现两次后预算恒为 0）。
+        assert slots.acquire(blocking=False) is True
+        slots.release()
+    finally:
+        release.set()
+
+
 # ── 5. C13 三道门三模式共用（#1713-1）──────────────────────────────────────
 # revision / 指纹 / session 门此前只在 rules 模式执行 —— vlm/hybrid 直接
 # resolve，旧像素可在非默认模式下归因到新 spec（跨代误修复）。门现前移到

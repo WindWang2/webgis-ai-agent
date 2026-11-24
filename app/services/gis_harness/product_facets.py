@@ -85,9 +85,8 @@ def derive_facet_contract(
         return EMPTY_FACET_CONTRACT
 
     intent = chapter.get("intent")
-    product_type = str(
-        (intent or {}).get("task") if isinstance(intent, dict) else ""
-    ) or ""
+    raw_task = intent.get("task") if isinstance(intent, dict) else None
+    product_type = str(raw_task or "")
     recipe_id = str(chapter.get("recipe_id") or "")
     template_selection = chapter.get("template_selection")
     if not isinstance(template_selection, dict):

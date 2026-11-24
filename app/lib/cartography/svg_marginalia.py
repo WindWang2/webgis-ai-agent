@@ -485,13 +485,14 @@ def render_g41_canonical_legend(
             f'<title>{escape_svg_text(col_label)}</title>'
             f'→ {escape_svg_text(_short(col_label, 32))}</text>')
         missing = canonical.get("missing") if isinstance(canonical.get("missing"), dict) else {}
+        counts = canonical.get("counts") if isinstance(canonical.get("counts"), dict) else {}
         parts.append(
             f'<text x="{_fmt(x + size * 0.5)}" '
             f'y="{_fmt(y + line_units * 5.6)}" font-family="{fam}" '
             f'font-size="{_fmt(size * 0.72)}" fill="#64748b">'
             f'{escape_svg_text(str(missing.get("label") or "无数据"))} '
             f'n={int(missing.get("count") or 0)} · 有效对='
-            f'{int((canonical.get("counts") or {}).get("valid_pairs") or 0)} · '
+            f'{int(counts.get("valid_pairs") or 0)} · '
             f'规则={escape_svg_text(str(canonical.get("boundary_rule") or ""))}</text>')
         parts.append(
             f'<text x="{_fmt(x + size * 0.5)}" y="{_fmt(y + line_units * 6.4)}" '
@@ -535,10 +536,11 @@ def render_g41_canonical_legend(
             f'<text x="{_fmt(x + size * 0.5)}" y="{_fmt(by + line_units * 1.1)}" '
             f'font-family="{fam}" font-size="{_fmt(size * 0.68)}" fill="#64748b">'
             f'{escape_svg_text(str(measure.get("visual_meaning") or ""))}</text>')
+        missing = canonical.get("missing") if isinstance(canonical.get("missing"), dict) else {}
         parts.append(
             f'<text x="{_fmt(x + size * 0.5)}" y="{_fmt(by + line_units * 1.9)}" '
             f'font-family="{fam}" font-size="{_fmt(size * 0.68)}" fill="#64748b">'
-            f'缺失/未知 n={int((canonical.get("missing") or {}).get("count") or 0)} · '
+            f'缺失/未知 n={int(missing.get("count") or 0)} · '
             f'clip={escape_svg_text(str(channel.get("clip") or ""))} · '
             f'来源={escape_svg_text(str(measure.get("source") or ""))}</text>')
     parts.append(

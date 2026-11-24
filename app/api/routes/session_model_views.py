@@ -179,7 +179,10 @@ async def put_session_model(
     if cap is not None:
         cap = int(cap)
         if cap <= 0:
-            cap = None
+            raise HTTPException(
+                status_code=400,
+                detail="session token cap must be a positive integer",
+            )
         admin_max = int(settings.SESSION_MODEL_TOKEN_CAP_MAX or 0)
         if cap is not None and admin_max > 0 and cap > admin_max:
             raise HTTPException(

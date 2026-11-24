@@ -310,8 +310,6 @@ def _length_penalty(stats: FieldStats) -> Tuple[float, str]:
         return 1.0, f"long_text(mean={mean_len:.1f}>{LONG_TEXT_HARD:.0f})"
     if mean_len > LONG_TEXT_MEAN:
         return 0.5, f"long_text(mean={mean_len:.1f}>{LONG_TEXT_MEAN:.0f})"
-    if mean_len < 1.0:
-        return 0.5, "too_short"
     return 0.0, ""
 
 

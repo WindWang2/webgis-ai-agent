@@ -251,3 +251,29 @@ async def test_signature_only_matches_its_own_path(client):
         params={"exp": exp, "sig": sig},
     )
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_data_root_file_named_public_is_not_public(tmp_path, monkeypatch):
+    """DATA_DIR 根下恰名为 public 的文件 ≠ 公共目录树内容（匿名不可读）。"""
+    from app.core import config as cfg
+    from app.api.routes import static as static_routes
+    from app.core.database import get_async_db
+
+    data_dir = tmp_path / "data-root-eq"
+    data_dir.mkdir()
+    (data_dir / "public").write_bytes(b"ROOT_FILE")
+    monkeypatch.setattr(cfg.settings, "DATA_DIR", str(data_dir))
+
+    app = FastAPI()
+    app.include_router(static_routes.router, prefix="/api/v1")
+
+    async def _no_db():
+        yield None
+
+    app.dependency_overrides[get_async_db] = _no_db
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        resp = await c.get("/api/v1/static/public")
+    assert resp.status_code == 404
+    assert resp.content != b"ROOT_FILE"

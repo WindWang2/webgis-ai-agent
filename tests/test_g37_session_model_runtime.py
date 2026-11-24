@@ -863,3 +863,19 @@ async def test_put_preference_rejects_models_outside_catalog(monkeypatch):
     with pytest.raises(HTTPException) as exc_info:
         await put_session_model("conv-1", req, _conv=conv, db=MagicMock())
     assert exc_info.value.status_code == 404
+
+
+@pytest.mark.parametrize("cap", [0, -7])
+async def test_put_preference_rejects_nonpositive_token_cap(monkeypatch, cap):
+    """review-P3：cap<=0 不得静默归一为「清除上限」，必须 400。"""
+    from fastapi import HTTPException
+    from app.api.routes.session_model_views import ModelPreferenceUpdate, put_session_model
+
+    _catalog_env(monkeypatch, base="m-base")
+    req = ModelPreferenceUpdate(
+        mode="inherit", session_token_cap=cap, expected_revision=0)
+    with pytest.raises(HTTPException) as exc_info:
+        await put_session_model(
+            "conv-cap", req, _conv=SimpleNamespace(id="conv-cap"),
+            db=MagicMock())
+    assert exc_info.value.status_code == 400

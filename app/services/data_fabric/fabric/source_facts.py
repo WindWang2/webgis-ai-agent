@@ -353,7 +353,11 @@ class SourceFactsService:
                 self._entries.pop(key, None)
         facts: Optional[SourceFactsRecord] = None
         durable_row = self._durable.load(scope_key, fingerprint)
-        if durable_row is not None:
+        # durable 层保留更久（3600s），但事实新鲜度由本服务 TTL 决定：
+        # 超过服务 TTL 的 durable 行不得重新盖上新鲜戳（否则可陈旧约 1 小时）。
+        if durable_row is not None and (
+            time.time() - float(durable_row.freshness_collected_at) <= self._ttl
+        ):
             facts = durable_row
         if facts is None and descriptor is not None:
             facts = facts_from_descriptor(

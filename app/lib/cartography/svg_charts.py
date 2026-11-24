@@ -225,11 +225,12 @@ def _render_line_family(x: float, y: float, title: str,
     n = max(len(vs) for vs in series_values) if series_values else 0
     # review P0-1：单点 series 的 i/(len-1) 除零会把异常炸穿整页编译
     # （compile catch-all → 全空白 + 零诊断）。<2 点的序列画孤立 marker。
-    short = [vs for vs in series_values if 0 < len(vs) < 2]
-    for vs in short:
+    for si, vs in enumerate(series_values):
+        if not (0 < len(vs) < 2):
+            continue
         px, py = x + 12 + plot_w / 2.0, y + head + (max_val - vs[0]) / span * h
         parts.append(f'<circle cx="{_fmt(px)}" cy="{_fmt(py)}" r="2.4" '
-                     f'fill="{CHART_PALETTE[series_values.index(vs) % len(CHART_PALETTE)]}" '
+                     f'fill="{CHART_PALETTE[si % len(CHART_PALETTE)]}" '
                      f'fill-opacity="0.75" />')
     if n >= 2:
         for si, vs in enumerate(series_values):
@@ -582,12 +583,19 @@ def render_chart_panel(
 def chart_panel_height(chart: Any) -> float:
     """装配前的确定性高度估计（stack 布局用；与渲染几何同表）。"""
     kind, _t, points, series, _s, _rc = _parse_chart(chart)
-    if kind in ("pie", "donut", "rose", "box_plot", "heat_matrix", "kpi_card",
+    if kind == "box_plot":
+        # 渲染器按 row_h=22 逐箱绘制（y+22 起，最多 MAX_BARS 行）——高度
+        # 必须覆盖内容底边，否则 stack 布局下方面板重叠。
+        n_boxes = len([p for p in points if isinstance(p, dict)])
+        return max(130.0, 22.0 + 22.0 * min(n_boxes, MAX_BARS))
+    if kind in ("pie", "donut", "rose", "heat_matrix", "kpi_card",
                 "radar"):
         return 130.0
     if kind == "horizontal_bar":
-        return 30.0 + 16.0 * min(len(series[0]["data"]) if series else len(points),
-                                 MAX_BARS)
+        # 渲染器按 max(各序列点数) 生成类目行（_render_chart_panel:506），
+        # 高度估算须同口径。
+        n_bars = max((len(s["data"]) for s in series), default=len(points))
+        return 30.0 + 16.0 * min(n_bars, MAX_BARS)
     return 116.0 + 22.0
 
 

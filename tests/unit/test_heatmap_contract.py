@@ -232,3 +232,16 @@ class TestBandwidthBounds:
         c = normalize_heatmap_radius(bandwidth_m=2500)
         assert c.bandwidth_m == 2500
         assert not any("clamped" in w for w in c.warnings)
+
+
+def test_radius_only_default_bandwidth_is_disclosed():
+    """只给 radius_px 时缺省带宽必须可区分于显式 1000m。"""
+    defaulted = normalize_heatmap_radius(radius_px=24)
+    assert defaulted.bandwidth_m == DEFAULT_BANDWIDTH_M
+    assert defaulted.bandwidth_source == "default"
+    explicit = normalize_heatmap_radius(
+        radius_px=24, bandwidth_m=float(DEFAULT_BANDWIDTH_M))
+    assert explicit.bandwidth_source == "explicit"
+    assert explicit.to_metadata()["bandwidth_source"] == "explicit"
+    legacy = normalize_heatmap_radius(legacy_radius=500)
+    assert legacy.bandwidth_source == "legacy_radius"

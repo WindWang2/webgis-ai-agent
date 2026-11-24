@@ -116,7 +116,7 @@ def probe_scene3d_capabilities(
     if dem_ids:
         entries.append(CapabilityEntry(
             key="terrain", status="available", reason_code="SCENE_CAP_DEM_VERIFIED",
-            detail=f"已核实 raster-dem 源: {', '.join(dem_ids[:3])}",
+            detail=f"已核实 raster-dem 源: {', '.join(dem_ids[:3])}"[:200],
             alternatives=[],
         ))
     else:
@@ -196,7 +196,7 @@ def probe_scene3d_capabilities(
         else:
             entries.append(CapabilityEntry(
                 key="line_of_sight", status="unavailable",
-                reason_code="SCENE_CAP_VIEWSHED_NO_DEM",
+                reason_code="SCENE_CAP_LOS_NO_DEM",
                 detail="工具在但缺 DEM 数据事实（LOS 输入是 terrain_surface）",
                 alternatives=["先经数据面注册 raster-dem 源（G3D01）",
                               "viewshed 掩膜 + 观察点（语义差异须披露）"],
@@ -222,7 +222,7 @@ def probe_scene3d_capabilities(
         else:
             entries.append(CapabilityEntry(
                 key="terrain_measurement", status="unavailable",
-                reason_code="SCENE_CAP_VIEWSHED_NO_DEM",
+                reason_code="SCENE_CAP_MEASUREMENT_NO_DEM",
                 detail="量测工具族在但缺 DEM 数据事实",
                 alternatives=["先经数据面注册 raster-dem 源（G3D01）"],
             ))
@@ -246,7 +246,7 @@ def probe_scene3d_capabilities(
         else:
             entries.append(CapabilityEntry(
                 key="cut_fill_volume", status="unavailable",
-                reason_code="SCENE_CAP_VIEWSHED_NO_DEM",
+                reason_code="SCENE_CAP_CUTFILL_NO_DEM",
                 detail="工具在但缺 DEM 数据事实（体积输入是 terrain_surface）",
                 alternatives=["先经数据面注册 raster-dem 源（G3D01）",
                               "surface_area_analysis（面积而非体积）"],

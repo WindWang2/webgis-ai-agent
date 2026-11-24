@@ -796,9 +796,11 @@ def _derive_dimensions(
         dims["cartography"] = "pending"
         dims["observed_map"] = "unknown"
     # 披露维：有方法论警告（披露已落地）→ ok；未评估 → unknown。
-    # 不确定性正证据在 W7 落地前保持诚实 unknown。
+    # ``science.evaluated`` 只表示「存在重算契约」，不是披露证据 —— 不能用
+    # 它把无警告的章节虚报为已披露。不确定性正证据在 W7 落地前保持诚实
+    # unknown。
     dims["methodology_disclosure"] = (
-        "ok" if chapter.get("methodology_warnings") or science.evaluated else "unknown"
+        "ok" if chapter.get("methodology_warnings") else "unknown"
     )
     dims["uncertainty_disclosure"] = "unknown"
     return {k: v for k, v in dims.items() if v}
@@ -893,8 +895,6 @@ def format_instance_line(chapter: Optional[Dict[str, Any]]) -> str:
         blockers = list(sci.get("data_blockers") or []) + list(sci.get("method_blockers") or [])
         if blockers:
             lines.append("blocked:" + ",".join(str(b) for b in blockers[:3]))
-        if sci.get("divergent") and sci.get("direction") == "worsened":
-            lines.append("science:awaiting_finalize")
     stages = stored.get("stages") or []
     stale = [
         s.get("capability") for s in stages

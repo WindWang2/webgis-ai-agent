@@ -1254,7 +1254,7 @@ def repair_spatial_dataset(
         raise HTTPException(status_code=404, detail="Project not found")
 
     geojson_data = payload.get("geojson")
-    operations = payload.get("operations", ["make_valid", "remove_empty"])
+    operations = payload.get("operations") or ["make_valid", "remove_empty"]
     if not geojson_data:
         raise HTTPException(status_code=400, detail="Missing 'geojson' in payload")
 
@@ -1272,7 +1272,9 @@ def repair_spatial_dataset(
     session_id = str(payload.get("session_id") or "")[:80] or None
     source_ref = str(payload.get("source_ref") or "")[:80] or None
     dataset_id = str(payload.get("dataset_id") or "")[:80] or None
-    issue_codes = [str(c)[:64] for c in (payload.get("issue_codes") or [])][:16]
+    raw_issue_codes = [str(c)[:64] for c in (payload.get("issue_codes") or [])]
+    issue_codes = raw_issue_codes[:16]
+    issue_codes_truncated = len(raw_issue_codes) > 16
 
     # review round-1 SEC CRITICAL-1: 会话所有权守卫（SEC-08 同款，本文件
     # record_map_product_version / run 等会话写路径同一纪律）—— 外来
@@ -1348,6 +1350,9 @@ def repair_spatial_dataset(
         "repaired_ref": execution["repaired_ref"],
         "ref_registration_error": execution["ref_registration_error"],
         "repair_evidence": execution["repair_evidence"],
+        # lineage 证据的有界投影会丢尾部 issue code —— 显式披露截断，
+        # 客户端不能把「只有 16 条」误读成「只有 16 条问题」。
+        "issue_codes_truncated": issue_codes_truncated,
         "lineage_status": lineage_status,
         "lineage_artifact_id": lineage_artifact_id,
         "lineage_error": lineage_error,
@@ -1715,6 +1720,10 @@ def execute_project_data_gc(
             "deleted_count": int(orphans.get("deleted_count") or 0),
             "deleted_revision_ids": _bounded_items(
                 orphans.get("deleted_revision_ids") or []),
+            # 项目路由不做孤儿修订清理（全局 sweep 负责，见上方注释）——
+            # 显式披露「未实现」而不是让 0 既像「无孤儿」又像「没跑」。
+            "implemented": False,
+            "scope": "global_sweep",
         },
         "skipped_protected": skipped,
     }
@@ -1957,10 +1966,12 @@ async def restore_workspace_snapshot(
         req.session_id, snapshot_id, mode=req.mode, project_id=project_id
     )
     error = str(result.get("error") or "")
-    if "not found" in error:
-        raise HTTPException(status_code=404, detail=error)
-    if "unknown mode" in error:
-        raise HTTPException(status_code=400, detail=error)
+    if error:
+        # 不按文案猜状态码：快照存在性来自 verification 报告；其余错误
+        # 也不得以 200 返回（此前文案不匹配时错误体会带成功码出网）。
+        verification = result.get("verification")
+        exists = bool(verification.get("exists")) if isinstance(verification, dict) else False
+        raise HTTPException(status_code=404 if not exists else 409, detail=error)
     return result
 
 

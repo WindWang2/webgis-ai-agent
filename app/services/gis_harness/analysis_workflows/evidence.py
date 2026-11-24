@@ -164,7 +164,9 @@ def evidence_summary(
         "steps_declared": sorted(declared),
         "steps_executed": sorted(executed),
         "steps_not_executed": sorted(declared - executed),
-        "all_have_output_ref": all(r.output_ref for r in receipts.values()),
+        # 空 receipts = 无任何执行证据，不得空真宣称全部有产物。
+        "all_have_output_ref": bool(receipts) and all(
+            r.output_ref for r in receipts.values()),
         "method_contracts_available": {
             r.step_id: r.method_use_contract_available
             for r in receipts.values()},

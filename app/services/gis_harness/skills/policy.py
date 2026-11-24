@@ -209,7 +209,6 @@ class SkillPolicy:
                 fallback_reason="GIS_SKILL_POLICY disabled; use existing planner",
             )
 
-        selection = self._trusted.resolve(facts, packs=TRUSTED_PACKS)
         # G30：用户显式选择（chat.skill_name / 工作台）优先于意图模糊匹配
         # —— 只消除「用哪个方法」的歧义；弃用/隔离/eligibility 硬门照常。
         explicit = str(getattr(facts, "explicit_skill_id", "") or "").strip()
@@ -217,6 +216,7 @@ class SkillPolicy:
             decision = self._decide_explicit(explicit, facts, sig,
                                               prefer_execute=prefer_execute)
         else:
+            selection = self._trusted.resolve(facts, packs=TRUSTED_PACKS)
             decision = self._decide_trusted(selection, facts, sig,
                                             prefer_execute=prefer_execute)
 
@@ -292,8 +292,8 @@ class SkillPolicy:
             eligibility_ok = rejection is None
             unmet = list(getattr(rejection, "reason_codes", []) or [])[:6] \
                 if rejection is not None else []
-        except Exception:  # noqa: BLE001 — 资格判定缺席不越权拒绝
-            eligibility_ok, unmet = True, []
+        except Exception:  # noqa: BLE001 — 资格判定失败按不合格（fail-closed）
+            eligibility_ok, unmet = False, ["ELIGIBILITY_CHECK_FAILED"]
         mode: SkillPolicyMode = "guide"
         if prefer_execute and eligibility_ok and skill.is_runnable_asset():
             mode = "execute_guided"

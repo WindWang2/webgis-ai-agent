@@ -134,6 +134,8 @@ class SkillEvidenceRecorder:
         return kinds
 
     def to_bounded_list(self, *, limit: int = 64) -> List[Dict[str, Any]]:
+        if limit <= 0:
+            return []
         return [r.to_bounded_dict() for r in self._records[-limit:]]
 
 

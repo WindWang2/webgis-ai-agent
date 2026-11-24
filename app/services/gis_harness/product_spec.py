@@ -511,11 +511,8 @@ def apply_product_edit(
         if v is not None and not isinstance(filt, dict):
             errors.append("set_view_filter requires payload.filter (dict)")
         elif v is not None:
-            if len(filt) > MAX_FILTER_KEYS:
-                errors.append(f"filter keys exceed {MAX_FILTER_KEYS}")
-            else:
-                v.binding.filter = dict(filt)
-                affected = [target]
+            v.binding.filter = dict(filt)
+            affected = [target]
     elif op == "toggle_view":
         v = _view_or_err(target)
         if v is not None:

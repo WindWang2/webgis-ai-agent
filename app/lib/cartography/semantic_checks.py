@@ -250,6 +250,7 @@ class CartographyReport:
             "warning_count": sum(
                 1 for check in checks
                 if check.status == "warning"
+                and check.evidence_class == "deterministic"
             ),
             "profiles": self.profiles,
             "checks": [c.to_dict() for c in checks],
@@ -532,7 +533,10 @@ def _classification_integrity(legend_spec: Any) -> tuple[str, Dict[str, Any], st
             index for index, color in enumerate(colors)
             if not _is_supported_color(color)
         ] if isinstance(colors, list) else [0]
-        colors_valid = len(colors) >= 2 and not invalid_color_indexes
+        colors_valid = (
+            isinstance(colors, list) and len(colors) >= 2
+            and not invalid_color_indexes
+        )
         evidence = {
             "legend_type": ltype,
             "min": mn,
@@ -731,7 +735,9 @@ def _check_thematic_consistency(
                 ))
             # graduated: also compare interior break thresholds (value drift).
             if ltype == "graduated" and color_spec.get("method") == "step":
-                legend_interior = [float(b) for b in (legend_spec.get("breaks") or [])[1:-1] if _is_num(b)]
+                breaks_raw = legend_spec.get("breaks")
+                breaks_list = breaks_raw if isinstance(breaks_raw, list) else []
+                legend_interior = [float(b) for b in breaks_list[1:-1] if _is_num(b)]
                 paint_stops = _paint_input_stops(color_spec)
                 if (legend_interior and paint_stops
                         and not _approx_eq_list(legend_interior, paint_stops)):
@@ -1583,7 +1589,8 @@ def _check_map_legend_completeness(
             thematic_visible.append(str(layer.get("id")))
     if not thematic_visible:
         return
-    legend = (mapspec.get("layout") or {}).get("legend")
+    layout = mapspec.get("layout")
+    legend = layout.get("legend") if isinstance(layout, dict) else None
     legend_hidden = isinstance(legend, dict) and legend.get("visible") is False
     if not legend_hidden:
         report.add_check(
@@ -2100,7 +2107,8 @@ def _check_layer_paint_fields(
         "explicit" if sid in explicit_profile_ids
         else "unknown"
     )
-    for prop, raw_spec in (layer.get("paint") or {}).items():
+    paint = layer.get("paint")
+    for prop, raw_spec in (paint if isinstance(paint, dict) else {}).items():
         if isinstance(raw_spec, list):
             report.add_check(
                 "STYLE_EXPRESSION_SUPPORT",
@@ -2569,7 +2577,8 @@ def evaluate_cartography_semantics(
     _check_density_semantics_honesty(report, mapspec)
 
     # 7. Legend / style field consistency (warning).
-    legend = (mapspec.get("layout") or {}).get("legend") or {}
+    layout = mapspec.get("layout")
+    legend = (layout.get("legend") if isinstance(layout, dict) else None) or {}
     legend_field = legend.get("field") if isinstance(legend, dict) else None
     if legend_field:
         paint_fields = set()

@@ -142,9 +142,11 @@ async def decide_feature_edit_plan(
     except fe_executor.FeatureEditConflict as exc:
         raise HTTPException(status_code=409, detail={"code": exc.code, **exc.detail})
     except fe_executor.FeatureEditBlocked as exc:
-        code = exc.code if exc.code in ("dataset_not_found",) else 400
-        raise HTTPException(status_code=404 if code == "dataset_not_found" else 400,
-                            detail={"code": exc.code, "message": exc.message, **exc.detail})
+        # 与 undo/redo 同语义：除 dataset_not_found（404）外，Blocked 是
+        # 状态冲突 → 409（此前 decide 独用 400，同一错误码三种状态码）。
+        if exc.code == "dataset_not_found":
+            raise HTTPException(status_code=404, detail={"code": exc.code, "message": exc.message, **exc.detail})
+        raise HTTPException(status_code=409, detail={"code": exc.code, "message": exc.message, **exc.detail})
     except (LockContentionError, LockDegradedError, LockLostError) as exc:
         raise HTTPException(status_code=503, detail=f"Session busy: {exc}")
 

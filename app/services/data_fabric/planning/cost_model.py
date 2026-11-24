@@ -24,8 +24,7 @@ from app.services.data_fabric.contracts import CostEstimate
 
 #: Per-row byte overhead for the GeoJSON carrier envelope.
 _ROW_OVERHEAD_BYTES = 40
-#: Per-field size by declared/observed type class.
-_FIELD_BYTES = {"number": 8, "integer": 8, "float": 8, "bool": 4, "date": 12}
+#: Per-field size heuristic (all declared/observed types share one default).
 _DEFAULT_FIELD_BYTES = 28
 #: Geometry carrier bytes per geometry type class.
 _GEOMETRY_BYTES = {"point": 32, "line": 160, "polygon": 224, "raster": 0, "table": 0, "none": 0}

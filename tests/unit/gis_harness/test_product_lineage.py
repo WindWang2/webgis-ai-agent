@@ -118,6 +118,32 @@ def test_record_status_projects_liveness():
     assert "ref:stats-1" in lineage.reusable_inputs("chart:required")
 
 
+def test_superseded_source_is_execution_debt():
+    """P3：superseded 与 reusable 排除集同口径 —— 层记执行债且入 dead_outputs。"""
+    chapter, mapspec = _chapter()
+    records = {
+        "ref:geojson-poi": ArtifactRecord(
+            artifact_id="ref:geojson-poi", status="superseded",
+        ),
+    }
+    lineage = build_facet_lineage(chapter, mapspec, records=records)
+    entry = lineage.entries["map_layer:poi-main"]
+    assert entry.recompute_capabilities == ["poi_query"]
+    assert "ref:geojson-poi" in lineage.dead_outputs()
+
+
+def test_registry_unavailable_degrades_lineage(monkeypatch):
+    """P3：capability registry 不可用时血缘投影 fail-soft（不抛出）。"""
+    def _boom():
+        raise RuntimeError("registry down")
+
+    monkeypatch.setattr(
+        "app.lib.gis.capability_registry.get_capability_registry", _boom)
+    chapter, mapspec = _chapter()
+    lineage = build_facet_lineage(chapter, mapspec)
+    assert "map_layer:poi-main" in lineage.entries
+
+
 def test_lineage_is_pure_and_deterministic():
     chapter, mapspec = _chapter()
     a = build_facet_lineage(chapter, mapspec)

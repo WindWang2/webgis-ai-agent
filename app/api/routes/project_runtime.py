@@ -63,10 +63,20 @@ async def _auth_project(
     db: Session, project_id: str, user: Dict[str, Any]
 ) -> Any:
     user_id, org_id = actor_ids(user)
-    project = await asyncio.to_thread(
-        ProjectService.get_project_with_auth,
-        db=db, project_id=project_id, user_id=user_id, org_id=org_id,
-    )
+
+    def _load() -> Any:
+        # #565：请求级 sync Session 不得跨线程使用（SQLAlchemy Session
+        # 非线程安全）。在 worker 线程内开自有 SessionLocal，读完即关；
+        # 返回的 project 已加载所需列（owner_id/org_id）。
+        from app.core.database import SessionLocal
+
+        with SessionLocal() as owned:
+            return ProjectService.get_project_with_auth(
+                db=owned, project_id=project_id,
+                user_id=user_id, org_id=org_id,
+            )
+
+    project = await asyncio.to_thread(_load)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     return project

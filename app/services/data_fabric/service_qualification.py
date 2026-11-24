@@ -28,7 +28,7 @@ NUMERIC_RASTER = "numeric_raster"
 VECTOR_FEATURES = "vector_features"
 UNKNOWN = "unknown"
 
-_TILE_PROTOCOLS = {"ogc_api_tiles", "wms", "wmts", "pmtiles", "arcgis_mapserver"}
+_TILE_PROTOCOLS = {"ogc_api_tiles", "wms", "wmts", "pmtiles"}
 
 
 def qualification_for_descriptor(descriptor: Any) -> Dict[str, Any]:

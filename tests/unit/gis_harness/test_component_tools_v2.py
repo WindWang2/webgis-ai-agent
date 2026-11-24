@@ -425,3 +425,29 @@ async def test_component_update_change_is_json_serializable(registry, clean_sess
         res.get("component_mutation_evidence", {}).get("change", {}),
         default=numpy_json_default,
     )
+
+
+@pytest.mark.asyncio
+async def test_component_update_strips_internal_heatmap_palette_option(
+        registry, clean_session, monkeypatch):
+    """内部控制键 heatmap_palette 不得随 patch 持久化进组件 options。"""
+    await _seed_components(clean_session)
+    from app.services.gis_harness import heatmap_restyle as hr
+
+    async def _ok(session_id, palette_name):
+        return {"success": True, "code": "heatmap_palette_applied",
+                "palette": "blues", "layer_ids": []}
+
+    monkeypatch.setattr(hr, "recolor_session_heatmaps", _ok)
+    res = await registry.dispatch(
+        "webgis_component_update",
+        {"session_id": clean_session, "component_type": "title",
+         "options": {"heatmap_palette": "blues", "custom_flag": "x"}},
+        session_id=clean_session,
+    )
+    assert res["success"] is True, res.get("message")
+    spec = await mapspec_store.get_mapspec(clean_session)
+    title = next(c for c in spec["layout"]["components"]
+                 if c["type"] == "title")
+    assert title["options"].get("custom_flag") == "x"
+    assert "heatmap_palette" not in title["options"]

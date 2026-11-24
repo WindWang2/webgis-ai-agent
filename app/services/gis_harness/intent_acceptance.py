@@ -69,8 +69,8 @@ def derive_intent_requirements(chapter: Dict[str, Any]) -> Dict[str, List[str]]:
     components = [
         str(slot)[:48] for slot in (chapter.get("required_components") or [])
     ][:MAX_REQUIREMENTS]
-    return {"layers": layers[:MAX_REQUIREMENTS], "roles": roles,
-            "components": components}
+    return {"layers": layers[:MAX_REQUIREMENTS],
+            "roles": roles[:MAX_REQUIREMENTS], "components": components}
 
 
 def _spec_layers_by_id(mapspec: Optional[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:

@@ -11,10 +11,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 import pytest
 
+from app.services.gis_harness.visual_observation.repair_bridge import (
+    load_proposal,
+    save_proposal,
+)
 from app.services.gis_harness.visual_observation.repair_decisions import (
     DECISION_APPROVED,
     DECISION_AUTO_APPLIED,
@@ -346,3 +351,84 @@ def test_visual_repair_intent_is_frozen_dataclass():
     intent = VisualRepairIntent()
     with pytest.raises(Exception):
         intent.base_revision = 5      # type: ignore[misc]
+
+
+def test_intent_from_dict_rejects_foreign_schema_version():
+    """P3：外来/未来 schema 必须诚实 None，不得静默截断后强转。"""
+    good = intent_to_dict(compile_intent(
+        proposal_id="vrepair-schema-1", base_revision=1,
+        approval_class=APPROVAL_AUTO_SAFE, origin="user",
+        defects=[{"category": "contrast", "severity": "warning",
+                  "layer_ids": ["L1"], "occluder_layer_id": None,
+                  "dimension": "color_discriminability", "evidence": "e",
+                  "min_contrast_ratio": 1.4, "suggested_operation": None}],
+    ))
+    assert intent_from_dict(dict(good, schema_version="v2")) is None
+    assert intent_from_dict(dict(good, schema_version="future")) is None
+    # 旧快照没有版本键 → 仍按当前版本兼容（additive）。
+    no_version = {k: v for k, v in good.items() if k != "schema_version"}
+    assert intent_from_dict(no_version) is not None
+
+
+# ── 并发原子性（读改写不得丢条目）─────────────────────────────────────────
+
+class _SlowConcurrentStore:
+    """最小状态存储：每次读写都让出事件循环，暴露非原子读改写。
+
+    同时实现 ``get_state_field`` / ``set_map_state_fields``（原子路径）与
+    ``get_map_state`` / ``set_map_state``（旧的整块路径），以便同一个 fake
+    能分别驱动修复前/后的实现。
+    """
+
+    def __init__(self) -> None:
+        self.state: dict = {}
+
+    async def get_state_field(self, session_id, key):
+        await asyncio.sleep(0)
+        return self.state.get(key)
+
+    async def set_map_state_fields(self, session_id, fields):
+        await asyncio.sleep(0)
+        self.state.update(fields)
+        return True
+
+    async def get_map_state(self, session_id):
+        await asyncio.sleep(0)
+        return dict(self.state)
+
+    async def set_map_state(self, session_id, key, value, seq=None):
+        await asyncio.sleep(0)
+        self.state[key] = value
+        return True
+
+
+@pytest.mark.asyncio
+async def test_concurrent_decisions_do_not_lose_entries(monkeypatch):
+    """P3：同会话并发 record_decision 不得丢决策（拒绝记忆随之丢失）。"""
+    store = _SlowConcurrentStore()
+    monkeypatch.setattr(
+        "app.services.session_data.session_data_manager", store)
+    await asyncio.gather(
+        record_decision(
+            "s-conc", decision=DECISION_REJECTED, proposal_id="p-1",
+            recurrence_fingerprints=["fp-a"]),
+        record_decision(
+            "s-conc", decision=DECISION_REJECTED, proposal_id="p-2",
+            recurrence_fingerprints=["fp-b"]),
+    )
+    decisions = await load_decisions("s-conc")
+    assert {d.get("proposal_id") for d in decisions} == {"p-1", "p-2"}
+
+
+@pytest.mark.asyncio
+async def test_concurrent_proposals_do_not_overwrite(monkeypatch):
+    """P3：同会话并发 save_proposal 不得丢提案（非原子读改写）。"""
+    store = _SlowConcurrentStore()
+    monkeypatch.setattr(
+        "app.services.session_data.session_data_manager", store)
+    await asyncio.gather(
+        save_proposal("s-conc-prop", {"proposal_id": "vrepair-a"}),
+        save_proposal("s-conc-prop", {"proposal_id": "vrepair-b"}),
+    )
+    assert await load_proposal("s-conc-prop", "vrepair-a") is not None
+    assert await load_proposal("s-conc-prop", "vrepair-b") is not None

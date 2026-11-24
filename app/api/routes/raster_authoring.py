@@ -125,6 +125,9 @@ async def descriptor(
         bands = None
         if histogram_bands:
             bands = [int(b.strip()) for b in histogram_bands.split(",") if b.strip()]
+    except (ValueError, TypeError) as err:
+        raise HTTPException(status_code=400, detail="histogram_bands 必须是 1-based CSV") from err
+    try:
         return await describe_raster(
             session_id, ref_id,
             owner_token=await _owned(session_id, owner_token, conv),
@@ -133,7 +136,9 @@ async def descriptor(
     except RasterExpressionError as err:
         raise _fail(err) from err
     except (ValueError, TypeError) as err:
-        raise HTTPException(status_code=400, detail="histogram_bands 必须是 1-based CSV") from err
+        # 服务层合法 CSV 下的 ValueError（如波段越界）不是格式错误 ——
+        # 透传真实原因，别让调用方去修 histogram_bands。
+        raise HTTPException(status_code=400, detail=str(err)[:300]) from err
 
 
 # ─── 真实像元检视（只读，不写 MapSpec）──────────────────────────────────────

@@ -285,7 +285,8 @@ def override_status(
       文字就是文字），无 text 的基础标注披露 field_missing；
     - stale：要素在但 sourceRevision ≠ 当前 content_revision —— 仍然
       应用（身份未断），但标记待复核；
-    - unverified：消费侧无法取到特征数据复核（如未水合 ref 源导出）；
+    - unverified：消费侧无法取到特征数据复核（如未水合 ref 源导出），
+      或 sourceRevision 不可解析（无法判定 stale/active）；
     - active：全部复核通过。
     """
     if not feature_found:
@@ -299,12 +300,14 @@ def override_status(
     ):
         return "field_missing"
     rev = override.get("sourceRevision")
-    if (
-        rev is not None
-        and current_revision is not None
-        and float(rev) != float(current_revision)
-    ):
-        return "stale"
+    if rev is not None and current_revision is not None:
+        try:
+            mismatch = float(rev) != float(current_revision)
+        except (TypeError, ValueError):
+            # 修订号不可解析 ⇒ 无法复核身份，按 unverified 披露（fail-honest）。
+            return "unverified"
+        if mismatch:
+            return "stale"
     return "active"
 
 
@@ -377,7 +380,7 @@ def preview_authoring_ops(
         wanted = []
         for op in ops:
             if isinstance(op, dict) and isinstance(op.get("featureId"), str):
-                wanted.append(op["featureId"])
+                wanted.append(op["featureId"].strip())
         known_index = find_feature_overrides(known_features, wanted)
 
     changed = False

@@ -584,8 +584,9 @@ def bound_receipt_rows(
     for row in rows:
         for key in ("input_ref", "output_ref", "ref_id", "artifact_ref"):
             value = str(row.get(key) or "").strip()
-            if value and (value == ref_norm or value.endswith(ref_norm)
-                          or ref_norm.endswith(value)):
+            # 只认精确 ref 绑定：双向 endswith 会让短 ref（如 "1"）命中
+            # 无关回执（"dataset:x/1"），错误回执的 cap 码降级/FAILED 需求。
+            if value and value == ref_norm:
                 out.append(row)
                 break
     return out

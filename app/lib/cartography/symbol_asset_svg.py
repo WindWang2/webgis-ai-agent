@@ -300,9 +300,6 @@ __all__ = [
 # 规避：把根 width/height 改写为目标采样像素（viewBox 不动），按内在尺寸
 # 渲染 —— 输出像素与 CLI 缩放等价且 pattern 完整（3x 缩放实证）。
 
-_ROOT_W_RE = None
-
-
 def prepare_svg_for_rasterize(svg: str, w_px: int, h_px: int) -> str:
     """含 G40 pattern 标记时改写根 width/height 为采样像素（否则原样）。
 
@@ -314,11 +311,11 @@ def prepare_svg_for_rasterize(svg: str, w_px: int, h_px: int) -> str:
     import re
 
     out = re.sub(
-        r'(<svg\b[^>]*?\bwidth=")[^"]+(")',
+        r'(<svg\b[^>]*?\swidth=")[^"]+(")',
         lambda m: m.group(1) + str(max(1, int(w_px))) + m.group(2),
         svg, count=1)
     out = re.sub(
-        r'(<svg\b[^>]*?\bheight=")[^"]+(")',
+        r'(<svg\b[^>]*?\sheight=")[^"]+(")',
         lambda m: m.group(1) + str(max(1, int(h_px))) + m.group(2),
         out, count=1)
     return out

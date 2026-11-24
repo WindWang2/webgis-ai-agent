@@ -500,10 +500,20 @@ def _render_pdf_to_file(
     with tempfile.NamedTemporaryFile(
         dir=_exports_dir_write(), delete=False, suffix=".pdf",
     ) as tmp:
-        tmp.write(pdf_bytes)
-        tmp.flush()
-        os.fsync(tmp.fileno())
         tmp_path = tmp.name
+        try:
+            tmp.write(pdf_bytes)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        except BaseException:
+            # 磁盘满/IO 错时 with 退出只关句柄不删文件（delete=False）——
+            # 这里显式清理，别把半个临时 PDF 永久留在 exports 目录。
+            tmp.close()
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
     try:
         os.replace(tmp_path, pdf_path)
     except BaseException:
@@ -796,6 +806,9 @@ async def export_map_as_mixed(
                                    "overlap", "embedded", "width", "height")}
             for p in (manifest.get("raster_layers") or [])[:12]
         ],
+        # 截断必须披露：否则 >12 个 raster layer 的 manifest 在响应里
+        # 看似完整。
+        "raster_layers_truncated": len(manifest.get("raster_layers") or []) > 12,
         "renderer": manifest.get("renderer", {}),
         "checksum": manifest.get("checksum"),
         "render_diagnostics": manifest.get("diagnostics", []),

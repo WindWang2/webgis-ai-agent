@@ -214,3 +214,14 @@ def test_role_missing_code_aligns_with_legacy_family():
     assert role_missing_code("boundary") == f"{AWF_DATA_ROLE_MISSING}:BOUNDARY"
     assert role_missing_code("target_time") == \
         f"{AWF_DATA_ROLE_MISSING}:TARGET_TIME"
+
+
+def test_evidence_summary_empty_receipts_is_not_all_have_output_ref():
+    """空 receipts 不得空真宣称 all_have_output_ref=True（全失败运行的
+    终局摘要必须如实为 False）。"""
+    from app.services.gis_harness.analysis_workflows.evidence import (
+        evidence_summary,
+    )
+
+    summary = evidence_summary(_contract(), {})
+    assert summary["all_have_output_ref"] is False

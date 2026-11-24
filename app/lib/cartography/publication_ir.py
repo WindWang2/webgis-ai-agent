@@ -666,7 +666,7 @@ def _time_pages(
         page_w, page_h, bounds = page_geometry(None)
         target_layer = bound_layer or str(first_layer or "")
         page_specs.append({
-            "page_id": f"t-{frame.get('id')}",
+            "page_id": f"t-{frame.get('id')}"[:120],
             "title": str(frame.get("label") or frame.get("id") or "")[:200],
             "frame_index": None,
             "paper": _paper_of(page_w, page_h, None),
@@ -735,6 +735,13 @@ def _product_page(
     content_h = 1.0 - 2 * margin - legend_band
     slot_w = (content_w - (columns - 1) * gap) / columns
     slot_h = (content_h - (rows - 1) * gap) / rows
+    if slot_w <= 0 or slot_h <= 0:
+        # 裸网格口径放不下（仅可能在未经 schema 的原始文档上出现）：
+        # typed 拒绝，而不是让 FrameSlotIR 的 gt=0 抛裸 ValidationError。
+        raise MapSpecSchemaError(
+            "product_page_grid_overflow",
+            f"frame_product 网格无法容纳 {len(slots)} 个画幅"
+            f"（columns={columns}, rows={rows}）")
 
     layout_frames_raw = (document.get("layout") or {}).get("frames") \
         if isinstance(document.get("layout"), dict) else None
@@ -746,7 +753,14 @@ def _product_page(
 
     frame_slots: List[FrameSlotIR] = []
     for i, slot in enumerate(slots):
-        fid = str(slot.get("frame_id") or "")
+        fid_raw = slot.get("frame_id")
+        if not isinstance(fid_raw, str) or not 1 <= len(fid_raw) <= 64:
+            # 与 ProductFrameSlot.frame_id(StrictStr, 1..64) 同口径的 typed
+            # 拒绝（原始文档绕过 schema 时不得漏成裸 ValidationError）。
+            raise MapSpecSchemaError(
+                "product_page_frame_id_invalid",
+                f"frame_product.frames[{i}].frame_id 必须为 1..64 字符")
+        fid = fid_raw
         col = i % columns
         row = i // columns
         x = margin + col * (slot_w + gap)

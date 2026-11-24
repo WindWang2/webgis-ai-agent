@@ -304,6 +304,12 @@ def test_acquisition_bound_role_local_feasible() -> None:
     assert not plan.synthetic_demo_allowed
 
 
+def test_acquisition_dict_without_status_defaults_to_unresolved() -> None:
+    """P3：缺 status 键的 dict 不得把字符串 "None" 当解析态。"""
+    plan = plan_acquisition([{"role": "subject", "acquisition": "local"}])
+    assert plan.roles[0].resolution_status == "unresolved"
+
+
 def test_carto_rate_requires_denominator_blocks_on_missing() -> None:
     method = SimpleNamespace(method_id="density.admin_rate",
                              approximate=False)

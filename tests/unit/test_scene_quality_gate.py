@@ -172,6 +172,13 @@ class TestLegendInvariance:
         finding = check_legend_invariance(before, after)
         assert finding is not None
 
+    def test_missing_layer_id_does_not_break_sort(self):
+        """缺 id 层产生 None 键：排序不得因 None/str 混排抛 TypeError。"""
+        before = [{"legend_spec": {"breaks": [1, 2]}}, {"id": "l1"}]
+        after = []
+        finding = check_legend_invariance(before, after)
+        assert finding is not None
+
 
 class TestSelfHealMapping:
     def test_pitch_blocking_maps_to_set_view(self):

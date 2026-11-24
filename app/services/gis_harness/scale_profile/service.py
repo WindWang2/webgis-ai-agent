@@ -543,8 +543,9 @@ async def apply_scale_representation(
         }))
     new_layer = dict(ctx["layer"])
     windows = representation_windows_of_profile(profile2)
-    if any(w.get("mode") != "raw" for w in windows):
-        new_layer["representation"] = {"windows": windows}
+    # 恒以本次档案重写 windows：全 raw 的二次 commit 也必须覆盖旧
+    # representation（否则残留旧 gen source 覆盖，与新 scale_profile 矛盾）。
+    new_layer["representation"] = {"windows": windows}
     new_layer["scale_profile"] = to_mapspec_layer_block(profile2)
     new_layer["scale_profile"]["classification_breaks_fingerprint"] = (
         _legend_breaks_fingerprint(ctx["layer"]))

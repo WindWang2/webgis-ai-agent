@@ -24,7 +24,13 @@ from app.services.gis_harness.map_operations.contracts import (
     RC_CLARIFICATION_NEEDED,
     RC_COMPONENT_NOT_FOUND,
     RC_LAYER_NOT_FOUND,
+    KIND_MOVE_LAYER,
+    KIND_REMOVE_LAYER,
     KIND_SET_COMPONENT,
+    KIND_SET_LAYER_OPACITY,
+    KIND_SET_LAYER_PAINT,
+    KIND_SET_LAYER_SYMBOL,
+    KIND_SET_LAYER_VISIBILITY,
     KIND_SET_VIEWPORT,
     TARGET_KIND_COMPONENT_ID,
     TARGET_KIND_FOCUSED_LAYER,
@@ -128,6 +134,11 @@ async def _last_result_layer_id(session_id: str) -> Optional[str]:
 
         ring = state.get(RECEIPTS_KEY)
         if isinstance(ring, list):
+            layer_effect_kinds = {
+                KIND_SET_LAYER_VISIBILITY, KIND_SET_LAYER_OPACITY,
+                KIND_SET_LAYER_PAINT, KIND_SET_LAYER_SYMBOL,
+                KIND_MOVE_LAYER, KIND_REMOVE_LAYER,
+            }
             for receipt in ring:
                 if not isinstance(receipt, dict) or receipt.get("status") not in (
                     "committed", "partial",
@@ -135,6 +146,11 @@ async def _last_result_layer_id(session_id: str) -> Optional[str]:
                     continue
                 for eff in reversed(receipt.get("effects") or []):
                     if not isinstance(eff, dict) or eff.get("state") != "applied":
+                        continue
+                    if str(eff.get("kind") or "") not in layer_effect_kinds:
+                        # set_viewport 的 targets 恒 ["viewport"]、set_component
+                        # 为组件 id —— 都不是图层指代，跳过以免误导性
+                        # layer_not_found（应走 clarification_needed）。
                         continue
                     targets = eff.get("targets")
                     if isinstance(targets, list) and targets:

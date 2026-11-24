@@ -281,7 +281,7 @@ def chrome_for_legend_type(
     has_graduated_layer = bool(bound & _GRADUATED_MODELS)
     if lt == "categorical" or "categorical_thematic" in bound:
         return ["categorical_legend"]
-    if lt in {"graduated", "classified"}:
+    if lt in _DISCRETE_LEGEND_TYPES:
         return ["legend"]
     if lt in _CONTINUOUS_LEGEND_TYPES:
         if has_graduated_layer:

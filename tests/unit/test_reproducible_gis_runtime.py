@@ -19,6 +19,7 @@ from sqlalchemy import select
 from app.core.database import Base, Engine, SessionLocal
 from app.schemas.project_schema import WorkflowStepSpec
 from app.services.gis_harness.workflow_promotion import (
+    build_recipe_metadata,
     build_workflow_recipe,
     promotion_blockers,
 )
@@ -224,6 +225,40 @@ def test_promotion_is_deterministic():
     a, _ = build_workflow_recipe(chapter, name="wf")
     b, _ = build_workflow_recipe(chapter, name="wf")
     assert a.model_dump() == b.model_dump(), "same plan → identical recipe"
+
+
+def test_promotion_rejects_plan_truncated_at_step_cap():
+    """P3：超过 _MAX_STEPS 的计划不得把截断残片当作完整晋升。"""
+    chapter = {
+        "query": "big",
+        "data_requirements": [
+            {"capability": f"cap_{i}", "status": "available",
+             "bound_ref": "ref:x", "params": {}, "depends_on": []}
+            for i in range(65)
+        ],
+        "analysis_steps": [],
+    }
+    recipe, blockers = build_workflow_recipe(chapter, name="wf")
+    assert recipe is None
+    assert blockers == ["plan_truncated"]
+
+
+def test_recipe_metadata_intent_is_depth_and_size_bounded():
+    """P3：metadata.intent 是有界证据面，不是无界载荷。"""
+    intent: dict = {"task": "x" * 2000}
+    node = intent
+    for i in range(10):
+        child: dict = {"level": i}
+        node["nested"] = child
+        node = child
+    bounded = build_recipe_metadata({"intent": intent})["intent"]
+    depth = 0
+    node = bounded
+    while isinstance(node, dict):
+        depth += 1
+        node = node.get("nested")
+    assert depth <= 4
+    assert len(bounded["task"]) <= 512
 
 
 # ── A5: capability re-resolution ──────────────────────────────────────────

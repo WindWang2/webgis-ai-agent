@@ -208,3 +208,23 @@ def test_provider_candidates_cost_rank_wired(monkeypatch):
     monkeypatch.setenv(cp.RESOURCE_RANK_ENV, "0")
     ranked_off, _ = _provider_candidates("cap", CTX, graph)
     assert all("cost_rank" not in c.factors for c in ranked_off)
+
+
+def test_kill_switch_keeps_degraded_semantics_disclosure(monkeypatch):
+    """kill-switch 只关资源排序，不得吞掉 degraded 候选的 approximate 披露。"""
+    graph = _StubGraph("demo_cap", [
+        _tool("exact_path", "fast", "light"),
+        _tool("fallback_path", "fast", "light"),
+    ])
+
+    def fake_qualify(node, ctx, g=None):
+        if node.id == "fallback_path":
+            return QualificationResult(QualificationStatus.DEGRADED, [])
+        return QualificationResult(QualificationStatus.ELIGIBLE, [])
+
+    monkeypatch.setattr(cp, "qualify_node", fake_qualify)
+    monkeypatch.setenv(cp.RESOURCE_RANK_ENV, "0")
+    plan = cp.plan_candidates_v8("demo_cap", CTX, graph=graph,
+                                 resource_pressure=0.0)
+    assert plan.resource_pressure is None
+    assert plan.worst_semantics == "approximate"

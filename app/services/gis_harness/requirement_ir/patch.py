@@ -468,7 +468,8 @@ def _get_path_value(spec: GISIntentSpec, path: str) -> Any:
 
 def _is_default_value(value: Any) -> bool:
     """「新话语对该面无表达」的判定：字段处于默认空态。"""
-    return value is None or value == "" or value is False \
+    return value is None or value == "" \
+        or (isinstance(value, bool) and value is False) \
         or value == () or value == [] or value == {}
 
 

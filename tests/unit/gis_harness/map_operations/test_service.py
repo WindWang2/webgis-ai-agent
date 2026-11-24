@@ -550,3 +550,49 @@ async def test_failed_presentation_effect_not_resubmitted_in_chain(monkeypatch):
     assert receipt["effects"][0]["state"] == "failed"
     assert receipt["effects"][0]["reason_code"] == "internal_error"
     assert single_calls == [], single_calls
+
+
+async def test_committed_message_distinguishes_noop_from_user_wins():
+    """P3：RC_NOOP 跳过不得表述为「保留用户决策」。"""
+    sid = f"mop-{uuid.uuid4().hex[:10]}"
+    await _seed(sid)
+    first = await commit_map_operation(sid, MapOperationRequest(
+        operation_id=mint_operation_id(), mode="commit",
+        effects=[{"kind": "set_layer_opacity", "target": "schools",
+                  "opacity": 0.5}],
+    ))
+    assert first["status"] == "committed"
+    noop = await commit_map_operation(sid, MapOperationRequest(
+        operation_id=mint_operation_id(), mode="commit",
+        effects=[
+            {"kind": "set_layer_opacity", "target": "schools", "opacity": 0.5},
+            {"kind": "set_layer_opacity", "target": "districts", "opacity": 0.7},
+        ],
+    ))
+    assert noop["status"] == "committed"
+    assert noop["effects"][0]["reason_code"] == "noop"
+    assert "已是目标状态" in noop["message"]
+    assert "保留用户决策" not in noop["message"]
+
+
+async def test_last_result_skips_non_layer_effects():
+    """P3：set_viewport 的 targets=["viewport"] 不得被当作 last_result 层。"""
+    from app.services.gis_harness.map_operations.contracts import RECEIPTS_KEY
+
+    sid = f"mop-{uuid.uuid4().hex[:10]}"
+    await _seed(sid)
+    await session_data_manager.set_map_state(sid, RECEIPTS_KEY, [{
+        "status": "committed",
+        "effects": [
+            {"kind": "set_viewport", "state": "applied",
+             "targets": ["viewport"]},
+        ],
+    }])
+    receipt = await commit_map_operation(sid, MapOperationRequest(
+        operation_id=mint_operation_id(), mode="commit",
+        effects=[{"kind": "set_layer_visibility",
+                  "target_kind": "last_result", "visible": False}],
+    ))
+    eff = receipt["effects"][0]
+    assert eff["state"] == "skipped"
+    assert eff["reason_code"] == "clarification_needed"

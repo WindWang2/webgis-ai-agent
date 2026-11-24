@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+import copy
 from typing import Any, Dict, List, Tuple
 
 #: 场景元组：(id,话语,族,期望 cue dict,链路状态 dict)
@@ -143,8 +144,8 @@ def intent_scenarios() -> List[Dict[str, Any]]:
             "id": sid,
             "utterance": utterance,
             "family": family,
-            "expected_cues": cues,
-            "chain": chain,
+            "expected_cues": copy.deepcopy(cues),
+            "chain": copy.deepcopy(chain),
         }
         for sid, utterance, family, cues, chain in _SCENARIOS
     ]

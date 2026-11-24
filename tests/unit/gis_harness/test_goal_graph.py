@@ -241,3 +241,16 @@ def test_candidate_validator_rejects_oversize_and_drops_dangling_deps():
     assert result["valid"], result["errors"]
     node = [n for n in result["normalized"]["nodes"] if n["id"] == "a"][0]
     assert node["depends_on"] == ["goal"]
+
+
+def test_candidate_validator_rejects_duplicate_node_ids():
+    """重复节点 id 会让 adj/node() 静默丢节点 → 显式 valid=False。"""
+    ch = _equity_chapter()
+    candidate = {"nodes": [
+        {"id": "dup", "kind": "verify", "depends_on": []},
+        {"id": "dup", "kind": "deliver", "depends_on": ["dup"]},
+    ]}
+    result = validate_candidate_graph(candidate, ch)
+    assert not result["valid"]
+    assert any("duplicate node ids" in e for e in result["errors"])
+    assert result["normalized"] is None

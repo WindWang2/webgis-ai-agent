@@ -90,7 +90,9 @@ def _normalize_token(v: Any) -> str:
 
 
 def _normalize_field(name: str) -> str:
-    return "".join(ch for ch in str(name).strip().lower() if not ch.isspace())
+    return "".join(
+        ch for ch in str(name).strip().lower()
+        if not ch.isspace() and ch != "-")
 
 
 def _match_field_synonym(field: str) -> Optional[Tuple[str, int]]:
@@ -306,14 +308,14 @@ def _looks_like_road_field(field: str) -> bool:
 #: 缺省带级保留秩（词表序前 K；street = 全保留哨兵 999）。
 #: 惯例：粗尺度保跨城干线（world 3 = 高速/国道/省道），city 带纳入县乡
 #: 干线，street 带全量。可被用户逐带覆盖（apply 工具入参）。
+_STREET_SENTINEL = 999
+
 DEFAULT_KEEP_RANKS: Dict[str, int] = {
     "world": 3,
     "province": 4,
     "city": 6,
-    "street": 999,
+    "street": _STREET_SENTINEL,
 }
-
-_STREET_SENTINEL = 999
 
 
 def kept_values_for_band(
@@ -337,6 +339,9 @@ def kept_values_for_band(
     # 全保留 —— 评审 R1-P2-7：键名笔误不得改变取舍语义）
     ranks = {**DEFAULT_KEEP_RANKS, **(keep_ranks or {})}
     k = int(ranks[tier])
+    if k < 0:
+        # 负 K 会从词表尾部切片 —— 静默保留错误取值集，必须 fail-closed。
+        raise ValueError(f"keep rank for {tier!r} must be >= 0 (got {k})")
     kept = list(model.value_order[:k])
     if mandatory_values:
         for v in mandatory_values:

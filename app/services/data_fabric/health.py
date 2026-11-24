@@ -38,12 +38,17 @@ _FAILURE_STATUSES = frozenset({STATUS_UNREACHABLE, STATUS_DEGRADED, STATUS_TIMEO
 
 
 def adapter_health_key(adapter: GeospatialDataSourceAdapter) -> str:
-    """Registry scope/revision is authoritative; unmanaged instances stay isolated."""
+    """Registry scope/revision is authoritative; unmanaged instances share by profile.
+
+    ``id(adapter)`` must not participate: it grows the health cache forever
+    (one entry per new instance) and can alias a freed instance's id to a new
+    adapter, serving that old adapter's health result.
+    """
     bound = getattr(adapter, "_data_fabric_health_key", None)
     if bound:
         return str(bound)
     profile = getattr(adapter, "profile", None)
-    return f"{getattr(profile, 'id', 'unknown')}|instance:{id(adapter)}"
+    return str(getattr(profile, "id", None) or "unknown")
 
 
 class SourceDownError(SourceUnreachableError):

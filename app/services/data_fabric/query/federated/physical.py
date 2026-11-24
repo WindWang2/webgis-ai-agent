@@ -43,7 +43,9 @@ class CancelToken:
         cancel_event: Optional[threading.Event] = None,
     ):
         started = time.monotonic()
-        self._deadline = (started + deadline_s) if deadline_s else None
+        # deadline_s=0 与 federation._source_query 的 `> deadline_s` 保持同一
+        # 解释：0 表示已超时，而不是「无期限」。
+        self._deadline = (started + deadline_s) if deadline_s is not None else None
         self._event = cancel_event
 
     def check(self) -> None:

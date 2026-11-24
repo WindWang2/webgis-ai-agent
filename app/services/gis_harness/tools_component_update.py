@@ -294,7 +294,12 @@ def register_component_update_tool(registry: ToolRegistry) -> None:
                     chart_options["selectionField"] = derived_selection_field
         if stats is not None:
             chart_options["stats"] = stats
-        merged_options = {**(options or {}), **chart_options} or None
+        # heatmap_palette 是工具内部控制键（上面已消费），不得随 patch 落进
+        # 组件 options（内部指令泄漏为持久化状态）。
+        _merged_input = {
+            k: v for k, v in (options or {}).items()
+            if k != "heatmap_palette"}
+        merged_options = {**_merged_input, **chart_options} or None
 
         spec = (
             _spec_early

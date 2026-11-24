@@ -247,6 +247,9 @@ async def run_map_finalization(
     def _finding_key(f: MapCompletionFinding) -> str:
         return f"{f.code}:{str(f.target)[:64]}"
 
+    if max_passes <= 0:
+        # 0 轮修复 ≠ 零校验：仍做一次纯校验，状态不得凭空 complete。
+        findings = _validate_all(inputs, chapter)
     while passes < max_passes:
         passes += 1
         findings = _validate_all(inputs, chapter)
@@ -263,7 +266,7 @@ async def run_map_finalization(
             repaired_last_pass = False
             break
         repairable = [f for f in findings if f.repair is not None]
-        if not repairable or not findings:
+        if not repairable:
             repaired_last_pass = False
             break
         retry_free = [
@@ -662,8 +665,6 @@ def _assemble_visual_snapshot(
                     rect.get("width"), rect.get("height"),
                 ],
             })
-            if len(component_boxes) >= 24:
-                break
     snapshot = {
         "trigger": "finalization",
         "session_id": str(session_id or "")[:64],

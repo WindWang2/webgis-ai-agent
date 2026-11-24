@@ -72,6 +72,27 @@ def test_requirements_derived_bounded():
     assert empty["layers"] == []
 
 
+def test_requirements_roles_truncated_with_layers(monkeypatch):
+    """P3：layers 截断到 MAX_REQUIREMENTS 时 roles 必须同步截断（不错位）。"""
+    import app.services.gis_harness.intent_acceptance as mod
+
+    ids = [f"layer-{i:02d}" for i in range(20)]
+    monkeypatch.setattr(
+        "app.services.gis_harness.render_observation._planned_result_layer_ids",
+        lambda chapter: list(ids),
+    )
+    chapter = {
+        "map_layers": [
+            {"layer_id": lid, "role": "primary" if i == 0 else "secondary"}
+            for i, lid in enumerate(ids)
+        ],
+    }
+    req = mod.derive_intent_requirements(chapter)
+    assert req["layers"] == ids[: mod.MAX_REQUIREMENTS]
+    assert req["roles"] == ["primary"] + ["secondary"] * 15
+    assert len(req["roles"]) == len(req["layers"])
+
+
 # ── 验收判定 ─────────────────────────────────────────────────────────────
 
 

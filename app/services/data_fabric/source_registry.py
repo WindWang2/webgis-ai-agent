@@ -318,16 +318,27 @@ class SourceRegistryService:
         for key in source.auth.env_keys:
             if not re_env_name(key):
                 raise SourceRegistryError(path, f"auth.env_keys entry '{key}' is not a valid env var name")
-        # options must not smuggle credential-looking plaintext
-        for opt_key, value in source.options.items():
-            lowered = str(opt_key).lower()
-            if any(tok in lowered for tok in ("secret", "password", "token", "api_key")):
-                if isinstance(value, str) and not value.startswith("${"):
-                    raise SourceRegistryError(
-                        path,
-                        f"options.{opt_key} looks like a credential and must use ${{ENV_VAR}} "
-                        "(no plaintext secrets in the registry)",
-                    )
+        # options must not smuggle credential-looking plaintext (top level and
+        # nested maps such as options.headers — Authorization/Cookie 等)。
+        credential_tokens = (
+            "secret", "password", "token", "api_key", "access_key",
+            "authorization", "cookie",
+        )
+
+        def _check(mapping: Dict[Any, Any], prefix: str) -> None:
+            for opt_key, value in mapping.items():
+                lowered = str(opt_key).lower()
+                if any(tok in lowered for tok in credential_tokens):
+                    if isinstance(value, str) and not value.startswith("${"):
+                        raise SourceRegistryError(
+                            path,
+                            f"{prefix}.{opt_key} looks like a credential and must use "
+                            "${ENV_VAR} (no plaintext secrets in the registry)",
+                        )
+                if isinstance(value, dict):
+                    _check(value, f"{prefix}.{opt_key}")
+
+        _check(source.options, "options")
 
     def reload_if_changed(self, *, force: bool = True) -> bool:
         """Hot reload: true if any file changed/added/removed and reload ran."""
@@ -345,7 +356,14 @@ class SourceRegistryService:
             self.load()
             return True
         for path in files:
-            if path.stat().st_mtime != snapshots.get(path):
+            try:
+                mtime = path.stat().st_mtime
+            except OSError:
+                # 文件在 glob 与 stat 之间被删除：按「已变更」触发重载（load()
+                # 重新 glob，健康源不受影响），绝不让 FileNotFoundError 穿出。
+                self.load()
+                return True
+            if mtime != snapshots.get(path):
                 self.load()
                 return True
         return False

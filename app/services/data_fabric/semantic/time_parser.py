@@ -119,13 +119,13 @@ def _parse_time_expr(text: str, *, now: Optional[date] = None) -> Optional[TimeR
     m = re.search(r"(?:近|最近|过去|前)\s*([一二两二三四五六七八九十\d]+)\s*个?月", t)
     if m:
         n = _num(m.group(1)) or 1
-        start = _month_end(today) - timedelta(days=30 * n)
-        return TimeRange(_iso(date(start.year, start.month, 1)), _iso(today), "month", 0.9)
+        start = _shift_month_start(today, n)
+        return TimeRange(_iso(start), _iso(today), "month", 0.9)
     m = re.search(r"last\s+([a-z]+|\d+)\s+months?", t, re.I)
     if m:
         n = _num(m.group(1)) or 1
-        start = _month_end(today) - timedelta(days=30 * n)
-        return TimeRange(_iso(date(start.year, start.month, 1)), _iso(today), "month", 0.9)
+        start = _shift_month_start(today, n)
+        return TimeRange(_iso(start), _iso(today), "month", 0.9)
     if re.search(r"(?:近|最近|过去)\s*半\s*年", t):
         start = _month_end(today) - timedelta(days=30 * 6)
         return TimeRange(_iso(date(start.year, start.month, 1)), _iso(today), "month", 0.85)
@@ -252,6 +252,12 @@ def _month_end(d: date) -> date:
     if d.month == 12:
         return date(d.year, 12, 31)
     return date(d.year, d.month + 1, 1) - timedelta(days=1)
+
+
+def _shift_month_start(today: date, months: int) -> date:
+    """近 N 个月的首个自然月 1 号（日历月运算，不随 today 日号漂移）。"""
+    index = today.year * 12 + (today.month - 1) - (months - 1)
+    return date(index // 12, index % 12 + 1, 1)
 
 
 __all__ = ["TimeRange", "parse_time_expr"]

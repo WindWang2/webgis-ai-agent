@@ -133,6 +133,8 @@ def test_publication_components_no_demand_without_export_or_layers():
     assert check_publication_components(ch, spec) != []  # 有层有导出 → 要求
     assert check_publication_components(ch, _mapspec(exports=[])) == []
     assert check_publication_components(_chapter(layers=0), spec) == []
+    # 无 spec：无法证明声明了出版导出 → 零 finding（不得以假前提报缺失）
+    assert check_publication_components(ch, None) == []
     # 组件齐备 → 零 finding
     full = _mapspec(components=[{"type": t} for t in (
         "title", "north_arrow", "scale_bar")], exports=["png"])

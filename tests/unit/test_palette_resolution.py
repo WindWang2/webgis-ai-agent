@@ -27,3 +27,20 @@ def test_resolve_returns_list_type():
     """Always returns a list (callers index/slice it)."""
     assert isinstance(resolve_palette_colors("Viridis"), list)
     assert isinstance(resolve_palette_colors("nope"), list)
+
+
+def test_contrast_ratio_fails_closed_on_non_string():
+    """非 str 输入不得抛 AttributeError（文档承诺非法色按黑处理）。"""
+    from app.lib.cartography.palettes import contrast_ratio
+
+    assert contrast_ratio(None, "#ffffff") == 21.0
+    assert contrast_ratio("#ffffff", None) == 21.0
+    assert contrast_ratio(None, None) == 1.0
+
+
+def test_grayscale_ramp_separation_uses_parsed_rgb_for_functional_colors():
+    """rgb()/rgba() 不能按"不透黑"算亮度（白底 alpha 合成须生效）。"""
+    from app.lib.cartography.palettes import grayscale_ramp_separation
+
+    sep = grayscale_ramp_separation(["#000000", "rgba(0, 0, 0, 0.5)"])
+    assert sep is not None and sep > 0.0

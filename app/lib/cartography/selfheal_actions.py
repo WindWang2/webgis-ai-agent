@@ -386,12 +386,6 @@ def _build_palette_rotation(layer: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return None
     candidates.sort()
     _, best_name, best_colors = candidates[0]
-    # 颜色数对齐：多于 n 时等距采样 n 个（呈现级、确定性）。
-    if len(best_colors) != n:
-        step = (len(best_colors) - 1) / (n - 1)
-        best_colors = [
-            best_colors[round(index * step)] for index in range(n)
-        ]
     new_legend = dict(legend_spec)
     new_legend[ramp_key] = best_colors
     new_legend["palette"] = best_name

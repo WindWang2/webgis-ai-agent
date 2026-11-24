@@ -275,6 +275,11 @@ class PhysicalExecutor:
         self.trace = ExecutionTrace()
         try:
             return self._eval(new_tree, lift_key=None)
+        except CancelledError:
+            # 重执行期的取消必须原样冒泡（逐页取消承诺）：except Exception
+            # 会把 CancelledError（RuntimeError 子类）吞掉并返回旧结果。
+            self._streaming, self.trace = first_streaming, first_trace
+            raise
         except Exception as exc:  # noqa: BLE001 - R1-M7：重执行失败保留首次合法结果
             self._streaming, self.trace = first_streaming, first_trace
             self.adaptive.notes.append(
@@ -326,15 +331,6 @@ class PhysicalExecutor:
             # 交付 CRS 语义与行扫描一致（聚合无几何列 → 不需 output_crs）。
             req = node.aggregate_request
             rows: List[Dict[str, Any]] = []
-            if adapter is None:
-                from app.services.data_fabric.query.federation import (
-                    FederatedQueryError,
-                )
-
-                raise FederatedQueryError(
-                    f"chain source '{node.source_id}' is not connected",
-                    details={"source_id": node.source_id},
-                )
             from app.schemas.data_fabric_schema import QuerySpec
 
             extras: Dict[str, Any] = {

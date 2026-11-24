@@ -134,9 +134,10 @@ def scope_ref_mismatch(
     city_tokens = [(key, text) for key, text in tokens if _city_level(text, key)]
     if not city_tokens:
         return None
-    if any(places_compatible(scope, text) for _, text in city_tokens):
+    if all(places_compatible(scope, text) for _, text in city_tokens):
         return None
-    sample = city_tokens[0][1]
+    sample = next(text for _, text in city_tokens
+                  if not places_compatible(scope, text))
     return f"scope_ref_mismatch:{scope}!={sample}"
 
 
@@ -323,12 +324,6 @@ def scope_geography_verdict(
             "verdict": "unverified",
             "reason": "scope_unverified",
             "evidence": "none",
-        }
-    if _disjoint(ref, scope_box):
-        return {
-            "verdict": "mismatched",
-            "reason": f"scope_bbox_disjoint:{scope}!={ref[0]:.4f},{ref[1]:.4f},{ref[2]:.4f},{ref[3]:.4f}",
-            "evidence": "bbox",
         }
     if _contained(ref, scope_box):
         return {"verdict": "matched", "reason": "", "evidence": "bbox"}

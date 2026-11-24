@@ -8,6 +8,7 @@
 - no-second-loop 守卫：advisor 输出结构里没有任何可执行通道字段。
 """
 from app.services.gis_harness.product_action import (
+    ACTION_FINALIZE_PRODUCT,
     ACTION_PRODUCE_CHART,
     ACTION_PRODUCE_LAYER,
     ACTION_RETRY_ANALYSIS,
@@ -70,6 +71,15 @@ def test_chart_owed_maps_to_channel_not_tool_shortcut():
     # chart 产出是 harness 工具族而非 registry capability —— capability
     # 如实留空，不把 tool id 冒充 capability（P9 §19）。
     assert rec.capability == ""
+
+
+def test_optional_chart_does_not_advise_produce_chart():
+    """P3：文档契约是 pending chart（required）才建议 produce_chart。"""
+    optional_chart = _facet(KIND_CHART, "chart-optional", FS_PENDING)
+    optional_chart.required = False
+    rec = advise_next_product_action({}, [
+        optional_chart, _facet(KIND_NARRATIVE, "goal", FS_PENDING)])
+    assert rec.action == ACTION_FINALIZE_PRODUCT
 
 
 def test_deterministic_same_input_same_output():

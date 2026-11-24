@@ -251,6 +251,7 @@ def _check_stale_overlays(
         )
         if not ref:
             continue   # 无 ref 语义（basemap/xyz）——不判定
+        ref = str(ref)  # list/dict ref 不可哈希；键面按字符串对齐（:258）
         if ref not in descriptors:
             # unknown（探测失败/存储瞬态故障）：未知 ≠ 过期，跳过不判
             # （三态纪律同 inputs.py:92-95 / validators/artifacts.py:60-61）。

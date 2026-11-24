@@ -290,7 +290,10 @@ async def start_repair_attempt(
                         "evidence_signature": sig})
 
     # 预算 admission（副作用前；repair_cartography 内部自理不预扣）。
+    # 只拒绝「全部写入动作都被预算拒绝」：只读动作的拒绝不得否决仍可
+    # 准入的写入面（按 writable 逐一判定，不混算全部动作）。
     denied: List[str] = []
+    denied_writable: List[str] = []
     for aid in selected:
         row = by_id[aid]
         if row.get("action") == "repair_cartography":
@@ -306,10 +309,13 @@ async def start_repair_attempt(
         except Exception:  # noqa: BLE001 — 预算面失败按允许（执行时兜底）
             admissible, why = True, ""
         if not admissible:
-            denied.append(f"{aid}:{budget_class}:{str(why)[:48]}")
+            entry = f"{aid}:{budget_class}:{str(why)[:48]}"
+            denied.append(entry)
+            if row.get("side_effect") == "write":
+                denied_writable.append(entry)
     writable = [aid for aid in selected
                 if by_id[aid].get("side_effect") == "write"]
-    if writable and len(denied) >= len(writable):
+    if writable and len(denied_writable) >= len(writable):
         raise GoalRepairErrorCode(
             ERROR_BUDGET_DENIED,
             f"全部写入动作被预算拒绝（{'; '.join(denied[:3])}）",
@@ -477,6 +483,7 @@ async def _reconcile_waiting_delivery(view: Dict[str, Any]) -> None:
         job_id = str(act.get("job_id") or "")
         if not job_id:
             continue
+        budget_class = "repair"
         try:
             from app.services.data_delivery import get_delivery_job
             from app.services.data_delivery.source_resolver import (
@@ -488,6 +495,15 @@ async def _reconcile_waiting_delivery(view: Dict[str, Any]) -> None:
             # 会话无 user_id → 授权不放宽，维持等待披露。
             spec_owner = store.read_dispatch_spec(
                 int(view["attempt_id"])) or {}
+            # 与 runner _charge_if_executed 同源：按动作绑定的 budget_class
+            # 计费，不把非 repair 类动作记进 repair 桶（迟到收口路径）。
+            for binding in spec_owner.get("bindings") or []:
+                if (isinstance(binding, dict)
+                        and str(binding.get("action_id") or "")
+                        == str(act.get("action_id") or "")):
+                    budget_class = str(
+                        binding.get("budget_class") or "repair")
+                    break
             owner = spec_owner.get("owner") or {}
             user_id = owner.get("user_id") or None
             if not user_id:
@@ -509,7 +525,7 @@ async def _reconcile_waiting_delivery(view: Dict[str, Any]) -> None:
             try:
                 from app.services.gis_harness.loop_budget import loop_charge
 
-                loop_charge(str(view.get("session_id") or ""), "repair")
+                loop_charge(str(view.get("session_id") or ""), budget_class)
             except Exception:  # noqa: BLE001 — 计费失败不阻断收口
                 logger.debug("[goal-repair] reconcile charge failed",
                              exc_info=True)

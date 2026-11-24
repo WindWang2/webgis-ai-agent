@@ -169,7 +169,10 @@ async def download_delivery(
     owner_token: Optional[str] = Depends(get_owner_token),
 ):
     """受控下载：授权（creator/会话/项目/owner token）→ receipt 成员校验。"""
-    if user is None and not owner_token:
+    # get_current_user_optional 未认证时返回 user_id="anonymous" 的哨兵 dict，
+    # 不是 None —— 显式识别哨兵，否则未认证请求会落进授权裁决而非 401。
+    user_id = (user or {}).get("user_id") if isinstance(user, dict) else None
+    if user_id in (None, "", "anonymous") and not owner_token:
         raise HTTPException(status_code=401, detail="Authentication required")
     try:
         path, mime, filename, sha256 = await resolve_download(

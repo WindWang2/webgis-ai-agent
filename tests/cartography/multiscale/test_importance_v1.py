@@ -192,3 +192,21 @@ class TestNoneBucketNotCountedAsNonNull:
         assert d.selected is not None
         assert d.selected.evidence == "user_override"
         assert d.selected.non_null_coverage == round(30 / 200, 6)
+
+
+def test_negative_keep_rank_rejected():
+    """负 K 不得静默从词表尾部切片（fail-closed）。"""
+    d = derive_importance_model(ROAD_SCHEMA, ROAD_DIST, feature_count=2760)
+    assert d.selected is not None
+    with pytest.raises(ValueError, match="must be >= 0"):
+        kept_values_for_band(d.selected, "city", {"city": -1})
+
+
+def test_hyphenated_field_name_matches_specific_synonym():
+    """road-class 按文档承诺去连字符后命中 roadclass（而非泛化的 class）。"""
+    schema = _field_schema({"road-class": "string"})
+    dist = {"road-class": {"motorway": 5, "trunk": 8, "primary": 3}}
+    d = derive_importance_model(schema, dist, feature_count=16)
+    assert d.selected is not None
+    assert d.selected.matched_field_synonym == "roadclass"
+    assert "synonym:roadclass" in d.selected.reason_codes

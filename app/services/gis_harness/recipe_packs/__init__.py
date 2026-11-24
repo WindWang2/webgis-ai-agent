@@ -3,7 +3,7 @@
 结构契约：
 
 - 每个领域模块暴露 ``RECIPES: List[CartographyRecipe]``；
-- 模块间注册顺序按模块名排序（确定性），包内按声明序；
+- 模块间注册顺序按 ``PACK_MODULES`` 元组顺序（确定性），包内按声明序；
 - 与 17 个 V1 seed 的关系：seed 是跨领域通用产品族，packs 是专业差异化
   工作流 —— 重复 id 按 registry keep-first 语义由 seed 胜出（parity 测试
   锁定不重叠）；

@@ -314,3 +314,10 @@ def test_tool_create_3d_extrusion_dual_channel_legend():
     assert "error" not in res_single
     assert "height_legend" not in res_single
 
+
+
+def test_invalid_stats_respect_scale_factor():
+    """无效/全零数据的兜底高度也必须乘 scale_factor（与其他早退一致）。"""
+    spec = ExtrusionHeightSpec(
+        height_field="pop", min_visual_height_m=20.0, scale_factor=2.5)
+    assert build_extrusion_height_expression(spec, {"valid": False}) == 50.0

@@ -241,7 +241,8 @@ class CapabilityProbeService:
             if entry is not None:
                 if not force and not entry.is_expired(now=now):
                     self._entries.move_to_end(key)
-                    return entry
+                    # 返回副本：调用方不得改坏共享缓存记录（含 caps/cost）。
+                    return entry.model_copy()
                 self._entries.pop(key, None)
         # 锁外探测（网络）。
         cost = ProbeCost()
@@ -285,8 +286,10 @@ class CapabilityProbeService:
             if entry is None:
                 return None
             if entry.is_expired():
-                entry.caps_basis = "stale"
-            return entry
+                # 不改写共享记录（披露翻转会泄漏给所有调用方）；过期降级
+                # 只体现在本次返回的副本上。
+                return entry.model_copy(update={"caps_basis": "stale"})
+            return entry.model_copy()
 
     def invalidate(self, profile_id: Optional[str] = None) -> int:
         removed = 0

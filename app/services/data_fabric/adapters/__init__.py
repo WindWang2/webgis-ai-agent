@@ -30,7 +30,6 @@ WMSAdapter = WMSWMTSAdapter
 WMTSAdapter = WMSWMTSAdapter
 ArcGISRestAdapter = ArcGISAdapter
 ArcGISRESTAdapter = ArcGISAdapter
-ArcGISRESTAdapter = ArcGISAdapter
 
 __all__ = [
     "PostGISAdapter",

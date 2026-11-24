@@ -38,6 +38,25 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/config", tags=["配置管理"])
 
 
+def _write_new_file(path: str, content: bytes) -> None:
+    """原子创建新文件（O_CREAT|O_EXCL）。
+
+    ``Path.exists()`` 检查与 ``write_bytes`` 之间无原子性：两个同名技能上传
+    并发时都能通过 409 守卫。用独占创建把「已存在」判定交给内核，输家
+    拿到 :class:`FileExistsError`。
+    """
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(content)
+    except BaseException:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        raise
+
+
 def _validate_or_reject_skill_code(code: str) -> None:
     """Validate skill code via AST deny-list. Raises HTTPException on failure.
 
@@ -346,9 +365,13 @@ async def upload_skill(
         raise HTTPException(status_code=409, detail="禁止覆盖已安装的技能")
 
     if ext == ".md":
-        await asyncio.to_thread(Path(file_path).write_text, code_to_write, encoding="utf-8")
+        data = code_to_write.encode("utf-8")
     else:
-        await asyncio.to_thread(Path(file_path).write_bytes, content)
+        data = content
+    try:
+        await asyncio.to_thread(_write_new_file, file_path, data)
+    except FileExistsError:
+        raise HTTPException(status_code=409, detail="禁止覆盖已安装的技能") from None
 
     # audit ISSUE-011（#1337）：admin 上传即「批准」—— 把 .py 的 sha256 登记
     # 进 skills-lock.json runtime_skills，之后 load_skills 才放行该文件。

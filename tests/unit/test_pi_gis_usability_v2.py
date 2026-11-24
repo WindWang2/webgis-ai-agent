@@ -38,6 +38,17 @@ def test_name_mismatch_still_rejects_without_bbox():
     assert verdict["evidence"] == "name"
 
 
+def test_one_compatible_token_does_not_mask_conflicting_city_evidence():
+    """同一 ref 的地名证据自相矛盾时，兼容 token 不得短路冲突判定。"""
+    reason = scope_ref_mismatch(
+        "北京市",
+        descriptor={"query": "北京市"},
+        features=[{"type": "Feature", "properties": {"cityname": "成都市"}}],
+    )
+    assert reason is not None
+    assert "成都" in reason
+
+
 def test_missing_names_do_not_invent_a_mismatch():
     assert scope_ref_mismatch("北京市", features=[{
         "type": "Feature",

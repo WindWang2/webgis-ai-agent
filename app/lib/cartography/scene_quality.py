@@ -138,7 +138,7 @@ def check_legend_invariance(
     """
     before_by_id = {lyr.get("id"): lyr for lyr in before_layers if isinstance(lyr, dict)}
     after_by_id = {lyr.get("id"): lyr for lyr in after_layers if isinstance(lyr, dict)}
-    for layer_id in sorted(before_by_id):
+    for layer_id in sorted(before_by_id, key=str):
         if layer_id not in after_by_id:
             return _finding(
                 "SCENE_LEGEND_DRIFT", "blocking",

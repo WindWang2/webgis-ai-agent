@@ -749,3 +749,15 @@ async def test_map_product_raster_primary_does_not_mark_point_caps(registry, cle
     if "point_profile" in caps:
         assert caps["point_profile"]["status"] != "available", \
             "面主数据不得把 point_profile 标记为完成"
+
+
+def test_candidate_why_handles_blank_condition_reason():
+    """condition 首句为空且 reasons 为空时不得 IndexError。"""
+    from types import SimpleNamespace
+
+    from app.services.gis_harness.tool_map_product import _candidate_why
+
+    blank = SimpleNamespace(condition_reasons_zh=[""], reasons_zh=[])
+    assert _candidate_why(blank) == ""
+    fallback = SimpleNamespace(condition_reasons_zh=[], reasons_zh=["core reason"])
+    assert _candidate_why(fallback) == "core reason"

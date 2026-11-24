@@ -147,3 +147,43 @@ def test_legend_selection_per_layer_model() -> None:
     legend_desc = reg.get_by_type("legend")
     assert "visual_heatmap" in colorbar_desc.compatible_map_models
     assert "administrative_choropleth" in legend_desc.compatible_map_models
+
+
+def test_per_layer_legend_template_defaults_do_not_override_binding() -> None:
+    """模板 default_options 不得覆盖逐层绑定的 layerId（与单实例路径同序）。"""
+    from types import SimpleNamespace
+
+    desc = SimpleNamespace(
+        category="legend", compatible_map_models=["choropleth"],
+        priority=50, default_position="none")
+
+    class _CompReg:
+        def get(self, ctype):
+            return desc
+
+        def get_by_type(self, ctype):
+            return desc
+
+    tpl = SimpleNamespace(
+        variant="default", default_style={},
+        default_options={"layerId": "template-layer", "title": "T"})
+
+    class _TmplReg:
+        def get(self, template_id):
+            return tpl
+
+    out = ComponentComposer()._compose_per_layer_legends(
+        slot=SimpleNamespace(
+            allowed_component_types=["legend"], position_zone="bottom-left"),
+        primary_type="legend",
+        layer_bindings={"primary": "layer-a"},
+        layer_model_ids={"layer-a": "choropleth"},
+        comp_reg=_CompReg(),
+        tmpl_reg=_TmplReg(),
+        template_map={"legend": "tpl-1"},
+        overrides={},
+        seen_ids=set(),
+    )
+    assert len(out) == 1
+    assert out[0].options["layerId"] == "layer-a"
+    assert out[0].options["title"] == "T"

@@ -175,6 +175,6 @@ def build_catalog(*, domain: str = "", include_deprecated: bool = True) -> Dict[
             "gis_skills": len(entries),
             "runnable": runnable_count,
             "md_guides": len(md_guides),
-            "extension_candidates": len(extension_candidates),
+            "extension_candidates": min(len(extension_candidates), 20),
         },
     }

@@ -71,7 +71,6 @@ _UNSUPPORTED_ELEMENTS = {
 }
 _EVENT_ATTR_RE = re.compile(r"^on[a-z]+$", re.IGNORECASE)
 _URL_VALUE_RE = re.compile(r"url\s*\(", re.IGNORECASE)
-_EXTERNAL_HREF_RE = re.compile(r"^(?!#)[a-zA-Z][a-zA-Z0-9+.\-]*:", re.IGNORECASE)
 
 _NUM_RE = re.compile(r"^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$")
 
@@ -504,7 +503,9 @@ def _reject_attrs(el: Any) -> None:
         if _EVENT_ATTR_RE.match(kl):
             raise SymbolAssetError("SVG_EVENT_ATTR", f"事件属性 {k!r} 拒绝")
         v = el.get(k) or ""
-        if kl in ("href", "xlink:href"):
+        # ElementTree 把 xlink:href 展开为 {uri}href —— 键名按后缀识别，
+        # 否则 xlink 外部引用会绕过本守卫（只剩 use 分支兜底）。
+        if kl == "href" or kl.endswith("}href"):
             if not str(v).startswith("#"):
                 raise SymbolAssetError(
                     "SVG_EXTERNAL_HREF", f"{k}={v!r} 外部引用拒绝")
@@ -608,9 +609,13 @@ def _emit(
             uniform = abs(a - d_) < 1e-9 and abs(c) < 1e-9 and abs(_b) < 1e-9 and a != 0
             if uniform:
                 tx, ty = _apply(m, cx, cy)
+                tx = _check_coord(tx, where="circle")
+                ty = _check_coord(ty, where="circle")
+                r_scaled = abs(a) * r
+                _check_coord(r_scaled, where="circle r")
                 prim = SymbolPrimitive(
                     op="circle", cx=round(tx, 3), cy=round(ty, 3),
-                    r=round(abs(a) * r, 3), fill=fill, stroke=stroke,
+                    r=round(r_scaled, 3), fill=fill, stroke=stroke,
                     stroke_width=stroke_w if stroke != "none" else 0.0, opacity=opacity)
             else:
                 segs = 16
@@ -641,6 +646,8 @@ def _emit(
             px, py = cx + rx * math.cos(ang), cy + ry * math.sin(ang)
             if m is not None:
                 px, py = _apply(m, px, py)
+            px = _check_coord(px, where="ellipse")
+            py = _check_coord(py, where="ellipse")
             d3.append((["M"] if k == 0 else ["L"]) + [round(px, 3), round(py, 3)])
         d3.append(["Z"])
         state.primitives.append(SymbolPrimitive(
@@ -656,6 +663,8 @@ def _emit(
             _check_coord(_v, where="line coord")
         p1 = _apply(m, x1, y1) if m else (x1, y1)
         p2 = _apply(m, x2, y2) if m else (x2, y2)
+        p1 = (_check_coord(p1[0], where="line"), _check_coord(p1[1], where="line"))
+        p2 = (_check_coord(p2[0], where="line"), _check_coord(p2[1], where="line"))
         prim = SymbolPrimitive(
             op="line", x=round(p1[0], 3), y=round(p1[1], 3),
             w=round(p2[0] - p1[0], 3), h=round(p2[1] - p1[1], 3),

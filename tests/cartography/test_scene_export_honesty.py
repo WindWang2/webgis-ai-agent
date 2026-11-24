@@ -175,3 +175,13 @@ class TestR1ReviewFixes:
                for i in range(501)]
         with pytest.raises(ValueError):
             elevation_profile_component(points=big)
+
+
+class TestManifestRobustness:
+    def test_non_dict_layer_layout_does_not_crash(self):
+        """layer.layout 为 list/str 时 manifest 构建不得抛 AttributeError。"""
+        for bad in ([], "broken"):
+            spec = _spec("2d")
+            spec["layers"] = [{"id": "l1", "type": "fill", "layout": bad}]
+            manifest = build_product_manifest(spec, export_format="png")
+            assert manifest["layers"][0]["visible"] is True

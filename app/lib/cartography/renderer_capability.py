@@ -196,11 +196,14 @@ def check_required_capabilities(required: Iterable[Any]) -> Dict[str, Any]:
     unsupported = []
     degraded = []
     layer_levels = layer_type_levels()
+    component_types = None
     for key in sorted(set(required or [])):
         key = str(key)[:64]
         if key.startswith("component:"):
             ctype = key[len("component:"):]
-            if ctype not in component_type_keys():
+            if component_types is None:
+                component_types = component_type_keys()
+            if ctype not in component_types:
                 unsupported.append(key)
             continue
         if key in layer_levels:

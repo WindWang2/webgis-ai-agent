@@ -156,6 +156,19 @@ class TestExaggeration:
         )
         assert d.recommended_exaggeration <= 10.0
 
+    def test_non_positive_exaggeration_disclosed(self):
+        d = plan_scene(
+            _base_intent(
+                terrain_intent=True,
+                has_elevation_evidence=True,
+                exaggeration_request=0.0,
+            )
+        )
+        assert d.recommended_exaggeration == 1.0
+        assert any(
+            r.code == "SCENE_EXAGGERATION_CLAMPED" for r in d.reasons
+        )
+
 
 class TestDeterminismAndHonesty:
     def test_replay_determinism(self):

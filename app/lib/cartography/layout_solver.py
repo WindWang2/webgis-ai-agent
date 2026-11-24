@@ -214,6 +214,12 @@ def solve_component_layout(
                 #（QA/导出侧会看到超容，但功能性组件不得静默消失）
                 zone = p.requested_zone if p.requested_zone != "none" else "bottom-right"
                 occupied[zone] = occupied.get(zone, 0) + 1
+                if zone in EXCLUSIVE_ZONES:
+                    exclusive_used.add(zone)
+                if zone.startswith("top-"):
+                    top_load += 1
+                elif zone.startswith("bottom-"):
+                    bottom_load += 1
                 placements.append(LayoutPlacement(
                     id=p.id, type=p.type, zone=zone,
                     reason="required_overflow_kept",
@@ -341,7 +347,6 @@ def solve_layout_v3(
     bottom_load = 0
 
     ordered = sorted(participants, key=lambda p: (p.optional, p.priority, p.id))
-    occupied: Dict[str, int] = {z: 0 for z in ZONE_ORDER}
     exclusive_used: set = set()
     singleton_used: set = set()
     group_zones: Dict[str, set] = {}     # collision_group → 已占 zones
@@ -420,7 +425,6 @@ def solve_layout_v3(
                 else:
                     reason = "fallback_zone"
             remaining[zone] -= p.width_units
-            occupied[zone] += 1
             if zone in EXCLUSIVE_ZONES:
                 exclusive_used.add(zone)
             if p.type in SINGLETON_TYPES:
@@ -469,6 +473,12 @@ def solve_layout_v3(
                     f"at capacity (profile={page_profile}, compact={cons.compact})")
             else:
                 zone = p.requested_zone if p.requested_zone != "none" else "bottom-right"
+                if zone in EXCLUSIVE_ZONES:
+                    exclusive_used.add(zone)
+                if zone.startswith("top-"):
+                    top_load += 1
+                elif zone.startswith("bottom-"):
+                    bottom_load += 1
                 placements.append(LayoutPlacementV3(
                     id=p.id, type=p.type, zone=zone,
                     reason="required_overflow_kept", width_units=p.width_units))
@@ -714,23 +724,27 @@ def solve_layout_v4(
                 default=None,
             )
             if donor is not None:
+                previous_placements = placements
                 placements = [q for q in placements if q.id != donor.id]
-                suppressed.append(LayoutPlacementV3(
-                    id=donor.id, type=donor.type, zone="none",
-                    reason=f"selfheal_hidden_for:{p.id}",
-                    width_units=donor.width_units,
-                ))
-                hidden_ids.append(donor.id)
-                steps.append(RepairStep(
-                    action="hide_lowest_priority", component_id=donor.id,
-                    component_type=donor.type, from_zone=donor.zone,
-                    reason=f"yield_for:{p.id}",
-                ))
                 zone = _try_place(p, width if width else p.width_units)
                 if zone:
+                    suppressed.append(LayoutPlacementV3(
+                        id=donor.id, type=donor.type, zone="none",
+                        reason=f"selfheal_hidden_for:{p.id}",
+                        width_units=donor.width_units,
+                    ))
+                    hidden_ids.append(donor.id)
+                    steps.append(RepairStep(
+                        action="hide_lowest_priority", component_id=donor.id,
+                        component_type=donor.type, from_zone=donor.zone,
+                        reason=f"yield_for:{p.id}",
+                    ))
                     placed_zone = zone
                     if collapsible and width == 1 and p.width_units > 1:
                         collapsed_ids.append(p.id)
+                else:
+                    # 腾让后仍放不下：donor 恢复原位，不做无谓隐藏。
+                    placements = previous_placements
 
         if placed_zone:
             placements.append(LayoutPlacementV3(

@@ -169,6 +169,15 @@ class TestBuildProjectionPatches:
             origin="user", actor="r", producer_class=None,
             mutation_id="m11", turn=2, result_mapspec=_spec()) == []
 
+    def test_component_declared_type_outside_whitelist_skips(self):
+        """P3：intent 自带 component_type 也必须过 IR 六面白名单。"""
+        assert sp.build_projection_patches(
+            PatchComponentIntent(component_id="legend",
+                                 component_type="not_a_component_face",
+                                 enabled=False),
+            origin="user", actor="r", producer_class=None,
+            mutation_id="m11b", turn=2, result_mapspec=_spec()) == []
+
     def test_remove_component_known_type_projects(self):
         patches = sp.build_projection_patches(
             RemoveComponentIntent(component_id="north_arrow"),

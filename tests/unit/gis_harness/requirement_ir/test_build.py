@@ -158,3 +158,22 @@ class TestRebuildWithPatches:
         assert any(lock.scope == "palette" for lock in fresh.intent.locks)
         # 携带的 lock 落到 representation 面（user-wins 存活）
         assert fresh.intent.representation.palette == "blue"
+
+
+class TestRederiveObligations:
+    def test_layer_lock_pin_not_inherited_by_task_map_item(self):
+        from app.services.gis_harness.requirement_ir.contracts import UserLock
+        from app.services.gis_harness.requirement_ir.obligations import (
+            derive_requirements,
+            rederive,
+        )
+
+        doc = _doc("统计成都各区小学数量")
+        spec = doc.intent.model_copy(deep=True)
+        spec.task.kind = "analysis"
+        spec.locks = [UserLock(scope="layer_visibility", value="roads")]
+        old = derive_requirements(spec)
+        spec.task.kind = "map"
+        fresh = rederive(spec, old.items, doc)
+        task_item = next(i for i in fresh.items if i.source_path == "task.kind")
+        assert task_item.pinned is False
