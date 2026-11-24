@@ -18,7 +18,7 @@ from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
-from httpx import ASGITransport, AsyncClient, Response
+from httpx import ASGITransport, AsyncClient
 from fastapi import FastAPI
 
 from app.services.session_data import session_data_manager
