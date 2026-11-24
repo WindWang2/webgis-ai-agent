@@ -25,6 +25,7 @@ import os
 import random
 import statistics
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -35,12 +36,36 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 # app settings load. Test conftest pins it false; this standalone script
 # always exercises the Pi path.
 os.environ.setdefault("PI_AUTOSTART", "true")
+# 与 pytest conftest 同款纪律：锁走进程内 fallback。本脚本是独立进程
+# （无 conftest），settings 默认 USE_REDIS=true 而环境无 redis-server ——
+# 分布式锁 degraded + acquire_writer(fail_on_degraded=True) 会让每 turn
+# 在首个事件前就 PiRpcError，soak 变相永久挂起（G37 writer-gate 后实测）。
+os.environ.setdefault("USE_REDIS", "false")
+# TC-10 同款纪律：本脚本是独立进程（无 conftest fixture 建表）—— 默认
+# DATABASE_URL 指向 ./data/webgis.db 旧库缺新表（turn_context_receipts /
+# chat_turn_runtime），usage-ledger persist 直接裸抛崩掉整个 soak。改钉
+# 一次性临时库，run_soak 里与应用启动同一入口 init_db() 建全套表。
+os.environ.setdefault(
+    "DATABASE_URL",
+    "sqlite:///" + os.path.join(tempfile.mkdtemp(prefix="pi-soak-db-"), "soak.db"),
+)
 
 import app.agent_pi_bridge as bridge_mod  # noqa: E402
 from app.agent_pi_bridge import PiBridge, PiBridgePool  # noqa: E402
 
 import app.api.routes.chat as chat_mod  # noqa: E402
 from app.utils.sse import sse_event_type  # noqa: E402
+
+
+class _FakeIssued:
+    """PiRpcClient.IssuedRequest 的最小同形句柄（id/command/future）。"""
+
+    __slots__ = ("id", "command", "future")
+
+    def __init__(self, rid: str, command: str, future) -> None:
+        self.id = rid
+        self.command = command
+        self.future = future
 
 
 class FakeRpc:
@@ -143,6 +168,30 @@ class FakeRpc:
 
     def pending_request_ids(self) -> set:
         return set(self._pending.keys())
+
+    async def issue(self, cmd: str, data=None):
+        """G22-P1 写相位 stub：登记 pending future 并返回句柄（不触发 body）。
+
+        abort-on-disconnect / clear_queue 走 ``issue``+``collect`` 两相位 ——
+        缺这个面会让 disconnect 路径 abort 静默降级（探针实测日志）。
+        """
+        rid = str(self._next_id)
+        self._next_id += 1
+        fut = asyncio.get_running_loop().create_future()
+        self._pending[rid] = fut
+        return _FakeIssued(rid, cmd, fut)
+
+    async def collect(self, issued, command: str | None = None) -> None:
+        cmd = command or issued.command
+        fut = self._pending.get(issued.id)
+        if fut is None or fut.done():
+            return
+        if cmd == "abort":
+            self._cancel_body()
+        if not fut.done():
+            fut.set_result({})
+        self._pending.pop(issued.id, None)
+        return await fut
 
     def fail_pending_ids(self, request_ids, reason: str) -> int:
         failed = 0
@@ -250,7 +299,15 @@ async def drive_turn(bridge: PiBridge, session_id: str, report: SoakReport):
 
     task = asyncio.create_task(run())
     try:
-        await first_event.wait()
+        # 有界等待：run() 可能零事件完成（如 writer admission 前置失败 →
+        # 任务携带异常收场，首事件永不 set）—— 无界 wait 会把整个 soak
+        # 拖成永久挂起；超时按 failed 计数并放行 gather 收尾。
+        await asyncio.wait_for(first_event.wait(), timeout=30.0)
+    except asyncio.TimeoutError:
+        task.cancel()
+        report.failed += 1
+        report.classify_failure([])
+        return task, chunks
     except asyncio.CancelledError:
         task.cancel()
         raise
@@ -266,6 +323,18 @@ async def run_soak(
 ) -> SoakReport:
     random.seed(seed)
     report = SoakReport()
+
+    # 隔离临时库建全套表（与生产启动同一 init_db 入口；TC-10 纪律见文件头）。
+    import importlib
+    import pkgutil
+
+    import app.models as _models
+
+    for _info in pkgutil.iter_modules(_models.__path__):
+        importlib.import_module(f"app.models.{_info.name}")
+    from app.core.database import init_db
+
+    init_db()
 
     # Pin the module to fast heartbeat + no Redis turn registry.
     bridge_mod.PI_HEARTBEAT_INTERVAL = 0.02
