@@ -342,8 +342,10 @@ def keep_region_of(contract: PublicationScaleContract) -> Optional[List[float]]:
     xs0, ys0, xs1, ys1 = [], [], [], []
     for b in boxes:
         try:
-            xs0.append(float(b[0])); ys0.append(float(b[1]))
-            xs1.append(float(b[2])); ys1.append(float(b[3]))
+            xs0.append(float(b[0]))
+            ys0.append(float(b[1]))
+            xs1.append(float(b[2]))
+            ys1.append(float(b[3]))
         except (TypeError, ValueError):
             continue
     if not xs0:
