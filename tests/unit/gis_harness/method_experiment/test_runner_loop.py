@@ -22,7 +22,7 @@ from app.services.gis_harness.method_experiment.runner import (
     ExperimentRunner,
     trial_content_fingerprint,
 )
-from app.services.gis_harness.method_experiment.state import new_state
+from app.services.gis_harness.method_experiment.state import new_state_from_plan
 
 
 class FakeResult:
@@ -60,7 +60,7 @@ def _plan_and_state(**kw):
         family_id="interpolation", input_ref="ref:geojson-x",
         value_field="v", candidate_ids=["idw", "ordinary_kriging"],
         max_trials=6, **kw)
-    state = new_state(plan.to_bounded_summary())
+    state = new_state_from_plan(plan)
     return plan, state
 
 
@@ -158,7 +158,7 @@ async def test_identical_variants_reuse_content_fingerprint():
               params=dict(plan.trials[0].params), seed=0,
               eval_tool=plan.trials[0].eval_tool),
     )})
-    state = new_state(plan.to_bounded_summary())
+    state = new_state_from_plan(plan)
     rec = DispatchRecorder()
     runner = ExperimentRunner(dispatch=rec, persist=_persist_noop)
     state = await runner.run("sess", plan, state)

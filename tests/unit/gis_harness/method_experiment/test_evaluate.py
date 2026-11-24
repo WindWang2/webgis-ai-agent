@@ -14,7 +14,7 @@ from app.services.gis_harness.method_experiment.plan import (
 )
 from app.services.gis_harness.method_experiment.state import (
     TrialRecord,
-    new_state,
+    new_state_from_plan,
 )
 
 
@@ -41,7 +41,7 @@ def test_direction_semantics():
 
 def test_ranking_direction_and_deterministic_tiebreak():
     plan = _plan()
-    state = new_state(plan.to_bounded_summary())
+    state = new_state_from_plan(plan)
     state.trials = {
         "t01": _mk_trial("t01", "idw", {"cv_rmse": 5.0}),
         "t02": _mk_trial("t02", "ordinary_kriging", {"cv_rmse": 3.0}),
@@ -57,7 +57,7 @@ def test_ranking_direction_and_deterministic_tiebreak():
 
 def test_failed_and_not_evaluated_excluded_with_disclosure():
     plan = _plan()
-    state = new_state(plan.to_bounded_summary())
+    state = new_state_from_plan(plan)
     state.trials = {
         "t01": _mk_trial("t01", "idw", {"cv_rmse": 5.0}),
         "t02": _mk_trial("t02", "ordinary_kriging", {}, state="failed",
@@ -76,7 +76,7 @@ def test_failed_and_not_evaluated_excluded_with_disclosure():
 
 def test_abstain_when_insufficient_evidence():
     plan = _plan()
-    state = new_state(plan.to_bounded_summary())
+    state = new_state_from_plan(plan)
     state.trials = {"t01": _mk_trial("t01", "idw", {"cv_rmse": 5.0})}
     ev = evaluate_experiment(plan, state)
     assert ev.recommendation is not None
@@ -86,7 +86,7 @@ def test_abstain_when_insufficient_evidence():
 
 def test_recommendation_carries_evidence_and_sensitivity():
     plan = _plan(candidate_ids=["idw"])
-    state = new_state(plan.to_bounded_summary())
+    state = new_state_from_plan(plan)
     state.trials = {
         "t01": _mk_trial("t01", "idw", {"cv_rmse": 5.0, "cv_mae": 4.0}),
         "t02": _mk_trial("t02", "idw", {"cv_rmse": 8.0, "cv_mae": 6.0},
@@ -106,7 +106,7 @@ def test_recommendation_carries_evidence_and_sensitivity():
 
 def test_pareto_front_identifies_nondominated():
     plan = _plan(candidate_ids=["idw"])
-    state = new_state(plan.to_bounded_summary())
+    state = new_state_from_plan(plan)
     # A: rmse 好 bias 差；B: rmse 差 bias 好；C: 双差（被支配）
     state.trials = {
         "t01": _mk_trial("t01", "idw",
@@ -126,7 +126,7 @@ def test_pareto_front_identifies_nondominated():
 
 def test_adoption_receipt_requires_completed_trial():
     plan = _plan()
-    state = new_state(plan.to_bounded_summary())
+    state = new_state_from_plan(plan)
     state.trials = {
         "t01": _mk_trial("t01", "idw", {"cv_rmse": 5.0}),
         "t02": _mk_trial("t02", "ordinary_kriging", {}, state="not_evaluated",
@@ -148,7 +148,7 @@ def test_adoption_receipt_requires_completed_trial():
 
 def test_evaluation_bounded_projection():
     plan = _plan()
-    state = new_state(plan.to_bounded_summary())
+    state = new_state_from_plan(plan)
     state.trials = {
         "t01": _mk_trial("t01", "idw", {"cv_rmse": 5.0, "cv_mae": 4.0}),
         "t02": _mk_trial("t02", "ordinary_kriging",

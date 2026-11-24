@@ -24,7 +24,7 @@ from app.services.gis_harness.method_experiment.plan import (
     compile_experiment_plan,
 )
 from app.services.gis_harness.method_experiment.runner import ExperimentRunner
-from app.services.gis_harness.method_experiment.state import new_state
+from app.services.gis_harness.method_experiment.state import new_state_from_plan
 from app.services.session_data import session_data_manager
 
 SESSION = "mexp-e2e-test-session"
@@ -103,7 +103,7 @@ async def test_interpolation_experiment_full_loop(registry):
         family_id="interpolation", input_ref=ref, value_field="price",
         candidate_ids=["idw", "ordinary_kriging", "nearest_neighbor"],
         max_trials=10)
-    state = new_state(plan.to_bounded_summary())
+    state = new_state_from_plan(plan)
 
     dispatch = await _dispatch_factory(registry)
     persisted = []
@@ -160,7 +160,7 @@ async def test_density_experiment_loop(registry):
     plan = compile_experiment_plan(
         family_id="density", input_ref=ref, value_field="",
         candidate_ids=["kde_fixed"], max_trials=6)
-    state = new_state(plan.to_bounded_summary())
+    state = new_state_from_plan(plan)
     dispatch = await _dispatch_factory(registry)
     async def _persist(st):
         return None
@@ -218,7 +218,7 @@ async def test_network_experiment_loop(registry):
         extra_inputs={"network": net_ref, "facilities": fac_ref},
         candidate_ids=["isochrone_walk"], max_trials=6)
     assert plan.trial_count() == 3             # 10/15/30 分钟情景
-    state = new_state(plan.to_bounded_summary())
+    state = new_state_from_plan(plan)
     dispatch = await _dispatch_factory(registry)
     async def _persist(st):
         return None

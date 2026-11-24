@@ -25,7 +25,7 @@ from app.services.gis_harness.method_experiment.runner import (
 )
 from app.services.gis_harness.method_experiment.state import (
     ExperimentRunState,
-    new_state,
+    new_state_from_plan,
     state_alias,
     state_from_payload,
     state_to_payload,
@@ -94,14 +94,14 @@ async def ensure_state_for_plan(
     返回 (state, decline_code)。decline_code 非空 = 同 id 不同内容
     （指纹失配，调用方拒绝覆盖）。
     """
-    summary = plan.to_bounded_summary()
+    summary_fingerprint = plan.fingerprint()[:16]
     existing = await load_state(session_id, plan.experiment_id)
     if existing is None:
-        state = new_state(summary)
+        state = new_state_from_plan(plan)
         state.log("plan_compiled", trials=len(plan.trials))
         await persist_state(session_id, state)
         return state, ""
-    if existing.plan_fingerprint != summary.get("fingerprint", ""):
+    if existing.plan_fingerprint != summary_fingerprint:
         return existing, "MEXP_ID_COLLISION"
     return existing, ""
 

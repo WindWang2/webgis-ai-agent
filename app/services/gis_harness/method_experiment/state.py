@@ -119,7 +119,13 @@ class ExperimentRunState(BaseModel):
 
 
 def new_state(plan_dict: Dict[str, Any]) -> ExperimentRunState:
-    """从计划摘要构建初始运行态（试验全部 pending）。"""
+    """从计划摘要构建初始运行态（试验全部 pending）。
+
+    注意：``plan_dict`` 应是**计划模型的完整 dump**（可被
+    ``MethodExperimentPlan.model_validate`` 回读）——展示用有界摘要不可
+    作快照（run_window 恢复时重验证会失败）。推荐用
+    ``new_state_from_plan``。
+    """
     experiment_id = str(plan_dict.get("experiment_id", ""))
     trials = {
         t["trial_id"]: TrialRecord(
@@ -138,6 +144,30 @@ def new_state(plan_dict: Dict[str, Any]) -> ExperimentRunState:
         family_id=str(plan_dict.get("family_id", "")),
         plan_fingerprint=str(plan_dict.get("fingerprint", "")),
         plan_snapshot=dict(plan_dict),
+        trials=trials,
+        status="pending",
+    )
+
+
+def new_state_from_plan(plan) -> ExperimentRunState:
+    """从计划模型构建初始运行态（快照 = 完整 model dump，可回读恢复）。"""
+    dump = plan.model_dump(mode="json")
+    trials = {
+        t.trial_id: TrialRecord(
+            trial_id=t.trial_id,
+            candidate_id=t.candidate_id,
+            variant_index=t.variant_index,
+            params=dict(t.params),
+            seed=t.seed,
+            eval_tool=t.eval_tool,
+        )
+        for t in plan.trials
+    }
+    return ExperimentRunState(
+        experiment_id=plan.experiment_id,
+        family_id=plan.family_id,
+        plan_fingerprint=plan.fingerprint()[:16],
+        plan_snapshot=dump,
         trials=trials,
         status="pending",
     )

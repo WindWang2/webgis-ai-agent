@@ -17,7 +17,7 @@ from app.services.gis_harness.method_experiment.plan import (
     compile_experiment_plan,
 )
 from app.services.gis_harness.method_experiment.runner import ExperimentRunner
-from app.services.gis_harness.method_experiment.state import new_state
+from app.services.gis_harness.method_experiment.state import new_state_from_plan
 from app.services.session_data import session_data_manager
 
 SESSION_A = "mexp-perf-session-a"
@@ -79,7 +79,7 @@ async def test_candidate_scaling_linear_dispatch_count(registry):
     plan_small = compile_experiment_plan(
         family_id="interpolation", input_ref=ref, value_field="v",
         candidate_ids=["idw"], max_trials=6)
-    state_s = new_state(plan_small.to_bounded_summary())
+    state_s = new_state_from_plan(plan_small)
     t0 = time.monotonic()
     state_s = await runner.run(SESSION_A, plan_small, state_s)
     dt_small = time.monotonic() - t0
@@ -88,7 +88,7 @@ async def test_candidate_scaling_linear_dispatch_count(registry):
     plan_big = compile_experiment_plan(
         family_id="interpolation", input_ref=ref, value_field="v",
         candidate_ids=["idw", "nearest_neighbor"], max_trials=6)
-    state_b = new_state(plan_big.to_bounded_summary())
+    state_b = new_state_from_plan(plan_big)
     t0 = time.monotonic()
     state_b = await runner.run(SESSION_A, plan_big, state_b)
     dt_big = time.monotonic() - t0
@@ -111,7 +111,7 @@ async def test_warm_cache_zero_recompute(registry):
     plan = compile_experiment_plan(
         family_id="interpolation", input_ref=ref, value_field="v",
         candidate_ids=["idw"], max_trials=6)
-    state = new_state(plan.to_bounded_summary())
+    state = new_state_from_plan(plan)
     state = await runner.run(SESSION_A, plan, state)
     cold_calls = len(dispatch.calls)
     assert cold_calls == 3
@@ -141,7 +141,7 @@ async def test_projection_payload_bounded_under_scale(registry):
         plan = compile_experiment_plan(
             family_id="interpolation", input_ref=ref, value_field="v",
             candidate_ids=["idw"], max_trials=6)
-        state = new_state(plan.to_bounded_summary())
+        state = new_state_from_plan(plan)
         state = await runner.run(SESSION_A, plan, state)
         ev = evaluate_experiment(plan, state).to_bounded_dict()
         sizes[tag] = len(str(ev))
