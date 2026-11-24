@@ -189,13 +189,12 @@ describe('ScenarioPanel', () => {
 });
 
 import { ScenarioPanel } from './scenario-panel';
-import type { HTMLElement } from 'react';
 
-function withinCard(card: HTMLElement, text: string): HTMLElement {
+function withinCard(card: Element, text: string): HTMLButtonElement {
   const buttons = Array.from(card.querySelectorAll('button'));
   const hit = buttons.find((b) => b.textContent?.trim() === text);
   if (!hit) throw new Error(`button ${text} not found in card`);
-  return hit as HTMLElement;
+  return hit;
 }
 
 function ScenarioPanelUnderTest() {
