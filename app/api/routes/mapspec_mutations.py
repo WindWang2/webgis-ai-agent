@@ -1,5 +1,5 @@
 """User-origin MapSpec mutations — thin adapter over apply_mutation (#639/#640)."""
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -249,4 +249,87 @@ async def apply_scale_portrayal_route(
             actor="mapspec_route",
         )
     except ScalePortrayalError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+# ── GOAL 04 WP5：纸面目标比例尺制图综合（UI 与 Agent 共用同一 service）──────
+
+
+class PaperScaleInspectQuery(BaseModel):
+    layer: str = Field(..., max_length=128)
+    denominator: Optional[int] = Field(None, ge=100, le=100_000_000)
+    denominator_text: Optional[str] = Field(None, max_length=32)
+    page_text: Optional[str] = Field(None, max_length=32)
+    purpose: str = Field("reference", max_length=32)
+    dpi: Optional[float] = Field(None, gt=0, le=2400)
+
+
+class PaperScaleApplyBody(BaseModel):
+    layer: str = Field(..., max_length=128)
+    denominator: Optional[int] = Field(None, ge=100, le=100_000_000)
+    denominator_text: Optional[str] = Field(None, max_length=32)
+    page_text: Optional[str] = Field(None, max_length=32)
+    purpose: str = Field("reference", max_length=32)
+    dpi: Optional[float] = Field(None, gt=0, le=2400)
+    kept_values: Optional[List[Any]] = Field(None, max_length=32)
+    sum_fields: Optional[List[str]] = Field(None, max_length=8)
+    mode: Literal["preview", "commit"] = "preview"
+    expected_revision: Optional[int] = Field(None, ge=0)
+    operation_id: Optional[str] = Field(None, max_length=64)
+    note: Optional[str] = Field(None, max_length=160)
+
+
+@router.get("/sessions/{session_id}/paper-scale")
+async def get_paper_scale_generalization(
+    session_id: str,
+    layer: str = Query(..., max_length=128),
+    denominator: Optional[int] = Query(None, ge=100, le=100_000_000),
+    denominator_text: Optional[str] = Query(None, max_length=32),
+    page_text: Optional[str] = Query(None, max_length=32),
+    purpose: str = Query("reference", max_length=32),
+    dpi: Optional[float] = Query(None, gt=0, le=2400),
+    _conv: Conversation = Depends(require_owned_session),
+) -> dict[str, Any]:
+    """只读尺度证据面（等效 zoom / 变化披露 / 策略提示）；session 归属验权。"""
+    from app.services.gis_harness.paper_generalization.service import (
+        PaperScaleError,
+        inspect_paper_scale_generalization,
+    )
+    try:
+        return await inspect_paper_scale_generalization(
+            session_id, layer,
+            denominator=denominator, denominator_text=denominator_text,
+            page_text=page_text, purpose=purpose, dpi=dpi)
+    except PaperScaleError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/sessions/{session_id}/paper-scale")
+async def apply_paper_scale_generalization_route(
+    session_id: str,
+    req: PaperScaleApplyBody,
+    _conv: Conversation = Depends(require_owned_session),
+) -> dict[str, Any]:
+    """纸面综合 preview/commit（QA fail-closed 门 + CAS + 回执环）。"""
+    from app.services.gis_harness.paper_generalization.service import (
+        PaperScaleError,
+        apply_paper_scale_generalization,
+    )
+    try:
+        return await apply_paper_scale_generalization(
+            session_id, req.layer,
+            mode=req.mode,
+            denominator=req.denominator,
+            denominator_text=req.denominator_text,
+            page_text=req.page_text,
+            purpose=req.purpose,
+            dpi=req.dpi,
+            kept_values=req.kept_values,
+            sum_fields=req.sum_fields,
+            expected_revision=req.expected_revision,
+            operation_id=req.operation_id,
+            note=req.note or "",
+            turn_id=None,
+        )
+    except PaperScaleError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
