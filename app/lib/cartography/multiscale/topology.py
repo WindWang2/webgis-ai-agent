@@ -289,6 +289,14 @@ def simplify_polygon_topology(
             vertex_freq[qc] = vertex_freq.get(qc, 0) + 1
     anchors_shared = sum(1 for v in vertex_freq.values() if v >= 2)
     chains_shared = sum(1 for v in chain_member_count.values() if v >= 2)
+    # 部分配对披露（评审 R1-P2-4）：共享段（seg 频次 ≥2）中不属于任何
+    # 多成员链的数量 —— 角落 L 形 run 不对称、顶点未配齐等真实脏数据
+    # 常态；>0 时跨要素一致性只对已配对链成立，残余缝隙交 QA 审计。
+    shared_seg_total = sum(1 for v in seg_index.values() if v >= 2)
+    partial_shared_segments = max(
+        0, shared_seg_total - sum(
+            (len(canonical[k]) - 1) * v
+            for k, v in chain_member_count.items() if v >= 2))
 
     # ── 4. 简化（共享链一次；独占 run 逐个；失败保护原坐标）──
     simplified_chain: Dict[Tuple, Optional[List[Tuple[float, float]]]] = {}
@@ -486,6 +494,11 @@ def simplify_polygon_topology(
         disclosure.append(
             "边界共享顶点存在但无逐段配对的共享边链（顶点未配齐数据）——"
             "本引擎不做跨要素一致化保证，相邻面缝隙需 QA 审计（诚实披露）")
+    elif partial_shared_segments > 0:
+        disclosure.append(
+            f"{partial_shared_segments} 个共享段未纳入多成员共享链"
+            "（邻接边界顶点部分配对）—— 这些段的两侧简化独立，"
+            "缝隙量需 QA 距离审计（诚实披露）")
     if fallback_count:
         disclosure.append(
             f"{fallback_count} 个要素回退原几何（链保护传播后仍违反不变量）"
@@ -506,6 +519,8 @@ def simplify_polygon_topology(
         "chains_protected_original": len(protected_chains),
         "partial_vertex_match": bool(
             anchors_shared > 0 and chains_shared == 0),
+        "shared_segments_total": shared_seg_total,
+        "partial_shared_segments": partial_shared_segments,
         "stats_match": len(kept_features) == input_count,
         "reason_counts": dict(sorted(reason_counts.items())),
         "per_feature": details,
