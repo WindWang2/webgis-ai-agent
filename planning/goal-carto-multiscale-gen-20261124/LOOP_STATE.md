@@ -106,6 +106,23 @@
   回归 multiscale+paper_generalization+scale_profile+routes 254 passed、
   cartography 全量（跑批复核中）、面板 vitest 5、tsc 主 config 0 错误
 
-### R3（进行中）
-- 评审 R2 复审（同一评审员续，核对清偿 + 相邻路径伤害）
-- 完成后：最终门禁 → push → PR
+### R3 / R2 复审 + 终态
+- 评审 R2（同一评审员）：结论「有条件可合并」——P0×2/P1×4 确认真实清偿
+  （独立脚本复跑）；两项合并条件 N1（消除路径缝隙审计按稳定 fid 对齐 +
+  跳过披露 + 米空间距离）与 N2（keep_values 硬约束接引擎）+ P3 N3-N6
+  （指纹参数缺口/inspect dpi 一致性/resume+keep_region e2e）全部就地
+  清偿（commit「fix(multiscale): 独立评审 R2 清偿」）。
+- 回归：multiscale+paper_generalization+routes 238 passed 复核；
+  cartography 全量 3843 passed（4 红灯均纯净基线复现）；面板 vitest 5、
+  tsc 双 config 零新增、production build exit 0。
+- 最终门禁：git diff --check 干净、无大文件、无敏感信息、基于 master tip。
+- push：feat/carto-multiscale-generalization-20261124 → PR **#2274**
+  （base master，未自动合并；分支与 worktree 保留供后续审查）。
+
+### 终态交付摘要
+- 28 commits（含基线清偿与共享路径最小修复各 1）
+- 新模块 9（paper_scale/topology/polygon_eliminate/network_select/
+  point_aggregate/qa_pack/publication_compile/semantic_checks_paper_plan/
+  paper_generalization 服务）+ 工具面 + REST 对 + 前端面板
+- 测试 +82 用例（契约/引擎 oracle/服务闭环/旅程/语义检查/性能对照）
+- 未执行：真实浏览器 journey（not_evaluated，见 EVIDENCE.md）
