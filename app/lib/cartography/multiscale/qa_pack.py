@@ -123,6 +123,7 @@ def audit_polygon_pairwise_seams(
                 "coverage_gap_m2": 0.0,
                 "adjacent_pairs_checked": 0,
                 "gap_pairs": [],
+                "within_tolerance": True,
                 "evaluated": len(geoms) >= 1}
     kx, ky = _metric_factors(latitude_hint)
     deg_to_m2 = kx * ky
@@ -154,9 +155,18 @@ def audit_polygon_pairwise_seams(
     if len(ref_geoms) == len(geoms) and ref_geoms:
         ref_q = []
         for g in ref_geoms:
-            coords = [c for c in getattr(g, "exterior", None).coords]                 if g.geom_type == "Polygon" else []
-            ref_q.append({(round(c[0], 9), round(c[1], 9)) for c in coords})
-        deg_tol_deg = float(gap_distance_tolerance_m) / max(kx, 1.0)
+            # 顶点采样：Polygon 取外环；MultiPolygon 取全部部件外环
+            # （洞不计入邻接判定 —— 邻接由外部边界定义）
+            exts: List[Any] = []
+            if g.geom_type == "Polygon":
+                exts = [g.exterior]
+            elif g.geom_type == "MultiPolygon":
+                exts = [part.exterior for part in g.geoms]
+            qs: set = set()
+            for ext in exts:
+                for c in ext.coords:
+                    qs.add((round(c[0], 9), round(c[1], 9)))
+            ref_q.append(qs)
         for i in range(len(geoms)):
             for j in range(i + 1, len(geoms)):
                 shared = ref_q[i] & ref_q[j]
@@ -164,13 +174,13 @@ def audit_polygon_pairwise_seams(
                     continue   # 非邻接对
                 adjacent_pairs_checked += 1
                 try:
-                    dist = geoms[i].distance(geoms[j])
+                    dist_m = geoms[i].distance(geoms[j]) * kx
                 except Exception:  # noqa: BLE001 — 距离失败按未知保守
-                    dist = float("inf")
-                if dist * kx > float(gap_distance_tolerance_m) or                         dist > deg_tol_deg * 10 ** 9:
+                    dist_m = float("inf")
+                if dist_m > float(gap_distance_tolerance_m):
                     gap_pairs.append({
                         "pair": [i, j],
-                        "distance_m": round(dist * kx, 3),
+                        "distance_m": round(dist_m, 3),
                     })
     within = bool(
         max_overlap <= overlap_tolerance_m2 and gap <= gap_tolerance_m2
