@@ -497,7 +497,11 @@ def _score_pair(
 def _detect_field_conflicts(
     ra: EntityRecord, rb: EntityRecord, plan: FusionPlan
 ) -> Dict[str, str]:
-    """按输出字段联合检测同值/冲突/缺失（绝不折算缺失）。"""
+    """按输出字段联合检测同值/冲突/缺失（绝不折算缺失）。
+
+    名称字段一致性用计划的归一化管线比较 —— 与匹配证据同一语义
+    （声明 remove_bracketed 时「X（Y校区）」与「X」是同值，不是冲突）。
+    """
     out: Dict[str, str] = {}
     for field_name, m in _union_output_fields(plan).items():
         field_a = m.get("a")
@@ -516,6 +520,22 @@ def _detect_field_conflicts(
             continue
         va = ra.row.get(field_a)
         vb = rb.row.get(field_b)
+        is_name_field = (field_a == plan.source_a.name_field
+                         and field_b == plan.source_b.name_field)
+        if is_name_field:
+            na = textsim.normalize_text(
+                str(va or ""), plan.strategy.name_normalizers) if va else ""
+            nb = textsim.normalize_text(
+                str(vb or ""), plan.strategy.name_normalizers) if vb else ""
+            if not na and not nb:
+                out[field_name] = "missing_both"
+            elif not na:
+                out[field_name] = "missing_a"
+            elif not nb:
+                out[field_name] = "missing_b"
+            else:
+                out[field_name] = "identical" if na == nb else "conflict"
+            continue
         eq = textsim.field_values_equal(va, vb)
         if eq is None:
             a_missing = va is None or va == ""

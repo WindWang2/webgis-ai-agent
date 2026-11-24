@@ -270,7 +270,7 @@ async def resolve_view(
             "source_unresolvable",
             f"source_{side} 异常：{type(exc).__name__}: {exc}", side=side,
         ) from exc
-    view = build_source_view(side, plan, snapshot, source_ref)
+    view = build_source_view(side, plan, snapshot, source_dict.get("ref") or "")
     evidence = {
         "side": side,
         "kind": snapshot.kind,
@@ -386,6 +386,9 @@ def assemble_commit(
         decision = decisions_by_key.get(key)
         if decision:
             decided_pairs += 1
+        if decision is None and pair.status in ("needs_review", "ambiguous"):
+            # 身份未决 —— 绝不自动合并（交给 withheld 循环两侧输出）
+            continue
         if decision and decision.get("action") == "reject":
             counts["rejected"] += 2
             fa = adjudication.single_feature(

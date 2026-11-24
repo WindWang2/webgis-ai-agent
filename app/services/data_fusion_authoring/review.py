@@ -148,8 +148,12 @@ def upsert_decision(
                 current_revision=row.revision,
             )
         row.action = action
-        row.field_values = field_values
-        row.geometry_side = geometry_side
+        # 部分更新语义：field_values=None = 保留已有人工值（显式 {} 才清空）
+        # —— CAS 复核（补备注/换 action）不得无声抹掉先前的人工决定。
+        if field_values is not None:
+            row.field_values = field_values
+        if geometry_side is not None:
+            row.geometry_side = geometry_side
         row.decision_run_id = decision_run_id
         row.idx_a = idx_a
         row.idx_b = idx_b

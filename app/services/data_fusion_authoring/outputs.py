@@ -142,14 +142,20 @@ def write_commit_staging(
     *,
     feature_collection: Dict[str, Any],
     quality_report: Dict[str, Any],
-    receipt: Dict[str, Any],
     lineage: Dict[str, Any],
-) -> None:
+) -> str:
+    """commit 包（除收据外）落 staging；返回 fused_fc.json 的文件字节哈希
+    —— 收据哈希与核验哈希同源（先写文件后哈希，绝不用内存序列化另算）。"""
     d = staging_dir(run_id)
     _write_json(d / "fused_fc.json", feature_collection)
     _write_json(d / "quality_report.json", quality_report)
-    _write_json(d / "receipt.json", receipt)
     _write_json(d / "lineage.json", lineage)
+    return _sha256_file(d / "fused_fc.json")
+
+
+def write_commit_receipt(run_id: str, receipt: Dict[str, Any]) -> None:
+    """收据最后落盘（携带 fc_sha256 后）；发布前最后一步。"""
+    _write_json(staging_dir(run_id) / "receipt.json", receipt)
 
 
 def atomic_publish(run_id: str) -> Path:

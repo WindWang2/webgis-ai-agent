@@ -24,6 +24,7 @@ from app.services.data_fusion_authoring import (
     adjudication,
     contracts,
     executor,
+    incremental,
     matching,
     outputs,
     review,
@@ -227,7 +228,7 @@ async def describe_sources(
         side = str(src.get("side") or "a")
         try:
             spec_probe = _probe_spec(side, src)
-            view, evidence = executor.resolve_view(
+            view, evidence = await executor.resolve_view(
                 session_id, spec_probe, actor, side)
             cards.append(_eligibility_card(side, spec_probe, view, evidence))
         except DataFusionError as exc:
@@ -273,14 +274,15 @@ def _probe_spec(side: str, src: Dict[str, Any]) -> FusionPlan:
         ],
     })
     # 单源探测计划（不执行匹配；strategy 仅作装载参数）
+    a_dump = spec.model_dump(mode="json") | {
+        "priority": 1, "priority_reason": "资格卡探测（非融合信任声明）"}
+    b_dump = spec.model_dump(mode="json") | {
+        "priority": 2, "priority_reason": "资格卡探测（非融合信任声明）"}
     return FusionPlan.model_validate({
         "entity_kind": src.get("entity_kind") or "point_poi",
         "title": "eligibility-probe",
-        "source_a": spec.model_dump(mode="json"),
-        "source_b": spec.model_dump(mode="json") | {
-            "priority": 2,
-            "priority_reason": "资格卡探测（非融合信任声明）",
-        },
+        "source_a": a_dump,
+        "source_b": b_dump,
         "strategy": {"weights": {
             "external_id": 0.0, "name": 0.4, "address": 0.15,
             "category": 0.15, "distance": 0.30},
@@ -534,10 +536,19 @@ async def execute_plan(
 
     existing = _find_completed_run_by_key(session_id, base_key)
     if existing is not None and not base_run_id:
-        try:
-            outputs.verify_published(existing["run_id"])
-            return {**existing, "idempotent_reuse": True}
-        except (DataFusionError, FileNotFoundError, ValueError):
+        # 两段式复用：已 commit → 内容可核验才复用（J28 同款）；
+        # 仅匹配完成 → 匹配包可读即复用（commit 是显式后续步骤）
+        if existing.get("output_ref"):
+            try:
+                outputs.verify_published(existing["run_id"])
+                return {**existing, "idempotent_reuse": True}
+            except (FileNotFoundError, ValueError):
+                _invalidate_run(session_id, existing["run_id"],
+                                "receipt_missing")
+        elif outputs.read_match_bundle(existing["run_id"]) is not None:
+            return {**existing, "idempotent_reuse": True,
+                    "state": "matched_pending_commit"}
+        else:
             _invalidate_run(session_id, existing["run_id"], "receipt_missing")
 
     active = _find_active_run_by_key(session_id, base_key)
@@ -773,6 +784,7 @@ def _run_view(session_id: str, run_id: str) -> Dict[str, Any]:
             "plan_id": run.plan_id,
             "session_id": run.session_id,
             "status": run.status,
+            "job_id": run.job_id,
             "plan_revision": run.plan_revision,
             "plan_digest": run.plan_digest,
             "base_run_id": run.base_run_id,
@@ -854,8 +866,7 @@ def _find_completed_run_by_key(
         rows = db.execute(
             select(DataFusionRun)
             .where(DataFusionRun.session_id == session_id,
-                   DataFusionRun.status == "completed",
-                   DataFusionRun.output_ref.is_(None))
+                   DataFusionRun.status == "completed")
             .order_by(DataFusionRun.created_at.desc())
         ).scalars().all()
     for r in rows:
@@ -1119,12 +1130,6 @@ async def commit_run(
         executor.assemble_commit, plan, src_a, src_b, result,
         decisions_by_key, run_id)
     receipt["orphan_decisions"] = len(orphan)
-    fc_sha = None
-    import hashlib as _hashlib
-
-    fc_sha = _hashlib.sha256(json.dumps(
-        fc, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
-    receipt["fc_sha256"] = fc_sha
     lineage = {
         "run_id": run_id,
         "plan_id": view["plan_id"],
@@ -1145,9 +1150,13 @@ async def commit_run(
         "decisions_orphan": len(orphan),
         "method_version": contracts.METHOD_VERSION,
     }
-    outputs.write_commit_staging(
+    # 先写内容文件再哈希「文件字节」—— 收据哈希与 verify_published 同源
+    #（内存序列化与落盘序列化不同，绝不用两套口径）
+    fc_sha = outputs.write_commit_staging(
         run_id, feature_collection=fc, quality_report=quality,
-        receipt=receipt, lineage=lineage)
+        lineage=lineage)
+    receipt["fc_sha256"] = fc_sha
+    outputs.write_commit_receipt(run_id, receipt)
     outputs.atomic_publish(run_id)
 
     owner_scope = {"session_id": session_id}
@@ -1275,7 +1284,7 @@ async def refresh_plan(
     incremental.assert_refresh_safe(impact)
     result = await execute_plan(
         session_id, plan_id, expected_revision=expected_revision,
-        actor=actor, background=True, base_run_id=base_row.id)
+        actor=actor, background=False, base_run_id=base_row.id)
     return {
         "plan_id": plan_id, "base_run_id": base_row.id,
         "changed": True, "impact": impact.to_dict(), "run": result,
