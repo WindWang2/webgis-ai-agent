@@ -89,6 +89,7 @@ def write_match_bundle(
     source_cards: Dict[str, Any],
     plan_snapshot: Dict[str, Any],
     side_keys: Optional[Dict[str, List[str]]] = None,
+    side_briefs: Optional[Dict[str, Dict[str, Dict[str, Any]]]] = None,
     budget_event: Optional[Dict[str, Any]] = None,
 ) -> Path:
     """run 完成时冻结匹配包（staging 内；commit 由 executor 原子发布）。"""
@@ -99,6 +100,8 @@ def write_match_bundle(
     _write_json(d / "plan_snapshot.json", plan_snapshot)
     if side_keys is not None:
         _write_json(d / "side_keys.json", side_keys)
+    if side_briefs is not None:
+        _write_json(d / "side_briefs.json", side_briefs)
     if budget_event:
         _write_json(d / "budget_event.json", budget_event)
     return d
@@ -127,11 +130,16 @@ def read_match_bundle(run_id: str) -> Optional[Dict[str, Any]]:
     if (d / "side_keys.json").exists():
         with open(d / "side_keys.json", encoding="utf-8") as f:
             side_keys = json.load(f)
+    side_briefs: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    if (d / "side_briefs.json").exists():
+        with open(d / "side_briefs.json", encoding="utf-8") as f:
+            side_briefs = json.load(f)
     return {
         "pairs": pairs.get("pairs", []),
         "match_stats": stats,
         "source_cards": cards,
         "side_keys": side_keys,
+        "side_briefs": side_briefs,
     }
 
 

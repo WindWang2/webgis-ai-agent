@@ -647,6 +647,15 @@ async def execute_plan(
     return _run_view(session_id, run_id)
 
 
+def _entity_brief(rec: Any, spec: Any) -> Dict[str, Any]:
+    """审阅面板侧名投影（有界；名称 ≤80 字符 + id）。"""
+    name = rec.row.get(spec.name_field)
+    return {
+        "name": ("" if name is None else str(name))[:80],
+        "external_id": rec.ext_id,
+    }
+
+
 async def _run_execution_job(
     run_id: str, job_id: int, session_id: str, plan: FusionPlan,
     actor: Dict[str, Any], *, fp_a: str, fp_b: str,
@@ -727,6 +736,13 @@ async def _execute_body(
             "b": sorted(incremental.fingerprint_records(
                 recs_b, plan, src_b.source_ref, "b")),
         }
+        # 审阅面板侧名投影（有界：名称 ≤80、id 原样短串）
+        side_briefs = {
+            "a": {str(r.index): _entity_brief(r, plan.source_a)
+                  for r in recs_a},
+            "b": {str(r.index): _entity_brief(r, plan.source_b)
+                  for r in recs_b},
+        }
         outputs.write_match_bundle(
             run_id,
             pairs=pair_dicts,
@@ -734,6 +750,7 @@ async def _execute_body(
             source_cards=[card_a, card_b],
             plan_snapshot=plan.model_dump(mode="json"),
             side_keys=side_keys,
+            side_briefs=side_briefs,
         )
         elapsed = time.monotonic() - started
         receipt = {
@@ -961,12 +978,19 @@ def review_queue(
                 "receipt_missing",
                 "匹配包缺少 pair 稳定键（旧包格式）——请重新执行",
                 status=410)
+        briefs = bundle.get("side_briefs") or {}
+        brief_a = (briefs.get("a") or {}).get(str(p["idx_a"])) or {}
+        brief_b = (briefs.get("b") or {}).get(str(p["idx_b"])) or {}
         items.append({
             "pair_key": pair_key,
             "idx_a": p["idx_a"], "idx_b": p["idx_b"],
             "status": p["status"], "score": p["score"],
             "hard_block": p.get("hard_block"),
             "id_pinned": p.get("id_pinned", False),
+            "name_a": brief_a.get("name", ""),
+            "name_b": brief_b.get("name", ""),
+            "external_id_a": brief_a.get("external_id"),
+            "external_id_b": brief_b.get("external_id"),
             "evidence": p.get("evidence"),
             "renormalized": p.get("renormalized", False),
             "geometry_evidence": p.get("geometry_evidence"),
