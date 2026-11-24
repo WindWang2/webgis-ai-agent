@@ -153,6 +153,10 @@ class DeltaIntent(BaseModel):
     field_paths: List[str] = Field(default_factory=list, max_length=MAX_FIELD_PATHS)
     summary: str = Field(default="", max_length=MAX_REASON)
     payload: Dict[str, Any] = Field(default_factory=dict)
+    #: 提案时观察到的父会话基准值（三方合并的 base 边）：小值内联
+    #: （paint 键/标量）；大对象只存 ``<path>.digest``（如整层快照）。
+    #: 缺席 = 未观察（采纳时按"不可判定基线"保守处理）。
+    base_values: Dict[str, Any] = Field(default_factory=dict)
 
 
 # ── 候选（注册表条目；引用 whatif 分支，不复制其元数据）──────────────
@@ -328,6 +332,8 @@ class AdoptionReceipt(BaseModel):
     turn_id: str = ""
     idempotency_key: str = ""
     reverted_by: str = ""  # 回退采纳的 adoption id（审计链）
+    #: 采纳前父会话 checkpoint（回退锚；RollbackIntent 消费）。
+    pre_adopt_checkpoint_id: str = ""
 
     def find_item(self, seq: int) -> Optional[AdoptionItem]:
         for item in self.items:
