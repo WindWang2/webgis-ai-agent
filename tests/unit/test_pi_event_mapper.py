@@ -341,3 +341,24 @@ def test_nested_error_child_projects_step_error_with_parent():
     assert "event: step_error" in err
     assert "parent_tool_call_id" in err and parent_id in err
     assert "district required" in err
+
+
+def test_abort_batch_end_without_start_or_cache_is_honest_step_error():
+    """#9986（v1.6.0）：abort 批量中**未执行**的工具收到 vendor 合成的
+    "Operation aborted" error ``tool_execution_end`` —— 该 end 没有对应的
+    ``tool_execution_start``（emitToolExecutionEnd 只发 end、不补 start），
+    也不会命中 dispatch cache（工具从未进入本桥 dispatch）。mapper 必须
+    走 fallback 分支产出诚实 step_error，绝不崩溃、绝不谎报成功。"""
+    event = {
+        "type": "tool_execution_end",
+        "toolName": "webgis_cartography_status",
+        "toolCallId": "call_1_1",  # 批次第二个 call：从未 start
+        "result": {"content": [{"type": "text", "text": "Operation aborted"}]},
+        "isError": True,
+    }
+    sse = map_event_to_sse(event, session_id="s1", cache_lookup=lambda t: None)
+    assert sse is not None
+    assert "event: step_error" in sse
+    assert "Operation aborted" in sse
+    # 诚实性：cache 未命中 → 无 dispatch 分类真值，细分类不猜（tool_error）
+    assert '"tool_error"' in sse
