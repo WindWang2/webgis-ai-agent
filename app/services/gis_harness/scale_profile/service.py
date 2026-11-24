@@ -161,7 +161,10 @@ async def _resolve_fc(
     from app.schemas.ref_descriptor import collect_field_schema
 
     features = fc.get("features") or []
+    # 无属性要素（properties 全空）→ collect_field_schema 返回 (None, True)；
+    # 空 schema 是合法态（不崩链 —— paper_generalization 测试暴露的潜在缺陷）。
     field_schema, complete = collect_field_schema(features)
+    field_schema = field_schema if isinstance(field_schema, dict) else {}
     blob = json.dumps(_canonical_fc_digest_input(fc), ensure_ascii=False,
                       sort_keys=True, separators=(",", ":"), allow_nan=False)
     descriptor = {
