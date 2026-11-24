@@ -44,6 +44,7 @@ from app.lib.cartography.multiscale.publication_compile import (
     SCHEMA_VERSION as PLAN_SCHEMA_VERSION,
     plan_with_artifact_ref,
     upsert_representation_window,
+    windows_cover_domain,
 )
 from app.services.gis_harness.scale_profile.service import (
     _fc_content_fingerprint,
@@ -431,8 +432,19 @@ async def apply_paper_scale_generalization(
     layer["scale_profile"] = scale_profile
     rep = layer.get("representation") if isinstance(
         layer.get("representation"), dict) else {}
-    windows = upsert_representation_window(
-        rep.get("windows") or [], window)
+    existing = list(rep.get("windows") or [])
+    if windows_cover_domain(existing):
+        windows = upsert_representation_window(existing, window)
+    else:
+        # 既有窗不覆盖全域（无带档案的普通层）：合成 raw 覆盖保证 [0,24)
+        # 连续 —— 否则导出裁决的「缺口回退末窗」会让窗外 zoom 也走纸面
+        # 工件（违背「跨度外 = 原始数据」语义）。
+        windows = upsert_representation_window([
+            {"min_zoom": 0.0, "max_zoom": float(window["min_zoom"]),
+             "mode": "raw"},
+            {"min_zoom": float(window["max_zoom"]), "max_zoom": 24.0,
+             "mode": "raw"},
+        ], window)
     layer["representation"] = {**rep, "windows": windows}
 
     from app.services.mapspec.intents import (

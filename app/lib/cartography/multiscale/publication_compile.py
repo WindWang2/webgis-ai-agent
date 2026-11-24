@@ -30,7 +30,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from pydantic import BaseModel, ConfigDict
 
@@ -306,6 +306,34 @@ def compile_paper_scale_plan(
     )
 
 
+def windows_cover_domain(windows: Sequence[Any]) -> bool:
+    """窗口列表是否连续覆盖 [0,24)（与 profile.validate_profile 同语义的
+    轻量判定；供服务层决定是否需要合成 raw 覆盖）。"""
+    from app.lib.cartography.representation import (
+        ZOOM_DOMAIN_MAX,
+        ZOOM_DOMAIN_MIN,
+    )
+
+    spans: List[Tuple[float, float]] = []
+    for w in windows or []:
+        if not isinstance(w, dict):
+            continue
+        mn, mx = w.get("min_zoom"), w.get("max_zoom")
+        if not (isinstance(mn, (int, float)) and isinstance(mx, (int, float))
+                and not isinstance(mn, bool) and not isinstance(mx, bool)):
+            continue
+        spans.append((float(mn), float(mx)))
+    if not spans:
+        return False
+    spans.sort()
+    cursor = ZOOM_DOMAIN_MIN
+    for mn, mx in spans:
+        if mn > cursor + 1e-9 or mx <= mn:
+            return False
+        cursor = max(cursor, mx)
+    return cursor >= ZOOM_DOMAIN_MAX - 1e-9
+
+
 def upsert_representation_window(
     windows: Sequence[Any],
     new_window: Dict[str, Any],
@@ -380,4 +408,5 @@ __all__ = [
     "compile_paper_scale_plan",
     "plan_with_artifact_ref",
     "upsert_representation_window",
+    "windows_cover_domain",
 ]
