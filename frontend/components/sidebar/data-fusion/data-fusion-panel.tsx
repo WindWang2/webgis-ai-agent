@@ -1074,6 +1074,11 @@ export function DataFusionPanel({ sessionId, ownerToken }: DataFusionPanelProps)
                     <div className="flex flex-wrap items-center gap-1.5 text-caption">
                       <span className="font-mono text-ink" title={item.pair_key}>{trunc(item.pair_key, 24)}</span>
                       <span className="text-ink-muted">#{item.idx_a}×#{item.idx_b}</span>
+                      {(item.name_a || item.name_b) && (
+                        <span className="text-ink" title={`${item.name_a ?? ''} / ${item.name_b ?? ''}`}>
+                          {trunc(item.name_a || '—', 24)} ⇄ {trunc(item.name_b || '—', 24)}
+                        </span>
+                      )}
                       <span className="font-mono text-ink">{item.score != null ? item.score.toFixed(3) : '—'}</span>
                       <span className={`rounded border px-1.5 py-0.5 ${statusBadgeClass(item.status)}`}>
                         {pairStatusLabel(item.status)}

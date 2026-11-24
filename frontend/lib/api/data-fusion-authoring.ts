@@ -320,6 +320,10 @@ export interface FusionReviewItem {
   score: number | null;
   hard_block?: string | null;
   id_pinned?: boolean;
+  name_a?: string;
+  name_b?: string;
+  external_id_a?: string | null;
+  external_id_b?: string | null;
   evidence?: FusionEvidenceItem[] | null;
   renormalized?: boolean;
   geometry_evidence?: Record<string, unknown> | null;
