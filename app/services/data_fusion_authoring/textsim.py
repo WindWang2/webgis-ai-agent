@@ -82,12 +82,24 @@ def _levenshtein_bounded(a: str, b: str, max_dist: int) -> int:
     return prev[lb]
 
 
+#: 相似度求值的字符上限（对抗巨型字段：10 万字符字段的无界 DP 会
+#: 挂死执行线程）。超限截断求值 —— 有界求值是标准做法，调用方在
+#: evidence 中如实披露 ``truncated_eval``。
+MAX_SIM_EVAL_CHARS = 512
+
+
 def char_similarity(a: str, b: str) -> float:
-    """归一化编辑距离相似度 ∈ [0,1]（1 = 全等；空串对非空 = 0）。"""
+    """归一化编辑距离相似度 ∈ [0,1]（1 = 全等；空串对非空 = 0）。
+
+    超长输入（> ``MAX_SIM_EVAL_CHARS``）截断求值（对抗巨型字段，
+    O(n·band) 保证有界）。
+    """
     if a == b:
         return 1.0
     if not a or not b:
         return 0.0
+    a = a[:MAX_SIM_EVAL_CHARS]
+    b = b[:MAX_SIM_EVAL_CHARS]
     max_len = max(len(a), len(b))
     # 带宽取可接受差异上限的 2 倍即可判定 <0.5 分支，超出直接给低分
     band = max(2, int(max_len * 0.5))
@@ -120,10 +132,16 @@ def name_similarity(
     """
     if not norm_a and not norm_b:
         return {"value": None, "char": None, "token": None}
+    truncated = (len(norm_a) > MAX_SIM_EVAL_CHARS
+                 or len(norm_b) > MAX_SIM_EVAL_CHARS)
     c = char_similarity(norm_a, norm_b)
-    t = token_similarity(norm_a, norm_b)
+    t = token_similarity(norm_a[:MAX_SIM_EVAL_CHARS * 4],
+                         norm_b[:MAX_SIM_EVAL_CHARS * 4])
     v = max(c, t)
-    return {"value": v, "char": c, "token": t}
+    out = {"value": v, "char": c, "token": t}
+    if truncated:
+        out["truncated_eval"] = True
+    return out
 
 
 def _num(v: object) -> Optional[float]:
