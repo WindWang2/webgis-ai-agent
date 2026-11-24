@@ -346,8 +346,10 @@ def register_method_experiment_tools(registry: ToolRegistry) -> None:
                         or decline == "MEXP_EXPERIMENT_NOT_FOUND" else [])}
 
         counts = state.counts()
+        # partial（窗口预算暂停）是 run 的正常终点而非失败——
+        # next_steps 已指引续跑（review C-P3）。
         return {
-            "success": state.status in ("completed",),
+            "success": state.status in ("completed", "partial"),
             "tool": tool_name,
             "experiment_id": experiment_id,
             "status": state.status,

@@ -66,14 +66,35 @@ class PlanCompileError(ValueError):
         super().__init__(f"{detail} [{code}]")
 
 
+#: 额外输入角色的键数上限（network/facilities 已覆盖 v1 词表；有界纪律）。
+MAX_EXTRA_INPUTS = 4
+
+
 class ExperimentInput(BaseModel):
-    """实验输入绑定（ref 为权威；qualifier 只作画像线索）。"""
+    """实验输入绑定（ref 为权威；qualifier 只作画像线索）。
+
+    extra_inputs 有界（review C-P2）：键 ≤4、键名 ≤32、ref 值 ≤128——
+    该 dict 进计划指纹与持久快照，无界会放大两者。
+    """
 
     ref: str                                    # 主输入（点要素集 ref:xxx）
     value_field: str = ""                       # 值字段（cv 族必需）
     extra_inputs: Dict[str, str] = Field(default_factory=dict)  # role → ref
     crs_hint: str = ""                          # 声明 CRS（未声明=工具级 preflight 裁决）
     unit_hint: str = ""                         # 值单位声明（评价披露用，不换算）
+
+    @field_validator("ref", "value_field")
+    @classmethod
+    def _bounded_strings(cls, v: str) -> str:
+        return v[:128]
+
+    @field_validator("extra_inputs")
+    @classmethod
+    def _bounded_extra(cls, v: Dict[str, str]) -> Dict[str, str]:
+        if len(v) > MAX_EXTRA_INPUTS:
+            raise ValueError(
+                f"extra_inputs 键数超上限 {MAX_EXTRA_INPUTS}: {len(v)}")
+        return {str(k)[:32]: str(val)[:128] for k, val in v.items()}
 
 
 class CandidateSelection(BaseModel):
@@ -233,6 +254,21 @@ def compile_experiment_plan(
             raise PlanCompileError(
                 f"{MEXP_EXTRA_INPUT_REQUIRED}:{role}",
                 f"族 {family_id} 需要额外输入角色 {role}（如路网/设施 ref）")
+
+    # ── 评价工具对账（review C-P2：注册面可用时悬空 fatal——「悬空 fatal」
+    # 承诺的兑现点；注册面不可用（纯编译期）则交给运行期 dispatch 诚实失败）──
+    try:
+        from app.agent_pi_bridge import try_get_tool_registry
+        live_registry = try_get_tool_registry()
+    except Exception:  # noqa: BLE001 — 桥不可用不阻断纯编译
+        live_registry = None
+    if live_registry is not None:
+        dangling = [c.candidate_id for c in card.candidates
+                    if live_registry.get(c.eval_tool) is None]
+        if dangling:
+            raise PlanCompileError(
+                "MEXP_EVAL_TOOL_UNREGISTERED",
+                f"候选评价工具在注册面悬空: {dangling[:4]}")
 
     # ── 候选选择（缺省 = 卡全候选；显式子集须 ⊆ 卡；声明序不变）────────
     chosen: Tuple[CandidateSpec, ...]

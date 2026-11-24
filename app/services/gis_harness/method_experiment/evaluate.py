@@ -40,7 +40,7 @@ from app.services.gis_harness.method_experiment.state import (
 ABSTAIN_REASONS = (
     "insufficient_completed_trials",   # 可比组样本 <2
     "metrics_not_evaluated",           # 试验全部 not_evaluated
-    "no_comparable_group",             # 协议指标全部缺值
+    "scenario_not_rankable",           # 情景族：候选是不同问题不是不同答案
 )
 
 
@@ -339,7 +339,21 @@ def _recommend(
     plan: MethodExperimentPlan, state: ExperimentRunState,
     groups: List[GroupRanking],
 ) -> Recommendation:
-    """推荐或弃权（推荐只基于证据充分的第一可比组）。"""
+    """推荐或弃权（推荐只基于证据充分的第一可比组）。
+
+    scenario 族一律弃权（review C-P1）：情景候选回答的是**不同问题**
+    （30 分钟 vs 10 分钟覆盖、kNN-k vs 距离带权重）——按方向排名会
+    把「阈值最大的情景」伪装成「更好的方法」。可比组照常呈现（有序
+    对比是情景信息），但推荐语义不成立。
+    """
+    if plan.protocol.kind == "scenario":
+        return Recommendation(
+            status="abstained", abstain_reason="scenario_not_rankable",
+            caveats=(
+                "情景对比（同底数据、参数即情景）不产生『更好方法』推荐——"
+                "候选是不同问题不是不同答案；指标表只做并列披露",
+                "如需方法选型结论，请比较同一情景参数下的不同方法/参数候选"),
+        )
     usable = [g for g in groups if g.n_evaluated >= 2 and g.best() is not None]
     if not usable:
         reason = "metrics_not_evaluated" if all(

@@ -312,7 +312,7 @@ _CARDS: Tuple[MethodCard, ...] = (
             "isochrone", "accessibility", "coverage",
         ),
         protocol_kind="scenario",
-        default_metrics=("network_coverage", "network_mean_cost"),
+        default_metrics=("network_coverage",),
         requires_value_field=False,
         extra_inputs=("network", "facilities"),
         comparability_notes=(
@@ -334,7 +334,7 @@ _CARDS: Tuple[MethodCard, ...] = (
                 },
                 fixed_params={"mode": "walking"},
                 sample_floor=1,
-                metric_ids=("network_coverage", "network_mean_cost"),
+                metric_ids=("network_coverage",),
                 limitations=("脱离路网的设施由工具按 exclude_unreachable 披露",),
             ),
             CandidateSpec(
@@ -350,7 +350,7 @@ _CARDS: Tuple[MethodCard, ...] = (
                 },
                 fixed_params={"mode": "driving"},
                 sample_floor=1,
-                metric_ids=("network_coverage", "network_mean_cost"),
+                metric_ids=("network_coverage",),
                 limitations=("成本模型与 walking 不同——跨 mode 分组不联合排名",),
             ),
         ),

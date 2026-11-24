@@ -95,15 +95,21 @@ async def ensure_state_for_plan(
     （指纹失配，调用方拒绝覆盖）。
     """
     summary_fingerprint = plan.fingerprint()[:16]
-    existing = await load_state(session_id, plan.experiment_id)
-    if existing is None:
-        state = new_state_from_plan(plan)
-        state.log("plan_compiled", trials=len(plan.trials))
-        await persist_state(session_id, state)
-        return state, ""
-    if existing.plan_fingerprint != summary_fingerprint:
-        return existing, "MEXP_ID_COLLISION"
-    return existing, ""
+    # 创建/对账进同一锁族（review C-P2：锁外 load→create→persist 的
+    # TOCTOU——并发同 id plan 可双写；与 run/adopt 同单写者纪律）。
+    from app.services.distributed_lock import session_lock_registry
+
+    async with session_lock_registry.lock(
+            f"mexp:{plan.experiment_id}", fail_on_degraded=True):
+        existing = await load_state(session_id, plan.experiment_id)
+        if existing is None:
+            state = new_state_from_plan(plan)
+            state.log("plan_compiled", trials=len(plan.trials))
+            await persist_state(session_id, state)
+            return state, ""
+        if existing.plan_fingerprint != summary_fingerprint:
+            return existing, "MEXP_ID_COLLISION"
+        return existing, ""
 
 
 async def run_window(

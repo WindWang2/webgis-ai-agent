@@ -127,13 +127,6 @@ _METRICS: Tuple[MetricContract, ...] = (
         description="情景参数下可达设施占全部设施的比例（同一网络+设施集内可比）",
     ),
     MetricContract(
-        metric_id="network_mean_cost", name_zh="平均网络成本", name_en="Mean cost",
-        direction="lower_better", unit_kind="minutes",
-        comparable_group="network_scenario",
-        applicable_families=("network_accessibility",),
-        description="可达设施的网络成本均值（分钟；仅成本口径一致时可比）",
-    ),
-    MetricContract(
         metric_id="autocorr_statistic", name_zh="自相关统计量", name_en="Statistic",
         direction="higher_better", unit_kind="unitless",
         comparable_group="autocorr_scenario",

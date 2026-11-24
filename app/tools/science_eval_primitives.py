@@ -124,6 +124,20 @@ def register_science_eval_primitive_tools(registry: ToolRegistry) -> None:
             cv_cap = max(10, min(int(max_samples), _CV_MAX_SAMPLES))
         except (TypeError, ValueError):
             cv_cap = _CV_MAX_SAMPLES
+        if method == "idw":
+            # 生产 IDW 契约对齐（_validate_power 同界）——无效幂 typed 拒绝，
+            # 不静默按无效值计算（review C-P2）。
+            from app.lib.geo_analysis.interpolation import _validate_power
+
+            try:
+                power = float(_validate_power(power))
+            except Exception as exc:  # noqa: BLE001 — typed 诚实失败
+                return {
+                    "success": False,
+                    "error": f"invalid_power:{type(exc).__name__}",
+                    "message": str(exc)[:240],
+                    "skipped_reason": "invalid_power",
+                }
         from app.lib.geo_analysis.interpolation import (
             _parse_point_values,
             _pick_metric_crs,
@@ -245,6 +259,8 @@ def register_science_eval_primitive_tools(registry: ToolRegistry) -> None:
             note=report.note, unit=value_field,
             leakage_check=report.leakage_check,
             fold_failures=report.fold_failures,
+            duplicate_crossfold_pairs=report.duplicate_crossfold_pairs,
+            calibration=report.calibration,
         )
 
     # ── 2. 密度守恒/边界诊断 ────────────────────────────────────────────
@@ -309,7 +325,11 @@ def register_science_eval_primitive_tools(registry: ToolRegistry) -> None:
                 "message": f"密度诊断至少需要 3 个点，got {n_raw}",
             }
         pts = extract_centroids(gdf)
-        idx, subsampled = _stride_subsample(n_raw, 10_000)
+        try:
+            input_cap = max(100, min(int(max_features), 10_000))
+        except (TypeError, ValueError):
+            input_cap = 10_000
+        idx, subsampled = _stride_subsample(n_raw, input_cap)
         pts = pts[idx]
 
         from app.lib.geo_analysis.density import (
@@ -325,7 +345,6 @@ def register_science_eval_primitive_tools(registry: ToolRegistry) -> None:
                 "error": "invalid_bandwidth",
                 "message": f"bandwidth_m 必须为正（米），got {bandwidth_m}",
             }
-        clamped = False
 
         # ── 评估网格：bbox + bw 边距（先建网格，再评估）──────────────────
         minx, miny, maxx, maxy = (
@@ -426,7 +445,6 @@ def register_science_eval_primitive_tools(registry: ToolRegistry) -> None:
             "success": True,
             "method": method,
             "bandwidth_effective": round(bw, 2),
-            "bandwidth_clamped": clamped,
             "n_points": int(n_used),
             "n_input": int(n_raw),
             "integral_mass": round(integral_mass, 4),
@@ -535,6 +553,13 @@ def register_science_eval_primitive_tools(registry: ToolRegistry) -> None:
                 "message": str(exc)[:240],
             }
         pts = extract_centroids(vsi.gdf)
+        try:
+            input_cap = max(100, min(int(max_features), 50_000))
+        except (TypeError, ValueError):
+            input_cap = 50_000
+        if len(pts) > input_cap:
+            sub_idx, _ = _stride_subsample(len(pts), input_cap)
+            pts = pts[sub_idx]
         n = len(pts)
         if n < 6:
             return {
@@ -728,7 +753,10 @@ def _cv_adapters(
             return {"xy": coords[train_mask], "vals": train_values}
 
         def predict_trend(model, train_mask, test_mask):
-            order = _feasible_trend_order(len(model["vals"])) or 1
+            # order 由 fit 闭包自持（逐折同阶=同一方法语义；折内样本不足以
+            # 支撑该阶时诚实折失败——绝不静默降阶，review C-P2）。
+            order = model.get("order") or _feasible_trend_order(
+                len(model["vals"])) or 1
             res = trend_predict(
                 model["xy"], model["vals"], coords[test_mask], order=order)
             return np.asarray(res["predictions"], dtype=float), None
@@ -772,6 +800,8 @@ def _block_cv_payload(
     per_fold: list, metric_crs: str, subsampled: bool, note: str = "",
     unit: str = "", leakage_check: Optional[dict] = None,
     fold_failures: int = 0,
+    duplicate_crossfold_pairs: int = 0,
+    calibration: Optional[dict] = None,
 ) -> dict:
     """分块 CV 统一载荷（指标键与 runner 适配器契约一致）。"""
     payload: Dict[str, Any] = {
@@ -797,6 +827,10 @@ def _block_cv_payload(
         payload["leakage_check"] = leakage_check
     if fold_failures:
         payload["fold_failures"] = int(fold_failures)
+    if duplicate_crossfold_pairs:
+        payload["duplicate_crossfold_pairs"] = int(duplicate_crossfold_pairs)
+    if calibration:
+        payload["uncertainty_calibration"] = calibration
     if per_fold:
         payload["per_fold_head"] = [
             {k: v for k, v in row.items() if isinstance(v, (int, float, str))}

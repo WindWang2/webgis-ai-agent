@@ -225,3 +225,43 @@ def test_fingerprint_changes_with_input_and_params():
     assert trial_content_fingerprint(
         plan1, {"method": "idw", "power": 2.0}, 0,
         "interpolation_block_cv") == t1  # 确定性
+
+
+@pytest.mark.asyncio
+async def test_window_budget_counts_failed_dispatches():
+    """窗口预算按 dispatch 次数计——快速失败不得绕过 max_trials_per_call
+    （review C-P1 回归锁）。"""
+    script = [FakeResult(status="error", error_msg="boom")] * 6
+    rec = DispatchRecorder(script=script)
+    runner = ExperimentRunner(dispatch=rec, persist=_persist_noop)
+    plan, state = _plan_and_state()
+    state = await runner.run("sess", plan, state, max_trials_per_call=2)
+    assert len(rec.calls) == 2            # 失败同扣窗口
+    counts = state.counts()
+    assert counts.get("failed", 0) == 2
+    assert counts.get("pending", 0) == 2
+    assert state.status == "partial"
+
+
+@pytest.mark.asyncio
+async def test_resume_after_cancel_reaches_completed():
+    """取消后续跑：剩余 pending 完成后整体 completed（cancelled 计数诚实
+    保留，但不再是终局僵局——review C-P1 回归锁）。"""
+    rec = DispatchRecorder()
+    runner = ExperimentRunner(dispatch=rec, persist=_persist_noop)
+    plan, state = _plan_and_state()
+    calls = {"n": 0}
+
+    def cancel_after_two():
+        calls["n"] += 1
+        return calls["n"] > 2
+
+    state = await runner.run("sess", plan, state, cancel_check=cancel_after_two)
+    assert state.status == "cancelled"
+    # 续跑：不再取消
+    state = await runner.run("sess", plan, state)
+    counts = state.counts()
+    assert counts.get("completed", 0) == 3
+    assert counts.get("cancelled", 0) == 1   # 取消试验保持终态（诚实）
+    assert counts.get("pending", 0) == 0
+    assert state.status == "completed"

@@ -53,6 +53,9 @@ MAX_DIAGNOSTIC_KEYS = 8
 #: 错误消息截断（有界状态纪律）。
 _MAX_MSG = 240
 
+#: 单次工具输入行数预算默认（runner 构造；构造器可覆盖）。
+_MAX_FEATURES_DEFAULT = 100_000
+
 
 def trial_content_fingerprint(
     plan: MethodExperimentPlan, params: Dict[str, Any], seed: int,
@@ -168,46 +171,68 @@ def _extract_clustering(raw: Dict[str, Any]) -> Tuple[Dict[str, float], Dict[str
 
 
 def _extract_network(raw: Dict[str, Any]) -> Tuple[Dict[str, float], Dict[str, Dict[str, Any]], Dict[str, Any]]:
-    """``isochrone_network`` 结果 → 覆盖/成本指标（stats 事实提取）。"""
+    """``isochrone_network`` 结果 → 覆盖指标。
+
+    对齐工具真实输出（review C-P0 修正：此前读取不存在的 stats 键）：
+    - 逐设施 feature 携带 ``properties.reachable``（bool）；
+    - 工具层 stats：``facility_polygons``（保留数）、
+      ``excluded_unreachable``（exclude_unreachable=True 时剔除数）、
+      ``facilities_total``（输入设施总数——工具层 additive 补写）。
+    覆盖率 = 可达保留设施 / 输入设施总数（脱离路网与剔除占位面都算
+    不可达——同一口径下跨情景可比）。
+    """
     stats = raw.get("stats") if isinstance(raw.get("stats"), dict) else {}
     metrics: Dict[str, float] = {}
     basis: Dict[str, Dict[str, Any]] = {}
+    data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
+    features = data.get("features") if isinstance(
+        data.get("features"), list) else []
+    reachable_kept = sum(
+        1 for f in features
+        if isinstance(f, dict)
+        and isinstance(f.get("properties"), dict)
+        and f["properties"].get("reachable") is True)
     total = _as_float(stats.get("facilities_total"))
-    reachable = _as_float(stats.get("facility_polygons"))
-    if total is not None and reachable is not None and total > 0:
-        metrics["network_coverage"] = round(reachable / total, 6)
+    excluded = _as_float(stats.get("excluded_unreachable")) or 0.0
+    if total is not None and total > 0:
+        metrics["network_coverage"] = round(reachable_kept / total, 6)
         basis["network_coverage"] = {
-            "reachable": reachable, "total": total,
-            "excluded_unreachable": stats.get("excluded_unreachable")}
-    mean_cost = _as_float(stats.get("mean_travel_time"))
-    if mean_cost is not None:
-        metrics["network_mean_cost"] = round(mean_cost, 6)
-        basis["network_mean_cost"] = {"mode": stats.get("mode")}
+            "reachable_kept": reachable_kept,
+            "excluded_unreachable": excluded,
+            "total": total,
+            "note": "脱离路网(unsnappable)+剔除占位面都计入不可达",
+        }
     diagnostics = {
         "facility_polygons": stats.get("facility_polygons"),
-        "excluded_unreachable": stats.get("excluded_unreachable"),
-        "isochrone_count": stats.get("isochrone_count"),
+        "excluded_unreachable": excluded,
+        "facilities_total": total,
+        "mode": stats.get("mode"),
     }
     return metrics, basis, {k: v for k, v in diagnostics.items() if v is not None}
 
 
 def _extract_autocorr(raw: Dict[str, Any]) -> Tuple[Dict[str, float], Dict[str, Dict[str, Any]], Dict[str, Any]]:
-    """``moran_i`` 结果 → 统计量/显著性（固定种子契约披露）。"""
+    """``moran_i`` 结果 → 统计量/显著性（固定种子契约披露）。
+
+    对齐工具真实输出（GeoAnalysisResult.to_llm_response）：指标在
+    ``data`` 子 dict（moran_i/p_value/n_features/permutations/expected_i）。
+    """
+    data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
     metrics: Dict[str, float] = {}
-    stat = _as_float(raw.get("moran_i"))
+    stat = _as_float(data.get("moran_i"))
     if stat is not None:
         metrics["autocorr_statistic"] = round(stat, 6)
-    p = _as_float(raw.get("p_value"))
+    p = _as_float(data.get("p_value"))
     if p is not None:
         metrics["autocorr_p_value"] = round(p, 6)
     basis = {m: {
-        "n_features": raw.get("n_features"),
-        "permutations": raw.get("permutations"),
+        "n_features": data.get("n_features"),
+        "permutations": data.get("permutations"),
         "seed": 42,   # 工具契约固定种子（可复现的诚实披露）
     } for m in metrics}
     diagnostics = {
-        "weights_scheme": raw.get("weights_scheme"),
-        "expected_i": raw.get("expected_i"),
+        "pattern": data.get("pattern"),
+        "expected_i": data.get("expected_i"),
     }
     return metrics, basis, {k: v for k, v in diagnostics.items() if v is not None}
 
@@ -223,63 +248,85 @@ METRIC_EXTRACTORS = {
 
 
 def build_trial_args(
-    plan: MethodExperimentPlan, params: Dict[str, Any],
+    plan: MethodExperimentPlan, params: Dict[str, Any], seed: int = 0,
+    max_features: int = _MAX_FEATURES_DEFAULT,
 ) -> Dict[str, JsonValue]:
-    """试验参数 → 评价工具入参（族分派；ref 直通——dispatch 解引用）。"""
+    """试验参数 → 评价工具入参。
+
+    族分派按**评价工具的真实签名**构造（逐键与工具 schema 对齐——
+    不给不接受这些参数的工具注入 max_features/geojson；review C-P0）。
+    ref 直通——dispatch 层解引用。
+    """
     family = plan.family_id
     protocol = plan.protocol
-    base: Dict[str, JsonValue] = {"geojson": plan.input.ref}
+    args: Dict[str, JsonValue]
     if family == "interpolation":
-        base.update({
+        # interpolation_block_cv(geojson, value_field, method, folds,
+        #   scheme, power, model, kernel, max_samples, max_features)
+        args = {
+            "geojson": plan.input.ref,
             "value_field": plan.input.value_field,
             "method": str(params.get("method", "idw")),
             "folds": protocol.folds,
             "scheme": protocol.scheme or "spatial_block",
             "max_samples": protocol.max_samples,
-        })
+            "max_features": int(max_features),
+        }
         for k in ("power", "model", "kernel"):
             if k in params:
-                base[k] = params[k]
+                args[k] = params[k]
     elif family == "density":
-        base.update({
+        # density_edge_diagnostic(geojson, method, bandwidth_m, max_features)
+        args = {
+            "geojson": plan.input.ref,
             "method": str(params.get("method", "kde_fixed")),
-        })
+            "max_features": int(max_features),
+        }
         if "bandwidth_m" in params:
-            base["bandwidth_m"] = params["bandwidth_m"]
-        if plan.input.crs_hint:
-            base["crs_hint"] = plan.input.crs_hint
+            args["bandwidth_m"] = params["bandwidth_m"]
     elif family == "clustering":
-        base.update({
+        # cluster_stability(geojson, method, k, eps_m, min_samples, runs,
+        #   seed, value_field, max_features)
+        args = {
+            "geojson": plan.input.ref,
             "method": str(params.get("method", "kmeans")),
             "runs": protocol.stability_runs,
-            "seed": 42,
-        })
+            "seed": int(seed) or 42,
+            "max_features": int(max_features),
+        }
         if "k" in params:
-            base["k"] = params["k"]
+            args["k"] = params["k"]
         if "eps_m" in params:
-            base["eps_m"] = params["eps_m"]
+            args["eps_m"] = params["eps_m"]
         if "min_samples" in params:
-            base["min_samples"] = params["min_samples"]
+            args["min_samples"] = params["min_samples"]
         if plan.input.value_field:
-            base["value_field"] = plan.input.value_field
+            args["value_field"] = plan.input.value_field
     elif family == "network_accessibility":
-        base.update({
+        # isochrone_network(network_layer, facilities, travel_time, mode,
+        #   exclude_unreachable)——无 geojson/max_features 形参（review C-P0）。
+        args = {
             "network_layer": plan.input.extra_inputs.get("network", ""),
             "facilities": plan.input.extra_inputs.get("facilities", ""),
             "travel_time": float(params.get("travel_time", 15.0)),
             "mode": str(params.get("mode", "walking")),
             "exclude_unreachable": True,
-        })
+        }
     elif family == "spatial_autocorrelation":
-        base.update({
+        # moran_i(geojson, value_field, weights_scheme, k, distance_band,
+        #   permutations)——无 max_features 形参（review C-P0）。
+        args = {
+            "geojson": plan.input.ref,
             "value_field": plan.input.value_field,
             "weights_scheme": str(params.get("weights_scheme", "knn")),
-        })
+        }
         if "k" in params:
-            base["k"] = params["k"]
+            args["k"] = params["k"]
         if "distance_band" in params:
-            base["distance_band"] = params["distance_band"]
-    return base
+            args["distance_band"] = params["distance_band"]
+    else:  # pragma: no cover — EXPERIMENT_FAMILY_IDS 词表守护
+        args = {"geojson": plan.input.ref}
+    return args
 
 
 class ExperimentRunner:
@@ -365,8 +412,9 @@ class ExperimentRunner:
                 continue
 
             # ── 真实 dispatch ───────────────────────────────────────────
-            args = build_trial_args(plan, plan_trial.params)
-            args["max_features"] = self._max_features
+            args = build_trial_args(
+                plan, plan_trial.params, seed=plan_trial.seed,
+                max_features=self._max_features)
             trial.state = "running"
             trial.attempts += 1
             trial.touch()
@@ -374,6 +422,8 @@ class ExperimentRunner:
                       tool=plan_trial.eval_tool)
             await self._persist(state)
 
+            dispatched += 1               # 窗口预算按 dispatch 次数计（失败同扣——
+            # 快速失败不得绕过 max_trials_per_call；review C-P1）
             t0 = time.monotonic()
             try:
                 result = await self._dispatch(
@@ -446,17 +496,19 @@ class ExperimentRunner:
             state.log("trial_completed", trial_id=trial.trial_id,
                       metrics=len(trial.metrics))
             await self._persist(state)
-            dispatched += 1
 
         # ── 窗口收口：诚实整体状态 ──────────────────────────────────────
+        # cancelled 不是终局僵局：取消后剩余续跑完成 → 实验整体 completed
+        # （取消计数诚实保留在 counts 里；review C-P1）。
         counts = state.counts()
         if counts.get("pending", 0) or counts.get("running", 0):
             state.status = "partial" if (
                 counts.get("completed", 0) or counts.get("reused", 0)) else "running"
             if state.status == "running" and dispatched >= call_budget:
                 state.status = "partial"   # 预算暂停也是部分（可续跑）
-        elif counts.get("failed", 0) and not (
-                counts.get("completed", 0) or counts.get("reused", 0)):
+        elif counts.get("completed", 0) or counts.get("reused", 0):
+            state.status = "completed"
+        elif counts.get("failed", 0):
             state.status = "failed"
         elif counts.get("cancelled", 0):
             state.status = "cancelled"
@@ -498,20 +550,3 @@ def _bounded_basis(basis: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def input_binding_changed(plan: MethodExperimentPlan, current_input) -> bool:
-    """计划输入绑定 vs 当前输入是否失配（recompute 语义的纯判定）。
-
-    ``current_input``：同形状 ExperimentInput（或可 model_dump 的 dict）。
-    失配 = ref/value_field/extra_inputs 任一变化 → 已完成试验不再可信
-    （调用方决定重跑范围；本函数不修改状态）。
-    """
-    current = current_input
-    if isinstance(current, dict):
-        from app.services.gis_harness.method_experiment.plan import (
-            ExperimentInput,
-        )
-        try:
-            current = ExperimentInput.model_validate(current)
-        except Exception:  # noqa: BLE001 — 无法解析视为失配（fail-closed）
-            return True
-    return plan.input.model_dump() != current.model_dump()

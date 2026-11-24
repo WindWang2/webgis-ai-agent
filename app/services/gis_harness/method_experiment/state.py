@@ -118,36 +118,6 @@ class ExperimentRunState(BaseModel):
         return sum(t.wall_ms for t in self.trials.values())
 
 
-def new_state(plan_dict: Dict[str, Any]) -> ExperimentRunState:
-    """从计划摘要构建初始运行态（试验全部 pending）。
-
-    注意：``plan_dict`` 应是**计划模型的完整 dump**（可被
-    ``MethodExperimentPlan.model_validate`` 回读）——展示用有界摘要不可
-    作快照（run_window 恢复时重验证会失败）。推荐用
-    ``new_state_from_plan``。
-    """
-    experiment_id = str(plan_dict.get("experiment_id", ""))
-    trials = {
-        t["trial_id"]: TrialRecord(
-            trial_id=t["trial_id"],
-            candidate_id=t.get("candidate_id", ""),
-            variant_index=int(t.get("variant_index", 0)),
-            params=dict(t.get("params") or {}),
-            seed=int(t.get("seed", 0)),
-            eval_tool=t.get("eval_tool", ""),
-        )
-        for t in plan_dict.get("trials", [])
-        if isinstance(t, dict) and t.get("trial_id")
-    }
-    return ExperimentRunState(
-        experiment_id=experiment_id,
-        family_id=str(plan_dict.get("family_id", "")),
-        plan_fingerprint=str(plan_dict.get("fingerprint", "")),
-        plan_snapshot=dict(plan_dict),
-        trials=trials,
-        status="pending",
-    )
-
 
 def new_state_from_plan(plan) -> ExperimentRunState:
     """从计划模型构建初始运行态（快照 = 完整 model dump，可回读恢复）。"""

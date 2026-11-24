@@ -101,7 +101,7 @@ CAPABILITIES: List[CapabilityDescriptor] = [
             description="纯空间维聚类（K-Means / DBSCAN；spatial_cluster 工具），"
                         "返回逐要素簇标签；稳定性/轮廓系数评价走方法实验引擎。",
             input_artifact_types=["poi_feature_set", "point_feature_set"],
-            output_artifact_types=["clustered_feature_set"],
+            output_artifact_types=["point_feature_set"],
             geometry_requirements=["point"],
             purpose_template="空间聚类分簇",
         ),

@@ -65,34 +65,25 @@ def _points_fc(n=60, seed=4):
 
 
 async def _dispatch_factory(registry):
-    """生产 dispatch 形状的测试注入：ref 解引用 + 真实注册表工具实现。
+    """真实生产 dispatch：共享 ToolDispatchService（Pydantic 校验/ref 解引用/
+    未知参数闸全在缝内——review C-P1 修复：此前直接调工具函数绕过了
+    schema 对账，掩盖了 args/签名失配）。"""
+    from app.agent_pi_bridge import set_tool_registry, try_get_tool_registry
+    from app.services.gis_harness.method_experiment.service import (
+        production_dispatch,
+    )
 
-    与 ToolDispatchService 的「ref: 参数自动解引用」缝对齐——工具函数
-    本身不解引用（生产由 dispatch 层完成）。
-    """
-    _REF_ARGS = ("geojson", "network_layer", "facilities")
+    previous = try_get_tool_registry()
+    set_tool_registry(registry)
+    dispatch_fn = production_dispatch()
+    assert dispatch_fn is not None, "生产 dispatch 不可用"
 
     async def _dispatch(tool_name, args, session_id):
         _dispatch.calls.append({"tool": tool_name, "args": dict(args)})
-        spec = registry.get(tool_name)
-        assert spec is not None, f"工具未注册: {tool_name}"
-        func = spec.func if hasattr(spec, "func") else spec
-        resolved = dict(args)
-        for key in _REF_ARGS:
-            v = resolved.get(key)
-            if isinstance(v, str) and v.startswith("ref:"):
-                payload = await session_data_manager.get(session_id, v)
-                assert payload is not None, f"ref 无法解引用: {v}"
-                resolved[key] = payload
-        raw = func(**resolved)
-        # 最小 ToolDispatchResult 仿形（status/raw_result 契约）
-        class _R:
-            def __init__(self, raw):
-                self.status = "ok"
-                self.raw_result = raw
-                self.error_msg = None
-        return _R(raw)
+        return await dispatch_fn(tool_name, args, session_id)
+
     _dispatch.calls = []
+    _dispatch.restore = lambda: set_tool_registry(previous)
     return _dispatch
 
 
@@ -112,7 +103,10 @@ async def test_interpolation_experiment_full_loop(registry):
         persisted.append(st.status)
 
     runner = ExperimentRunner(dispatch=dispatch, persist=_persist)
-    state = await runner.run(SESSION, plan, state, max_trials_per_call=6)
+    try:
+        state = await runner.run(SESSION, plan, state, max_trials_per_call=6)
+    finally:
+        dispatch.restore()
     assert len(persisted) > 0
 
     counts = state.counts()
@@ -165,7 +159,10 @@ async def test_density_experiment_loop(registry):
     async def _persist(st):
         return None
     runner = ExperimentRunner(dispatch=dispatch, persist=_persist)
-    state = await runner.run(SESSION, plan, state)
+    try:
+        state = await runner.run(SESSION, plan, state)
+    finally:
+        dispatch.restore()
     counts = state.counts()
     assert counts.get("completed", 0) == 3     # 带宽网格 3 候选变体
     ev = evaluate_experiment(plan, state)
@@ -224,13 +221,54 @@ async def test_network_experiment_loop(registry):
         return None
     runner = ExperimentRunner(dispatch=dispatch, persist=_persist)
     state = await runner.run(SESSION, plan, state)
-
-    ev = evaluate_experiment(plan, state)
-    g = next((g for g in ev.comparable_groups
-              if g.metric_id == "network_coverage"), None)
-    assert g is not None
-    if g.n_evaluated >= 2:
+    try:
+        counts = state.counts()
+        # 真实 dispatch 下全情景必须完成（review C-P0/P1 修复的回归锁：
+        # args 与工具 schema 失配时这里必然暴露 failed）
+        assert counts.get("completed", 0) == 3, (
+            f"网络情景应全部完成: {counts} "
+            + str([(t.reason_code, t.message[:80])
+                   for t in state.trials.values()]))
+        ev = evaluate_experiment(plan, state)
+        g = next((g for g in ev.comparable_groups
+                  if g.metric_id == "network_coverage"), None)
+        assert g is not None and g.n_evaluated == 3
         # 可达性随阈值单调不降（同一路网/设施的物理常识）
         vals = [(dict(r.params).get("travel_time"), r.value) for r in g.rows]
         vals.sort()
         assert vals[0][1] <= vals[-1][1]
+        # 情景族不产生方法推荐（review C-P1：候选是不同问题不是不同答案）
+        assert ev.recommendation is not None
+        assert ev.recommendation.status == "abstained"
+        assert ev.recommendation.abstain_reason == "scenario_not_rankable"
+    finally:
+        dispatch.restore()
+
+
+async def test_autocorr_experiment_loop(registry):
+    """自相关情景实验（真实 dispatch）：kNN k 情景 → 统计量/p 值提取。"""
+    fc = _value_fc(60, seed=21)
+    ref = await session_data_manager.store(SESSION, fc, prefix="geojson")
+    plan = compile_experiment_plan(
+        family_id="spatial_autocorrelation", input_ref=ref,
+        value_field="price",
+        candidate_ids=["moran_knn"], max_trials=6)
+    assert plan.trial_count() == 3             # k=4/8/12 情景
+    state = new_state_from_plan(plan)
+    dispatch = await _dispatch_factory(registry)
+    async def _persist(st):
+        return None
+    runner = ExperimentRunner(dispatch=dispatch, persist=_persist)
+    state = await runner.run(SESSION, plan, state)
+    try:
+        counts = state.counts()
+        assert counts.get("completed", 0) == 3, (
+            f"自相关情景应全部完成: {counts} "
+            + str([(t.reason_code, t.message[:80])
+                   for t in state.trials.values()]))
+        for t in state.trials.values():
+            assert "autocorr_statistic" in t.metrics
+            assert "autocorr_p_value" in t.metrics
+            assert t.metric_basis["autocorr_p_value"].get("seed") == 42
+    finally:
+        dispatch.restore()

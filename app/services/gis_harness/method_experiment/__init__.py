@@ -61,7 +61,7 @@ from app.services.gis_harness.method_experiment.runner import (  # noqa: F401
 from app.services.gis_harness.method_experiment.state import (  # noqa: F401
     ExperimentRunState,
     TrialRecord,
-    new_state,
+    new_state_from_plan,
     state_alias,
     state_from_payload,
     state_to_payload,
@@ -84,7 +84,7 @@ __all__ = [
     "compile_experiment_plan",
     "CV_SCHEMES", "EvaluationProtocol", "build_protocol_from_card",
     "ExperimentRunner", "trial_content_fingerprint",
-    "ExperimentRunState", "TrialRecord", "new_state", "state_alias",
+    "ExperimentRunState", "TrialRecord", "new_state_from_plan", "state_alias",
     "state_from_payload", "state_to_payload",
     "ExperimentEvaluation", "build_adoption_receipt", "evaluate_experiment",
 ]
