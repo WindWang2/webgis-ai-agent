@@ -11,8 +11,6 @@
   能发起，不能绕过审阅门或人工锁定；
 - execute 返回 job 时用 status 工具轮询；有界等待 wait_max_s 内联收敛。
 """
-from __future__ import annotations
-
 import asyncio
 from typing import Any, Dict, Optional
 
