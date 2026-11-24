@@ -240,6 +240,7 @@ def select_lines_with_connectivity(
     # ── 连通性桥接修复（BFS 最短桥接路径；确定性并列裁决）──
     components_before = len(_components()) if parent else 0
     bridges: List[Dict[str, Any]] = []
+    bridges_added_count = 0
     budget = max_bridges if max_bridges is not None else 10 ** 9
 
     # 被抑制边索引：node → [(feature_idx, other_node)]
@@ -291,17 +292,19 @@ def select_lines_with_connectivity(
             if budget <= 0:
                 break
             base_kept[fidx] = True
-            bridges.append({
-                "feature_id": _stable_feature_id(features[fidx], fidx),
-                "reason": "connectivity_bridge",
-            })
+            # 明细帽只截断**回执明细**（防病理放大），桥接本体继续到
+            # 连通或无路径 —— 明细截断绝不改变取舍语义。
+            if len(bridges) < _RECEIPT_BRIDGE_LIMIT:
+                bridges.append({
+                    "feature_id": _stable_feature_id(features[fidx], fidx),
+                    "reason": "connectivity_bridge",
+                })
+            bridges_added_count += 1
             budget -= 1
             for a, b in feature_edges[fidx]:
                 parent.setdefault(a, a)
                 parent.setdefault(b, b)
                 _union(a, b)
-        if len(bridges) >= _RECEIPT_BRIDGE_LIMIT:
-            break
 
     final_components = len(_components()) if parent else 0
     kept_count = sum(1 for k in base_kept if k)
@@ -311,7 +314,7 @@ def select_lines_with_connectivity(
     # ── 组装输出（保留序 = 输入序；被抑制者剔除）──
     out_features = [features[i] for i in range(input_count) if base_kept[i]]
     disclosures: List[str] = []
-    truncated = len(bridges) >= _RECEIPT_BRIDGE_LIMIT
+    truncated = bridges_added_count > len(bridges)
     if final_components > 1:
         disclosures.append(
             f"保留子网仍分裂为 {final_components} 个互不连通分量"
@@ -339,7 +342,7 @@ def select_lines_with_connectivity(
         "junction_nodes": sum(1 for d in node_degree.values() if d >= 3),
         "components_before": components_before,
         "components_final": final_components,
-        "bridges_added": len(bridges),
+        "bridges_added": bridges_added_count,
         "bridges_truncated": truncated,
         "fully_connected": final_components <= 1,
         "stats_match": kept_count + suppressed_count + len(parse_failures) == input_count,
