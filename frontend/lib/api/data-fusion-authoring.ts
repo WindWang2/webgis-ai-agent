@@ -386,10 +386,10 @@ export interface FusionRenderRefResponse {
   features: number;
 }
 
-/** incremental.RefreshImpact.to_dict 投影。 */
+/** incremental.RefreshImpact.to_dict 投影（键集合口径：added/removed 为计数）。 */
 export interface FusionRefreshImpact {
-  side_a: { added: string[]; removed: string[] };
-  side_b: { added: string[]; removed: string[] };
+  side_a: { added: number; removed: number };
+  side_b: { added: number; removed: number };
   total_new: number;
   affected_ratio: number;
   cap: number;
@@ -399,6 +399,11 @@ export interface FusionRefreshImpact {
   decisions_stale_total: number;
   decisions_orphan: number;
   verdict: string;
+}
+
+/** 变更合计 = 双侧 added+removed（键集合口径把内容修改计 +1/-1，保守）。 */
+export function refreshAffectedCount(i: FusionRefreshImpact): number {
+  return i.side_a.added + i.side_a.removed + i.side_b.added + i.side_b.removed;
 }
 
 export interface FusionRefreshUnchanged {

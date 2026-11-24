@@ -4,8 +4,10 @@
 - **候选生成用三个互补 blocking 通道**（ID 桶 / 空间格网 / 名称桶），
   绝不 O(N²) 全表比较；候选总量在预算内先估算后强制；
 - **证据评分可解释**：每对记录逐证据分项值；缺失证据双缺失时跳过并
-  重归一（记录 renormalized），单侧缺失按 0 计（不可佐证）；绝不把
-  缺失折算成满分或把缺数据当零值；
+  重归一（记录 renormalized），单侧缺失按 0 计（不可佐证）；类别字段
+  任一源未声明时整体跳过重归一，已声明但词表外/缺失值按计划声明的
+  unknown 中性系数计（comparison="unknown" 如实披露）；绝不把缺失
+  折算成满分或把缺数据当零值；
 - **歧义保护**：非互最优 / top-2 边际不足 / 单实体候选溢出 → 一律
   ambiguous/needs_review，任何单一证据不得越过歧义保护自动合并；
 - **ID 硬证据**：双侧外部标识均有且不同 → 硬冲突（恒不自动合并）；
@@ -33,10 +35,21 @@ _RADIUS_M = 6_378_137.0  # WGS84 长半轴（pyproj.Geod 一致口径）
 class SpatialContext:
     """CRS 感知的距离/重叠/分格（executor 按 crs_safety 分类构建）。
 
-    ``geographic``：pyproj.Geod 大地距离（米）+ 等经纬度格网（赤道口径
-    cell 度数，3×3 邻域覆盖 max_distance —— 东向收缩纬度只会更密）。
-    ``projected``：平面距离（CRS 单位须为米，executor 已闸）+ 等米格网。
+    ``geographic``：pyproj.Geod 大地距离（米）+ 等经纬度格网。
+    blocking 两条地球几何修正（独立审查 P1/P2 实测钉住）：
+    - **反子午线回绕**：x 格键对 360° 周期取模 —— ±180° 两侧的近邻
+      （真实距离可仅数十米）必须落在相邻格键，绝不按平面判远；
+    - **高纬东西向 halo**：cell 度数按赤道口径取，纬度 φ 处每度经度
+      仅 span 111320·cosφ 米 —— 东西向 max_distance 需要
+      ±ceil(1/cosφ) 格邻域（docstring 旧论断方向说反，已弃）。
+    北南向不受纬度收缩影响（111320·cell = max_m），±1 格恒覆盖。
+    ``projected``：平面距离（CRS 单位须为米，executor 已闸）+ 等米格网
+    （无回绕/无纬度效应）。
     """
+
+    #: 高纬 cos 钳制下限（|φ|>75.5° 后 1/cos 增长过快；极地数据集应
+    #: 使用投影 CRS —— typed 闸只放行可比帧，极区网格退化在此披露）
+    _COS_FLOOR = 0.25
 
     def __init__(self, crs_kind: str, max_distance_m: float) -> None:
         if crs_kind not in ("geographic", "projected"):
@@ -49,8 +62,13 @@ class SpatialContext:
             from pyproj import Geod
             self._geod = Geod(ellps="WGS84")
             self._cell = self.max_distance_m / 111_320.0
+            # 360° 周期格数（向上取整，保证无混叠）
+            import math
+
+            self._x_cells = int(math.ceil(360.0 / self._cell))
         else:
             self._cell = self.max_distance_m
+            self._x_cells = None
 
     # 点距离（米）；非点几何返回 None（由 overlap_ratio 处理）
     def distance_m(self, geom_a: Any, geom_b: Any) -> Optional[float]:
@@ -90,7 +108,7 @@ class SpatialContext:
             return (inter_len / denom) if denom > 0 else None
         return None
 
-    # 候选格键（3×3 邻域在调用方展开）
+    # 候选格键（邻域在调用方展开；geographic 的 x 键已按 360° 周期回绕）
     def base_cell(self, geom: Any) -> Optional[Tuple[int, int]]:
         if geom is None:
             return None
@@ -98,15 +116,35 @@ class SpatialContext:
             x, y = geom.x, geom.y
         except AttributeError:
             x, y = geom.centroid.x, geom.centroid.y
-        return (int(x // self._cell), int(y // self._cell))
+        cx = int(x // self._cell)
+        if self.crs_kind == "geographic":
+            cx = cx % self._x_cells  # 反子午线回绕（-180/180 同域）
+        return (cx, int(y // self._cell))
+
+    def x_halo(self, geom: Any) -> int:
+        """地理帧东西向格邻域半径 ±⌈1/cosφ⌉（≥1；投影帧恒 1）。"""
+        if self.crs_kind != "geographic":
+            return 1
+        try:
+            lat = geom.y
+        except AttributeError:
+            lat = geom.centroid.y
+        import math
+
+        cos_phi = max(math.cos(math.radians(max(-75.0, min(75.0, lat)))),
+                      self._COS_FLOOR)
+        return int(math.ceil(1.0 / cos_phi))
 
     def neighborhood(
-        self, cell: Tuple[int, int]
+        self, cell: Tuple[int, int], x_radius: int = 1
     ) -> Iterable[Tuple[int, int]]:
         cx, cy = cell
-        for dx in (-1, 0, 1):
+        for dx in range(-x_radius, x_radius + 1):
             for dy in (-1, 0, 1):
-                yield (cx + dx, cy + dy)
+                nx = cx + dx
+                if self.crs_kind == "geographic":
+                    nx = nx % self._x_cells
+                yield (nx, cy + dy)
 
 
 # ───────────────────────── 实体记录 ─────────────────────────
@@ -299,7 +337,8 @@ def _blocks_spatial(
     pairs: Dict[Tuple[int, int], None],
     max_pairs: int,
 ) -> None:
-    """空间格网：点 3×3 邻域；面/线 STRtree 包络查询。"""
+    """空间格网：点动态邻域（地理帧东西向高纬扩展 + 360° 回绕）；
+    面/线 STRtree 包络查询（pad 与 CRS 单位一致）。"""
     if plan.entity_kind == "point_poi":
         grid: Dict[Tuple[int, int], List[int]] = {}
         for r in recs_b:
@@ -310,7 +349,8 @@ def _blocks_spatial(
             cell = ctx.base_cell(ra.geom)
             if cell is None:
                 continue
-            for nc in ctx.neighborhood(cell):
+            x_radius = ctx.x_halo(ra.geom)
+            for nc in ctx.neighborhood(cell, x_radius=x_radius):
                 for j in grid.get(nc, ()):
                     pairs.setdefault((ra.index, j), None)
                     if len(pairs) > max_pairs:
@@ -325,7 +365,10 @@ def _blocks_spatial(
         if not valid_idx:
             return
         tree = STRtree([geoms_b[i] for i in valid_idx])
-        pad = ctx.max_distance_m * 0.01
+        if ctx.crs_kind == "geographic":
+            pad = (ctx.max_distance_m * 0.01) / 111_320.0  # 米→度
+        else:
+            pad = ctx.max_distance_m * 0.01
         for ra in recs_a:
             if ra.geom is None:
                 continue
@@ -376,6 +419,11 @@ def _sim_name(ra: EntityRecord, rb: EntityRecord) -> Tuple[
 def _sim_category(
     ra: EntityRecord, rb: EntityRecord, plan: FusionPlan
 ) -> Tuple[Optional[float], Dict[str, Any]]:
+    # 任一源未声明 category_field → 证据整体缺失（跳过重归一，与
+    # name/address/id 同一语义）。已声明但值不在词表 → 计划声明的
+    # unknown 中性系数（诚实披露 comparison="unknown"，绝不折算 equal）。
+    if not (plan.source_a.category_field and plan.source_b.category_field):
+        return None, {"reason": "category_field_not_declared"}
     factor = plan.strategy.category_unknown_factor
     if ra.category_known and rb.category_known:
         if ra.category_canon == rb.category_canon:
@@ -416,10 +464,18 @@ def _sim_address(ra: EntityRecord, rb: EntityRecord) -> Tuple[
         return None, {}
     if not ra.addr_present or not rb.addr_present:
         return 0.0, {"reason": "one_side_missing"}
-    from app.services.data_fusion_authoring.textsim import char_similarity, token_similarity
+    from app.services.data_fusion_authoring.textsim import (
+        MAX_SIM_EVAL_CHARS,
+        char_similarity,
+        token_similarity,
+    )
     c = char_similarity(ra.addr_norm, rb.addr_norm)
     t = token_similarity(ra.addr_norm, rb.addr_norm)
-    return max(c, t), {"char": round(c, 6), "token": round(t, 6)}
+    detail: Dict[str, Any] = {"char": round(c, 6), "token": round(t, 6)}
+    if len(ra.addr_norm) > MAX_SIM_EVAL_CHARS or \
+            len(rb.addr_norm) > MAX_SIM_EVAL_CHARS:
+        detail["truncated_eval"] = True  # 截断如实披露（审查 P3）
+    return max(c, t), detail
 
 
 def _sim_ext_id(

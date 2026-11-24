@@ -25,31 +25,6 @@ from app.services.data_fusion_authoring.errors import DataFusionError
 from app.services.data_fusion_authoring.plan import FusionPlan
 
 
-@dataclass
-class EntityDiff:
-    added: List[str] = field(default_factory=list)
-    removed: List[str] = field(default_factory=list)
-    changed: List[str] = field(default_factory=list)
-    unchanged: int = 0
-
-    @property
-    def affected(self) -> int:
-        return len(self.added) + len(self.removed) + len(self.changed)
-
-    def to_dict(self, *, sample_limit: int = 20) -> Dict[str, Any]:
-        return {
-            "added": self.added[:sample_limit],
-            "removed": self.removed[:sample_limit],
-            "changed": self.changed[:sample_limit],
-            "added_total": len(self.added),
-            "removed_total": len(self.removed),
-            "changed_total": len(self.changed),
-            "unchanged": self.unchanged,
-            "affected": self.affected,
-            "sample_limit": sample_limit,
-        }
-
-
 def fingerprint_records(
     recs: List, plan: FusionPlan, source_ref: str, side: str
 ) -> Dict[str, Dict[str, Any]]:
@@ -67,43 +42,10 @@ def fingerprint_records(
     return out
 
 
-def diff_side(
-    old_recs: List, new_recs: List,
-    plan: FusionPlan, source_ref: str, side: str,
-) -> EntityDiff:
-    """单侧实体 diff（内容指纹三态；变更 = 键同而内容异）。
-
-    ``changed``：指纹不同但业务身份（id 或归一化名称）可对应的实体
-    —— 即"同一实体的内容变化"（名称/几何/属性更新），区别于纯增删。
-    """
-    old_map = fingerprint_records(old_recs, plan, source_ref, side)
-    new_map = fingerprint_records(new_recs, plan, source_ref, side)
-    diff = EntityDiff()
-    # 业务身份键（用于 changed 归并）：id 优先，其次归一化名称
-    def _identity(entry: Dict[str, Any]) -> str:
-        if entry.get("ext_id"):
-            return f"id:{entry['ext_id']}"
-        return f"name:{entry.get('name_norm') or ''}"
-
-    old_by_identity: Dict[str, Dict[str, Any]] = {}
-    for fp, entry in old_map.items():
-        old_by_identity.setdefault(_identity(entry), entry)
-    for fp, entry in new_map.items():
-        ident = _identity(entry)
-        old_entry = old_map.get(fp)
-        if old_entry is not None:
-            diff.unchanged += 1
-            continue
-        prev = old_by_identity.get(ident)
-        if prev is not None:
-            diff.changed.append(ident)
-        else:
-            diff.added.append(ident)
-    new_identities = {_identity(e) for e in new_map.values()}
-    for ident in old_by_identity:
-        if ident not in new_identities:
-            diff.removed.append(ident)
-    return diff
+#: 键集合 diff 口径说明：指纹不同即 removed+added（"同一实体的内容
+#: 修改"被计为 1 removed + 1 added —— 影响面占比按此**偏保守膨胀**；
+#: 内容修改不可能被键集合口径漏判，只会多报。诚实取舍：不引入
+#: 启发式身份归并来"减少"变更面。
 
 
 @dataclass

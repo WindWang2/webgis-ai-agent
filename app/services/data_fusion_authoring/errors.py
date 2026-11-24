@@ -24,7 +24,6 @@ _HTTP_STATUS: Dict[str, int] = {
     "source_unresolvable": 410,
     "render_ref_over_budget": 413,
     "commit_blocked": 409,
-    "lock_conflict": 409,
     "refresh_not_safe": 409,
     "internal_error": 500,
 }
@@ -37,7 +36,6 @@ _HINTS: Dict[str, str] = {
     "entity_kind_unsupported": "源几何形态与声明实体种类不符（point_poi 需点几何；area/line 需对应几何）",
     "crs_unresolvable": "两侧源需为可比坐标帧（EPSG:4326/CRS84 或已声明投影）；先用 G45 坐标操作统一帧",
     "commit_blocked": "存在未决审阅项：完成审阅后提交，或把计划提交政策改为 allow_unresolved（未决项按单源输出并披露）",
-    "lock_conflict": "该配对存在人工锁定：刷新不会推翻锁定；如需重配请先在审阅面板显式解除",
     "refresh_not_safe": "来源变更面过大：增量重配不安全，请执行全量重算（预算内自动生成新 run）",
     "budget_exceeded": "输入/候选对/输出规模超出预算：缩小范围或提高计划内预算后重试",
 }

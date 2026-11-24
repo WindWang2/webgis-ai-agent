@@ -140,13 +140,19 @@ def adjudicate_fields(
                 value=None, rule=rule, comparison=comparison,
                 side=None, values=values)
 
-        # 单侧映射：唯一来源 → 唯一确定
+        # 单侧映射：唯一来源 → 唯一确定；源值为空 = 该字段在唯一来源
+        # 缺失（missing 语义，输出缺失但不制造审阅项 —— 与 contracts
+        # FIELD_COMPARISONS 的 missing_* 文档一致，独立审查 P3）
         if m.get("a") is None or m.get("b") is None:
             present = va if m.get("a") else vb
+            side = "a" if m.get("a") else "b"
             if present is None or present == "":
-                out.append(_unresolved())
+                out.append(FieldAdjudication(
+                    output_field=field_name, outcome="resolved_rule",
+                    value=None, rule=rule, comparison="missing_both",
+                    side=None, values=values))
             else:
-                out.append(_resolved(present, "a" if m.get("a") else "b"))
+                out.append(_resolved(present, side))
             continue
 
         if comparison == "identical":
@@ -317,20 +323,29 @@ def merged_feature(
 def single_feature(
     side: str, rec: EntityRecord, plan: FusionPlan, run_id: str, ref: str,
     *, withheld: bool = False, partner_key: Optional[str] = None,
+    partner_keys: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """未配对/未决单源特征（真实实体保留；未决审阅如实披露）。"""
+    """未配对/未决单源特征（真实实体保留；未决审阅如实披露）。
+
+    ``partner_keys``：同一实体卷入多个未决对时列出全部争抢键
+    （审查 P3 —— 只发首个 pair 的两侧会漏披露其他待决实体）。
+    """
     src = plan.source_a if side == "a" else plan.source_b
     props: Dict[str, Any] = {}
     for fm in src.field_mappings:
         props[fm.output_field] = rec.row.get(fm.source_field)
     origin = "withheld_review" if withheld else (
         "single_a" if side == "a" else "single_b")
-    props[contracts.PROVENANCE_KEY] = {
+    prov = {
         "origin": origin,
         "run_id": run_id,
         "sources": [_source_entry(side, rec, plan, ref)],
-        "partner_key": partner_key,
+        "partner_key": partner_key or (
+            (partner_keys or [None])[0] if partner_keys else None),
     }
+    if partner_keys:
+        prov["partner_keys"] = list(partner_keys)
+    props[contracts.PROVENANCE_KEY] = prov
     return {
         "type": "Feature",
         "geometry": _geom_to_json(rec.geom),

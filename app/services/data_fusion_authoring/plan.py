@@ -259,6 +259,13 @@ class FusionPlan(BaseModel):
                 raise ValueError(
                     "external_id 正权重与 id_mismatch_blocks_match=False 矛盾："
                     "id 冲突是硬证据，必须阻断自动合并")
+        # category 权重 >0 需两源都声明 category_field（否则该证据
+        # 永不可算，digest 声明了算不出的证据 = 语义欺骗）
+        if self.strategy.weights.get("category", 0.0) > 0.0 and not (
+                self.source_a.category_field and self.source_b.category_field):
+            raise ValueError(
+                "category 正权重要求两源都声明 category_field"
+                "（未声明类别请把该权重显式置 0）")
         # external_id 证据要求可比的共享标识空间
         if self.strategy.weights.get("external_id", 0.0) > 0.0:
             ida, idb = self.source_a.id_space, self.source_b.id_space

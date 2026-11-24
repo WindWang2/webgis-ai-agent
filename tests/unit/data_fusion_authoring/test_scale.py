@@ -56,8 +56,9 @@ def _scale_plan(**over) -> FusionPlan:
     )
     kw.update(over)
     strategy_kwargs = {
-        "weights": {"external_id": 0.0, "name": 0.45, "address": 0.0,
-                    "category": 0.15, "distance": 0.40},
+        # 规模夹具不声明类别字段 → category 显式 0（计划校验一致）
+        "weights": {"external_id": 0.0, "name": 0.60, "address": 0.0,
+                    "category": 0.0, "distance": 0.40},
         "max_match_distance_m": 80.0, "close_distance_m": 20.0,
     }
     strategy_kwargs.update(strategy_over)

@@ -436,5 +436,5 @@ async def recover(
     conv: Conversation = Depends(require_owned_session),
 ):
     """孤儿 run 收敛（进程重启恢复；typed 记录，不伪造完成）。"""
-    n = service.recover_pending_runs()
+    n = service.recover_pending_runs(session_id)
     return FusionRecoverResponse(recovered=n)

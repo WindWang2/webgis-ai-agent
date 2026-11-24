@@ -180,21 +180,34 @@ def field_values_equal(va: object, vb: object) -> Optional[bool]:
 def parse_temporal(v: object) -> Optional[float]:
     """时间字段 → epoch 秒（比较用）。不可解析 = None（诚实缺失）。
 
-    支持：数字（秒/毫秒自动判别）、ISO-8601 日期/日期时间（无时区按
-    UTC 处理 —— 计划声明负责时区语义，本域不做隐式本地化）。
+    - 数字：秒（<1e11）/ 毫秒（1e11–1e14）/ 微秒（>1e14）三档判别
+      （秒级上限 1e11 ≈ 公元 5138 年；毫秒 1e14 ≈ 公元 3366 年 ——
+      各档在「现实年份」内无歧义，微秒 1.7e15 不再千倍偏差）；
+    - ISO-8601：**完整串解析，显式 offset 优先**（绝不先截断再兜底 ——
+      截断会丢掉 "+08:00" 把带时区值当 UTC，newest_temporal 裁决可被
+      倒置）；无时区按 UTC（计划声明负责时区语义，本域不做隐式本地化）。
     """
     n = _num(v)
     if n is not None:
-        # >1e11 视为毫秒时间戳（2003-03 之后量级；秒级上限 1e11 ≈ 5138 年）
+        if n > 1e14:
+            return n / 1e6
         if n > 1e11:
-            n = n / 1000.0
+            return n / 1e3
         return n
     if isinstance(v, str):
         s = v.strip()
         if not s:
             return None
         from datetime import datetime, timezone
-        cand = s.replace("Z", "+00:00")
+        cand = s.replace("Z", "+00:00").replace("z", "+00:00")
+        # 完整串优先（offset 在后缀 —— 先截断必丢偏移）
+        try:
+            dt = datetime.fromisoformat(cand)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.timestamp()
+        except ValueError:
+            pass
         for cut in (19, 16, 10):
             try:
                 dt = datetime.fromisoformat(cand[:cut])

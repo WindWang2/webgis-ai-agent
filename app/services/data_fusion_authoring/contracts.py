@@ -157,7 +157,6 @@ ERROR_CODES = frozenset({
     "run_not_active",            # 对非活跃运行执行取消
     "result_unavailable",        # 结果尚未发布/不可分页
     "commit_blocked",            # require_resolved 政策下仍有未决项
-    "lock_conflict",             # 人工锁定与新匹配冲突（锁定不被无声推翻）
     "refresh_not_safe",          # 增量刷新不安全（变更面过大 → 全量重算）
     "render_ref_over_budget",    # 输出超过渲染投影上限（数据本体仍可交付）
     "internal_error",

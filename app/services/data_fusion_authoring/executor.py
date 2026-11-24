@@ -94,13 +94,10 @@ def build_source_view(
     invalid = 0
     spec = plan.source_a if side == "a" else plan.source_b
     if snapshot.is_table:
+        # 表源无几何：距离证据缺失由引擎诚实重归一，不在此阻断
+        #（纯属性融合是合法场景）
         rows = list((snapshot.payload or {}).get("rows") or [])
         geoms = [None] * len(rows)
-        if plan.entity_kind != "table_only" and plan.strategy.weights.get(
-                "distance", 0.0) > 0.0:
-            # 距离证据 >0 但表源无几何 —— 距离证据缺失由引擎诚实重归一，
-            # 不在此阻断（纯属性融合是合法场景）
-            pass
     else:
         for f in (snapshot.payload or {}).get("features") or []:
             rows.append((f.get("properties") or {}).copy())
@@ -268,6 +265,17 @@ async def resolve_view(
             "source_unresolvable",
             f"source_{side} 异常：{type(exc).__name__}: {exc}", side=side,
         ) from exc
+    # 上游截断闸（G18 completeness）：被查询帽截断的源绝不静默当总体
+    # 融合 —— 计数/收据/质量报告会失真（红线：不以截断冒充完成）。
+    comp = getattr(snapshot, "completeness", None) or {}
+    truncated = comp.get("truncated") is True
+    if truncated:
+        raise DataFusionError(
+            "budget_exceeded",
+            f"source_{side} 被上游截断（completeness={dict(list(comp.items())[:4])}）："
+            "融合绝不以截断数据冒充完整 —— 请缩小计划范围或提高上游查询帽",
+            side=side, completeness=dict(list(comp.items())[:4]),
+        )
     view = build_source_view(side, plan, snapshot, source_dict.get("ref") or "")
     evidence = {
         "side": side,
@@ -275,6 +283,7 @@ async def resolve_view(
         "label": snapshot.label,
         "is_table": snapshot.is_table,
         "row_count": snapshot.row_count,
+        "truncated": truncated,
         "content_fingerprint": snapshot.content_fingerprint,
         "content_revision": getattr(snapshot, "content_revision", None),
         "crs": view.crs,
@@ -420,24 +429,35 @@ def assemble_commit(
         consumed_a.add(pair.idx_a)
         consumed_b.add(pair.idx_b)
 
-    # 未决审阅对 → 两侧 withheld 单源（pair_key 互挂，审阅面板可对照）
+    # 未决审阅对 → 两侧 withheld 单源（pair_key 互挂，审阅面板可对照）。
+    # 同一实体卷入多个未决对 → 只发一次，partner_keys 列全部争抢键
+    #（审查 P3：只发首个 pair 会漏披露其他待决实体，outstanding 与
+    # withheld_features 不可互推）。
+    contested: Dict[str, List[str]] = {"a": {}, "b": {}}
     for pair in result.pairs:
-        if pair.idx_a in consumed_a:
+        if pair.idx_a in consumed_a and pair.idx_b in consumed_b:
+            continue
+        if pair.status not in ("needs_review", "ambiguous"):
+            continue
+        if pair.idx_a in consumed_a or pair.idx_b in consumed_b:
             continue
         rec_a = recs_a[pair.idx_a]
         rec_b = recs_b[pair.idx_b]
         key = adjudication.pair_stable_key(
             rec_a, rec_b, plan, src_a.source_ref, src_b.source_ref)
-        fa = adjudication.single_feature(
-            "a", rec_a, plan, run_id, src_a.source_ref, withheld=True,
-            partner_key=key)
-        fb = adjudication.single_feature(
-            "b", rec_b, plan, run_id, src_b.source_ref, withheld=True,
-            partner_key=key)
-        features.extend([fa, fb])
-        counts["withheld_review"] += 2
-        consumed_a.add(pair.idx_a)
-        consumed_b.add(pair.idx_b)
+        contested["a"].setdefault(pair.idx_a, []).append(key)
+        contested["b"].setdefault(pair.idx_b, []).append(key)
+    for side, recs, view, src in (
+            ("a", recs_a, consumed_a, src_a),
+            ("b", recs_b, consumed_b, src_b)):
+        for idx, keys in sorted(contested[side].items()):
+            if idx in view:
+                continue
+            features.append(adjudication.single_feature(
+                side, recs[idx], plan, run_id, src.source_ref,
+                withheld=True, partner_keys=keys))
+            counts["withheld_review"] += 1
+            view.add(idx)
 
     for rec in recs_a:
         if rec.index not in consumed_a:

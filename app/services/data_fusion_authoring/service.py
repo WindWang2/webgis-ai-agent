@@ -282,8 +282,10 @@ def _probe_spec(side: str, src: Dict[str, Any]) -> FusionPlan:
         "source_a": a_dump,
         "source_b": b_dump,
         "strategy": {"weights": {
-            "external_id": 0.0, "name": 0.4, "address": 0.15,
-            "category": 0.15, "distance": 0.30},
+            # 资格卡不评分：category/id 恒 0（计划校验要求正权重必须
+            # 配齐可算字段 —— 探测面不假装能算）
+            "external_id": 0.0, "name": 0.55, "address": 0.15,
+            "category": 0.0, "distance": 0.30},
             "name_normalizers": ["trim", "casefold", "collapse_spaces"]},
     })
 
@@ -713,6 +715,18 @@ async def _execute_body(
         result = await asyncio.to_thread(
             matching.match_sources, src_a.rows, src_a.geoms,
             src_b.rows, src_b.geoms, plan, ctx)
+        # deadline 强制（合同承诺「执行前估算、执行中强制」—— 此前
+        # 只有承诺无闸，审查 P3）
+        elapsed_now = time.monotonic() - started
+        if elapsed_now > plan.effective_budgets()["deadline_s"]:
+            raise DataFusionError(
+                "budget_exceeded",
+                f"执行耗时 {elapsed_now:.0f}s 超过计划 deadline "
+                f"{plan.effective_budgets()['deadline_s']}s（已终止，"
+                "不冒充完成）",
+                elapsed_s=round(elapsed_now, 1),
+                cap=plan.effective_budgets()["deadline_s"],
+            )
         await handle.progress(phase="matched", message=(
             f"自动匹配 {result.stats['pairs_matched']} 对 / "
             f"审阅 {result.stats['pairs_needs_review'] + result.stats['pairs_ambiguous']} 对"))
@@ -1044,7 +1058,8 @@ async def delete_decision(
 async def list_decisions(
     session_id: str, plan_id: str, *, limit: int = 200, cursor: int = 0,
 ) -> Dict[str, Any]:
-    out = review.list_decisions(plan_id, limit=limit, cursor=cursor)
+    out = review.list_decisions(session_id, plan_id, limit=limit,
+                                cursor=cursor)
     out["plan_id"] = plan_id
     return out
 
@@ -1055,6 +1070,8 @@ async def commit_run(
     session_id: str, run_id: str, *, actor: Dict[str, Any],
     project_id: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """``project_id``：调用方声明的成果归属项目（入 DataObject
+    owner_scope 与 plan.project_id —— 之前被接受但未使用，审查 P3）。"""
     """受权提交：匹配包 + 决定 → 不可变融合数据集版本。
 
     门（顺序）：
@@ -1089,6 +1106,18 @@ async def commit_run(
         raise DataFusionError(
             "receipt_missing", "匹配包缺失（终态但内容不可读）", status=410)
     plan = parse_plan(view_snapshot_plan(view))
+    # 计划漂移闸：run 冻结的 digest 与当前计划必须一致 —— 否则按新阈值
+    # 重跑匹配会绕过既有审阅门（未审的新 auto-match 直接 merged）且
+    # lineage 失真。改计划 → 必须重新 execute（决定按内容键继承）。
+    if plan.normalized_digest() != view["plan_digest"]:
+        raise DataFusionError(
+            "stale_plan_revision",
+            "计划在 run 完成后被修改（digest 不一致）：commit 将按当前计划"
+            "重跑匹配、绕过既有审阅门 —— 请重新 execute 后再 commit"
+            "（人工决定按内容键自动继承）",
+            run_plan_digest=view["plan_digest"],
+            current_plan_digest=plan.normalized_digest(),
+        )
     fp = (view.get("receipt") or {})
     fp_a = fp.get("fingerprint_a")
     fp_b = fp.get("fingerprint_b")
@@ -1176,15 +1205,20 @@ async def commit_run(
         lineage=lineage)
     receipt["fc_sha256"] = fc_sha
     outputs.write_commit_receipt(run_id, receipt)
-    outputs.atomic_publish(run_id)
+    publish_state = outputs.atomic_publish(run_id)  # published | claimed
 
     owner_scope = {"session_id": session_id}
-    if plan.source_a.project_id:
+    if project_id:
+        owner_scope = {"project_id": project_id}
+    elif plan.source_a.project_id:
         owner_scope["project_id"] = plan.source_a.project_id
     do_publish = outputs.publish_data_object_for_run(
         run_id, owner_scope=owner_scope,
         source_refs=[plan.source_a.ref, plan.source_b.ref],
         input_fingerprint=fp_a[:32] + ":" + fp_b[:32])
+    if publish_state == "claimed":
+        # 崩溃窗口恢复：认领已发布内容（重试不再 500）—— 收据如实记录
+        receipt["publish_claimed"] = True
     descriptor = {
         "alias": plan.output_name or "融合成果",
         "title": plan.title or "融合成果",
@@ -1377,17 +1411,23 @@ def _job_is_live(job_id: int) -> bool:
         return True
 
 
-def recover_pending_runs() -> int:
-    """启动恢复：pending/running 且 job 已不在活跃集合 → typed 失效。"""
+def recover_pending_runs(session_id: Optional[str] = None) -> int:
+    """恢复：pending/running 且 job 已不在活跃集合 → typed 失效。
+
+    ``session_id`` 缺省 = 全库（lifespan 启动恢复）；REST 会话路由
+    必须传 session（否则任一会话可置他人孤儿 run 为 failed —— 审查
+    P2 越界写）。
+    """
     from app.core.database import SessionLocal
     from app.models.data_fusion_authoring import DataFusionRun
 
     n = 0
     with SessionLocal() as db:
-        rows = db.execute(
-            select(DataFusionRun).where(
-                DataFusionRun.status.in_(("pending", "running")))
-        ).scalars().all()
+        q = select(DataFusionRun).where(
+            DataFusionRun.status.in_(("pending", "running")))
+        if session_id:
+            q = q.where(DataFusionRun.session_id == session_id)
+        rows = db.execute(q).scalars().all()
         for r in rows:
             if r.job_id is None or not _job_is_live(int(r.job_id)):
                 r.status = "failed"

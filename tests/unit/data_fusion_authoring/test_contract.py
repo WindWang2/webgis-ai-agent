@@ -49,12 +49,13 @@ def _src(
 
 
 def _weights(**over: float) -> dict:
-    # 默认无可比 id 空间 → external_id 显式 0（id_space 校验单独覆盖）
+    # 默认无可比 id 空间 → external_id 显式 0；_src 未声明 category_field
+    # → category 显式 0（各自校验单独覆盖）
     w = {
         "external_id": 0.0,
-        "name": 0.40,
+        "name": 0.55,
         "address": 0.15,
-        "category": 0.15,
+        "category": 0.0,
         "distance": 0.30,
     }
     w.update(over)
@@ -157,10 +158,17 @@ def test_plan_rejects_negative_weight():
 
 
 def test_plan_zero_weight_explicit_ok():
-    w = _weights(address=0.0, category=0.30)
+    w = _weights(address=0.0, name=0.70)
     assert abs(sum(w.values()) - 1.0) < 1e-9
     plan = _plan(strategy=_strategy(weights=w))
     assert plan.strategy.weights["address"] == 0.0
+
+
+def test_plan_category_weight_requires_declared_field():
+    """category 正权重但未声明 category_field → 计划期拒绝。"""
+    with pytest.raises(Exception, match="category_field"):
+        _plan(strategy=_strategy(weights=_weights(
+            name=0.40, category=0.15)))
 
 
 def test_plan_rejects_threshold_inversion():
@@ -175,7 +183,7 @@ def test_plan_rejects_distance_window_inversion():
 
 
 def test_plan_point_poi_requires_distance_weight():
-    w = _weights(distance=0.0, name=0.70)
+    w = _weights(distance=0.0, name=0.85)
     with pytest.raises(Exception, match="point_poi"):
         _plan(strategy=_strategy(weights=w))
 

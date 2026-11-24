@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.services.data_fusion_authoring import contracts
 from app.services.data_fusion_authoring.errors import DataFusionError
@@ -59,6 +60,23 @@ def _validate_field_values(field_values: Optional[Dict[str, Any]]) -> None:
         if not isinstance(k, str) or not k or len(k) > 128:
             raise DataFusionError(
                 "invalid_plan", f"field_values 键非法：{k!r}")
+
+
+def _assert_plan_owned(db: Any, session_id: str, plan_id: str) -> None:
+    """plan 归属闸：计划不存在或不属于当前会话 → not_owned（404 语义）。
+
+    决定三端点（list/upsert/delete）必须先过此闸 —— 否则持有本会话 +
+    他人 plan_id 即可读/写/删他人决定（越权写会经 commit 进入他人成果）。
+    """
+    from app.models.data_fusion_authoring import DataFusionPlan
+
+    row = db.get(DataFusionPlan, plan_id)
+    if row is None or row.session_id != session_id:
+        raise DataFusionError(
+            "not_owned",
+            f"计划不存在或不属于当前会话：{plan_id}",
+            status=404,
+        )
 
 
 def load_decisions_by_key(
@@ -109,6 +127,7 @@ def upsert_decision(
             "invalid_plan", "pair_key 必须是内容指纹键（fp:…）")
 
     with SessionLocal() as db:
+        _assert_plan_owned(db, session_id, plan_id)
         row = db.execute(
             select(DataFusionDecision).where(
                 DataFusionDecision.plan_id == plan_id,
@@ -138,7 +157,16 @@ def upsert_decision(
                 revision=1,
             )
             db.add(row)
-            db.commit()
+            try:
+                db.commit()
+            except IntegrityError:
+                # 并发首插撞 uq_data_fusion_decision_pair：他人已建 ——
+                # typed 冲突（客户端带 revision 重读重试），绝不 500
+                db.rollback()
+                raise DataFusionError(
+                    "stale_review_revision",
+                    "决定已被并发创建：请重读当前决定后按其 revision 更新",
+                )
             return _decision_view(row)
         if row.revision != int(expected_revision):
             raise DataFusionError(
@@ -178,6 +206,7 @@ def delete_decision(
     from app.models.data_fusion_authoring import DataFusionDecision
 
     with SessionLocal() as db:
+        _assert_plan_owned(db, session_id, plan_id)
         row = db.execute(
             select(DataFusionDecision).where(
                 DataFusionDecision.plan_id == plan_id,
@@ -202,14 +231,15 @@ def delete_decision(
 
 
 def list_decisions(
-    plan_id: str, *, limit: int = 200, cursor: int = 0
+    session_id: str, plan_id: str, *, limit: int = 200, cursor: int = 0
 ) -> Dict[str, Any]:
-    """决定分页（按 created_at 稳定序；有界）。"""
+    """决定分页（按 created_at 稳定序；有界；plan 归属闸）。"""
     from app.core.database import SessionLocal
     from app.models.data_fusion_authoring import DataFusionDecision
 
     lim = max(1, min(int(limit), contracts.REVIEW_PAGE_MAX_ITEMS))
     with SessionLocal() as db:
+        _assert_plan_owned(db, session_id, plan_id)
         rows = db.execute(
             select(DataFusionDecision)
             .where(DataFusionDecision.plan_id == plan_id)

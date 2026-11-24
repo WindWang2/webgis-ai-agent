@@ -43,6 +43,7 @@ import {
   FusionRunView,
   FusionSourceCard,
   FusionSourceSpecInput,
+  refreshAffectedCount,
 } from '@/lib/api/data-fusion-authoring';
 import { useDataFusionStore } from '@/lib/hooks/use-data-fusion';
 import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
@@ -439,14 +440,15 @@ export function DataFusionPanel({ sessionId, ownerToken }: DataFusionPanelProps)
     }
   }, [api]);
 
-  const pollRun = useCallback(async (runId: string) => {
+  const pollRun = useCallback(async (runId: string, epoch: number) => {
     if (!api) return;
     for (let i = 0; i < 240; i++) {
       await new Promise((r) => setTimeout(r, 1000));
-      if (sessionIdRef.current !== sessionId || !open) return;
+      // epoch 守卫：面板重开/新操作后旧轮询立即退出（陈旧闭包竞态，审查 P3）
+      if (epochRef.current !== epoch || sessionIdRef.current !== sessionId) return;
       try {
         const view = await api.inspectRun(runId);
-        if (sessionIdRef.current !== sessionId) return;
+        if (epochRef.current !== epoch || sessionIdRef.current !== sessionId) return;
         setRun(view);
         if (view.status === 'completed') {
           void loadReviewQueue(runId, 0);
@@ -456,7 +458,7 @@ export function DataFusionPanel({ sessionId, ownerToken }: DataFusionPanelProps)
         if (view.status === 'failed' || view.status === 'cancelled') return;
       } catch { /* 轮询失败继续 */ }
     }
-  }, [api, sessionId, open, loadReviewQueue, loadDecisions, planId]);
+  }, [api, sessionId, loadReviewQueue, loadDecisions, planId]);
 
   const doExecute = useCallback(async () => {
     const saved = await saveOrSyncPlan();
@@ -471,7 +473,7 @@ export function DataFusionPanel({ sessionId, ownerToken }: DataFusionPanelProps)
         void loadReviewQueue(view.run_id, 0);
         void loadDecisions(saved.planId);
       } else if (view.status !== 'failed' && view.status !== 'cancelled') {
-        void pollRun(view.run_id);
+        void pollRun(view.run_id, epoch);
       }
     } catch (err) {
       if (epoch !== epochRef.current) return;
@@ -644,7 +646,7 @@ export function DataFusionPanel({ sessionId, ownerToken }: DataFusionPanelProps)
           void loadReviewQueue(res.run.run_id, 0);
           void loadDecisions(planId);
         } else {
-          void pollRun(res.run.run_id);
+          void pollRun(res.run.run_id, epoch);
         }
         useToastStore.getState().addToast(t('refreshDoneToast'), 'success');
       }
@@ -1383,11 +1385,11 @@ export function DataFusionPanel({ sessionId, ownerToken }: DataFusionPanelProps)
                 <div className="space-y-1 rounded border border-edge-subtle bg-surface-sunken p-2 text-caption text-ink-muted" data-testid="df-refresh-impact">
                   <div>
                     {t('impactSummary', {
-                      addedA: refreshImpact.side_a.added.length,
-                      addedB: refreshImpact.side_b.added.length,
-                      removedA: refreshImpact.side_a.removed.length,
-                      removedB: refreshImpact.side_b.removed.length,
-                      changed: refreshImpact.total_new,
+                      addedA: refreshImpact.side_a.added,
+                      addedB: refreshImpact.side_b.added,
+                      removedA: refreshImpact.side_a.removed,
+                      removedB: refreshImpact.side_b.removed,
+                      changed: refreshAffectedCount(refreshImpact),
                     })}
                   </div>
                   <div>

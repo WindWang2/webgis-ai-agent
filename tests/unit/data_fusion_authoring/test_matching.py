@@ -666,6 +666,27 @@ def test_temporal_parsing():
     assert parse_temporal(None) is None
 
 
+def test_temporal_explicit_offset_preserved():
+    """显式时区偏移必须生效（截断丢弃会把 +08:00 当 UTC → 裁决倒置）。"""
+    from app.services.data_fusion_authoring.textsim import parse_temporal
+    utc = parse_temporal("2023-01-01T12:00:00+00:00")
+    cst = parse_temporal("2023-01-01T12:00:00+08:00")
+    assert cst is not None and utc is not None
+    assert cst == utc - 8 * 3600
+    # Z 与 +00:00 等价
+    assert parse_temporal("2023-01-01T12:00:00Z") == utc
+
+
+def test_temporal_timestamp_scales():
+    from app.services.data_fusion_authoring.textsim import parse_temporal
+    sec = parse_temporal(1700000000)
+    ms = parse_temporal(1700000000000)
+    us = parse_temporal(1700000000000000)
+    assert sec == 1700000000.0
+    assert ms == 1700000000.0
+    assert us == 1700000000.0
+
+
 def test_blocking_budget_exceeded_typed():
     plan = _plan(budgets={"max_candidate_pairs": 5})
     rows_a, geoms_a = [], []

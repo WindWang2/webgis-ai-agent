@@ -166,15 +166,25 @@ def write_commit_receipt(run_id: str, receipt: Dict[str, Any]) -> None:
     _write_json(staging_dir(run_id) / "receipt.json", receipt)
 
 
-def atomic_publish(run_id: str) -> Path:
-    """staging → final 原子改名（commit 边界；失败不留半包）。"""
+def atomic_publish(run_id: str) -> str:
+    """staging → final 原子改名（commit 边界）。返回 "published"/"claimed"。
+
+    ``claimed``：rename 后、DB 落账前崩溃留下的已发布 final —— 内容
+    完整可读则由重试的 commit 认领（修复卡死窗口；独立审查 P2），
+    不完整（半包/损坏）→ typed internal_error（不静默覆盖）。
+    """
     src = staging_dir(run_id)
     dst = final_dir(run_id)
     if dst.exists():
-        raise FileExistsError(f"final already published: {run_id}")
+        fc_ok = (dst / "fused_fc.json").exists()
+        receipt_ok = (dst / "receipt.json").exists()
+        if fc_ok and receipt_ok:
+            return "claimed"
+        raise RuntimeError(
+            f"final dir exists but incomplete (crash residue): {run_id}")
     dst.parent.mkdir(parents=True, exist_ok=True)
     src.rename(dst)
-    return dst
+    return "published"
 
 
 def read_receipt(run_id: str) -> Optional[Dict[str, Any]]:
@@ -189,16 +199,23 @@ def read_receipt(run_id: str) -> Optional[Dict[str, Any]]:
 
 
 def verify_published(run_id: str) -> Dict[str, Any]:
-    """内容可核验性检查（幂等复用前的 J28 同款纪律）。"""
+    """内容可核验性检查（幂等复用前的 J28 同款纪律）。
+
+    收据缺失/不可读/缺 fc_sha256 = 核验失败（typed 上层映射
+    receipt_missing）—— 绝不降级成仅存在性检查（最后防线弱化）。"""
     d = final_dir(run_id)
     fc = d / "fused_fc.json"
     receipt_p = d / "receipt.json"
     if not fc.exists() or not receipt_p.exists():
         raise FileNotFoundError("commit package incomplete")
-    receipt = read_receipt(run_id) or {}
-    sha = _sha256_file(fc)
+    receipt = read_receipt(run_id)
+    if not receipt:
+        raise ValueError("receipt unreadable (crash/corruption)")
     declared = receipt.get("fc_sha256")
-    if declared and declared != sha:
+    if not declared:
+        raise ValueError("receipt missing fc_sha256")
+    sha = _sha256_file(fc)
+    if declared != sha:
         raise ValueError(f"fc sha mismatch: {sha} != {declared}")
     return {"sha256": sha, "receipt": receipt}
 
