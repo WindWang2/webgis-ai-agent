@@ -189,6 +189,8 @@ _TOOL_MODULES = [
     ("app.tools.design_spec_tools", "register_map_design_tools"),
     # 系列地图作者计划与一致性（goal-carto-design-series WP3；Pi 与 UI 共用 map_series service）
     ("app.tools.map_series_tools", "register_map_series_tools"),
+    # 系列出版生产（同一 goal WP5；durable job 提交面）
+    ("app.tools.series_production_tools", "register_series_production_tools"),
 
 ]
 
