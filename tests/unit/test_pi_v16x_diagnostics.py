@@ -92,6 +92,24 @@ def test_diag_stats_ring_is_bounded():
     assert snap["counts"]["unmapped_event"] == 50  # 计数完整，摘录有界
 
 
+def test_auto_retry_events_enter_typed_diagnostics():
+    """WP5/C24：auto_retry_start/end 进有界诊断（脱敏、计数、SSE 不受影响）。"""
+    s1 = {"type": "auto_retry_start", "attempt": 1, "maxAttempts": 3,
+          "delayMs": 2000, "errorMessage": "529 overloaded /home/x"}
+    assert em.map_event_to_sse(s1, session_id="s") is not None  # SSE 帧仍在
+    s2 = {"type": "auto_retry_end", "attempt": 2, "success": True}
+    assert em.map_event_to_sse(s2, session_id="s") is not None
+    s3 = {"type": "auto_retry_end", "attempt": 3, "success": False,
+          "finalError": "exhausted /home/secret"}
+    assert em.map_event_to_sse(s3, session_id="s") is not None
+    snap = em.vendor_event_diagnostics()
+    assert snap["counts"] == {"auto_retry_start": 1, "auto_retry_end": 2}
+    start_entry = snap["recent"][0]
+    assert start_entry["attempt"] == "1" and "secret" not in start_entry["error"]
+    fail_entry = snap["recent"][-1]
+    assert fail_entry["success"] == "0" and "secret" not in fail_entry["final_error"]
+
+
 def test_diag_stats_reset():
     em.map_event_to_sse({"type": "whatever_unknown"}, session_id="s")
     em.reset_vendor_event_diagnostics()

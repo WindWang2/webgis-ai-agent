@@ -462,6 +462,16 @@ def _handle_auto_retry_start(event: dict, session_id: str, cache_lookup: Optiona
     ``agent_end{willRetry:true}`` and the retried run.
     """
     error = _sanitize_for_client(str(event.get("errorMessage", "") or "unknown error"))
+    # ADR-0301 D5 / WP5：provider 失败/重试进有界诊断（typed 计数 + 脱敏
+    # 摘录）——SSE 面之外，运维/治理可观测，不记录请求全文。
+    try:
+        _diag_stats.record("auto_retry_start", {
+            "attempt": str(int(event.get("attempt", 0) or 0)),
+            "max_attempts": str(int(event.get("maxAttempts", 0) or 0)),
+            "error": error[:160],
+        })
+    except Exception:  # noqa: BLE001 — 诊断绝不影响 SSE 主路径
+        pass
     content = AUTO_RETRY_START_FMT.format(
         delay=float(event.get("delayMs", 0) or 0) / 1000.0,
         attempt=int(event.get("attempt", 0) or 0),
@@ -479,7 +489,17 @@ def _handle_auto_retry_end(event: dict, session_id: str, cache_lookup: Optional[
     cancelled). The turn itself still ends on ``agent_settled``.
     """
     attempt = int(event.get("attempt", 0) or 0)
-    if event.get("success"):
+    success = bool(event.get("success"))
+    # ADR-0301 D5 / WP5：重试结果进有界诊断（finalError 脱敏截断）。
+    try:
+        end_detail = {"attempt": str(attempt), "success": "1" if success else "0"}
+        if not success:
+            end_detail["final_error"] = _sanitize_for_client(
+                str(event.get("finalError", "") or "unknown error"))[:160]
+        _diag_stats.record("auto_retry_end", end_detail)
+    except Exception:  # noqa: BLE001 — 诊断绝不影响 SSE 主路径
+        pass
+    if success:
         content = AUTO_RETRY_END_OK_FMT.format(attempt=attempt)
     else:
         error = _sanitize_for_client(str(event.get("finalError", "") or "unknown error"))

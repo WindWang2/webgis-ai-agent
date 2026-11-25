@@ -147,6 +147,18 @@ const srv = http.createServer((req, res) => {
         JSON.stringify({ req: requests.length, tools: toolNames }) + '\n');
     }
     const reqIdx = requests.length;
+    // ADR-0301 WP5 / C24：429×2 → 第三次成功（vendor auto-retry 观测面）。
+    // always-429：重试耗尽的诚实失败分支（auto_retry_end success=false）。
+    if (mode === 'always-429') {
+      res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '0' });
+      res.end(JSON.stringify({ error: { message: 'rate limited (stub)', type: 'rate_limit_error' } }));
+      return;
+    }
+    if (mode === 'provider-fail-then-succeed' && reqIdx <= 2) {
+      res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '0' });
+      res.end(JSON.stringify({ error: { message: 'rate limited (stub)', type: 'rate_limit_error' } }));
+      return;
+    }
     let toolCall = null;
     if (mode === 'tool-then-text') {
       const wantsTool = !(last && last.role === 'tool');
@@ -307,8 +319,10 @@ child.kill('SIGKILL');
 const lines = out.split('\n').filter(Boolean);
 const parsed = [];
 for (const line of lines) { try { parsed.push(JSON.parse(line)); } catch { parsed.push({ unparseable: line.slice(0, 120) }); } }
+const providerEvents = err.split('\n').filter((l) => l.includes('provider_response')).slice(-8);
 process.stderr.write('RESULT=' + JSON.stringify({
   lines: parsed, stderrHead: err.split('\n').slice(0, 5).join(' | ').slice(0, 400), aborted,
+  providerEvents,
 }) + '\n');
 """
 
@@ -903,6 +917,57 @@ async def test_manual_compaction_contract_and_post_compaction_usability(make_har
     assert state is not None and state.get("success") is True, state
     state_data = state.get("data") or {}
     assert isinstance(state_data.get("messageCount"), int), state_data
+
+
+async def test_provider_429_retry_observability(make_harness):
+    """C24（ADR-0301 WP5）：provider 429 → vendor auto-retry → 分层可观测。
+
+    事件面（真实 v1.6.1 wire）：auto_retry_start ×2（attempt 1,2）→
+    auto_retry_end(success) → agent_settled 恰一次且非 aborted。
+    扩展面：after_provider_response（v1.6.1 起覆盖 4xx/5xx 与每次重试）
+    → 扩展有界 stderr 行 `provider_response status=429`（宿主
+    PiStderrDiagnostics 有界环消费——provider 失败证据进诊断面，不含
+    任何 header 原文/请求全文）。
+    """
+    harness = make_harness(mode="provider-fail-then-succeed")
+    result = harness.run_turn("429 retry observability turn")
+    events = _events(result)
+    starts = [e for e in events if e.get("type") == "auto_retry_start"]
+    assert len(starts) == 2, [e.get("type") for e in events]
+    assert [s.get("attempt") for s in starts] == [1, 2], starts
+    ends = [e for e in events if e.get("type") == "auto_retry_end"]
+    assert len(ends) == 1 and ends[0].get("success") is True, ends
+    settled = [e for e in events if e.get("type") == "agent_settled"]
+    assert len(settled) == 1 and settled[0].get("aborted") is not True, settled
+    provider_lines = [
+        line for line in result.get("providerEvents", [])
+        if "status=429" in line
+    ]
+    assert provider_lines, result.get("providerEvents")
+
+
+async def test_provider_429_exhaustion_fails_honestly(make_harness):
+    """C24 负分支：持续 429 → vendor 重试预算耗尽 → 诚实失败终态。
+
+    锁定：auto_retry_start ×3（attempts 1..3）→ auto_retry_end(success=false)
+    携带非空 finalError → agent_settled 恰一次（不挂死、不伪成功）→
+    扩展 stderr 观测到 ≥3 次 status=429。治理侧（retry budget/no-progress）
+    以这些权威证据推进——本测试钉住证据源本身。"""
+    harness = make_harness(mode="always-429")
+    result = harness.run_turn("429 exhaustion honest failure turn")
+    events = _events(result)
+    starts = [e for e in events if e.get("type") == "auto_retry_start"]
+    assert len(starts) >= 3, [e.get("type") for e in events]
+    ends = [e for e in events if e.get("type") == "auto_retry_end"]
+    assert ends and ends[-1].get("success") is False, ends
+    assert str(ends[-1].get("finalError") or ""), ends[-1]
+    settled = [e for e in events if e.get("type") == "agent_settled"]
+    assert len(settled) == 1, settled
+    provider_lines = [
+        line for line in result.get("providerEvents", [])
+        if "status=429" in line
+    ]
+    assert len(provider_lines) >= 3, provider_lines
 
 
 async def test_graceful_stdin_eof_shutdown_and_adjacent_sigterm(harness):
