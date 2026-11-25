@@ -157,12 +157,25 @@ def test_real_frontend_path_full_width_ids_survive_ingest():
     assert selection["ids_truncated"] is True
 
 
-def test_oversized_record_is_honestly_rejected_not_accepted_dropped():
+def test_oversized_record_is_honestly_rejected_not_accepted_dropped(monkeypatch):
     """R2 N-1：超记录预算 → rejected/record_budget（诚实裁决），
-    绝不 accepted-but-dropped（伪造满信封 64 字符 id 场景）。"""
+    绝不 accepted-but-dropped（伪造满信封 64 字符 id 场景）。
+
+    P3：记录预算抬到「最宽载荷预算 + 2048B 信封余量」后，normalize 放行
+    的任何载荷都能入环（构造性不可越界，见 test_max_normalized_selection
+    _payload_fits_record_budget）—— 真实事件不再能触发 record_budget。
+    这里把预算收到仅载荷预算（由权威常量派生，不写死数字），在预算边界
+    上验证守卫仍诚实拒绝：ack 绝不 accepted 而事件不入环。
+    """
+    from app.services.gis_harness.interaction_ir import ingest as ingest_mod
     from app.services.gis_harness.interaction_ir.contracts import (
+        MAX_PAYLOAD_BYTES_SELECTION,
         MAX_SELECTED_IDS_PAYLOAD,
     )
+    # 记录 = normalize 载荷（≤ MAX_PAYLOAD_BYTES_SELECTION）+ 信封。
+    # 预算只留载荷面 → 满 optional 信封的记录必然越界。
+    monkeypatch.setattr(
+        ingest_mod, "_MAX_RECORD_BYTES", MAX_PAYLOAD_BYTES_SELECTION)
     ids = [("y" * 128)[:64] for _ in range(MAX_SELECTED_IDS_PAYLOAD)]
     state = LedgerState()
     event = {
@@ -171,7 +184,7 @@ def test_oversized_record_is_honestly_rejected_not_accepted_dropped():
         "client_seq": 1,
         "kind": "feature_selected",
         "actor": "user",
-        # 满 optional 信封（9×128B）+ 50×64 字符 id → record > 4608B。
+        # 满 optional 信封（9×128B）+ 50×64 字符 id → 记录超出载荷预算。
         "causation_id": "c" * 128,
         "correlation_id": "c" * 128,
         "turn_id": "t" * 128,

@@ -37,6 +37,22 @@ def _r6(value: Optional[float]) -> Optional[float]:
     return round(float(value), 6)
 
 
+def _r6_p(value: Optional[float]) -> Optional[float]:
+    """p 值专用 6 位收敛：非零小值不得被舍入成 0.0。
+
+    ``p = 1e-16`` 舍入到 6 位会得到 ``0.0``（p 值 0 在统计上是无效陈述，
+    且会让「0 < p ≤ 1」这类不变量失效）。因此仅当舍入结果仍为正、或原值
+    本就是 0 时才取舍入值，否则保留原值的量级。
+    """
+    if value is None:
+        return None
+    x = float(value)
+    r = round(x, 6)
+    if r > 0.0 or x == 0.0:
+        return r
+    return x
+
+
 class UncertaintyMeasure(BaseModel):
     """一次度量：值 + 方法 + （可选）区间/分位。"""
 
@@ -124,7 +140,7 @@ class StatisticalSignificance(BaseModel):
             return v
         if not 0.0 <= float(v) <= 1.0:
             raise ValueError("p_value must be in [0, 1]")
-        return _r6(float(v))
+        return _r6_p(float(v))
 
     def to_evidence(self) -> Dict[str, Any]:
         return {
@@ -132,7 +148,7 @@ class StatisticalSignificance(BaseModel):
             "uncertainty_type": self.uncertainty_type,
             "statistic_name": self.statistic_name,
             "statistic_value": _r6(self.statistic_value),
-            "p_value": _r6(self.p_value),
+            "p_value": _r6_p(self.p_value),
             "method": self.method,
             "permutations": self.permutations,
             "multiple_testing": self.multiple_testing,

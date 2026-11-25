@@ -1500,7 +1500,7 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
                 description="奇数窗口（像元）",
             ),
             ParameterSpec(
-                name="enl", type="number", unit="ratio",
+                name="enl", type="number", unit="ratio", minimum=1e-6,
                 description="等效视数（>0；缺省整图矩估计 ENL=mean²/var）",
             ),
             ParameterSpec(
@@ -1527,11 +1527,12 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
         parameters=[
             ParameterSpec(
                 name="calibration_constant", type="number", required=True,
-                unit="unitless",
-                description="定标常数 K（如 Sentinel-1 A²/AUT）——绝不虚构",
+                unit="unitless", minimum=1e-12,
+                description="定标常数 K（>0，如 Sentinel-1 A²/AUT）——绝不虚构",
             ),
             ParameterSpec(
                 name="incidence_deg", type="number", unit="degrees",
+                minimum=1e-6, maximum=90.0 - 1e-6,
                 description="标量入射角（度，0-90 开区间；σ⁰/γ⁰ 必需；"
                             "与 incidence_lut 互斥）",
             ),
@@ -1901,7 +1902,7 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
                 description="空域 Lee 窗口（像元）",
             ),
             ParameterSpec(
-                name="enl", type="number", unit="ratio",
+                name="enl", type="number", unit="ratio", minimum=1e-6,
                 description="等效视数（>0；缺省整图矩估计）",
             ),
         ],
@@ -1936,6 +1937,7 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
             ),
             ParameterSpec(
                 name="incidence_deg", type="number", unit="degrees",
+                minimum=1e-6, maximum=90.0 - 1e-6,
                 description="标量入射角（度，0-90 开区间；与 incidence_lut 互斥）",
             ),
             ParameterSpec(
@@ -1962,6 +1964,7 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
             ),
             ParameterSpec(
                 name="incidence_deg", type="number", unit="degrees",
+                minimum=1e-6, maximum=90.0 - 1e-6,
                 description="标量入射角（度，0-90 开区间；与 incidence_lut 互斥）",
             ),
             ParameterSpec(

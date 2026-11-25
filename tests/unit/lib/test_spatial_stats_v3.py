@@ -648,6 +648,8 @@ def test_hotspot_uncertainty_evidence_block():
     assert blk["method"] == "analytic_normal"
     assert blk["permutations"] is None
     assert blk["multiple_testing"] == "BH-FDR"
+    # 证据块 p_value 经 6 位收敛，但非零小值不得被舍入成 0.0
+    # （p 值 0 是无效陈述 —— StatisticalSignificance 用 _r6_p 保留原量级）。
     assert 0.0 < blk["p_value"] <= 1.0
     # max|Gi*| 与 min p 同位配对（双侧正态 p 的自洽性守卫；容差 =
     # 属性通道舍入：gi_star 舍 4 位、p_value 舍 6 位）

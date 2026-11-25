@@ -454,6 +454,10 @@ class AlgorithmResolver:
                         rejected=rejected[:_MAX_REJECTIONS],
                         fallback_trail=trail[:_MAX_FALLBACK_TRAIL],
                         fallback_candidates=[fb.id],
+                        # P3：算法级 fallback 成功与另两个分支同口径携带
+                        # 全拒时收集的变换建议（否则 planner 拿不到重投影
+                        # 提示，降级成功路径静默丢失可执行下一步）。
+                        required_transformations=transformations,
                         scientific_warnings=fb_warns[:_MAX_REJECTIONS],
                         not_evaluated=fb_uneval[:_MAX_REJECTIONS],
                         backend_variant=fb_bv,
