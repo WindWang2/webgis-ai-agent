@@ -567,6 +567,15 @@ def main() -> int:
             continue
         try:
             reports.append(fn())
+        except ModuleNotFoundError as exc:
+            # ADR-0301：fresh clone 未装依赖时 doctor 应给出可执行的指引，
+            # 而不是 5 个 "check crashed" FAIL——环境不完整不是运行时不健康。
+            reports.append(Report(
+                name, SKIP,
+                f"project dependencies missing ({exc.name}); "
+                "install the locked environment first",
+                "uv pip install -c requirements.lock -r requirements-dev.txt",
+            ))
         except Exception as exc:  # noqa: BLE001 — doctor must always finish
             reports.append(Report(name, FAIL, f"check crashed: {exc}"))
 

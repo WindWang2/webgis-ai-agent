@@ -55,6 +55,119 @@ def _extract_error_text(result: Any) -> str:
     return _sanitize_for_client(raw)
 
 
+# ── v1.6.x 诊断事件（ADR-0301 D5 / C18、C20）────────────────────────────────
+#
+# `extension_error`（v1.6.1 RPC 事件，json.md:193）与未知事件**不是** turn 终态、
+# 不进 SSE（用户面噪音为零），但必须可观测：有界计数 + 脱敏摘录，供 doctor /
+# 运维诊断消费。这里是有界记录的唯一权威；不假设任何事件的 success 语义。
+
+#: 未知事件统计上限（防异常 vendor 刷爆内存）。
+_DIAG_MAX_RECENT = 32
+
+
+class _BoundedEventStats:
+    """进程级有界事件统计：计数按类型聚合，摘录环形保留。"""
+
+    def __init__(self, max_recent: int = _DIAG_MAX_RECENT) -> None:
+        import threading
+
+        self._lock = threading.Lock()
+        self._counts: dict[str, int] = {}
+        self._recent: list[dict[str, str]] = []
+        self._max_recent = max_recent
+
+    def record(self, kind: str, detail: dict[str, str]) -> None:
+        with self._lock:
+            self._counts[kind] = self._counts.get(kind, 0) + 1
+            self._recent.append(detail)
+            del self._recent[:-self._max_recent]
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            return {
+                "counts": dict(self._counts),
+                "recent": list(self._recent),
+            }
+
+    def reset(self) -> None:
+        with self._lock:
+            self._counts.clear()
+            self._recent.clear()
+
+
+_diag_stats = _BoundedEventStats()
+
+
+def vendor_event_diagnostics() -> dict:
+    """extension_error / 未知事件的进程级有界快照（doctor 与运维消费）。"""
+    return _diag_stats.snapshot()
+
+
+def reset_vendor_event_diagnostics() -> None:
+    """测试隔离用；生产路径不调用。"""
+    _diag_stats.reset()
+
+
+def _handle_extension_error(
+    event: dict,
+    session_id: str,
+    cache_lookup: Optional[Callable[[str], Optional[Any]]] = None,
+    turn_stats: Optional[Callable[[], dict]] = None,
+) -> Optional[str]:
+    """v1.6.x：扩展 handler 抛错 → RPC `extension_error`（有界、脱敏、非终态）。
+
+    `extensionPath` 只留 basename（内部路径不出诊断面）；error 经 SSE 同款
+    脱敏并截断；不映射 SSE（turn 语义不被扩展错误改写——vendor 语义是记录
+    后继续，`agent_settled` 仍是唯一终判）。
+    """
+    ext = str(event.get("extensionPath", "") or "unknown")
+    ext_name = ext.rsplit("/", 1)[-1].rsplit("\\", 1)[-1][:120] or "unknown"
+    vendor_event = str(event.get("event", "") or "unknown")[:64]
+    error = _sanitize_for_client(str(event.get("error", "") or "unknown error"))[:200]
+    logger.warning(
+        "pi extension error: extension=%s event=%s error=%s", ext_name, vendor_event, error
+    )
+    _diag_stats.record("extension_error", {
+        "extension": ext_name,
+        "event": vendor_event,
+        "error": error,
+    })
+    return None
+
+
+def _handle_unknown_event(
+    event: dict,
+    session_id: str,
+    cache_lookup: Optional[Callable[[str], Optional[Any]]] = None,
+    turn_stats: Optional[Callable[[], dict]] = None,
+) -> Optional[str]:
+    """vendor 新增事件词表的有界记录（v1.6.x 演进前瞻）：不假设 success、
+    不进 SSE。已知但本仓有意不映射的高频事件（queue_update /
+    bash_execution_update 等，见 ``KNOWN_UNMAPPED_EVENTS``）只静默跳过；
+    真正未知的类型才 WARN + 计数（防刷屏）。"""
+    event_type = str(event.get("type", "") or "unknown")[:64]
+    if event_type in KNOWN_UNMAPPED_EVENTS:
+        return None
+    logger.warning("pi event of unmapped type received: %s", event_type)
+    _diag_stats.record("unmapped_event", {"type": event_type})
+    return None
+
+
+#: vendor 文档化的词表里、本仓**有意不映射**为 SSE 的事件（高频/宿主侧
+#: 自行处理）。集合依据 v1.6.1 docs/json.md 事件总表；vendor 新增的
+#: 未文档化事件不会命中集合 → 走 WARN 计数路径。
+KNOWN_UNMAPPED_EVENTS = frozenset({
+    "queue_update",
+    "bash_execution_update",
+    "entry_appended",
+    "session_info_changed",
+    "thinking_level_changed",
+    "summarization_retry_scheduled",
+    "summarization_retry_attempt_start",
+    "summarization_retry_finished",
+})
+
+
 def _text_from_content_blocks(content: Any) -> str:
     """Join text out of an AssistantMessage ``content`` value (string or block list)."""
     if isinstance(content, str):
@@ -441,6 +554,8 @@ _EVENT_HANDLERS: dict[str, Callable[..., Optional[str]]] = {
     "extension_ui_update": _handle_extension_ui_update,
     "extension_ui_fire": _handle_extension_ui_fire,
     "pi_steer_disposition": _handle_pi_turn_message,
+    # v1.6.x 诊断事件（ADR-0301 D5）：有界记录、非终态、不进 SSE。
+    "extension_error": _handle_extension_error,
 }
 
 
@@ -470,5 +585,5 @@ def map_event_to_sse(
     event_type = event.get("type", "")
     handler = _EVENT_HANDLERS.get(event_type)
     if handler is None:
-        return None
+        return _handle_unknown_event(event, session_id)
     return handler(event, session_id, cache_lookup, turn_stats=turn_stats)
