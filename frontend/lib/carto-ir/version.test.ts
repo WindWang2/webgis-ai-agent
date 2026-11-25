@@ -4,6 +4,7 @@ import {
   LATEST_SUPPORTED_MAPSPEC_VERSION,
   DEFAULT_MAPSPEC_VERSION,
   migrateMapSpec,
+  checkMapSpecVersion,
   checkComponentAbi,
   type MigratedMapSpec,
 } from "./version";
@@ -125,15 +126,18 @@ describe("migrateMapSpec：缺失/非字符串 version → 视为 1.0 并披露"
     expect(result.disclosures[0]?.kind).toBe("invalid");
     expect(result.disclosures[0]?.detail).toContain("non-string version (number)");
   });
-
-  it('version 为空字符串 "" → 视为缺失 → 缺省 1.0', () => {
-    const result = expectMigratedOk(migrateMapSpec({ version: "", layers: [] }));
-    expect(result.originalVersion).toBe("1.0");
-    expect(result.disclosures[0]?.kind).toBe("invalid");
-  });
 });
 
 describe("migrateMapSpec：forward version → fail-safe 拒绝", () => {
+  it('version 为空字符串 "" → 词表外字符串 → forward fail-safe 拒绝（与 checkMapSpecVersion 同裁决）', () => {
+    const result = expectMigratedFail(migrateMapSpec({ version: "", layers: [] }));
+    expect(result.reason).toBe("forward_version");
+    expect(result.version).toBe("");
+    expect(result.disclosures[0]?.kind).toBe("policy");
+    // 渲染门免克隆判定同口径（此前 migrate 按缺失放行 1.0，与门裁决分歧）
+    expect(checkMapSpecVersion({ version: "" }).ok).toBe(false);
+  });
+
   it('version "9.9" → ok:false、reason forward_version、policy 披露', () => {
     const result = expectMigratedFail(migrateMapSpec({ version: "9.9", layers: [] }));
     expect(result.reason).toBe("forward_version");

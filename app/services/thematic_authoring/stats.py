@@ -129,10 +129,7 @@ def scan_field(features: Iterable[Any], field: str) -> FieldScan:
         if present and raw is not None:
             num_kind = _classify_invalid(raw)
             if num_kind is not None:
-                if num_kind in ("bool", "string"):
-                    invalid[num_kind] += 1
-                else:
-                    invalid[num_kind] += 1  # nan / inf
+                invalid[num_kind] += 1
             else:
                 raw_values.append(float(raw))
             # 类别口径：NaN/Inf 排除（数值垃圾），其余非 null 值计入

@@ -133,6 +133,27 @@ def test_converter_blocks_non_point_geometry(monkeypatch):
     assert any("heatmap_guard" in w for w in warnings)
 
 
+def test_converter_guard_strips_heatmap_paint_from_downgraded_base(monkeypatch):
+    """守卫把显式 base type=heatmap 降级为 circle 时，base 层的 heatmap-*
+    paint 键不得合并进 circle 层（MapLibre 不识别），非 heatmap 键仍保留。"""
+    monkeypatch.setattr(settings, "HEATMAP_MIN_POINTS", 10)
+    fc = _fc([_polygon() for _ in range(20)])
+    payload = {"geojson": fc, "algorithm": "heatmap_data", "type_hint": "heatmap"}
+    base = {
+        "type": "heatmap",
+        "paint": {
+            "heatmap-radius": 30,
+            "heatmap-opacity": 0.6,
+            "opacity": 0.5,
+        },
+    }
+    layer, _, warnings = convert_analysis_to_mapspec_layer(payload, base)
+    assert layer["type"] == "circle"
+    assert not [k for k in layer["paint"] if str(k).startswith("heatmap-")]
+    assert layer["paint"].get("opacity") == 0.5
+    assert any("heatmap_guard" in w for w in warnings)
+
+
 def test_converter_blocks_line_geometry(monkeypatch):
     monkeypatch.setattr(settings, "HEATMAP_MIN_POINTS", 10)
     fc = _fc([_line() for _ in range(20)])

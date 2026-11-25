@@ -595,9 +595,13 @@ async def register_artifact(
         for k, v in _descriptor_fields(descriptor).items():
             setattr(rec, k, v)
         if metadata:
-            merged = dict(rec.metadata)
-            merged.update(metadata)
-            rec.metadata = merged
+            # 新键在前、旧键补后（同 update_record_metadata）：metadata 满 24
+            # 键时 to_dict 按插入序截断 —— 丢陈旧复用证据 = 保守 miss；旧键
+            # 在前则会静默丢本次写入的 staleness/指纹等新证据（不安全）。
+            merged = dict(metadata)
+            for k, v in rec.metadata.items():
+                merged.setdefault(k, v)
+            rec.metadata = dict(list(merged.items())[:MAX_RECORD_METADATA_KEYS])
         if isinstance(profile_digest, dict) and profile_digest:
             # V4：profile link 生产方（有界、确定性、无时间戳）。检索键 =
             # f"profile:v3:{artifact_id}@{revision}"（与 profiler LRU 的
@@ -778,6 +782,9 @@ async def mark_status(session_id: str, artifact_id: str, status: str) -> bool:
 
     if not session_id or not artifact_id:
         return False
+    # 状态是有限集合：不收自由串（与 update_record_metadata 同纪律）
+    if status not in (A_VALID, A_STALE, A_EXPIRED, A_SUPERSEDED, A_FAILED):
+        return False
     try:
         async with session_lock_registry.lock(session_id, fail_on_degraded=False):
             records = await _load_records(session_id, session_data_manager)
@@ -955,6 +962,10 @@ async def sweep_statuses(
     probed = dict(
         await asyncio.gather(*(_probe(aid) for aid in records.keys()))
     )
+    # 回写守卫基线：探测前快照的状态（下面的循环会就地改 rec.status，先取）。
+    # 探测与持锁保存之间若有并发状态写（register_artifact 复活终态记录 →
+    # valid / mark_status），旧 bucket 不得覆盖 fresh 状态。
+    seen_status = {aid: rec.status for aid, rec in records.items()}
     live = await load_records_for_plan(session_id, chapter, mapspec)
     now = time.time()
     result: Dict[str, List[str]] = {"expired": [], "stale": [], "valid": []}
@@ -990,9 +1001,13 @@ async def sweep_statuses(
                     + [(a, "stale") for a in result["stale"]]
                     + [(a, "valid") for a in result["valid"]]
                 ):
-                    if aid in fresh and fresh[aid].status not in (
-                        A_SUPERSEDED,
-                        A_FAILED,
+                    if (
+                        aid in fresh
+                        and fresh[aid].status == seen_status.get(aid)
+                        and fresh[aid].status not in (
+                            A_SUPERSEDED,
+                            A_FAILED,
+                        )
                     ):
                         fresh[aid].status = bucket
                         fresh[aid].updated_at = now

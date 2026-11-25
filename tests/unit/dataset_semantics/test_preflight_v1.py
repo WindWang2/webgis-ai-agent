@@ -271,3 +271,14 @@ def test_one_sided_temporal_not_masked_by_both_sided_pairs():
     by_check = {chk["check"]: chk["result"] for chk in rep.checks}
     assert by_check["temporal_overlap"] == "unknown"
     assert rep.verdict != "compatible"
+
+
+def test_input_over_cap_disclosed_not_compatible():
+    """review P3 回归：超过 MAX_PREFLIGHT_DATASETS 的输入不得静默截断 ——
+    报告披露漏检项数，且不冠以 compatible。"""
+    ds = {f"d{i}": _descriptor(key=f"d{i}", bbox=[104.0, 30.6, 104.2, 30.8])
+          for i in range(17)}   # MAX_PREFLIGHT_DATASETS = 16
+    rep = preflight_multi_dataset(ds)
+    assert rep.truncated_datasets == 1
+    assert rep.to_bounded_dict()["truncated_datasets"] == 1
+    assert rep.verdict != "compatible"

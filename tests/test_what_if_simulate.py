@@ -261,3 +261,25 @@ def test_what_if_simulate_result_model_validation():
     assert result.type == "what_if_simulation"
     dumped = result.model_dump()
     assert dumped["metrics"]["housing_price"]["baseline"] == 100.0
+
+
+@pytest.mark.asyncio
+async def test_error_text_redacts_url_query_before_llm():
+    """Exception text in `uncertainty` must not leak URL query/fragment (API keys)."""
+    from app.tools.what_if_simulate import what_if_simulate_async
+
+    engine = MagicMock()
+    engine.evaluate_decision = AsyncMock(
+        side_effect=RuntimeError(
+            "geocode failed: https://api.example.com/v1/geocode?key=SECRET#frag"
+        )
+    )
+    with patch("app.tools.what_if_simulate.DecisionEngine", return_value=engine):
+        result = await what_if_simulate_async(
+            scenario="新建地铁站", target_area="测试区域"
+        )
+
+    uncertainty = result["uncertainty"]
+    assert "SECRET" not in uncertainty
+    assert "frag" not in uncertainty
+    assert "https://api.example.com/v1/geocode" in uncertainty

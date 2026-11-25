@@ -83,8 +83,11 @@ def _feature_ids_for_layer(spec: Optional[Dict[str, Any]], layer_id: str):
     data = source.get("data") if isinstance(source.get("data"), dict) else source.get("inlineData")
     if not isinstance(data, dict) or data.get("type") != "FeatureCollection":
         return None
+    features = data.get("features") or []
+    if not isinstance(features, list):
+        return None  # 数据畸形（features 非列表）→ 不可证，unverified
     ids = set()
-    for feat in data.get("features") or []:
+    for feat in features:
         if isinstance(feat, dict) and feat.get("id") is not None:
             ids.add(str(feat["id"]))
     return ids

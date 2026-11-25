@@ -286,6 +286,42 @@ async def test_rebase_refuses_when_target_gone(service):
 
 
 @pytest.mark.asyncio
+async def test_rebase_reads_revision_before_spec(service, monkeypatch):
+    """先读 spec 再读 revision 的 TOCTOU：两次 await 之间落地的 mutation 会让
+    _validate_targets 校验比所记录 base 更旧的 spec。先读 revision 后读 spec
+    时，后读的 spec 至少已包含 base 时刻的变更。"""
+    sid = _sid()
+    engine, base = await _seed_layer(sid)
+    p = await service.create_proposal(
+        sid, author=_actor("u1"), title="改色", intents=_intents(base),
+    )
+    await service.submit(sid, p.proposal_id, _actor("u1"), base_revision=base)
+
+    from app.services.gis_world_state.mutation import apply_gis_mutation
+    from app.services.mapspec.lifecycle_engine import RemoveLayerIntent
+    from app.services.review import service as service_mod
+
+    real_read = service_mod.read_current_revision
+    state = {"done": False}
+
+    async def _read_with_interleaved_mutation(session_id):
+        if not state["done"]:
+            state["done"] = True
+            # 模拟两次读之间的并发 mutation：目标层在 revision 读数前被删除。
+            await apply_gis_mutation(
+                session_id, RemoveLayerIntent(layer_id="L1"),
+                origin="agent", actor="cleanup",
+            )
+        return await real_read(session_id)
+
+    monkeypatch.setattr(
+        service_mod, "read_current_revision", _read_with_interleaved_mutation,
+    )
+    with pytest.raises(InvalidTransition):
+        await service.rebase(sid, p.proposal_id, _actor("u1"))
+
+
+@pytest.mark.asyncio
 async def test_state_machine_guard(service):
     sid = _sid()
     engine, base = await _seed_layer(sid)

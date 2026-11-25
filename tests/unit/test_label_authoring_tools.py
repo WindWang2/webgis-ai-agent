@@ -191,3 +191,78 @@ class TestReviewR1Regressions:
         insp = await webgis_label_inspect(sid, "schools", feature_ids=["s1"])
         assert insp["success"] is True
         assert insp["targets"][0]["status"] == "unverified"
+
+
+class TestReviewP3Fixes:
+    async def test_inspect_targets_truncation_is_disclosed(self):
+        sid = "sess-g16-p3-trunc-inspect"
+        overrides = [{"featureId": f"ghost-{i}", "hidden": True}
+                     for i in range(65)]
+        engine = MapSpecLifecycleEngine()
+        await engine.apply_mutation(sid, UpsertLayerIntent(
+            layer={"id": "schools", "type": "circle", "source": "schools",
+                   "label": {"field": "name",
+                             "authoring": {"overrides": overrides}},
+                   "paint": {"circle-radius": 4}},
+            source_data=_FC))
+        insp = await webgis_label_inspect(sid, "schools")
+        assert insp["success"] is True
+        assert len(insp["targets"]) == 64
+        assert insp["targets_truncated"] is True
+
+    async def test_preview_reports_truncation_is_disclosed(self):
+        sid = "sess-g16-p3-trunc-preview"
+        await _seed(sid)
+        ops = [{"featureId": "sch-1", "op": "set", "set": {"pinned": True}}
+               for _ in range(65)]
+        res = await webgis_label_author(
+            sid, "schools", preview_only=True, ops=ops)
+        assert res["success"] is True
+        assert len(res["preview"]["reports"]) == 64
+        assert res["preview"]["reports_truncated"] is True
+
+    async def test_inspect_missing_feature_is_not_reported_as_orphan(self):
+        # 无覆写的请求 id 不在源数据中 → not_found（不是过期覆写）。
+        sid = "sess-g16-p3-missing"
+        await _seed(sid)
+        insp = await webgis_label_inspect(sid, "schools",
+                                          feature_ids=["ghost"])
+        target = insp["targets"][0]
+        assert target["status"] == "not_found"
+        assert target["why_not_shown"] == [
+            {"reason": "feature_not_found", "source": "identity"}]
+
+    async def test_unrecognized_mutation_result_shape_fails_closed(
+            self, monkeypatch):
+        # 结果既无 success 也无 is_error（如 dict）→ 不抛 AttributeError。
+        import app.services.gis_world_state as gws
+
+        async def _fake_apply(*args, **kwargs):
+            return {"success": True}
+
+        monkeypatch.setattr(gws, "apply_gis_mutation", _fake_apply)
+        sid = "sess-g16-p3-result-shape"
+        await _seed(sid)
+        res = await webgis_label_author(
+            sid, "schools",
+            ops=[{"featureId": "sch-1", "op": "set", "set": {"hidden": True}}])
+        assert res["success"] is False
+
+    async def test_malformed_mapspec_receipt_does_not_raise(self, monkeypatch):
+        import app.services.gis_world_state as gws
+
+        class _Result:
+            is_error = False
+            mapspec = {"layers": 5}  # 不可迭代的畸形摘要
+
+        async def _fake_apply(*args, **kwargs):
+            return _Result()
+
+        monkeypatch.setattr(gws, "apply_gis_mutation", _fake_apply)
+        sid = "sess-g16-p3-bad-spec"
+        await _seed(sid)
+        res = await webgis_label_author(
+            sid, "schools",
+            ops=[{"featureId": "sch-1", "op": "set", "set": {"hidden": True}}])
+        assert res["success"] is True
+        assert res["summary"] == "label authoring committed on schools"

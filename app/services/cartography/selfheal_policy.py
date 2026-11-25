@@ -92,13 +92,17 @@ def attribution_rows(
     ``verdict = effective``（actual ≥ expected×0.5）/ ``ineffective``（否则）
     —— ineffective 是实验归因结果；本函数不写入降权信号。
     """
-    rows = db.execute(
+    stmt = (
         select(CartoFeedbackSignal)
-        .where(CartoFeedbackSignal.target.like("selfheal:%"),
-               CartoFeedbackSignal.session_id == session_id, CartoFeedbackSignal.project_id == project_id)
+        .where(CartoFeedbackSignal.target.like("selfheal:%"))
         .order_by(CartoFeedbackSignal.created_at.desc())
         .limit(max(1, min(limit, 500)))
-    ).scalars()
+    )
+    if session_id is not None:
+        stmt = stmt.where(CartoFeedbackSignal.session_id == session_id)
+    if project_id is not None:
+        stmt = stmt.where(CartoFeedbackSignal.project_id == project_id)
+    rows = db.execute(stmt).scalars()
     out: List[Dict[str, Any]] = []
     for r in rows:
         payload = cast(SignalPayload, r.payload or {})
@@ -123,15 +127,19 @@ def action_success_table(db: Session, *, session_id: Optional[str] = None, proje
     排序：成功率降序 → 样本数降序 → action_id 字典序。
     """
     from app.services.cartography.intent_learning import (
-        FEEDBACK_SIGNAL_POLARITY, QUERY_LIMIT_MAX, signal_decay_factor, _as_aware,
+        FEEDBACK_SIGNAL_POLARITY, signal_decay_factor, _as_aware,
     )
 
-    rows = list(db.execute(
+    stmt = (
         select(CartoFeedbackSignal)
-        .where(CartoFeedbackSignal.target.like("selfheal:%"),
-               CartoFeedbackSignal.session_id == session_id, CartoFeedbackSignal.project_id == project_id)
+        .where(CartoFeedbackSignal.target.like("selfheal:%"))
         .order_by(CartoFeedbackSignal.created_at.desc(), CartoFeedbackSignal.id.desc()).limit(1000)
-    ).scalars())
+    )
+    if session_id is not None:
+        stmt = stmt.where(CartoFeedbackSignal.session_id == session_id)
+    if project_id is not None:
+        stmt = stmt.where(CartoFeedbackSignal.project_id == project_id)
+    rows = list(db.execute(stmt).scalars())
     now = datetime.now(timezone.utc)
     by_action: Dict[str, Dict[str, Any]] = {}
     for r in rows:
@@ -149,7 +157,7 @@ def action_success_table(db: Session, *, session_id: Optional[str] = None, proje
         payload = cast(SignalPayload, r.payload or {})
         entry["expectedSum"] += float(payload.get("expected_effect") or 0.0)
         entry["actualSum"] += float(payload.get("actual_delta") or 0.0)
-        if entry["success"] + entry["failure"] <= QUERY_LIMIT_MAX and r.created_at is not None:
+        if r.created_at is not None:
             age_days = max(0.0, (now - _as_aware(cast(datetime, r.created_at))).total_seconds() / 86400)
             weighted = cast(float, r.weight) * signal_decay_factor(age_days, cast(float, r.decay_days))
             entry["effectiveWeight"] += weighted if FEEDBACK_SIGNAL_POLARITY.get(str(r.signal_type)) == "positive" else -weighted

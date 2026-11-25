@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   resolveRepresentationPlan,
   representationModeAtZoom,
+  representationWindowAtZoom,
   rawWindowsOf,
   expansionWindowsOf,
   representationSublayerId,
@@ -315,6 +316,11 @@ describe("representationModeAtZoom：半开区间边界", () => {
     )!;
     expect(representationModeAtZoom(hiddenPlan, 7.999)).toBe("hidden");
     expect(representationModeAtZoom(hiddenPlan, 8)).toBe("raw");
+  });
+
+  it("非有限 zoom（NaN/Infinity）→ 显式抛错（不静默返回末窗）", () => {
+    expect(() => representationModeAtZoom(plan, Number.NaN)).toThrow(RangeError);
+    expect(() => representationWindowAtZoom(plan, Number.POSITIVE_INFINITY)).toThrow(RangeError);
   });
 });
 

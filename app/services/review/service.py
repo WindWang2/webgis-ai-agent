@@ -479,8 +479,11 @@ class ReviewService:
         from app.services.mapspec.lifecycle_engine import MapSpecLifecycleEngine
 
         engine = MapSpecLifecycleEngine()
-        spec = await engine.store.get_mapspec(session_id)
+        # 先读 revision 再读 spec：两次 await 之间若有 mutation 落地，spec 只会
+        # 比所记录的 base 更新（反之 _validate_targets 会校验旧于 base 的 spec —
+        # TOCTOU）。残留的 base 再漂移由 merge 的 CAS 漂移拒绝兜底。
         new_base = await read_current_revision(session_id)
+        spec = await engine.store.get_mapspec(session_id)
         if new_base == p.base_revision:
             # 无漂移 rebase 无意义，且会让旧批准"名义过期实际继续计数"
             # （review R1-P2）—— 显式拒绝。

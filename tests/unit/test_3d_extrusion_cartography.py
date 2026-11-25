@@ -158,6 +158,43 @@ def test_converter_3d_extrusion_guard_on_non_polygon():
     assert any("extrusion_3d_guard" in w for w in warnings)
 
 
+def test_converter_3d_extrusion_tolerates_bad_metadata_values():
+    """单个坏元数据值（非数值 scale_factor/opacity、缺失 properties）只做
+    局部降级，不得让整层退化为 circle 且 inline_geojson=None。"""
+    fc = _make_polygon_fc([{"gdp": 100}, {"gdp": 200}])
+    fc["features"][1]["properties"] = None
+    analysis_payload = {
+        "type_hint": "extrusion_3d",
+        "geojson": fc,
+        "metadata": {
+            "extrusion": {
+                "height_field": "gdp",
+                "scale_factor": "not-a-number",
+                "min_visual_height_m": "bad",
+                "max_visual_height_m": {"oops": 1},
+                "opacity": "bad",
+            }
+        },
+    }
+    layer, inline, warnings = convert_analysis_to_mapspec_layer(analysis_payload)
+    assert layer["type"] == "fill-extrusion"
+    assert inline is not None
+    assert not any("converter_error" in w for w in warnings)
+    assert "fill-extrusion-height" in layer["paint"]
+    assert layer["paint"]["fill-extrusion-opacity"] == 0.85
+
+
+def test_converter_3d_extrusion_syncs_explicit_2d_base_type():
+    """extrusion hint 生效时，base 层显式 2D 类型必须同步为 fill-extrusion，
+    否则 fill-extrusion-* paint 键会挂在 fill/line/circle 层上。"""
+    fc = _make_polygon_fc([{"gdp": 100}, {"gdp": 200}])
+    payload = {"type_hint": "extrusion_3d", "geojson": fc}
+    for base_type in ("fill", "line", "circle"):
+        layer, _, _ = convert_analysis_to_mapspec_layer(payload, {"type": base_type})
+        assert layer["type"] == "fill-extrusion", base_type
+        assert "fill-extrusion-height" in layer["paint"], base_type
+
+
 def test_semantic_checks_3d_extrusion_rules():
     fc = _make_polygon_fc([{"pop": 100}, {"pop": 200}])
     mapspec_topdown = {

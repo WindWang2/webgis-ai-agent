@@ -246,3 +246,16 @@ def test_ambiguous_keys_capture_up_to_64():
         feats.append({"properties": props_s})
     scan = stats_mod.scan_field(feats, "code")
     assert len(scan.ambiguous_keys) == 64  # cap 64（此前 5）
+
+
+def test_size_for_value_degenerate_domain_returns_none():
+    """P3 回归：退化值域（min==max）不得 ZeroDivisionError，按非法输入返回 None。"""
+    from app.services.thematic_authoring.builder import size_for_value, size_samples
+    from app.services.thematic_authoring.contract import SizeChannel
+
+    ch = SizeChannel.model_construct(
+        channel="radius", field="v", min_value=5.0, max_value=5.0,
+        min_size=4.0, max_size=10.0, scaling="linear",
+    )
+    assert size_for_value(5.0, ch) is None
+    assert size_samples(ch) == []

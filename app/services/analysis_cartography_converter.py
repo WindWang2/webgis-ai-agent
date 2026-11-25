@@ -475,6 +475,11 @@ def convert_analysis_to_mapspec_layer(
             and not base_layer.get("type")
         ):
             layer_type = "line"
+        # ADR-0095：extrusion hint 生效即原生 3D 通道，图层类型必须同步为
+        # fill-extrusion；否则 base 层显式 2D 类型会收到 fill-extrusion-*
+        # paint 键（层类型与 paint 键错配，MapLibre 不识别）。
+        if extrusion_hint_active:
+            layer_type = "fill-extrusion"
 
         # All legend-bearing emitters attach legend_spec at the top level of their
         # result dict (h3_binning, kde_contours, heatmap_data, apply_template,
@@ -573,6 +578,14 @@ def convert_analysis_to_mapspec_layer(
             existing_paint = base_layer.get("paint")
             paint = dict(default_paint)
             if isinstance(existing_paint, dict):
+                if base_layer.get("type") == "heatmap":
+                    # 守卫把显式 heatmap 降级为非热力类型时，base 层的
+                    # heatmap-* paint 键对该类型无效（MapLibre 不识别），
+                    # 不得随 existing paint 合并进降级后的图层。
+                    existing_paint = {
+                        k: v for k, v in existing_paint.items()
+                        if not str(k).startswith("heatmap-")
+                    }
                 paint.update(existing_paint)
 
             if has_thematic_paint or "color" not in paint:
@@ -618,9 +631,17 @@ def convert_analysis_to_mapspec_layer(
                 h_field = ext_meta.get("height_field") or meta.get("height_field") or meta.get("field") or "height"
                 h_unit = ext_meta.get("height_unit") or meta.get("height_unit") or "m"
                 transform = ext_meta.get("transform") or "linear"
-                scale_factor = float(ext_meta.get("scale_factor") or 1.0)
-                min_h = float(ext_meta.get("min_visual_height_m") or 10.0)
-                max_h = float(ext_meta.get("max_visual_height_m") or 5000.0)
+
+                def _ext_float(key: str, default: float) -> float:
+                    """局部容错：单个坏元数据值不得让整层退化为 circle。"""
+                    try:
+                        return float(ext_meta.get(key) or default)
+                    except (TypeError, ValueError):
+                        return default
+
+                scale_factor = _ext_float("scale_factor", 1.0)
+                min_h = _ext_float("min_visual_height_m", 10.0)
+                max_h = _ext_float("max_visual_height_m", 5000.0)
 
                 height_spec = ExtrusionHeightSpec(
                     height_field=h_field,
@@ -631,18 +652,24 @@ def convert_analysis_to_mapspec_layer(
                     max_visual_height_m=max_h,
                 )
                 raw_features = list(_iter_features(inline_geojson)) if inline_geojson else []
-                val_list = [
-                    f.get("properties", {}).get(h_field)
-                    for f in raw_features
-                    if isinstance(f, dict)
-                ]
+                val_list = []
+                for f in raw_features:
+                    if not isinstance(f, dict):
+                        continue
+                    props = f.get("properties")
+                    if isinstance(props, dict):
+                        val_list.append(props.get(h_field))
                 ext_stats = analyze_height_field_distribution(val_list)
                 h_expr = build_extrusion_height_expression(height_spec, ext_stats)
                 base_expr = build_extrusion_base_expression(height_spec)
 
                 paint["fill-extrusion-height"] = h_expr
                 paint["fill-extrusion-base"] = base_expr
-                paint["fill-extrusion-opacity"] = float(ext_meta.get("opacity") or 0.85)
+                try:
+                    ext_opacity = float(ext_meta.get("opacity") or 0.85)
+                except (TypeError, ValueError):
+                    ext_opacity = 0.85
+                paint["fill-extrusion-opacity"] = ext_opacity
                 paint["fill-extrusion-color"] = paint_color
                 if not ext_stats.get("valid"):
                     warnings.append(f"extrusion_3d: 高度字段 '{h_field}' 无有效数值，已采用保底可视高度")

@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
+import time
 import types
 from pathlib import Path
 
@@ -96,6 +98,58 @@ def test_unmapped_paths_yield_base_only(
     _patch_git(monkeypatch, ["docs/x.md", "frontend/app/page.tsx"])
     targets = qr._changed_py_targets()
     assert targets == ["tests/quality/", "tests/unit/tools/"]
+
+
+def test_git_failure_is_disclosed_not_silent(
+    qr: types.ModuleType, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """git 失败（如 origin/master 缺失）时不得静默退化成 base-only。"""
+
+    def fake_run(args, **kwargs):  # noqa: ANN001, ANN003
+        out = types.SimpleNamespace()
+        out.stdout = ""
+        out.stderr = "fatal: bad revision 'origin/master...HEAD'"
+        out.returncode = 128
+        return out
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    targets = qr._changed_py_targets()
+    assert targets == ["tests/quality/", "tests/unit/tools/"]
+    err = capsys.readouterr().err
+    assert "WARN" in err and "origin/master...HEAD" in err
+
+
+def test_truncation_beyond_40_is_disclosed(
+    qr: types.ModuleType, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """超过 40 目标被截断时必须披露，不得静默丢弃受影响测试映射。"""
+    files = [f"tests/integration/case_{i:02d}.py" for i in range(60)]
+    _patch_git(monkeypatch, files)
+    targets = qr._changed_py_targets()
+    assert len(targets) == 40
+    err = capsys.readouterr().err
+    assert "截断" in err and "超过上界 40" in err
+    assert "tests/integration/case_" in err
+
+
+def test_non_pytest_step_hangs_are_bounded(
+    qr: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """无 subprocess 超时的非 pytest 步骤挂起即永久卡死。"""
+    monkeypatch.setattr(qr, "NON_PYTEST_STEP_TIMEOUT_S", 0.3)
+    monkeypatch.setitem(qr.LANES, "timeout_probe", {
+        "title": "timeout probe",
+        "commands": [[sys.executable, "-c", "import time; time.sleep(5)"]],
+    })
+    started = time.monotonic()
+    report = qr._run_lane("timeout_probe", False)
+    assert time.monotonic() - started < 4
+    assert report["ok"] is False
+    step = report["steps"][0]
+    assert step["exit"] == 124
+    assert "TIMEOUT" in step["tail"]
 
 
 def test_full_local_failure_report_lists_only_executed_lanes(

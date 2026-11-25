@@ -236,6 +236,7 @@ def derive_changes(
     for op_index, op in enumerate(ops):
         if not isinstance(op, dict) or op.get("op") not in EDIT_OPS:
             continue
+        delta_start = len(deltas)
         kind = op.get("op")
         # G32：op 级目标限定 —— 带 wfids 的 plan 级 op 只作用于
         # plan 解析目标 ∩ op.wfids（无 wfids 时行为与历史完全一致）。
@@ -413,8 +414,10 @@ def derive_changes(
                 else:
                     op_summaries.append({"op": kind, "parents": len(merge_targets)})
         # 顺序语义：把已产生的 delta 应用到工作视图，后续 op 在最新态上求值。
-        if deltas or schema_ops:
-            feats, _ = apply_deltas_to_features(working.get("features") or [], deltas)
+        # 只重放本 op 新增的 delta（历史 delta 已应用且幂等）——全量重放是
+        # O(ops²)·n 的重复深拷贝/全表扫描，发生在预览/提交热路径。
+        if delta_start < len(deltas) or schema_ops:
+            feats, _ = apply_deltas_to_features(working.get("features") or [], deltas[delta_start:])
             feats, _ = apply_schema_ops_to_features(feats, schema_ops)
             working = {**working, "features": feats}
             if schema_ops:

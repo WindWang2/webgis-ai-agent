@@ -844,15 +844,18 @@ async def _execute_body(
         # 协作取消：清 staging、run 行落 cancelled；job 终态由 runner 的
         # 两段取消迁移落定（绝不留公开半成品）
         outputs.discard_staging(run_id)
+        outputs.discard_final(run_id)  # 发布后取消：终态包无收据 → 回收
         _mark("cancelled")
         raise
     except DataJoinError as exc:
         outputs.discard_staging(run_id)
+        outputs.discard_final(run_id)  # 发布后失败：run 行 failed，回收终态包
         _mark("failed", error_code=exc.code)
         # 面向 job 的错误：runner 会 mark_failed；此处再抛让 job 记录原因
         raise
     except Exception:  # noqa: BLE001 — 未预期异常
         outputs.discard_staging(run_id)
+        outputs.discard_final(run_id)  # 发布后失败：run 行 failed，回收终态包
         _mark("failed", error_code="internal_error")
         raise
 
@@ -969,6 +972,13 @@ async def list_runs(
 
 # ───────────────────────── 幂等复用 / 失效 ─────────────────────────
 
+def _like_prefix(base_key: str) -> str:
+    """幂等键 LIKE 前缀模式：转义通配符（session/plan id 可含 _ 或 %）。"""
+    escaped = (base_key.replace("\\", "\\\\")
+               .replace("%", "\\%").replace("_", "\\_"))
+    return f"{escaped}%"
+
+
 def _find_completed_run_by_key(
     session_id: str, base_key: str
 ) -> Optional[Dict[str, Any]]:
@@ -982,7 +992,7 @@ def _find_completed_run_by_key(
         row = db.scalars(
             select(DataJoinRun).where(
                 DataJoinRun.session_id == session_id,
-                DataJoinRun.idempotency_key.like(f"{base_key}%"),
+                DataJoinRun.idempotency_key.like(_like_prefix(base_key), escape="\\"),
                 DataJoinRun.status == "completed",
             ).order_by(DataJoinRun.created_at.desc())
         ).first()
@@ -1006,7 +1016,7 @@ def _find_active_run_by_key(session_id: str, base_key: str) -> Optional[Dict[str
         row = db.scalars(
             select(DataJoinRun).where(
                 DataJoinRun.session_id == session_id,
-                DataJoinRun.idempotency_key.like(f"{base_key}%"),
+                DataJoinRun.idempotency_key.like(_like_prefix(base_key), escape="\\"),
                 DataJoinRun.status.in_(["pending", "running"]),
             ).order_by(DataJoinRun.created_at.desc())
         ).first()
@@ -1045,7 +1055,7 @@ def _count_runs_by_key_prefix(session_id: str, base_key: str) -> int:
         n = db.scalar(
             select(func.count(DataJoinRun.id)).where(
                 DataJoinRun.session_id == session_id,
-                DataJoinRun.idempotency_key.like(f"{base_key}%"),
+                DataJoinRun.idempotency_key.like(_like_prefix(base_key), escape="\\"),
             ))
         return int(n or 0)
 

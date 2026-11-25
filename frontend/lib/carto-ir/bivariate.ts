@@ -95,18 +95,21 @@ export function checkBivariateLayer(layer: MapSpecLayer): BivariateCheck | null 
 /** paint 值树里 `["get", classField]` 引用计数（cheap 深度优先）。 */
 function countPaintClassFieldRefs(layer: MapSpecLayer, classField: string): number {
   let count = 0;
-  const visit = (node: unknown, depth: number): void => {
-    if (depth > 12 || node === null || typeof node !== "object") return;
+  // 合法 MapLibre 表达式可任意嵌套（case/interpolate 链）—— 不设深度上限
+  // （旧上限 12 会把深层合法层误判 paint_not_match）；seen 防御环状对象图。
+  const seen = new WeakSet<object>();
+  const stack: unknown[] = [layer.paint];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (node === null || typeof node !== "object" || seen.has(node)) continue;
+    seen.add(node);
     if (Array.isArray(node)) {
       if (node[0] === "get" && node[1] === classField) count++;
-      for (const child of node) visit(child, depth + 1);
-      return;
+      for (const child of node) stack.push(child);
+      continue;
     }
-    for (const child of Object.values(node as Record<string, unknown>)) {
-      visit(child, depth + 1);
-    }
-  };
-  visit(layer.paint, 0);
+    for (const child of Object.values(node as Record<string, unknown>)) stack.push(child);
+  }
   return count;
 }
 

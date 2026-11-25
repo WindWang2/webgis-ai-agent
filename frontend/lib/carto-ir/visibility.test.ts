@@ -158,12 +158,33 @@ describe("resolveZoomGate：结构门与提示词表", () => {
     expect(r.ignoredHints).toEqual([]);
   });
 
-  it("非有限 zoom 值（NaN）→ 不设门", () => {
+  it("非有限 zoom 值（NaN）→ 不设门 + non_numeric_hint 披露", () => {
     const r = resolveZoomGate(
       layerWith({ visibility: { min_zoom: Number.NaN } }),
     );
     expect(r.gate.minzoom).toBeUndefined();
     expect(r.gate.maxzoom).toBeUndefined();
+    expect(r.ignoredHints).toHaveLength(1);
+    expect(r.ignoredHints[0]?.key).toBe("visibility.min_zoom");
+    expect(r.ignoredHints[0]?.reason).toBe("non_numeric_hint");
+  });
+
+  it('非数值显式门（字符串 "8"/"14"）→ 不设门 + non_numeric_hint 披露', () => {
+    const r = resolveZoomGate(
+      layerWith({
+        visibility: {
+          min_zoom: "8" as unknown as number,
+          max_zoom: "14" as unknown as number,
+        },
+      }),
+    );
+    expect(r.gate.minzoom).toBeUndefined();
+    expect(r.gate.maxzoom).toBeUndefined();
+    expect(r.ignoredHints.map((h) => h.key)).toEqual([
+      "visibility.min_zoom",
+      "visibility.max_zoom",
+    ]);
+    expect(r.ignoredHints.every((h) => h.reason === "non_numeric_hint")).toBe(true);
   });
 });
 

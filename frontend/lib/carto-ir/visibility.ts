@@ -119,8 +119,18 @@ export function resolveZoomGate(
   if (!vis) return { gate: {}, ignoredHints };
 
   const floors: number[] = [];
-  const explicitMin = clampZoom(typeof vis.min_zoom === "number" ? vis.min_zoom : NaN);
-  const explicitMax = clampZoom(typeof vis.max_zoom === "number" ? vis.max_zoom : NaN);
+  const rawMin = (vis as { min_zoom?: unknown }).min_zoom;
+  const rawMax = (vis as { max_zoom?: unknown }).max_zoom;
+  const explicitMin = clampZoom(typeof rawMin === "number" ? rawMin : NaN);
+  const explicitMax = clampZoom(typeof rawMax === "number" ? rawMax : NaN);
+  // 非数值的显式结构门不静默丢弃（与 hint 面 non_numeric_hint 同款披露）：
+  // 静默缺失会让层在全 zoom 渲染。
+  if (rawMin !== undefined && explicitMin === undefined) {
+    ignoredHints.push({ key: "visibility.min_zoom", value: NaN, reason: "non_numeric_hint" });
+  }
+  if (rawMax !== undefined && explicitMax === undefined) {
+    ignoredHints.push({ key: "visibility.max_zoom", value: NaN, reason: "non_numeric_hint" });
+  }
 
   if (vis.hints && typeof vis.hints === "object") {
     for (const [key, value] of Object.entries(vis.hints)) {

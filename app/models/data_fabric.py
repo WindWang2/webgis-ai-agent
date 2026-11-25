@@ -25,8 +25,8 @@ class DataSource(Base):
     status = Column(String(50), nullable=False, default="active",
                     server_default="active", index=True)  # 对齐 0011 迁移（#2209）
     last_health_check = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     # #547：status 索引只保留 index=True 生成的 ix_data_sources_status ——
     # 之前 __table_args__ 里 idx_datasource_status 是同列第二份重复索引
@@ -62,8 +62,8 @@ class DataFabricDataset(Base):
     # ADR-0094 §9（Catalog V2）：条目可用性。available=最近一次同步可见；
     # unavailable=源仍可达但该数据集已从源消失（保留元数据供 stale 检索）。
     availability = Column(String(32), nullable=False, default="available", server_default="available")
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     __table_args__ = (
         Index("idx_catalog_source_name", "source_id", "name"),
@@ -96,7 +96,7 @@ class DataMaterializationRecord(Base):
     query_fingerprint = Column(String(64), nullable=True)
     result_mode = Column(String(32), nullable=True)
     record_count = Column(Integer, nullable=True)
-    materialized_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    materialized_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     __table_args__ = (
         Index("idx_mat_dataset_ref", "dataset_id", "ref_id"),
@@ -121,7 +121,7 @@ class DatasetStatisticsRecord(Base):
     confidence = Column(String(16), nullable=False, default="assumption")
     revision_strength = Column(String(16), nullable=False, default="weak")
     stats_json = Column(JSON, nullable=False, default=dict)
-    collected_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    collected_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     expires_at = Column(DateTime, nullable=True)
 
     __table_args__ = (
@@ -145,7 +145,7 @@ class SourceFactsRecordModel(Base):
     profile_id = Column(String(64), nullable=True)
     collector = Column(String(32), nullable=False, default="descriptor")
     facts_json = Column(JSON, nullable=False, default=dict)
-    collected_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    collected_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     expires_at = Column(DateTime, nullable=True)
 
     __table_args__ = (
@@ -168,7 +168,7 @@ class FederatedFeedbackModel(Base):
     engine = Column(String(8), nullable=False, default="v6")
     outcome = Column(String(16), nullable=False, default="ok")
     payload_json = Column(JSON, nullable=False, default=dict)
-    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     expires_at = Column(DateTime, nullable=True)
 
     __table_args__ = (

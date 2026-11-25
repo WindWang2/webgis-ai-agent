@@ -304,6 +304,13 @@ class TestSamplingBounds:
         samples = bounded_value_samples(wide)
         assert len(samples) <= 16  # SAMPLING_FIELD_CAP
 
+    def test_sampling_field_cap_strings_do_not_leak_into_inferred(self):
+        """review P3 回归：numeric_fields=None 且字符串字段超过 field_cap 时，
+        溢出字段名不得漏入 inferred 桶（否则采样面翻倍、突破 field_cap）。"""
+        feats = [{"properties": {f"s{i}": f"x{i}" for i in range(40)}}]
+        samples = bounded_value_samples(feats)
+        assert len(samples) <= 16  # SAMPLING_FIELD_CAP
+
     def test_large_synthetic_feature_count_descriptor(self):
         fields = {f"m{i}": "number" for i in range(20)}
         p = _profile(

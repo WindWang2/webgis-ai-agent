@@ -276,4 +276,86 @@ describe('ImportWorkbench', () => {
     });
     expect(payload.member_configs['f:src-1']).not.toHaveProperty('dirty');
   });
+
+  it('P3：勾选落库后用最新 plan_version 做乐观锁（保存计划不误报版本冲突）', async () => {
+    api.listImportBatches.mockResolvedValue(listEntry('ib-111', 'inspected'));
+    // 加载时服务器版本 0；勾选落库后服务器版本 1（active 仍是加载时的快照）
+    api.getImportBatch.mockResolvedValue({ ...BATCH, members: [MEMBER] });
+    api.saveImportPlan.mockResolvedValue({ batch_id: 'ib-111', plan_version: 1, plan_hashes: {}, status: 'configured' });
+    render(<ImportWorkbench onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: /ib-111/ }));
+    await waitFor(() => expect(screen.getByText('table.csv')).toBeTruthy());
+
+    await selectMemberAndSetMode();
+
+    fireEvent.click(screen.getByText('保存解释计划').closest('button') as HTMLButtonElement);
+    await waitFor(() => expect(api.saveImportPlan).toHaveBeenCalledTimes(2));
+    const payload = api.saveImportPlan.mock.calls.at(-1)?.[2];
+    expect(payload.expected_plan_version).toBe(1);
+  });
+
+  it('P3：提交前落计划带 expected_plan_version（不静默覆盖并发修改）', async () => {
+    api.listImportBatches.mockResolvedValue(listEntry('ib-111', 'inspected'));
+    api.getImportBatch.mockResolvedValue({ ...BATCH, plan_version: 3, members: [MEMBER] });
+    api.saveImportPlan.mockResolvedValue({ batch_id: 'ib-111', plan_version: 3, plan_hashes: {}, status: 'configured' });
+    api.commitImportBatch.mockResolvedValue({ status: 'committing', receipts: {} });
+    render(<ImportWorkbench onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: /ib-111/ }));
+    await waitFor(() => expect(screen.getByText('table.csv')).toBeTruthy());
+
+    await selectMemberAndSetMode();
+
+    const commitBtn = screen.getByTestId('import-commit-btn');
+    fireEvent.click(commitBtn);
+    await new Promise((r) => setTimeout(r, 300)); // ConfirmAction MIN_ARM_MS
+    fireEvent.click(commitBtn);
+    await waitFor(() => expect(api.commitImportBatch).toHaveBeenCalled());
+    const payload = api.saveImportPlan.mock.calls.at(-1)?.[2];
+    expect(payload.expected_plan_version).toBe(3);
+  });
+
+  it('P3：后一个勾选落库失败只回滚本次，不连坐此前已成功落库的勾选', async () => {
+    api.listImportBatches.mockResolvedValue(listEntry('ib-111', 'inspected'));
+    api.getImportBatch.mockResolvedValue({
+      ...BATCH,
+      members: [MEMBER, { ...MEMBER, member_key: 'f:src-2', display_name: 'b.csv' }],
+    });
+    api.saveImportPlan
+      .mockResolvedValueOnce({ batch_id: 'ib-111', plan_version: 1, plan_hashes: {}, status: 'configured' })
+      .mockRejectedValueOnce(new Error('save failed'));
+    render(<ImportWorkbench onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: /ib-111/ }));
+    await waitFor(() => expect(screen.getByText('table.csv')).toBeTruthy());
+
+    fireEvent.click(screen.getByTestId('member-select-f:src-1'));
+    await waitFor(() => expect(api.saveImportPlan).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByTestId('member-select-f:src-2'));
+    await waitFor(() => expect(api.saveImportPlan).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByTestId('import-workbench-error')).toBeTruthy());
+
+    expect((screen.getByTestId('member-select-f:src-1') as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByTestId('member-select-f:src-2') as HTMLInputElement).checked).toBe(false);
+  });
+
+  it('P3：轮询响应缺 receipts 字段时按无收据处理（不因 Object.entries(undefined) 崩溃）', async () => {
+    api.listImportBatches.mockResolvedValue(listEntry('ib-111', 'committing'));
+    api.getImportBatch.mockResolvedValue({ ...BATCH, status: 'committing', members: [MEMBER] });
+    const { rerender } = render(<ImportWorkbench onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: /ib-111/ }));
+    await waitFor(() => expect(screen.getByText('table.csv')).toBeTruthy());
+
+    (useBoundedPoll as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { status: 'committing' }, // 接口形状退化：receipts 字段缺失
+      loading: false,
+      error: null,
+      refresh: vi.fn(),
+      status: {},
+    });
+    rerender(<ImportWorkbench onClose={() => {}} />);
+    await waitFor(() => expect(screen.queryByTestId('import-receipts')).toBeNull());
+    expect(screen.getByTestId('import-workbench')).toBeTruthy();
+    (useBoundedPoll as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      data: null, loading: false, error: null, refresh: vi.fn(), status: {},
+    }));
+  });
 });

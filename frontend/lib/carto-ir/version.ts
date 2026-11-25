@@ -143,7 +143,7 @@ export function migrateMapSpec(input: unknown): MigratedMapSpec {
   const disclosures: MigrationDisclosure[] = [];
 
   let version: SupportedMapSpecVersion;
-  if (typeof rawVersion !== "string" || rawVersion === "") {
+  if (typeof rawVersion !== "string") {
     version = DEFAULT_MAPSPEC_VERSION;
     disclosures.push({
       path: "version",

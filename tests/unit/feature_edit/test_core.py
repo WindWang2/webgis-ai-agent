@@ -30,6 +30,7 @@ from app.services.feature_edit.journal import (
     new_journal,
 )
 from app.services.feature_edit.plan import build_plan, derive_changes, plan_safe_classification
+from app.services.feature_edit.topology import check_topology
 
 
 # ─── fixtures ──────────────────────────────────────────────────────────────
@@ -468,3 +469,33 @@ class TestPlan:
         assert not findings and plan["needs_materialization"] is True
         expected_wfid = wfid_for_index(FP, 1)
         assert plan["target_wfids"] == [expected_wfid]
+
+
+class TestTopologyNoDuplicatePoints:
+    def test_multipoint_participates_in_duplicate_rule(self):
+        """MultiPoint 不得被 geom_type.startswith("Point") 静默跳过。"""
+        fc = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [0.0, 0.0]},
+                    "properties": {WFID_PROP: "wf-static"},
+                },
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "MultiPoint", "coordinates": [[0.0, 0.0], [1.0, 1.0]]},
+                    "properties": {WFID_PROP: "wf-affected"},
+                },
+            ],
+        }
+        findings = check_topology(
+            fc, ["wf-affected"], {"rules": ["no_duplicate_points"]}
+        )
+        assert any(
+            f["code"] == "topology_violation"
+            and f["detail"]["rule"] == "no_duplicate_points"
+            and f["detail"]["wfid"] == "wf-affected"
+            and f["detail"]["duplicate_of"] == "wf-static"
+            for f in findings
+        )

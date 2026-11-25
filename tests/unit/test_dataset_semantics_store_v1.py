@@ -335,3 +335,18 @@ async def test_fingerprint_format_gate(store):
     assert put.reason_code == "DESCRIPTOR_FINGERPRINT_REQUIRED"
     rec = await store.get_by_fingerprint("s1", "ref:t", "../../etc/passwd")
     assert not rec.ok
+
+
+@pytest.mark.asyncio
+async def test_tampered_head_fingerprint_rejected_before_path_use(store):
+    """review P3 回归：head 的 descriptor_fingerprint 必须过格式闸 ——
+    "../..." 逃逸不得拼入载荷路径（读前拒收，不依赖读后 fail-closed）。"""
+    d = _descriptor()
+    await store.put("s1", "ref:t", d)
+    ddir = store._dataset_dir("s1", "ref:t")
+    head = json.loads((ddir / "head.json").read_text(encoding="utf-8"))
+    head["descriptor_fingerprint"] = "../escape"
+    (ddir / "head.json").write_text(json.dumps(head), encoding="utf-8")
+    rec = await store.get("s1", "ref:t")
+    assert rec.status == "corrupt"
+    assert rec.reason_code == "DESCRIPTOR_STORE_CORRUPT"

@@ -796,7 +796,7 @@ def _resolved_field_map(
         if k not in ("_wfid",)})
     reserved = {
         "_wfid", "_join_status", "_join_left_ref", "_join_right_ref",
-        "_join_left_wfid", "match_count", "geometry",
+        "_join_left_wfid", "match_count", "geometry", "__geometry__",
     }
     entries: List[Tuple[str, str, str]] = []
     if plan.field_map:

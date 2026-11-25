@@ -97,12 +97,14 @@ class PreflightReport:
     verdict: str = "unknown"    # ⊆ ("compatible", "gaps", "unknown")
     checks: List[Dict[str, Any]] = field(default_factory=list)
     gaps: List[PreflightGap] = field(default_factory=list)
+    truncated_datasets: int = 0   # 超出 MAX_PREFLIGHT_DATASETS 未预检的项数
 
     def to_bounded_dict(self) -> Dict[str, Any]:
         return {
             "verdict": self.verdict,
             "checks": self.checks[: len(PREFLIGHT_CHECKS)],
             "gaps": [g.to_bounded_dict() for g in self.gaps[:MAX_PREFLIGHT_GAPS]],
+            "truncated_datasets": int(self.truncated_datasets),
         }
 
 
@@ -252,6 +254,8 @@ def preflight_multi_dataset(
     字段 —— 缺分母不得伪装密度成果）。
     """
     report = PreflightReport()
+    # 超出上限的输入未参与任何判据 —— 必须披露（不得静默截断）。
+    report.truncated_datasets = max(0, len(datasets) - MAX_PREFLIGHT_DATASETS)
     # 形状归一：接受 {标签 → descriptor} 或 role_qualification_evidence 的
     # 产物形状 {角色 → {descriptor, expected_descriptor_fingerprint}}；
     # 条目 descriptor 缺席（None 形状）按未绑定跳过（review N2）。
@@ -489,6 +493,9 @@ def preflight_multi_dataset(
         report.verdict = "unknown"
     else:
         report.verdict = "compatible"
+    if report.verdict == "compatible" and report.truncated_datasets:
+        # 未预检的数据集可能藏着缺口：证据不完整时不得宣称 compatible。
+        report.verdict = "unknown"
     return report
 
 

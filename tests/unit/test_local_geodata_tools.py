@@ -7,7 +7,7 @@ SimpleWriter 产 3 节点 1 线），不依赖 1.5GB 真实数据；settings 指
 import geopandas as gpd
 import pandas as pd
 import pytest
-from shapely.geometry import box
+from shapely.geometry import Point, box
 
 from app.core.config import settings
 
@@ -319,6 +319,68 @@ async def test_osm_ingest_reimports_truncated_theme_gpkg(osm_env, tmp_path):
     res = query_osm_features("pois", [104.05, 30.60, 104.12, 30.70])
     assert res["count"] == 2
     assert list(truncated.parent.glob(".pois.tmp.gpkg")) == []
+
+
+def test_query_osm_features_invalid_limit_returns_error_dict():
+    """api-contract: 非法 limit 应与其他非法输入一样返回 error dict，而非抛异常。"""
+    from app.services.local_osm import query_osm_features
+
+    for bad in (None, "not-a-number"):
+        res = query_osm_features("pois", [104, 30, 105, 31], limit=bad)
+        assert "error" in res
+        assert "limit" in res["error"]
+
+
+def test_slim_theme_frame_preserves_long_other_tags():
+    """data-integrity: 入库不得截断 other_tags，否则尾部标签永久丢失、tag= 查询漏命中。"""
+    from app.services.local_osm import _MAX_TAGS_JSON_CHARS, _slim_theme_frame
+
+    long_value = "x" * (_MAX_TAGS_JSON_CHARS + 64)
+    raw = gpd.GeoDataFrame(
+        {
+            "osm_id": [1],
+            "name": ["长标签学校"],
+            "amenity": ["school"],
+            "other_tags": [
+                f'"amenity"=>"school", "note"=>"{long_value}", "tail_key"=>"tail_value"'
+            ],
+        },
+        geometry=[Point(104.08, 30.65)],
+        crs="EPSG:4326",
+    )
+    tags = str(_slim_theme_frame(raw, ("amenity",))["tags"].iloc[0])
+    assert len(tags) > _MAX_TAGS_JSON_CHARS
+    assert "tail_key" in tags
+
+
+def test_osm_force_reimport_failure_keeps_existing_theme_gpkg(tmp_path, monkeypatch):
+    """data-integrity: --force 重导失败不得先删掉原有完好的主题 GPKG。"""
+    import pyogrio
+
+    from app.services import local_osm
+
+    monkeypatch.setattr(local_osm, "osm_gpkg_dir", lambda: tmp_path / "osm_gpkg")
+    monkeypatch.setattr(local_osm, "_available_memory_gb", lambda: 100.0)
+
+    path = local_osm.theme_gpkg_path("pois")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    gpd.GeoDataFrame(
+        {"osm_id": ["old"], "name": ["旧数据"], "category": ["school"],
+         "tags": ['"amenity": "school"']},
+        geometry=[Point(104.08, 30.65)],
+        crs="EPSG:4326",
+    ).to_file(path, layer="pois", driver="GPKG")
+    original = path.read_bytes()
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("simulated OOM while rereading PBF")
+
+    monkeypatch.setattr(pyogrio, "read_dataframe", _boom)
+    with pytest.raises(RuntimeError):
+        local_osm.ingest_pbf(tmp_path / "china-fake.osm.pbf", ["pois"], force=True)
+
+    assert path.exists(), "重导失败后原有主题 GPKG 必须保留"
+    assert path.read_bytes() == original
 
 
 @pytest.mark.asyncio

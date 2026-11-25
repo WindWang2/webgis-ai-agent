@@ -258,7 +258,15 @@ class ThematicAuthoringPlan(BaseModel):
                 f"类级标签最多 {MAX_CLASSES} 项，收到 {len(v)}",
                 field="labels",
             )
-        return [str(s)[:64] for s in v]
+        for i, s in enumerate(v):
+            if len(s) > 64:
+                raise ThematicAuthoringError(
+                    "LABEL_TOO_LONG",
+                    f"类级标签最多 64 字符，labels[{i}] 收到 {len(s)} 字符",
+                    field="labels", index=i,
+                    correction_hint="缩短标签；超长说明请放入 title 或图例注记。",
+                )
+        return [str(s) for s in v]
 
     @field_validator("categories")
     @classmethod

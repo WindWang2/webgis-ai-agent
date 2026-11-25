@@ -82,6 +82,20 @@ describe("checkBivariateLayer：ok 分支", () => {
     expect(result?.status).toBe("ok");
     if (result?.status === "ok") expect(result.paintClassFieldRefs).toBe(2);
   });
+
+  it("深层嵌套合法 paint 表达式（>12 层）仍计数 get 引用 → ok（不误判 paint_not_match）", () => {
+    let expr: unknown = ["get", "__biv_class"];
+    for (let i = 0; i < 16; i += 1) {
+      expr = ["case", ["==", i, i], "#aaa", expr];
+    }
+    const layer = layerWith({
+      paint: paintOf({ "fill-color": expr }),
+      bivariate: { x_field: "a", y_field: "b" },
+    });
+    const result = checkBivariateLayer(layer);
+    expect(result?.status).toBe("ok");
+    if (result?.status === "ok") expect(result.paintClassFieldRefs).toBe(1);
+  });
 });
 
 describe("checkBivariateLayer：degraded 分支", () => {

@@ -129,6 +129,43 @@ def test_rank_cold_start_preserves_order(db) -> None:
     assert rank_actions_by_history(db, candidates) == candidates  # 无历史 = 原序
 
 
+def test_selfheal_scope_none_aggregates_across_scopes(db) -> None:
+    from app.services.cartography.selfheal_policy import (
+        action_success_table,
+        attribution_rows,
+        record_repair_outcome,
+    )
+
+    record_repair_outcome(
+        db, action_id="scoped", context="c", expected_effect=1.0,
+        actual_delta=1.0, success=True, session_id="s1", project_id="p1")
+    record_repair_outcome(
+        db, action_id="unscoped", context="c", expected_effect=1.0,
+        actual_delta=0.0, success=False)
+    # None = 不限定该维度 → 跨作用域聚合（而非只匹配 IS NULL 行）
+    assert {r["actionId"] for r in attribution_rows(db)} == {"scoped", "unscoped"}
+    assert {e["actionId"] for e in action_success_table(db)} == {"scoped", "unscoped"}
+    scoped = action_success_table(db, session_id="s1", project_id="p1")
+    assert [e["actionId"] for e in scoped] == ["scoped"]
+
+
+def test_success_table_weight_covers_same_window_beyond_query_limit(db) -> None:
+    from app.services.cartography.selfheal_policy import (
+        action_success_table,
+        record_repair_outcome,
+    )
+
+    for _ in range(250):
+        record_repair_outcome(
+            db, action_id="bulk", context="c", expected_effect=1.0,
+            actual_delta=1.0, success=True)
+    entry = action_success_table(db)[0]
+    # 计数/均值用整个窗口 → 有效权重也必须覆盖整个窗口（口径一致）
+    assert entry["samples"] == 250
+    assert entry["successRate"] == 1.0
+    assert entry["effectiveWeight"] == pytest.approx(250.0, abs=0.01)
+
+
 def test_record_repair_outcome_fail_safe() -> None:
     from app.services.cartography.selfheal_policy import record_repair_outcome
 

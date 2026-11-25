@@ -197,7 +197,13 @@ def query_osm_features(
     """
     import pyogrio
 
-    limit = max(1, min(int(limit), 2000))
+    try:
+        limit = max(1, min(int(limit), 2000))
+    except (TypeError, ValueError):
+        return {
+            "error": f"limit 必须是整数（收到 {limit!r}）",
+            "correction_hint": "limit 取值 1..2000，默认 200。",
+        }
     if theme not in THEME_SPECS:
         return {
             "error": f"未知主题 '{theme}'（可选: {', '.join(THEME_SPECS)}）",
@@ -411,8 +417,6 @@ def ingest_pbf(
     ]
     if existing and not force:
         return {"skipped": existing, "note": "已存在的主题默认跳过；--force 覆盖重导。"}
-    for t in existing:
-        outputs[t].unlink()
 
     counts: Dict[str, int] = {}
     import gc
@@ -478,7 +482,6 @@ def _slim_theme_frame(raw: Any, cat_keys: Tuple[str, ...]) -> Any:
             .astype("string")
             .fillna("")
             .str.replace('=>"', '": "', regex=False)
-            .str.slice(0, _MAX_TAGS_JSON_CHARS)
         )
     out = _gpd.GeoDataFrame(
         {

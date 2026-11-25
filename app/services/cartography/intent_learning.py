@@ -335,10 +335,17 @@ def effective_signal_weight(
     signal_types: Optional[Sequence[str]] = None,
     session_id: Optional[str] = None, project_id: Optional[str] = None,
 ) -> Dict[str, float]:
-    """目标的衰减后信号强度：正/负信号分开聚合（读取侧衰减）。"""
+    """目标的衰减后信号强度：正/负信号分开聚合（读取侧衰减）。
+
+    作用域参数为 None 时**不限定该维度**（跨作用域聚合）；只有显式给出
+    才按该列过滤。
+    """
     now = now or datetime.now(timezone.utc)
-    stmt = select(CartoFeedbackSignal).where(CartoFeedbackSignal.target == target,
-        CartoFeedbackSignal.session_id == session_id, CartoFeedbackSignal.project_id == project_id)
+    stmt = select(CartoFeedbackSignal).where(CartoFeedbackSignal.target == target)
+    if session_id is not None:
+        stmt = stmt.where(CartoFeedbackSignal.session_id == session_id)
+    if project_id is not None:
+        stmt = stmt.where(CartoFeedbackSignal.project_id == project_id)
     if signal_types:
         stmt = stmt.where(CartoFeedbackSignal.signal_type.in_(list(signal_types)))
     positive = 0.0

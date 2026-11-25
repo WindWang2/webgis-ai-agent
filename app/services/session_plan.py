@@ -1201,7 +1201,10 @@ async def _apply_tool_result_unlocked(
         # 元数据的 sha256[:16]），不存任何材料；续跑/replay 时比对当前
         # presence，失配即 stale（session_plan_credential_drift 披露归因）。
         gis["credential_presence_fingerprint"] = _credential_presence_fingerprint()
-        query = str(gis.get("query") or (raw.get("intent") or {}).get("query") or "")
+        _intent_payload = raw.get("intent")
+        if not isinstance(_intent_payload, dict):
+            _intent_payload = {}
+        query = str(gis.get("query") or _intent_payload.get("query") or "")
         new_key = goal_key(gis, query)
         old_key = goal_key(plan.gis_chapter, plan.user_goal)
         if plan.gis_chapter and old_key and new_key and old_key != new_key:
@@ -1281,7 +1284,9 @@ async def _apply_tool_result_unlocked(
 
     if tool_name == "webgis_map_product" and plan.gis_chapter is not None:
         merge_map_product_result(plan.gis_chapter, raw)
-        evidence = raw.get("map_product_evidence") or {}
+        evidence = raw.get("map_product_evidence")
+        if not isinstance(evidence, dict):
+            evidence = {}
         resolution = evidence.get("capability_resolution") or []
         done_caps = [
             str(item.get("capability"))
@@ -1330,6 +1335,8 @@ async def _apply_tool_result_unlocked(
     from app.services.session_data_protocol import is_unavailable_ref
     if is_unavailable_ref(geojson_ref):
         changed = _mark_progress(plan, hits, status="failed")
+        if lock is not None and lock.lost:
+            return [], None
         if not await save_session_plan(plan, store=backend):
             logger.error(
                 "[SessionPlan] failed-ref persist rejected session=%s",

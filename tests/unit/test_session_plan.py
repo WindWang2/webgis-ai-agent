@@ -507,3 +507,81 @@ async def test_save_rejection_emits_no_sse(sid, case):
     plan = await load_session_plan(sid)
     assert plan.gis_chapter["query"] == "成都市小学分布情况"
     assert all(row.status == "pending" for row in plan.progress)
+
+
+@pytest.mark.asyncio
+async def test_intent_tolerates_non_dict_intent_payload(sid):
+    """损坏/旧版的非字典 intent 不得在锁内抛 AttributeError（query 回退可跳过）。"""
+    gis = _gis("成都市小学分布情况", "成都市")
+    gis.pop("query")
+    events = await apply_tool_result(
+        sid, "webgis_map_intent",
+        {"plan": gis, "intent": "corrupt-legacy-intent"},
+        success=True,
+    )
+    assert SESSION_PLAN_UPDATED in [e.event for e in events]
+    plan = await load_session_plan(sid)
+    assert plan is not None
+    assert plan.gis_chapter["recipe_id"] == "poi_distribution_overview"
+
+
+@pytest.mark.asyncio
+async def test_map_product_tolerates_non_dict_evidence_payload(sid):
+    """map_product_evidence 为真值非字典时按空证据处理，不抛 AttributeError。"""
+    await apply_tool_result(
+        sid, "webgis_map_intent",
+        {"plan": _gis("成都市小学分布情况", "成都市")},
+        success=True,
+    )
+    events = await apply_tool_result(
+        sid, "webgis_map_product",
+        {"status": "finalized", "map_product_evidence": "corrupt-evidence"},
+        success=True, geojson_ref="ref:geojson-poi",
+    )
+    assert SESSION_PLAN_UPDATED in [e.event for e in events]
+    plan = await load_session_plan(sid)
+    assert plan.gis_chapter["status"] == "finalized"
+
+
+class _LostAfterFirstReadLock:
+    """Ownership healthy at entry, lost during the apply (single-read flip)."""
+
+    def __init__(self):
+        self.reads = 0
+
+    @property
+    def lost(self):
+        self.reads += 1
+        return self.reads > 1
+
+
+@pytest.mark.asyncio
+async def test_unavailable_ref_branch_skips_save_after_lock_lost(sid, monkeypatch):
+    """锁在 apply 期间丢失时，failed-ref 分支不得再写共享信封（与其他分支一致）。"""
+    from app.services import session_plan as session_plan_mod
+    from app.services.session_plan import apply_tool_result_with_lock
+
+    await apply_tool_result(
+        sid, "webgis_map_intent",
+        {"plan": _gis("成都市小学分布情况", "成都市")},
+        success=True,
+    )
+    saves = []
+    real_save = session_plan_mod.save_session_plan
+
+    async def _spy(plan, **kwargs):
+        saves.append(plan.envelope_id)
+        return await real_save(plan, **kwargs)
+
+    monkeypatch.setattr(session_plan_mod, "save_session_plan", _spy)
+
+    events, facts = await apply_tool_result_with_lock(
+        sid, "query_local_poi", {"success": True},
+        success=True, geojson_ref="ref:redis-unavailable-test",
+        lock=_LostAfterFirstReadLock(),
+    )
+    assert events == [] and facts is None
+    assert saves == [], "lost lock must abort the envelope write"
+    plan = await load_session_plan(sid)
+    row = next(r for r in plan.progress if r.capability == "poi_query")
+    assert row.status == "pending"
