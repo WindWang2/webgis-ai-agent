@@ -263,7 +263,7 @@ def create_version(
     if can_write is not None and not can_write(series):
         raise MapSeriesForbiddenError(f"map series '{series_id}' is not writable by this caller")
 
-    report = _validated_payload_or_raise(payload)
+    _validated_payload_or_raise(payload)
     spec_id, spec_version = resolve_spec_pin(db, payload)
     # 缺省 pin 在解析时点回写进 payload —— 之后 latest 前移不影响本 pin。
     payload = dict(payload)

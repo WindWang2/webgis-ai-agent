@@ -17,7 +17,6 @@ from app.services.gis_world_state.mutation import apply_gis_mutation
 from app.services.mapspec.intents import (
     SetLayoutIntent,
     UpsertLayerIntent,
-    UpsertSourceIntent,
 )
 from app.services.mapspec.store import BASE_STORAGE_DIR
 from app.services.session_data import session_data_manager

@@ -85,7 +85,7 @@ def layers_of(mapspec: Dict[str, Any]) -> List[Dict[str, Any]]:
     layers = mapspec.get("layers")
     if not isinstance(layers, list):
         return []
-    return [l for l in layers if isinstance(l, dict)]
+    return [layer for layer in layers if isinstance(layer, dict)]
 
 
 def _paint_has_stops(paint: Dict[str, Any]) -> bool:

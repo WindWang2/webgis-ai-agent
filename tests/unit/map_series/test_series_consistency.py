@@ -10,7 +10,6 @@ from typing import Any, Dict, List
 import pytest
 
 from app.models.design_spec import CartographyDesignSpec, CartographyDesignSpecVersion
-from app.models.map_series import CartographyMapSeries, CartographyMapSeriesVersion
 from app.services.design_specs.versioning import create_spec as create_design_spec
 from app.services.map_series.consistency import (
     ASSET_VERSION_DRIFT,

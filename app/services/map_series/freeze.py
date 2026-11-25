@@ -74,7 +74,7 @@ async def build_freeze_plan(
     else:
         plan_payload = series.payload or {}
 
-    from app.services.design_specs.versioning import get_spec, get_version as spec_version_row
+    from app.services.design_specs.versioning import get_spec
 
     spec_pin: Dict[str, Any]
     try:
