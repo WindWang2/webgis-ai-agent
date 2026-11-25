@@ -194,6 +194,28 @@ class TestTransaction:
         assert payload == snapshot, "失败后源 artifact 逐字节不变"
 
     @pytest.mark.asyncio
+    async def test_partial_execute_repair_marks_session_failed(self, monkeypatch):
+        """execute_repair 的 partial 状态不得被调用方伪造成 success。"""
+        payload = _dirty_geojson()
+        plan, ops = _plan_for(payload)
+
+        async def _partial(*a, **k):
+            return {
+                "status": "partial", "feature_count": 2,
+                "feature_count_before": 3,
+                "content_digest_before": "a", "content_digest_after": "b",
+                "repaired_ref": None, "ref_registration_error": None,
+                "repaired_geojson": copy.deepcopy(payload),
+            }
+
+        monkeypatch.setattr(
+            "app.services.data_quality.repair_execution.execute_repair", _partial)
+        result = await run_repair_transaction(
+            geojson=payload, plan=plan, operations=ops, mode="apply")
+        assert result["session"]["state"] == STATE_FAILED
+        assert result["failure"]["reason"] == "partial"
+
+    @pytest.mark.asyncio
     async def test_idempotent_rerun_returns_existing_session(self):
         payload = _dirty_geojson()
         plan, ops = _plan_for(payload)

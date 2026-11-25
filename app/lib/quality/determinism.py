@@ -81,14 +81,23 @@ def render_determinism_md() -> str:
         "seeded-stochastic": "种子化随机（可复现；种子来源已声明）",
         "stochastic-unseeded": "无种子随机（声明型 nondeterministic）",
         "INCONSISTENT": "自相矛盾声明（deterministic=True 且 unseeded）——禁止",
+        "unknown-policy": "未知 seed policy（不在认证词表内）——需登记",
     }
-    for cls in ("deterministic", "seeded-stochastic", "stochastic-unseeded", "INCONSISTENT"):
-        lines.append(f"| {cls} | {summary.get(cls, 0)} | {semantics[cls]} |")
+    known_classes = ("deterministic", "seeded-stochastic", "stochastic-unseeded", "INCONSISTENT")
+    extra_classes = tuple(sorted(set(summary) - set(known_classes) - {"total"}))
+    for cls in (*known_classes, *extra_classes):
+        lines.append(
+            f"| {cls} | {summary.get(cls, 0)} | "
+            f"{semantics.get(cls, '未分类（未知策略）')} |"
+        )
     lines.append(f"| total | {summary['total']} | |")
     lines.append("")
     lines.append("## INCONSISTENT / stochastic-unseeded 明细")
     lines.append("")
-    flagged = [r for r in rows if r["class"] in ("INCONSISTENT", "stochastic-unseeded")]
+    flagged = [
+        r for r in rows
+        if r["class"] in ("INCONSISTENT", "stochastic-unseeded", "unknown-policy")
+    ]
     if not flagged:
         lines.append("（无）")
     else:

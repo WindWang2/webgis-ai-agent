@@ -24,7 +24,8 @@ SEMANTIC_ROLES = (
 
 #: 敏感键模式：命中即跳过泛化（去毒前置，ADR-0191 D4）。
 SENSITIVE_KEY_PATTERN = re.compile(
-    r"(token|secret|password|passwd|api_?key|credential|authorization)",
+    r"(token|secret|password|passwd|api_?key|credential|authorization|"
+    r"key|auth|cookie|signature)",
     re.IGNORECASE,
 )
 
@@ -36,7 +37,7 @@ _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 #: 安全文本模式（约束层；注入载荷在该层即被拒绝）。
 SAFE_TEXT_PATTERN = r"^[\w\-\.\u4e00-\u9fa5 ]+$"
-_PLACE_PATTERN = r"^[\w\u4e00-\u9fa5\-]+$"
+_PLACE_PATTERN = r"^[\w\u4e00-\u9fa5\-\. ]+$"
 _DATE_PATTERN = r"^\d{4}-\d{2}-\d{2}$"
 
 _THRESHOLD_KEYS = ("threshold", "limit", "alpha", "sig", "cutoff", "p_value")
@@ -46,6 +47,7 @@ _FIELD_KEYS = ("layer", "field", "column", "attribute")
 _COORDINATE_BOUNDS: Dict[str, Tuple[float, float]] = {
     "lon": (-180.0, 180.0),
     "lng": (-180.0, 180.0),
+    "longitude": (-180.0, 180.0),
     "latitude": (-90.0, 90.0),
     "lat": (-90.0, 90.0),
 }

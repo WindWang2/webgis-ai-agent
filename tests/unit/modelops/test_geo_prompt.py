@@ -144,6 +144,43 @@ def test_payload_roundtrip_and_tamper_detection():
         GeoPromptArtifact.from_payload(tampered)
 
 
+def test_from_payload_wraps_non_numeric_scalars_as_typed_error():
+    with pytest.raises(PromptArtifactError, match="scalar fields"):
+        GeoPromptArtifact.from_payload(
+            {"points": [[1.0, 2.0]], "schema_version": "v1"}
+        )
+    with pytest.raises(PromptArtifactError, match="scalar fields"):
+        GeoPromptArtifact.from_payload(
+            {"points": [[1.0, 2.0]], "labels": ["high"]}
+        )
+
+
+def test_prompt_spec_from_payload_wraps_malformed_points_and_boxes():
+    from app.lib.modelops.errors import DescriptorError
+
+    with pytest.raises(DescriptorError, match="malformed prompt payload"):
+        PromptSpec.from_payload({"points": [["x", 2.0]]})
+    with pytest.raises(DescriptorError, match="point prompts must be"):
+        PromptSpec.from_payload({"points": [[1.0, 2.0, 3.0]]})
+    with pytest.raises(DescriptorError, match="box prompts must be"):
+        PromptSpec.from_payload({"boxes": [[1.0, 2.0]]})
+
+
+def test_compile_prompt_invalid_crs_is_typed():
+    bad_artifact = GeoPromptArtifact(crs="not-a-crs", points=((1.0, 1.0),))
+    with pytest.raises(PromptArtifactError, match="could not be parsed"):
+        compile_prompt(
+            bad_artifact, transform=Affine.identity(), raster_crs="EPSG:4326",
+            raster_height=8, raster_width=8,
+        )
+    good_artifact = GeoPromptArtifact(crs="EPSG:4326", points=((1.0, 1.0),))
+    with pytest.raises(PlanningError, match="could not be parsed"):
+        compile_prompt(
+            good_artifact, transform=Affine.identity(), raster_crs="bogus-crs",
+            raster_height=8, raster_width=8,
+        )
+
+
 # ── 编译：像素直通 ────────────────────────────────────────────────────
 
 

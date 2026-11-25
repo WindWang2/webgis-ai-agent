@@ -114,8 +114,9 @@ def generate_comparison_report_markdown(comparison: ScenarioComparisonResult) ->
         # guard above.
         vals = []
         for sid in scen_ids:
-            v = scen_dict.get(sid, 0.0)
-            vals.append(f"{v:.2f}" if isinstance(v, (int, float)) else "—")
+            v = scen_dict.get(sid)
+            # A missing scenario value is missing data, not a real zero.
+            vals.append(f"{v:.2f}" if isinstance(v, (int, float)) and not isinstance(v, bool) else "—")
         lines.append(f"| {m_key} | " + " | ".join(vals) + " |")
     lines.append("")
 

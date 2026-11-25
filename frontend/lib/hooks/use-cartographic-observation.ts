@@ -382,9 +382,10 @@ export function useCartographicObservation({
           const duplicate = Boolean(repairId && appliedRepairIdsRef.current.has(repairId))
           const budgetLeft = totalRepairsRef.current < MAX_TOTAL_SESSION_REPAIRS
           if (repairId && !duplicate && budgetLeft) {
-            totalRepairsRef.current += 1
             dispatchAction(repair)
-            // Record AFTER dispatch so a dispatch throw leaves the repair re-issuable.
+            // Record AFTER dispatch so a dispatch throw leaves the repair re-issuable
+            // and does not leak a unit of the session repair budget.
+            totalRepairsRef.current += 1
             const seen = appliedRepairIdsRef.current
             seen.add(repairId)
             if (seen.size > MAX_APPLIED_REPAIR_IDS) {

@@ -208,6 +208,12 @@ def test_export_dpi_cost_in_aggregation():
                 publication.dim(Dimension.RENDER_WORK_UNITS).expected))
 
 
+def test_export_dpi_none_falls_back_to_dpi_alias():
+    """export_dpi 键存在但为 None 时仍应回退 dpi 别名。"""
+    inp = render_input_from_spec_summary({"export_dpi": None, "dpi": 300})
+    assert inp.export_dpi == 300
+
+
 def test_budget_violations_reports_overages():
     agg_est = _est(wall=(1.0, 120.0, 200.0))
     viols = budget_violations(agg_est, {Dimension.WALL_TIME_S: 60.0,

@@ -54,13 +54,13 @@ export function fakeShapefileZip(): Buffer {
   central.writeUInt32LE(0, 20);
   central.writeUInt32LE(0, 24);
   central.writeUInt16LE(nameBytes.length, 28);
-  central.writeUInt32LE(30 + nameBytes.length, 42); // local header offset
+  central.writeUInt32LE(0, 42); // local header offset
   const end = Buffer.alloc(22);
   end.writeUInt32LE(0x06054b50, 0);
   end.writeUInt16LE(1, 8);
   end.writeUInt16LE(1, 10);
   end.writeUInt32LE(46 + nameBytes.length, 12);
-  end.writeUInt16LE(30, 16);
+  end.writeUInt16LE(30 + nameBytes.length, 16);
   return Buffer.concat([local, nameBytes, central, nameBytes, end]);
 }
 

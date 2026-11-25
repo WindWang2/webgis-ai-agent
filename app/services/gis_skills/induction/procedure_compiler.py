@@ -220,7 +220,10 @@ def compile_skill(
         step.seq: step.capability_id for step in analysis.steps}
     goal_text = (analysis.goal_text or analysis.selected_workflow
                  or "induced-procedure").strip()
-    skill_id = f"{INDUCED_SKILL_PREFIX}.{domain}.{_slug(goal_text)}"
+    # id 必须同时绑定拓扑：同目标不同拓扑是不同技能（否则 save 静默覆盖）。
+    topology = "|".join(f"{step.capability_id}:{step.kind}"
+                        for step in analysis.steps)
+    skill_id = f"{INDUCED_SKILL_PREFIX}.{domain}.{_slug(goal_text + '|' + topology)}"
     field_params = [p for p in generalization.parameters
                     if p.semantic_role == "field"]
     procedure = _build_procedure(analysis, capability_by_seq, field_params)
@@ -228,8 +231,12 @@ def compile_skill(
     completion = sorted({ek for s in procedure.steps
                          if s.kind == "deliver"
                          for ev in s.evidence_requirements
-                         for ek in [ev.evidence_kind]}) \
-        or [procedure.steps[-1].evidence_requirements[0].evidence_kind]
+                         for ek in [ev.evidence_kind]})
+    if not completion and procedure.steps:
+        # 末步无证据（畸形轨迹）不得 IndexError 逃逸；空完成证据由下游
+        # 沙盒自重放 fail-closed（rejected），而不是击穿批处理。
+        completion = [ev.evidence_kind
+                      for ev in procedure.steps[-1].evidence_requirements[:1]]
 
     obligations = [QualityObligation(
         obligation_id="obl_product_completeness",
@@ -239,7 +246,7 @@ def compile_skill(
         if any(ev.evidence_kind == "product_completeness"
                for s in procedure.steps
                for ev in s.evidence_requirements)
-        else completion[0],
+        else (completion[0] if completion else ""),
     )]
     if analysis.mutations_count > 0:
         obligations.append(QualityObligation(

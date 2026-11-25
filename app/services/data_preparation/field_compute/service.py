@@ -662,10 +662,11 @@ async def _execute_locked(plan: ComputePlan, session_id: str,
                     acc.samples.extend(st.samples)
                 precision = precision or batch.precision_policy
                 geometry_evidence = batch.geometry_evidence
-                # G23：批级进度（已计算行 / 总行；总量已知才报总数）
+                # G23：批级进度（已处理行 / 总行；computed_rows 只统计有非 null
+                # 结果的行走不到 100%，进度必须报已处理行数）。
                 if progress is not None:
                     try:
-                        progress(computed_rows, len(rows_wg))
+                        progress(start + len(chunk), len(rows_wg))
                     except Exception:  # noqa: BLE001 — 进度绝不阻断计算
                         progress = None
         except OperationCancelled as exc:

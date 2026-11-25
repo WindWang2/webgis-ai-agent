@@ -417,6 +417,37 @@ describe('useWorkspaceSession selectSession (F-09)', () => {
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:thumb-1');
   });
 
+  it('restores attachment thumbnails with bounded concurrency', async () => {
+    let active = 0;
+    let maxActive = 0;
+    fetchVisualEvidenceThumb.mockImplementation(() => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      return new Promise(() => {});
+    });
+    const messages = Array.from({ length: 6 }, (_, i) => ({
+      id: `m${i}`,
+      role: 'user',
+      content: 'hi',
+      timestamp: '2026-01-01T00:00:00Z',
+      attachments: [{ evidence_id: `e${i}`, source_type: 'reference_upload' }],
+    }));
+    fetchMock
+      .mockResolvedValueOnce(jsonOk({ sessions: [] }))
+      .mockResolvedValueOnce(jsonOk({ title: 'S', messages }))
+      .mockResolvedValueOnce(jsonOk(undefined, 204)) // clarifications/pending
+      .mockResolvedValueOnce(jsonOk({ map_state: null }));
+
+    const { result } = renderHook(() => useWorkspaceSession(vi.fn()));
+    await act(async () => {
+      await result.current.selectSession('sid-thumbs', vi.fn());
+    });
+
+    // 并发上限 4：首批只发出 4 个 thumb 请求，不得一次打满 6 个。
+    expect(fetchVisualEvidenceThumb).toHaveBeenCalledTimes(4);
+    expect(maxActive).toBeLessThanOrEqual(4);
+  });
+
   it('F-1: startNewSession aborts an in-flight selectSession restore', async () => {
     // A slow restore for session A resolving AFTER the user started a new
     // session must not mutate the fresh session (no onRestoreMessages).

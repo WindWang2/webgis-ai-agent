@@ -328,16 +328,6 @@ class CompositeMapSpecBuilder:
             thematic_slot = self._thematic
             if thematic_slot.variant == "choropleth":
                 # Emit legend_spec (frontend thematic-paint consumes this; old "thematic" key was dead).
-                # Helper for the two graduated paths (real method vs unknown-method fallback)
-                # to keep breaks+colors synthesis in one place.
-                def _graduated_breaks_colors(palette: str, k_raw: Any) -> tuple[list[float], list[str]]:
-                    k_ = max(2, min(10, int(k_raw or 5)))
-                    breaks_ = [round(i / k_, 6) for i in range(k_ + 1)]
-                    from app.lib.cartography.palettes import get_color_from_palette as _gcp
-
-                    colors_ = [_gcp(palette, (breaks_[i] + breaks_[i + 1]) / 2.0) for i in range(k_)]
-                    return breaks_, colors_
-
                 # #717: with data, classify through the SINGLE engine
                 # (build_graduated_spec → CartographyService.classify) exactly
                 # like apply_template's thematic path — the synthetic [0,1]

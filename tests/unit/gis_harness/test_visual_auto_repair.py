@@ -338,3 +338,42 @@ async def test_duplicate_apply_still_records_decision(sid, monkeypatch):
     assert int(budget.get("session_total") or 0) == 0   # duplicate 不计预算
     decisions = await load_decisions(sid)
     assert decisions and decisions[-1]["decision"] == DECISION_AUTO_APPLIED
+
+
+def test_shared_engine_lazy_singleton_is_thread_safe(monkeypatch):
+    """并发首建必须只产生一个实例 —— 否则 visual-heal 收敛账本被拆分，
+    同一缺陷可被自动通道无限重复尝试（C13）。"""
+    import threading
+    import time
+
+    from app.services.mapspec import shared_engine
+
+    created = []
+    real_cls = shared_engine.MapSpecLifecycleEngine
+
+    class SlowEngine(real_cls):
+        def __init__(self):
+            created.append(threading.get_ident())
+            time.sleep(0.05)
+            super().__init__()
+
+    monkeypatch.setattr(shared_engine, "MapSpecLifecycleEngine", SlowEngine)
+    shared_engine.reset_shared_lifecycle_engine()
+    barrier = threading.Barrier(4)
+    results = []
+
+    def worker():
+        barrier.wait()
+        results.append(shared_engine.get_shared_lifecycle_engine())
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    try:
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert len(results) == 4
+        assert len(created) == 1, "并发首建创建了多个实例"
+        assert all(item is results[0] for item in results)
+    finally:
+        shared_engine.reset_shared_lifecycle_engine()

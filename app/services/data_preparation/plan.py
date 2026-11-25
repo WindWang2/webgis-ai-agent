@@ -211,7 +211,9 @@ class PreparationPlan(BaseModel):
     @classmethod
     def _steps(cls, v: Any) -> Tuple[PlanStep, ...]:
         if isinstance(v, tuple) and all(isinstance(s, PlanStep) for s in v):
-            return v[:MAX_PLAN_STEPS]
+            if len(v) > MAX_PLAN_STEPS:
+                raise ValueError(f"plan exceeds {MAX_PLAN_STEPS} steps")
+            return v
         steps = tuple(parse_step(s) for s in (v or []))
         if len(steps) > MAX_PLAN_STEPS:
             raise ValueError(f"plan exceeds {MAX_PLAN_STEPS} steps")

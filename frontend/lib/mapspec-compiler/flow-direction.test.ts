@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { compileMapSpecToSvg } from './mapspec-to-svg';
 
-function spec(coordinates: unknown, angleDpi = 96): any {
+function spec(coordinates: unknown): any {
   const edgeSource = 'flow-odf_demo-edges-source';
   return {
     version: '1.10',
@@ -51,7 +51,7 @@ describe('OD flow direction SVG parity fixtures', () => {
       [[-180.0, 30.05], [-179.9, 30.1]],
     ];
     for (const targetDpi of [96, 300]) {
-      const svg = compileMapSpecToSvg(spec(coordinates, targetDpi), { targetDpi });
+      const svg = compileMapSpecToSvg(spec(coordinates), { targetDpi });
       expect(svg).toContain('▶');
       expect(svg).toContain('rotate(');
       expect(svg).not.toContain('NaN');

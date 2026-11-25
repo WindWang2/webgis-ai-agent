@@ -16,6 +16,7 @@ import {
 
 vi.mock('@/lib/api/transport', () => ({
   apiFetch: vi.fn(),
+  ApiTimeoutError: class ApiTimeoutError extends Error {},
 }));
 
 vi.mock('@/lib/mapspec-runtime', () => ({
@@ -147,6 +148,37 @@ describe('useCartographicObservation repair budget (FE-P2-3)', () => {
     const dispatchAction = await issueObservations(12);
     // 预算 8：第 9 次起不再派发（12 次观测仅 8 次 dispatch）
     expect(dispatchAction).toHaveBeenCalledTimes(8);
+  });
+
+  it('does not spend repair budget when dispatchAction throws', async () => {
+    let dispatches = 0;
+    const dispatchAction = vi.fn(() => {
+      dispatches += 1;
+      if (dispatches <= 8) throw new Error('dispatch failed');
+    });
+    const runtimeRef = { current: null as MapSpecRuntime | null };
+    const hook = renderHook(() => useCartographicObservation({
+      runtimeRef, sessionId: 'sid-throw', ownerToken: null, dispatchAction,
+    }));
+    let seq = 0;
+    let issuedFp = '';
+    vi.mocked(apiFetch).mockImplementation(async () => ({
+      repair_action: {
+        type: 'layer_visibility_update',
+        action_id: `repair-throw-${seq++}`,
+        params: { mapspec_fingerprint: issuedFp },
+      },
+    }));
+    const map = { getStyle: () => ({ layers: [] }) } as never;
+    for (let i = 0; i < 9; i += 1) {
+      issuedFp = `fp-throw-${i}`;
+      hook.result.current({
+        map, spec: { layers: [] } as never, layers: [makeLayer(issuedFp)],
+      });
+      await flushAsync();
+    }
+    // 前 8 次 dispatch 抛错不得扣预算 → 第 9 次仍可派发（未修复时只有 8 次调用）。
+    expect(dispatchAction).toHaveBeenCalledTimes(9);
   });
 
   it('budget resets when the session changes', async () => {

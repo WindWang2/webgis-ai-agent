@@ -211,7 +211,8 @@ class SpatialImpactEngine:
             for item in intervals:
                 if len(item) == 3:
                     min_dist, max_dist, delta_val = item
-                    if min_dist <= distance_m <= max_dist:
+                    # Half-open interval, matching evaluate_step_intervals.
+                    if min_dist <= distance_m < max_dist:
                         return float(delta_val)
                 elif len(item) == 2:
                     max_dist, delta_val = item

@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from app.services.data_delivery import contracts as dl_contracts
+from app.services.data_delivery.loss import sanitize_csv_cell
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +154,13 @@ class GeoJSONWriter:
             rows=self.rows,
         )
 
+    def abort(self) -> None:
+        """异常路径关闭句柄（不写终止符，不产出半成品成员）。"""
+        try:
+            self._fh.close()
+        except Exception:  # noqa: BLE001 — 清理路径绝不掩盖原始错误
+            pass
+
 
 # ── pyogrio 批量 writer（GPKG / FlatGeobuf / Shapefile 成员）──────────────
 
@@ -194,7 +202,14 @@ class PyogrioWriter:
         import pyogrio
 
         layer = layer or self.layer_name
-        frame = self._to_frame(features)
+        try:
+            frame = self._to_frame(features)
+        except WriterError:
+            raise
+        except Exception as e:
+            raise WriterError(
+                dl_contracts.ERR_WRITE_FAILED,
+                f"批次转换为 GeoDataFrame 失败: {e}") from e
         if frame is None or len(frame) == 0:
             return
         target = self._layer_target(layer)
@@ -404,8 +419,6 @@ class GeoParquetWriter:
 
 def _csv_cell(v: Any, spreadsheet_safe: bool, counter: List[int],
               nan_counter: Optional[List[int]] = None) -> str:
-    from app.services.data_delivery.loss import sanitize_csv_cell
-
     if v is None:
         return ""
     if isinstance(v, bool):
@@ -500,3 +513,10 @@ class CSVWriter:
         result.extra["sanitized_cells"] = self._sanitized[0]
         result.extra["nan_inf_to_empty"] = self._nan_inf[0]
         return result
+
+    def abort(self) -> None:
+        """异常路径关闭句柄（不写 sidecar，不产出半成品成员）。"""
+        try:
+            self._fh.close()
+        except Exception:  # noqa: BLE001 — 清理路径绝不掩盖原始错误
+            pass

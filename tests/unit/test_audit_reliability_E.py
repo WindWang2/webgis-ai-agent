@@ -190,3 +190,29 @@ async def test_752_clear_session_degrades_on_redis_error(monkeypatch):
 
     monkeypatch.setattr(store, "_ensure_connected", boom)
     await store.clear_session(f"s752-{uuid.uuid4().hex[:6]}")  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_corrupt_or_missing_descriptor_is_not_silent_legacy_success(tmp_path):
+    """新格式 checkpoint 的 descriptor.json 损坏/缺失不得静默按 legacy 成功
+    （只恢复 mapspec、ref_count=0）。"""
+    import json
+
+    from app.services.mapspec import checkpoint as cp
+
+    session_dir = tmp_path / "ck-desc"
+    ckpt_dir = session_dir / "checkpoints" / "ck1"
+    ckpt_dir.mkdir(parents=True)
+    (ckpt_dir / "mapspec.json").write_text(
+        json.dumps({"version": "1.0", "layers": []})
+    )
+    (ckpt_dir / "descriptor.json").write_text("{not json")
+
+    corrupt = await cp.rollback(session_dir, "ck1", object())
+    assert corrupt["success"] is False
+    assert "descriptor" in corrupt["message"]
+
+    (ckpt_dir / "descriptor.json").unlink()
+    missing = await cp.rollback(session_dir, "ck1", object())
+    assert missing["success"] is False
+    assert "materialized_refs" in missing["message"]

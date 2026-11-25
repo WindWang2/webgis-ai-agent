@@ -59,6 +59,14 @@ _UNIT_MARKER = (
 _EXPLICIT_UNIT_RE = re.compile(
     rf"(?:[（(](?:{_UNIT_MARKER})[）)]|_(?:{_UNIT_MARKER}))$", re.I,
 )
+#: 无分隔符的单位后缀（面积km2 / 人口万人）。只收无歧义的多字符/拉丁
+#: 单位词 —— 单字 CJK 单位（度/人/元…）会误伤「人口密度」这类复合词。
+#: 「万人」作为数量级单位词显式补入。
+_BARE_UNIT_MARKERS = (
+    r"平方公里|平方千米|公顷|hectare|平方米|万元|亿元|百万元|美元|"
+    r"千克|公斤|毫升|千瓦时|万人|percent|pct|km2|km²|m2|kg|km|cm|mm|kwh|%"
+)
+_BARE_UNIT_SUFFIX_RE = re.compile(rf"(?:{_BARE_UNIT_MARKERS})$", re.I)
 _RATIO_HINT_RE = re.compile(
     r"(?<!功)(?<!频)(?<!汇)率|比例|占比|比重|percent|pct|ratio|share|fraction", re.I,
 )
@@ -176,7 +184,11 @@ def detect_unit_ambiguity(fp: FieldProfile) -> List[QualityIssue]:
 
     if _EXPLICIT_UNIT_RE.search(name):
         return []
-    if not _QUANTITY_HINT_RE.search(name):
+    hint = _QUANTITY_HINT_RE.search(name)
+    if not hint:
+        return []
+    bare_unit = _BARE_UNIT_SUFFIX_RE.search(name)
+    if bare_unit is not None and bare_unit.start() >= hint.end():
         return []
     return [
         _issue(

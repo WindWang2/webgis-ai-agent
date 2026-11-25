@@ -118,7 +118,8 @@ def _canonical_json_sha256(obj: Any) -> str:
 def _as_fc_payload(payload: Any) -> Optional[Dict[str, Any]]:
     """FC 形态：{type: FeatureCollection, features: [...]}（宽容 bbox/properties）。"""
     if isinstance(payload, dict) and payload.get("type") == "FeatureCollection" \
-            and isinstance(payload.get("features"), list):
+            and isinstance(payload.get("features"), list) \
+            and all(isinstance(f, dict) for f in payload["features"]):
         return payload
     return None
 
@@ -126,7 +127,7 @@ def _as_fc_payload(payload: Any) -> Optional[Dict[str, Any]]:
 def _as_rows_payload(payload: Any) -> Optional[Dict[str, Any]]:
     """rows 形态：{rows: [dict,...]}（feature_aggregate 等标准表格产物）。"""
     if isinstance(payload, dict) and isinstance(payload.get("rows"), list) \
-            and all(isinstance(r, dict) for r in payload["rows"][:8]):
+            and all(isinstance(r, dict) for r in payload["rows"]):
         return payload
     return None
 
@@ -547,7 +548,7 @@ def _snapshot_from_parquet(ref: str, path: Path) -> SourceSnapshot:
         t = str(f.type)
         if t.startswith("large_"):
             t = t[len("large_"):]
-        fields.append({"name": f.name, "inferred_type": t, "sample_values": None})
+        fields.append({"name": f.name, "inferred_type": t, "sample_values": []})
     snap = SourceSnapshot(
         kind="fabric_parquet", label=ref, is_table=(geometry_column is None),
         row_count=int(meta.num_rows), content_fingerprint=_file_sha256(path),

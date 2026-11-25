@@ -92,6 +92,19 @@ describe("dominantColorInWindow", () => {
     expect(result).toEqual({ r: 0, g: 255, b: 0 });
   });
 
+  it("ties use closest-to-center distance, not first-seen distance", () => {
+    // 5x5 centered at (2,2): red first appears far (-2,-2) and again at the
+    // center; blue appears at distances 1 and 2. Counts tie 2:2 — red must win
+    // because its closest sample is the center (dist 0), even though its first
+    // sample was farther than blue's.
+    const png = makePng(5, 5, (x, y) => {
+      if ((x === 0 && y === 0) || (x === 2 && y === 2)) return [255, 0, 0, 255];
+      if ((x === 3 && y === 2) || (x === 4 && y === 2)) return [0, 0, 255, 255];
+      return [0, 0, 0, 0];
+    });
+    expect(dominantColorInWindow(png, 2, 2, 2)).toEqual({ r: 255, g: 0, b: 0 });
+  });
+
   it("returns null if window completely outside canvas", () => {
     const png = makePng(4, 4, () => [255, 0, 0, 255]);
     expect(dominantColorInWindow(png, -10, -10, 2)).toBeNull();

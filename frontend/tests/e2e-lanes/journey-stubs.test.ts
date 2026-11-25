@@ -1,14 +1,24 @@
 /** The browser chooses the last matching route, not the most specific one. */
 import { describe, expect, it, vi } from 'vitest';
 import type { Page, Route, Request } from 'playwright/test';
-import { defaultWorld, installJourneyStubs } from '../../e2e/fixtures/api-stubs';
-import { TINY_PNG } from '../../e2e/fixtures/files';
+import { defaultWorld, installJourneyStubs, makeJob } from '../../e2e/fixtures/api-stubs';
+import { fakeShapefileZip, TINY_PNG } from '../../e2e/fixtures/files';
 import { TILE_PROVIDERS } from '../../lib/providers';
 
 type Matcher = Parameters<Page['route']>[0];
 type Handler = Parameters<Page['route']>[1];
 
-async function responseFor(url: string, world = defaultWorld()) {
+interface RequestInit {
+  method?: string;
+  body?: string;
+  origin?: string | null;
+}
+
+async function responseFor(
+  url: string,
+  world = defaultWorld(),
+  init: RequestInit = {},
+) {
   const routes: Array<{ matcher: Matcher; handler: Handler }> = [];
   const page = {
     route: async (matcher: Matcher, handler: Handler) => {
@@ -25,9 +35,9 @@ async function responseFor(url: string, world = defaultWorld()) {
   const fulfill = vi.fn();
   const request = {
     url: () => url,
-    method: () => 'GET',
-    headers: () => ({ origin: 'http://localhost:3310' }),
-    postData: () => null,
+    method: () => init.method ?? 'GET',
+    headers: () => (init.origin === null ? {} : { origin: init.origin ?? 'http://localhost:3310' }),
+    postData: () => init.body ?? null,
   } as unknown as Request;
   await match!.handler({ request: () => request, fulfill } as unknown as Route, request);
   expect(fulfill).toHaveBeenCalledOnce();
@@ -103,5 +113,108 @@ describe('journey mock route precedence', () => {
   it('still blanks unrelated external resources without network access', async () => {
     const { response } = await responseFor('https://unrelated.example.test/resource');
     expect(response).toEqual({ status: 200, contentType: 'text/plain', body: '' });
+  });
+});
+
+describe('journey stub contract regressions', () => {
+  it('echoes the request Origin on raw responses instead of credential-incompatible wildcard ACAO', async () => {
+    const origin = 'http://localhost:3310';
+    for (const url of [
+      'http://localhost:8001/api/v1/goal-repair/sessions/s-j42/preview',
+      'http://localhost:8001/api/v1/goal-repair/attempts/9999',
+      'http://localhost:8001/api/v1/export/download/journey-export.png',
+    ]) {
+      const { response } = await responseFor(url, defaultWorld(), { origin });
+      expect(response.headers['access-control-allow-origin'], url).toBe(origin);
+    }
+  });
+
+  it('does not leak internal attempt bookkeeping fields in the cancel acknowledgement', async () => {
+    const world = defaultWorld();
+    const created = await responseFor(
+      'http://localhost:8001/api/v1/goal-repair/sessions/s-j42/attempts',
+      world,
+      { method: 'POST', body: JSON.stringify({ action_ids: ['a1'] }) },
+    );
+    const attemptId = JSON.parse(created.response.body).attempt_id;
+    const { response } = await responseFor(
+      `http://localhost:8001/api/v1/goal-repair/attempts/${attemptId}/cancel`,
+      world,
+      { method: 'POST' },
+    );
+    const body = JSON.parse(response.body);
+    expect(body).toMatchObject({ status: 'cancelled', cancel_requested: true });
+    expect(body).not.toHaveProperty('_selected');
+    expect(body).not.toHaveProperty('_acked');
+    expect(body).not.toHaveProperty('_reads');
+  });
+
+  it('retries the job named in the URL, not the first failed job', async () => {
+    const world = defaultWorld();
+    world.jobs = [
+      makeJob('job-b', '失败 B', 'failed', null, '任务失败'),
+      makeJob('job-c', '失败 C', 'failed', null, '任务失败'),
+    ];
+    const { response } = await responseFor(
+      'http://localhost:8001/api/v1/tasks/jobs/job-c/retry',
+      world,
+      { method: 'POST' },
+    );
+    expect(JSON.parse(response.body)).toMatchObject({ id: 'job-c', status: 'running' });
+    expect(world.job('job-c')?.status).toBe('running');
+    expect(world.job('job-b')?.status).toBe('failed');
+  });
+
+  it('serves the job record on GET /tasks/jobs/{id}', async () => {
+    const world = defaultWorld();
+    world.jobs = [makeJob('job-run', '长时分析', 'running', 30, '正在计算…')];
+    const { response } = await responseFor(
+      'http://localhost:8001/api/v1/tasks/jobs/job-run',
+      world,
+    );
+    expect(JSON.parse(response.body)).toMatchObject({ id: 'job-run', status: 'running' });
+  });
+
+  it('acknowledges cancellation with the addressed job id, not jobs[0]', async () => {
+    const world = defaultWorld();
+    world.jobs = [
+      makeJob('job-fail', '失败任务', 'failed', null, '任务失败'),
+      makeJob('job-run', '长时分析', 'running', 30, '正在计算…'),
+    ];
+    const { response } = await responseFor(
+      'http://localhost:8001/api/v1/tasks/jobs/job-run',
+      world,
+      { method: 'DELETE' },
+    );
+    expect(JSON.parse(response.body)).toMatchObject({ job_id: 'job-run' });
+    expect(world.job('job-fail')?.status).toBe('failed');
+    expect(world.job('job-run')?.status).toBe('cancelled');
+  });
+
+  it('answers project creation for a non-JSON body instead of throwing', async () => {
+    const world = defaultWorld();
+    const { response } = await responseFor(
+      'http://localhost:8001/api/v1/projects',
+      world,
+      { method: 'POST', body: 'not-json' },
+    );
+    expect(response.status).toBe(200);
+    expect(JSON.parse(response.body)).toMatchObject({ id: 'p-j-2', status: 'active' });
+    expect(world.projects).toHaveLength(2);
+  });
+
+  it('emits a zip whose central directory offsets point at the real records', () => {
+    const zip = fakeShapefileZip();
+    const nameLength = Buffer.byteLength('j1.shp', 'utf8');
+    const eocd = zip.length - 22;
+    expect(zip.readUInt32LE(eocd)).toBe(0x06054b50);
+    const cdOffset = zip.readUInt32LE(eocd + 16);
+    expect(cdOffset).toBe(30 + nameLength);
+    expect(zip.readUInt32LE(cdOffset)).toBe(0x02014b50);
+    expect(zip.readUInt16LE(cdOffset + 28)).toBe(nameLength);
+    expect(zip.subarray(cdOffset + 46, cdOffset + 46 + nameLength).toString('utf8')).toBe('j1.shp');
+    const localOffset = zip.readUInt32LE(cdOffset + 42);
+    expect(localOffset).toBe(0);
+    expect(zip.readUInt32LE(localOffset)).toBe(0x04034b50);
   });
 });

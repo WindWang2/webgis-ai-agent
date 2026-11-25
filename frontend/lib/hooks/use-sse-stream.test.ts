@@ -10,6 +10,7 @@ import { useChatStore } from '@/lib/store/useChatStore';
 import { useToastStore } from '@/components/ui/toast';
 import type { SelectedFeatureInfo, ToolCallEntry } from '@/lib/store/hud-types';
 import { getCommittedMapSpec, getMapSpecSessionCursor, setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
+import { MAX_CHAT_MESSAGES } from '@/lib/chat/message-reducer';
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 // use-sse-stream consumes the bridge for aiStatus + send; we spy on send to
@@ -1321,5 +1322,27 @@ describe('terminal events release the send guard (#1694 API-03)', () => {
     await act(async () => { expect(await result.current.handleSend('third')).toBe(false); });
     await act(async () => { releaseSecond(); await second; });
     bridgeMock.send.mockResolvedValue(undefined);
+  });
+});
+
+describe('pi fire-and-forget 消息追加必须遵守 MAX_CHAT_MESSAGES', () => {
+  it('pi_ui / pi_turn_message 连续追加不绕过 200 条上界', () => {
+    renderStream();
+    act(() => {
+      for (let i = 0; i < 260; i += 1) {
+        if (i % 2 === 0) {
+          bridgeMock.onEventCallback?.({
+            event: 'pi_ui',
+            data: { kind: 'notify', message: `notify-${i}` },
+          });
+        } else {
+          bridgeMock.onEventCallback?.({
+            event: 'pi_turn_message',
+            data: { session_id: 'sid-fe4', mode: 'queue', disposition: 'accepted' },
+          });
+        }
+      }
+    });
+    expect(useChatStore.getState().messages.length).toBeLessThanOrEqual(MAX_CHAT_MESSAGES);
   });
 });

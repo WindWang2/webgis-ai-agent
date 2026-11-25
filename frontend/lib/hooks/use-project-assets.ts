@@ -99,6 +99,11 @@ export function useProjectDatasets(projectId: string): UseProjectDatasetsResult 
   const gen = useRef(0);
   const abort = useRef<AbortController | null>(null);
   const mounted = useRef(true);
+  /** schema 快照只对当前项目有意义：切项目即清空（防跨项目残留/无界增长）。 */
+  const schemaProjectRef = useRef(projectId);
+  /** 当前列表快照（attach 去重判定用；避免把 datasets 放进回调依赖）。 */
+  const datasetsRef = useRef<ProjectDataset[]>([]);
+  datasetsRef.current = datasets;
   const pageSize = 50;
 
   const applyPage = useCallback((page: Page<ProjectDataset>, append: boolean) => {
@@ -113,6 +118,10 @@ export function useProjectDatasets(projectId: string): UseProjectDatasetsResult 
 
   const reload = useCallback(
     async (opts?: FetchOpts) => {
+      if (schemaProjectRef.current !== projectId) {
+        schemaProjectRef.current = projectId;
+        setSchemaByDataset({});
+      }
       if (!projectId) {
         abort.current?.abort();
         gen.current += 1;
@@ -175,8 +184,10 @@ export function useProjectDatasets(projectId: string): UseProjectDatasetsResult 
           ...prev,
           [attached.id]: attached.schema_profile ?? {},
         }));
+        // 重附 / 本地列表过期：数组去重后 total 不得再 +1（否则相对服务端单向漂移）。
+        const alreadyListed = datasetsRef.current.some((d) => d.id === attached.id);
         setDatasets((prev) => (prev.some((d) => d.id === attached.id) ? prev : [attached, ...prev]));
-        setTotal((t) => t + 1);
+        if (!alreadyListed) setTotal((t) => t + 1);
         return attached;
       } catch (err: unknown) {
         if (mounted.current) setError(parseApiErrorDetail(err, t('project.errAttachDataset')));

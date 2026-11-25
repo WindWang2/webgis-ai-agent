@@ -471,6 +471,41 @@ describe('useWorkflowWorkspace — hidden-tab polling resume (#549)', () => {
     });
     expect(api.fetchWorkflowRun.mock.calls.length).toBe(before);
   });
+
+  it('an older run-detail response cannot overwrite a newer visibility refetch', async () => {
+    const pending: Array<{ resolve: (v: unknown) => void }> = [];
+    api.fetchWorkflowRun
+      .mockResolvedValueOnce(detail({ status: 'running' }))
+      .mockImplementation(() => new Promise((resolve) => { pending.push({ resolve }); }));
+
+    const { result } = renderHook(() => useWorkflowWorkspace());
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    await act(async () => { result.current.openWorkflow('wf1'); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    await act(async () => { result.current.openRun('r1'); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(result.current.runDetail?.status).toBe('running');
+
+    // 两次可见性补拉并发（不查在飞请求）：后发请求编号更大。
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'));
+      document.dispatchEvent(new Event('visibilitychange'));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(pending).toHaveLength(2);
+
+    // 新请求先回（completed）→ 旧请求后回（running）不得覆盖。
+    await act(async () => {
+      pending[1].resolve(detail({ status: 'completed' }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(result.current.runDetail?.status).toBe('completed');
+    await act(async () => {
+      pending[0].resolve(detail({ status: 'running' }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(result.current.runDetail?.status).toBe('completed');
+  });
 });
 
 describe('useWorkflowWorkspace — compare binding', () => {

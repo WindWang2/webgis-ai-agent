@@ -356,7 +356,9 @@ async def run_repair_transaction(
             }
 
         session = mark_applied(session, apply_result={
-            "status": "success",
+            # 透传 execute_repair 的真实状态（部分 op failed → "partial"）；
+            # 硬编码 success 会让 mark_applied 的 partial→failed 分支不可达。
+            "status": str(apply_result.get("status") or "success"),
             "feature_count_after": apply_result.get("feature_count"),
             "feature_count_before": apply_result.get("feature_count_before"),
             "content_digest_before": apply_result.get("content_digest_before"),
@@ -364,6 +366,12 @@ async def run_repair_transaction(
             "repaired_ref": apply_result.get("repaired_ref"),
             "ref_registration_error": apply_result.get("ref_registration_error"),
         })
+        if session.state == STATE_FAILED:
+            _cache_put(session)
+            return {
+                "session": session.to_bounded_dict(),
+                "failure": session.failure,
+            }
 
         # ── verify：修复后复评（residual 质量事实）───────────────────────
         repaired = apply_result.get("repaired_geojson")

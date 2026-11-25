@@ -783,3 +783,22 @@ async def test_visual_repair_budget_is_scoped_to_session_and_expires(monkeypatch
     monkeypatch.setattr(module, "time", types.SimpleNamespace(monotonic=lambda: 101.0))
     renewed = await engine.apply_visual_heal_patch(first, [defect])
     assert not renewed.is_error
+
+
+def test_apply_heal_plan_self_move_above_does_not_raise() -> None:
+    """move_above=(x,x) 的防御分支不得在 target 移除后按 id 反查（StopIteration）。"""
+    from app.services.mapspec.visual_healer import HealOp, VisualHealPlan
+
+    spec = _spec([_bg(), _symbol()])
+    op = HealOp(
+        op=MUTATION_HEAL_LAYER_ORDER,
+        layer_ids=("poi-labels",),
+        rationale="defensive",
+        move_above=("poi-labels", "poi-labels"),
+    )
+    plan = VisualHealPlan(defects=(), ops=(op,))
+
+    out, applied = apply_heal_plan(spec, plan)
+
+    assert [layer["id"] for layer in out["layers"]] == ["basemap-bg", "poi-labels"]
+    assert applied == 0

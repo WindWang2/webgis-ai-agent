@@ -60,6 +60,9 @@ class StoragePressureView:
 
     def level(self) -> str:
         p, known = self._reading()
+        return self._level_of(p, known)
+
+    def _level_of(self, p: float, known: bool) -> str:
         if not known:
             return LEVEL_UNKNOWN
         if p >= self._high:
@@ -93,7 +96,8 @@ class StoragePressureView:
 
     def snapshot(self) -> dict:
         p, known = self._reading()
-        return {"pressure": p, "level": self.level(), "known": known}
+        # pressure 与 level 必须来自同一读（TTL 到期不再二次取样）。
+        return {"pressure": p, "level": self._level_of(p, known), "known": known}
 
 
 __all__ = [

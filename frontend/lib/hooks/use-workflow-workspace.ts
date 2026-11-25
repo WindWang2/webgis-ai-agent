@@ -119,6 +119,8 @@ export function useWorkflowWorkspace(): UseWorkflowWorkspaceResult {
   const detailGen = useRef(0);
   const workflowGen = useRef(0);
   const runGen = useRef(0);
+  /** 在飞 run 明细请求序号：轮询/可见性补拉并发时只有最新响应可写回。 */
+  const runDetailReq = useRef(0);
   const projectAbort = useRef<AbortController | null>(null);
   const workflowAbort = useRef<AbortController | null>(null);
   const runAbort = useRef<AbortController | null>(null);
@@ -271,8 +273,9 @@ export function useWorkflowWorkspace(): UseWorkflowWorkspaceResult {
 
   const loadRunDetail = useCallback(
     async (projectId: string, runId: string, signal: AbortSignal, gen: number) => {
+      const req = ++runDetailReq.current;
       const detail = await fetchWorkflowRun(projectId, runId, { forceRefresh: true, signal });
-      if (!mounted.current || gen !== runGen.current) return null;
+      if (!mounted.current || gen !== runGen.current || req !== runDetailReq.current) return null;
       setRunDetail(detail);
       return detail;
     },

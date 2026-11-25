@@ -136,6 +136,8 @@ class RetryBudget:
                 session_id, _SessionTokens(tokens=0.0))
             sess.tokens = 0.0
             sess.cancelled = True
+            # 有界性：大量「取消但从未重试」的会话条目同样受上限约束。
+            self._evict_locked()
 
     def close_session(self, session_id: str) -> None:
         """会话关闭：账目摘除（有界性）。"""

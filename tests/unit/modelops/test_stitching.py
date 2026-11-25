@@ -1,6 +1,8 @@
 """merge/postprocess oracle 测试（手算 oracle；R1-m5 契约）。"""
 from __future__ import annotations
 
+import pathlib
+
 import numpy as np
 import pytest
 
@@ -107,6 +109,49 @@ def test_instance_geometry_mismatch_raises():
     plan = _plan(4, 4)
     with pytest.raises(PreprocessError):
         merge_instances(plan, [np.zeros((4, 3), dtype=np.int32)], [{1: 1}])
+
+
+def test_segmentation_merge_rejects_num_classes_beyond_uint8_ignore():
+    """>255 类无法在 uint8 + ignore=255 下编码 → typed 拒绝（不静默回绕）。"""
+    plan = _plan(4, 4)
+    probs = [np.zeros((256, 4, 4), dtype=np.float32)]
+    with pytest.raises(PreprocessError, match="num_classes"):
+        merge_segmentation(plan, probs, input_nodata=None,
+                           policy=SegmentationMergePolicy(), num_classes=256)
+
+
+def test_instance_merge_cleans_memmap_dir_on_error(tmp_path, monkeypatch):
+    """memmap 分支异常路径必须删除临时目录（不残留 canvas.npy）。"""
+    import tempfile as tempfile_mod
+    from types import SimpleNamespace
+
+    created = []
+    real_mkdtemp = tempfile_mod.mkdtemp
+
+    def _mkdtemp(*args, **kwargs):
+        path = real_mkdtemp(dir=tmp_path, **{k: v for k, v in kwargs.items() if k != "dir"})
+        created.append(path)
+        return path
+
+    monkeypatch.setattr(tempfile_mod, "mkdtemp", _mkdtemp)
+    monkeypatch.setattr(np, "memmap", lambda *a, **k: np.zeros((4, 4), dtype=np.int32))
+    # 8193*8193*4 > 256MiB → 走 memmap 分支（不实际分配大画布）。
+    plan = SimpleNamespace(
+        raster_height=8193,
+        raster_width=8193,
+        tiles=[
+            SimpleNamespace(
+                index=0,
+                core_window=(0, 0, 4, 4),
+                read_window=(0, 0, 4, 4),
+                pad=(0, 0, 0, 0),
+            )
+        ],
+    )
+    with pytest.raises(PreprocessError):
+        merge_instances(plan, [np.zeros((3, 3), dtype=np.int32)], [{1: 1}])
+    assert created
+    assert not any(pathlib.Path(p).exists() for p in created)
 
 
 # ── detection oracle ─────────────────────────────────────────────────

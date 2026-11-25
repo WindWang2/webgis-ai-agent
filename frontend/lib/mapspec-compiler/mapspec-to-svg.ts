@@ -261,6 +261,9 @@ function parseColor(c: unknown): [number, number, number] | null {
   const s = c.trim().toLowerCase();
   if (s.startsWith("#")) {
     const hex = s.slice(1);
+    // P3：非十六进制字符（如 "#xyz"）parseInt 得 NaN，仍是「真值」数组，
+    // 会绕过下面的插值回落产出 fill="#NaNNaNNaN"。非法串一律不认。
+    if (!/^(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/.test(hex)) return null;
     if (hex.length === 3) {
       return [
         parseInt(hex[0] + hex[0], 16),
@@ -351,7 +354,9 @@ function evaluateMapLibreExpression(
   const op = val[0];
   if (op === 'case') {
     for (let i = 1; i + 1 < val.length; i += 2) if (evaluateFilterBounded(val[i], { properties: props ?? {} }) === true) return val[i + 1];
-    return val[val.length - 1] ?? fallback;
+    // P3：合法 case 长度为偶数（2n+2，末项是 fallback）；奇数长度是缺
+    // fallback 的畸形表达式 —— 末项是 output，不能当兜底值。
+    return val.length % 2 === 0 ? (val[val.length - 1] ?? fallback) : fallback;
   }
   if (op === "literal") return val[1] !== undefined ? val[1] : fallback;
   if (op === "interpolate" || op === "interpolate-hcl" || op === "interpolate-lab") {
@@ -393,7 +398,9 @@ function evaluateMapLibreExpression(
       const label = val[i];
       if ((Array.isArray(label) ? label : [label]).some((item) => inputVal === item || String(inputVal) === String(item))) return val[i + 1];
     }
-    return val.length >= 3 ? val[val.length - 1] : fallback;
+    // P3：合法 match 长度为奇数（2n+3，末项是 fallback）；偶数长度是缺
+    // fallback 的畸形表达式 —— 末项是 label 的 output，不能当兜底值。
+    return (val.length - 2) % 2 === 1 ? (val[val.length - 1] ?? fallback) : fallback;
   }
   return fallback;
 }
@@ -555,6 +562,9 @@ export function resolvePaintValue(
 
 function validGeographicCoordinates(value: unknown): boolean {
   if (!Array.isArray(value)) return false;
+  // P3：空数组的 every 恒真，曾让 coordinates: [] 通过校验并在原点绘制，
+  // 绕过 layer_coordinates_invalid 披露。空坐标不是合法地理位置。
+  if (value.length === 0) return false;
   if (typeof value[0] === 'number') return value.length >= 2 && Number.isFinite(value[0]) && Number.isFinite(value[1]) && Math.abs(value[0]) <= 180 && Math.abs(value[1]) <= 90;
   return value.every(validGeographicCoordinates);
 }
@@ -1203,7 +1213,13 @@ function compileMapSpecToSvgBody(
             options.onDiagnostic?.("symbol_asset_unavailable", String(g40Binding.asset_id ?? ""));
           } else {
             const params = resolved.params as Record<string, any>;
-            const digestKey = String(resolved.doc.content_digest).slice(7, 19);
+            // P3：digest 缺失/过短时 slice(7,19) 退化为同一常量（如 "ed"），
+            // 多份不同资产塌成同一 defsId，g40Defs.has 命中后渲染错误图元。
+            // 取不到有效摘要时改用文档内容的稳定键。
+            const rawDigest = String(resolved.doc.content_digest ?? "");
+            const digestKey = rawDigest.length > 7
+              ? rawDigest.slice(7, 19)
+              : stableKeyOf(resolved.doc);
             // P2（review）：content_digest 为 spec 方可控值，未转义即注入
             // <g id> / <use href="#..."> 属性（引号/尖括号可突破标记）。
             const defsId = `cartoasset-${escapeSvgAttr(digestKey)}-${stableKeyOf(resolved.params)}`;

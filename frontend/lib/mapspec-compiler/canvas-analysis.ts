@@ -42,7 +42,10 @@ export function analyseCanvas(rgba: Uint8Array, width: number, height: number): 
 
   let transparentCount = 0;
   const colourCounts = new Map<string, number>();
-  const luminances: number[] = [];
+  // Welford 在线均值/方差：全尺寸画布（12MP ≈ 96MB）不再物化亮度数组。
+  let luminanceCount = 0;
+  let luminanceMean = 0;
+  let luminanceM2 = 0;
 
   for (let i = 0; i < totalPixels; i++) {
     const off = i * 4;
@@ -58,7 +61,11 @@ export function analyseCanvas(rgba: Uint8Array, width: number, height: number): 
     // one bucket — otherwise JPEG-like anti-aliasing noise fragments the count.
     const key = `${r >> 4}|${g >> 4}|${b >> 4}`;
     colourCounts.set(key, (colourCounts.get(key) ?? 0) + 1);
-    luminances.push(luminance(r, g, b));
+    const lum = luminance(r, g, b);
+    luminanceCount++;
+    const delta = lum - luminanceMean;
+    luminanceMean += delta / luminanceCount;
+    luminanceM2 += delta * (lum - luminanceMean);
   }
 
   const opaqueCount = totalPixels - transparentCount;
@@ -80,15 +87,8 @@ export function analyseCanvas(rgba: Uint8Array, width: number, height: number): 
     dominantColor = { r, g, b };
   }
 
-  const mean =
-    luminances.length > 0
-      ? luminances.reduce((a, b) => a + b, 0) / luminances.length
-      : 0;
-  const variance =
-    luminances.length > 0
-      ? luminances.reduce((a, l) => a + (l - mean) ** 2, 0) / luminances.length
-      : 0;
-  const luminanceStdDev = Math.sqrt(variance);
+  const luminanceStdDev =
+    luminanceCount > 0 ? Math.sqrt(luminanceM2 / luminanceCount) : 0;
 
   return {
     width,

@@ -26,7 +26,9 @@ import json
 import logging
 import os
 import tempfile
+import threading
 import time
+import weakref
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -50,6 +52,8 @@ _CANCEL_CHECK_EVERY = 512
 #: 收据记录上限（JSONL ring）。
 _MAX_RECEIPTS = 64
 _RECEIPTS_FILE = "receipts.jsonl"
+#: 收据文件 read-modify-write 互斥（执行锁只覆盖同 (session, plan_hash)）。
+_RECEIPTS_WRITE_LOCK = threading.Lock()
 
 #: 执行错误码（closed；typed 返回，不抛裸异常）。
 EXEC_ERROR_CODES = (
@@ -381,31 +385,34 @@ def _load_receipts_sync(path: Path) -> List[PreparationReceipt]:
 
 
 def _append_receipt_sync(path: Path, receipt: PreparationReceipt) -> None:
-    # ring 去重键 = (plan_hash, input_ref)：空指纹计划同 hash 不同数据集
-    # 各留各的收据，不互逐（R2-1）。
-    records = [r for r in _load_receipts_sync(path)
-               if not (r.plan_hash == receipt.plan_hash
-                       and r.input_ref == receipt.input_ref)]
-    records.append(receipt)
-    records = records[-_MAX_RECEIPTS:]
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            for r in records:
-                f.write(json.dumps(r.to_bounded_dict(), ensure_ascii=False,
-                                   sort_keys=True, separators=(",", ":")) + "\n")
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_name, path)
-    except Exception:
+    # 执行锁粒度是 (session, plan_hash)：同 session 不同计划并发执行会共写
+    # 同一 receipts.jsonl，read-modify-write 必须串行，否则互相丢收据。
+    with _RECEIPTS_WRITE_LOCK:
+        # ring 去重键 = (plan_hash, input_ref)：空指纹计划同 hash 不同数据集
+        # 各留各的收据，不互逐（R2-1）。
+        records = [r for r in _load_receipts_sync(path)
+                   if not (r.plan_hash == receipt.plan_hash
+                           and r.input_ref == receipt.input_ref)]
+        records.append(receipt)
+        records = records[-_MAX_RECEIPTS:]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
         try:
-            os.unlink(tmp_name)
-        except OSError:
-            logging.getLogger(__name__).warning(
-                "Failed to remove temporary preparation file", exc_info=True
-            )
-        raise
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                for r in records:
+                    f.write(json.dumps(r.to_bounded_dict(), ensure_ascii=False,
+                                       sort_keys=True, separators=(",", ":")) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_name, path)
+        except Exception:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                logging.getLogger(__name__).warning(
+                    "Failed to remove temporary preparation file", exc_info=True
+                )
+            raise
 
 
 async def find_receipt(session_id: str, plan_hash: str) -> Optional[PreparationReceipt]:
@@ -423,7 +430,9 @@ async def find_receipt(session_id: str, plan_hash: str) -> Optional[PreparationR
 
 #: 每 (session, plan_hash) 执行锁（并发幂等 —— review R1 #6：两个并发
 #: execute 同计划会铸出两个 prepared ref；串行化后第二个命中既有收据）。
-_EXEC_LOCKS: Dict[str, "asyncio.Lock"] = {}
+#: 弱引用锁表：锁在最后一次执行结束后可被 GC，避免长驻进程无界累积。
+_EXEC_LOCKS: "weakref.WeakValueDictionary[str, asyncio.Lock]" = \
+    weakref.WeakValueDictionary()
 
 
 def _exec_lock(session_id: str, plan_hash: str) -> "asyncio.Lock":

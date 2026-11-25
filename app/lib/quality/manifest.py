@@ -167,7 +167,8 @@ def _tool_rows(
     for name in sorted(descriptors):
         d = descriptors[name]
         tests = list(test_refs.get(name, []))
-        side_effect = getattr(getattr(d, "side_effect", None), "value", str(getattr(d, "side_effect", "")))
+        raw_side_effect = getattr(d, "side_effect", None)
+        side_effect = getattr(raw_side_effect, "value", str(raw_side_effect or ""))
         status = getattr(getattr(d, "status", None), "value", str(getattr(d, "status", "")))
         requires_confirmation = bool(getattr(d, "requires_confirmation", False))
         capabilities = list(getattr(d, "capabilities", ()) or ())
@@ -218,7 +219,7 @@ def _tool_rows(
                     )
                 )
         missing = []
-        if side_effect == SideEffectClass.UNCLASSIFIED.value:
+        if side_effect in ("", SideEffectClass.UNCLASSIFIED.value):
             missing.append("side_effect")
         for f in GATE_FIELDS:
             if f != "side_effect" and not row.get(f):
@@ -466,8 +467,12 @@ def gate(report: GateReportRecord) -> int:
 
 
 def load_findings_baseline(root: Optional[Path] = None) -> Dict[str, Any]:
-    """R2 review：畸形 JSON 不许 traceback 崩溃 —— 返回哨兵（空上限 +
-    负 dispatch 下限）让棘轮以可读违规红出来。"""
+    """读取 findings 棘轮基线；文件缺失 → {}。
+
+    畸形 JSON raise ValueError（fail-loud，附可读路径/解码原因）——
+    compile_quality_manifest 不吞异常，损坏的棘轮账本必须显式中止，
+    不得静默降级。
+    """
     base = root if root is not None else repo_root()
     path = base / FINDINGS_BASELINE_PATH
     if not path.exists():

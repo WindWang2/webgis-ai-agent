@@ -104,12 +104,22 @@ class PromptSpec:
             return None
         if not isinstance(payload, dict):
             raise DescriptorError("prompt payload must be a mapping")
+        try:
+            points = tuple(tuple(map(float, p)) for p in payload.get("points", []))
+            boxes = tuple(tuple(map(float, b)) for b in payload.get("boxes", []))
+            labels = tuple(int(lab) for lab in payload.get("labels", []))
+        except (TypeError, ValueError) as exc:
+            raise DescriptorError(f"malformed prompt payload: {exc}") from exc
+        if any(len(p) != 2 for p in points):
+            raise DescriptorError("point prompts must be (x, y) pairs")
+        if any(len(b) != 4 for b in boxes):
+            raise DescriptorError("box prompts must be (x, y, w, h) quads")
         return cls(
-            points=tuple(tuple(map(float, p)) for p in payload.get("points", [])),
-            boxes=tuple(tuple(map(float, b)) for b in payload.get("boxes", [])),
+            points=points,
+            boxes=boxes,
             text=payload.get("text") or None,
             combine=payload.get("combine", "union"),
-            labels=tuple(int(lab) for lab in payload.get("labels", [])),
+            labels=labels,
         )
 
     def geometry_payload(self) -> Dict[str, Any]:

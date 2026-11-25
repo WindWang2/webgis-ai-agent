@@ -72,8 +72,13 @@ def build_plan(
     band_indices: Tuple[int, ...] = tuple(range(n))
     if band_order and source_band_names:
         name_to_idx = {name: i for i, name in enumerate(source_band_names)}
-        if all(b in name_to_idx for b in band_order):
-            band_indices = tuple(name_to_idx[b] for b in band_order)
+        missing = [b for b in band_order if b not in name_to_idx]
+        if missing:
+            raise PreprocessError(
+                f"source band names {list(source_band_names)} do not satisfy model "
+                f"band_order; missing {missing}"
+            )
+        band_indices = tuple(name_to_idx[b] for b in band_order)
     return PreprocessPlan(
         band_indices=band_indices,
         normalization=descriptor.normalization.as_dict(),
@@ -155,6 +160,11 @@ def _normalize(chips: np.ndarray, normalization: Dict[str, Any]) -> np.ndarray:
     if kind == "mean_std":
         mean = np.asarray(normalization["mean"], dtype=np.float32)[:, None, None]
         std = np.asarray(normalization["std"], dtype=np.float32)[:, None, None]
+        if mean.shape[0] != chips.shape[0] or std.shape[0] != chips.shape[0]:
+            raise PreprocessError(
+                f"mean_std normalization length (mean={mean.shape[0]}, "
+                f"std={std.shape[0]}) != model input bands ({chips.shape[0]})"
+            )
         return (chips - mean) / std
     if kind == "min_max":
         vmin = np.asarray(normalization["vmin"], dtype=np.float32)[:, None, None]

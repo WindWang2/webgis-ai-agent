@@ -184,6 +184,15 @@ def _is_digest_only(arguments: Any) -> bool:
         "_digest_only" in arguments or "_arg_keys" in arguments)
 
 
+def _safe_count(payload: Any) -> int:
+    """计数面类型守卫：非 dict / 非数字 count 一律归零（trace 输入未校验）。"""
+    count = payload.get("count") if isinstance(payload, Mapping) else None
+    try:
+        return int(count or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _mutation_step_indexes(steps: List[InducedStep],
                            records: List[Dict[str, Any]]) -> Optional[set]:
     """MAP_MUTATIONS 记录 → 步骤下标（同工具按出现序 join，仿 dispatch 面）。
@@ -336,6 +345,10 @@ def analyze_trace(
         tool_name = str(call["tool_name"])
         kind = step_kind_for(tool_name)
         arguments = call.get("arguments")
+        try:
+            duration_ms = float(call.get("duration_ms") or 0.0)
+        except (TypeError, ValueError):
+            duration_ms = 0.0
         steps.append(InducedStep(
             seq=i,
             call_id=str(call.get("tool_call_id") or ""),
@@ -346,9 +359,9 @@ def analyze_trace(
             arguments=arguments if isinstance(arguments, dict) else {},
             evidence_kinds=_evidence_kinds_for(kind, tool_name),
             result_status=str(call.get("status") or ""),
-            duration_ms=float(call.get("duration_ms") or 0.0),
+            duration_ms=duration_ms,
         ))
-    if steps and (int((t.mutations or {}).get("count") or 0) > 0):
+    if steps and _safe_count(t.mutations) > 0:
         records = [r for r in ((t.mutations or {}).get("records") or [])
                    if isinstance(r, dict)]
         indexes = _mutation_step_indexes(steps, records)
@@ -369,8 +382,8 @@ def analyze_trace(
         goal_text=goal or (t.selected_workflow or "未声明目标"),
         user_input=(t.user_input or "")[:2000],
         steps=steps,
-        artifacts_count=int((t.artifacts or {}).get("count") or 0),
-        mutations_count=int((t.mutations or {}).get("count") or 0),
+        artifacts_count=_safe_count(t.artifacts),
+        mutations_count=_safe_count(t.mutations),
         session_id=t.session_id,
         turn_id=t.turn_id,
         selected_workflow=t.selected_workflow,

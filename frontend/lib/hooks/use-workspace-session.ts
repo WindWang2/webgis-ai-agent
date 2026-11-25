@@ -40,6 +40,24 @@ import {
 } from '@/lib/workbench/session-anchor';
 
 const MAX_SESSION_OWNER_TOKENS = 128;
+/** 缩略图恢复并发上限（附件多的会话不得一次打满浏览器连接池）。 */
+const THUMB_RESTORE_CONCURRENCY = 4;
+
+async function forEachLimited<T>(
+  items: readonly T[],
+  limit: number,
+  task: (item: T) => Promise<void>,
+): Promise<void> {
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const item = items[next];
+      next += 1;
+      await task(item);
+    }
+  });
+  await Promise.all(workers);
+}
 
 /**
  * #392: 把会话恢复失败转成对用户可见的提示文案。优先 FastAPI detail，
@@ -292,31 +310,36 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
             : {}),
         }));
         // G36：受权缩略图异步补挂（恢复后的 objectURL 注入对应消息）。
+        // 并发上限 THUMB_RESTORE_CONCURRENCY：附件多的会话不得一次并发发出 N 个请求。
         const attachMessages = restored.filter(
           (m: any) => Array.isArray(m.attachments) && m.attachments.length > 0,
         );
+        const thumbTasks: Array<{ messageId: string; evidenceId: string }> = [];
         for (const m of attachMessages) {
           for (const a of m.attachments as Array<{ evidence_id: string }>) {
-            if (!a.evidence_id) continue;
-            void fetchVisualEvidenceThumb(sid, a.evidence_id, token)
-              .then((blob) => {
-                if (signal.aborted) return;
-                const url = URL.createObjectURL(blob);
-                attachmentThumbUrlsRef.current.push(url);
-                useChatStore.getState().setMessages((prev) => prev.map((msg) => {
-                  if (msg.id !== m.id || msg.role !== 'user') return msg;
-                  const atts = msg.attachments;
-                  if (!Array.isArray(atts)) return msg;
-                  return {
-                    ...msg,
-                    attachments: atts.map((x: import('@/lib/chat/message-reducer').VisualAttachmentView) =>
-                      x.evidence_id === a.evidence_id ? { ...x, thumbUrl: url } : x),
-                  };
-                }));
-              })
-              .catch(() => { /* 缩略图缺席 = 无图不阻断 */ });
+            if (a.evidence_id) thumbTasks.push({ messageId: m.id as string, evidenceId: a.evidence_id });
           }
         }
+        void forEachLimited(thumbTasks, THUMB_RESTORE_CONCURRENCY, async ({ messageId, evidenceId }) => {
+          try {
+            const blob = await fetchVisualEvidenceThumb(sid, evidenceId, token);
+            if (signal.aborted) return;
+            const url = URL.createObjectURL(blob);
+            attachmentThumbUrlsRef.current.push(url);
+            useChatStore.getState().setMessages((prev) => prev.map((msg) => {
+              if (msg.id !== messageId || msg.role !== 'user') return msg;
+              const atts = msg.attachments;
+              if (!Array.isArray(atts)) return msg;
+              return {
+                ...msg,
+                attachments: atts.map((x: import('@/lib/chat/message-reducer').VisualAttachmentView) =>
+                  x.evidence_id === evidenceId ? { ...x, thumbUrl: url } : x),
+              };
+            }));
+          } catch {
+            /* 缩略图缺席 = 无图不阻断 */
+          }
+        });
         if (restored.length > 0) {
           restored.push({
             id: `session-switch-${Date.now()}`,

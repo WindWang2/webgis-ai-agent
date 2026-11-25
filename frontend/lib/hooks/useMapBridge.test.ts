@@ -610,6 +610,31 @@ describe('useMapBridge', () => {
     expect(last?.event).toBe('error');
   });
 
+  it('caps reconnect backoff (no unbounded multi-minute sleeps)', async () => {
+    async function* failingTurn(): AsyncGenerator<SSEEvent> {
+      throw new TypeError('network dropped');
+    }
+    mockStreamChat.mockImplementation(() => failingTurn());
+    const { result } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, onEvent, undefined, { maxAttempts: 8, baseDelayMs: 500 })
+    );
+    act(() => { result.current.send('q', {}); });
+    await act(async () => {});
+    // attempt 0 失败后的退避是 500；依次吃满 500/1000/2000/4000/8000/16000。
+    for (const delay of [500, 1000, 2000, 4000, 8000, 16000]) {
+      await act(async () => { vi.advanceTimersByTime(delay); });
+      await act(async () => {});
+    }
+    expect(mockStreamChat).toHaveBeenCalledTimes(7); // initial + 6 retries
+    // 下一次退避理论值 32s；封顶 30s —— 29999ms 时仍不得发新请求。
+    await act(async () => { vi.advanceTimersByTime(29_999); });
+    await act(async () => {});
+    expect(mockStreamChat).toHaveBeenCalledTimes(7);
+    await act(async () => { vi.advanceTimersByTime(1); });
+    await act(async () => {});
+    expect(mockStreamChat).toHaveBeenCalledTimes(8);
+  });
+
   it('never reconnects after a terminal event (DUP-1)', async () => {
     mockStreamChat.mockReturnValue(makeAsyncGen([{ event: 'done', data: {} }]));
     const { result } = renderHook(() =>

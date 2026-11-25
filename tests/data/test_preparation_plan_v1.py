@@ -13,16 +13,22 @@ from app.lib.data.profile import DatasetProfileV3, profile_features
 from app.lib.gis.dataset_descriptor import SourceRef
 from app.services.data_preparation.executor import (
     ExecError,
+    PreparationReceipt,
+    _append_receipt_sync,
+    _exec_lock,
+    _load_receipts_sync,
     apply_steps,
     dry_run,
     execute_plan,
 )
 from app.services.data_preparation.plan import (
+    MAX_PLAN_STEPS,
     AxisSwapStep,
     DedupStep,
     FieldMappingStep,
     FilterRowsStep,
     PlanValidationError,
+    PreparationPlan,
     RenameFieldStep,
     ReprojectStep,
     _plans_path,
@@ -545,3 +551,67 @@ class TestPlanRingBadLineTolerance:
         assert await save_plan(plan2)
         assert (await get_plan(sid, plan.plan_id)) is not None
         assert (await get_plan(sid, plan2.plan_id)) is not None
+
+
+# ── 收据并发 / 执行锁生命周期 / 步数上限（P3 修复回归）────────────────────
+
+class TestReceiptAppendSerialized:
+    def test_concurrent_appends_do_not_lose_records(self, tmp_path, monkeypatch):
+        """执行锁粒度是 (session, plan_hash)，同 session 不同计划并发执行会
+        共写同一 receipts.jsonl：read-modify-write 必须串行，否则互相丢收据。"""
+        import threading
+
+        from app.services.data_preparation import executor as ex
+
+        path = tmp_path / "receipts.jsonl"
+        real_load = ex._load_receipts_sync
+        gate = threading.Barrier(2)
+
+        def _synced_load(p):
+            # 两个写者都先读到同一份旧快照，再一起写 —— 未串行时必丢一条。
+            snapshot = real_load(p)
+            try:
+                gate.wait(timeout=0.5)
+            except threading.BrokenBarrierError:
+                pass
+            return snapshot
+
+        monkeypatch.setattr(ex, "_load_receipts_sync", _synced_load)
+
+        def _write(plan_hash):
+            ex._append_receipt_sync(path, PreparationReceipt(
+                plan_id=f"plan-{plan_hash}", plan_hash=plan_hash,
+                input_ref="ref:in", output_ref=f"ref:out-{plan_hash}"))
+
+        threads = [threading.Thread(target=_write, args=(h,))
+                   for h in ("aaa", "bbb")]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+        records = real_load(path)
+        assert {r.plan_hash for r in records} == {"aaa", "bbb"}
+
+
+class TestExecLockLifecycle:
+    def test_unused_exec_locks_are_evicted(self):
+        """锁表必须弱引用：长驻进程执行大量不同计划后不得无界增长。"""
+        import gc
+
+        from app.services.data_preparation import executor as ex
+
+        key = "sess-lock-gc:hash-lock-gc"
+        lock = _exec_lock("sess-lock-gc", "hash-lock-gc")
+        assert key in ex._EXEC_LOCKS
+        del lock
+        gc.collect()
+        assert key not in ex._EXEC_LOCKS
+
+
+class TestPlanStepsBound:
+    def test_tuple_steps_over_limit_rejected_not_truncated(self):
+        """PlanStep tuple 直传路径不得静默截断（否则 plan_hash 只覆盖前 16 步）。"""
+        steps = tuple(DedupStep(key_fields=("x",))
+                      for _ in range(MAX_PLAN_STEPS + 1))
+        with pytest.raises(ValueError, match="exceeds"):
+            PreparationPlan(plan_id="prep-too-many", steps=steps)

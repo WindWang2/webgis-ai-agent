@@ -73,6 +73,13 @@ def merge_segmentation(
     h, w = plan.raster_height, plan.raster_width
     from app.lib.modelops.errors import ResourceUnavailable
 
+    # 输出类别以 uint8 承载且 255 保留给 ignore/未覆盖：>255 类会按 uint8
+    # 回绕错列，==256 类时 argmax=255 与 ignore 冲突 —— fail-loud。
+    if not 1 <= num_classes <= 255:
+        raise PreprocessError(
+            f"num_classes={num_classes} cannot be represented in uint8 with "
+            "ignore index 255 (valid range: 1..255)"
+        )
     if h * w * (num_classes * 8 + 16) > 256 * 1024 * 1024:
         raise ResourceUnavailable("segmentation merge exceeds256MiB RAM budget; use the windowed inference engine")
     acc = np.zeros((num_classes, h, w), dtype=np.float32)
@@ -236,64 +243,72 @@ def merge_instances(
     import tempfile as _tempfile
 
     _mm_dir: Optional[pathlib.Path] = None
+    canvas = None
     if need <= 256 * 1024 * 1024:
         canvas = np.zeros((h, w), dtype=np.int32)
     elif need <= 16 * 1024**3:
         _mm_dir = pathlib.Path(_tempfile.mkdtemp(prefix="modelops-inst-"))
-        canvas = np.memmap(_mm_dir / "canvas.npy", dtype=np.int32, mode="w+", shape=(h, w))
-        canvas[:] = 0
     else:
         from app.lib.modelops.errors import ResourceUnavailable
 
         raise ResourceUnavailable(
             f"instance canvas needs {need} bytes > disk cap (use smaller raster)"
         )
-    global_classes: Dict[int, int] = {}
-    next_id = 1
-    for tile, inst_mask, cls_map in zip(plan.tiles, outputs, instance_classes, strict=True):
-        if inst_mask is None:
-            continue
-        row, col, core_h, core_w = tile.core_window
-        off_y = row - (tile.read_window[0] - tile.pad[1])
-        off_x = col - (tile.read_window[1] - tile.pad[0])
-        core = inst_mask[off_y: off_y + core_h, off_x: off_x + core_w]
-        if core.shape != (core_h, core_w):
-            raise PreprocessError(
-                f"tile {tile.index}: core slice {core.shape} != core "
-                f"{(core_h, core_w)} (planner/provider geometry mismatch)"
+    try:
+        if _mm_dir is not None:
+            canvas = np.memmap(
+                _mm_dir / "canvas.npy", dtype=np.int32, mode="w+", shape=(h, w)
             )
-        for tile_inst in np.unique(core):
-            if tile_inst == 0:
+            canvas[:] = 0
+        global_classes: Dict[int, int] = {}
+        next_id = 1
+        for tile, inst_mask, cls_map in zip(plan.tiles, outputs, instance_classes, strict=True):
+            if inst_mask is None:
                 continue
-            tile_inst = int(tile_inst)
-            gcls = cls_map.get(tile_inst, 1)
-            region = core == tile_inst
-            free = canvas[row: row + core_h, col: col + core_w] == 0
-            take = region & free
-            if not take.any():
-                continue
-            new_id = next_id
-            next_id += 1
-            region_global = canvas[row: row + core_h, col: col + core_w]
-            region_global[take] = new_id
-            global_classes[new_id] = gcls
-    if input_nodata is not None:
-        canvas[input_nodata] = 0
-    # #1206：polygonize 一律消费 result_arr —— memmap 分支此前在
-    # ``del canvas`` 后仍引用 canvas，polygonize=True 时抛 UnboundLocalError。
-    if _mm_dir is not None:
-        # 拷出后再 unmap/删目录（Windows：句柄存活时 rmtree 失败；后续
-        # polygonize 还要读 result_arr——不能直接 unmap）。
-        result_arr = np.array(canvas, dtype=np.int32, copy=True)
-        handle = getattr(canvas, "_mmap", None)
-        if handle is not None:
-            handle.close()
-        del canvas
-        import shutil as _shutil
+            row, col, core_h, core_w = tile.core_window
+            off_y = row - (tile.read_window[0] - tile.pad[1])
+            off_x = col - (tile.read_window[1] - tile.pad[0])
+            core = inst_mask[off_y: off_y + core_h, off_x: off_x + core_w]
+            if core.shape != (core_h, core_w):
+                raise PreprocessError(
+                    f"tile {tile.index}: core slice {core.shape} != core "
+                    f"{(core_h, core_w)} (planner/provider geometry mismatch)"
+                )
+            for tile_inst in np.unique(core):
+                if tile_inst == 0:
+                    continue
+                tile_inst = int(tile_inst)
+                gcls = cls_map.get(tile_inst, 1)
+                region = core == tile_inst
+                free = canvas[row: row + core_h, col: col + core_w] == 0
+                take = region & free
+                if not take.any():
+                    continue
+                new_id = next_id
+                next_id += 1
+                region_global = canvas[row: row + core_h, col: col + core_w]
+                region_global[take] = new_id
+                global_classes[new_id] = gcls
+        if input_nodata is not None:
+            canvas[input_nodata] = 0
+        # #1206：polygonize 一律消费 result_arr —— memmap 分支此前在
+        # ``del canvas`` 后仍引用 canvas，polygonize=True 时抛 UnboundLocalError。
+        if _mm_dir is not None:
+            # 拷出后再 unmap/删目录（Windows：句柄存活时 rmtree 失败；后续
+            # polygonize 还要读 result_arr——不能直接 unmap）。
+            result_arr = np.array(canvas, dtype=np.int32, copy=True)
+        else:
+            result_arr = canvas
+    finally:
+        # 异常路径同样清理 memmap 临时目录（否则 canvas.npy 永久残留磁盘）。
+        if _mm_dir is not None:
+            handle = getattr(canvas, "_mmap", None)
+            if handle is not None:
+                handle.close()
+            del canvas
+            import shutil as _shutil
 
-        _shutil.rmtree(_mm_dir, ignore_errors=True)
-    else:
-        result_arr = canvas
+            _shutil.rmtree(_mm_dir, ignore_errors=True)
     result = InstanceMergeResult(instance_ids=result_arr, instance_labels=global_classes)
     if polygonize:
         result.polygon_geojson = _polygonize(result_arr)

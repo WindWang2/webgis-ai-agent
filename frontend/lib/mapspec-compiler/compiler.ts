@@ -1284,19 +1284,19 @@ export function compileMapSpec(
       labelLayerCountDelta = 1;
       // 簇色板像素色（hex）进 legend 摘要（计数分级），有组件在场时由
       // 组件渲染；无组件时导出 HUD 图例兜底同链。
-      const clusterLegend = {
+      const clusterLegend: LegendDef = {
         layerId: layer.id,
-        title: layer.label?.field ?? undefined,
-        entries: [
-          { color: "#9ecae1", label: "1–9" },
-          { color: "#6baed6", label: "10–49" },
-          { color: "#3182bd", label: "50–199" },
-          { color: "#08519c", label: "200+" },
+        title: layer.label?.field ?? layer.id,
+        items: [
+          { color: "#9ecae1", label: "1–9", type: "point" },
+          { color: "#6baed6", label: "10–49", type: "point" },
+          { color: "#3182bd", label: "50–199", type: "point" },
+          { color: "#08519c", label: "200+", type: "point" },
         ],
       };
-      // 既有形状漂移（entries vs LegendDef.items —— 簇计数图例从未进导出
-      // 图例链；P3 记录，不改行为）。typed 收口见 PR 审查注记。
-      legends.push(clusterLegend as unknown as LegendDef);
+      // P3：按 LegendDef 契约用 items（此前 entries + as unknown as 断言，
+      // 消费方遍历 legend 读 .items 得 undefined）。
+      legends.push(clusterLegend);
     }
 
     // ── v1.6（方向 5）：表达窗口展开 ───────────────────────────────────

@@ -102,6 +102,16 @@ class TestUnitAmbiguity:
         issues = detect_unit_ambiguity(_fp("面积_km2", samples=[1234.5, 88.2]))
         assert issues == []
 
+    def test_bare_suffix_unit_marker_no_issue(self):
+        # 无分隔符后缀同样算显式单位声明（不再误报 unit_ambiguous）。
+        assert detect_unit_ambiguity(_fp("面积km2", samples=[1234.5, 88.2])) == []
+        assert detect_unit_ambiguity(_fp("人口万人", samples=[12.0, 35.0])) == []
+
+    def test_quantity_word_ending_with_unit_char_still_ambiguous(self):
+        # 「人口」末尾的「人」不是单位声明（无分隔符 + 落在数量词内）。
+        issues = detect_unit_ambiguity(_fp("人口", samples=[12.0, 35.0]))
+        assert [i.code for i in issues] == [QualityIssueCode.UNIT_AMBIGUOUS]
+
     def test_unit_hint_no_issue(self):
         issues = detect_unit_ambiguity(_fp("面积", unit_hint="km2", samples=[1.0]))
         assert issues == []

@@ -51,7 +51,7 @@ export function dominantColorInWindow(
   half = 2
 ): { r: number; g: number; b: number } | null {
   const { width, height, data } = png;
-  // Map color key → { count, firstDist, rgb }
+  // Map color key → { count, dist (min distance to center), rgb }
   const counts = new Map<string, { count: number; dist: number; rgb: { r: number; g: number; b: number } }>();
 
   for (let dy = -half; dy <= half; dy++) {
@@ -70,6 +70,9 @@ export function dominantColorInWindow(
       const existing = counts.get(key);
       if (existing) {
         existing.count++;
+        // P3：并列裁决取「该色到中心的最近距离」，不是首次出现的距离 ——
+        // 先采到远处同色像素不能让它输掉并列。
+        if (dist < existing.dist) existing.dist = dist;
       } else {
         counts.set(key, { count: 1, dist, rgb: { r, g, b } });
       }

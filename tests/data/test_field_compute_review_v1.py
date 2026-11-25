@@ -24,8 +24,10 @@ from app.services.data_preparation.field_compute.contracts import (
 from app.services.data_preparation.field_compute.interpreter import (
     EvalConfig, evaluate_rows,
 )
+from app.services.data_preparation.field_compute.geometry import measure_geometry
+from app.services.data_preparation.field_compute.functions import static_type
 from app.services.data_preparation.field_compute.parser import (
-    CompileContext, compile_columns,
+    CompileContext, compile_columns, compile_expression,
 )
 from app.services.dataset_semantics import reset_dataset_semantic_store
 from app.services.session_data import session_data_manager as sdm
@@ -772,3 +774,81 @@ class TestProvenanceOutputFingerprint:
         assert mine[0].output_fingerprint == out_fp
         assert mine[0].inputs[0]["descriptor_fingerprint"] == \
             plan.anchor.descriptor_fingerprint
+
+
+# ── P3 波次：静态类型 / 几何证据 / round / pad_left / 进度 ────────────────
+
+class TestStaticTypeIfBranch:
+    def test_if_branch_type_mismatch_is_any(self):
+        """if 两个分支类型不一致时静态类型必须是 any（与 case 同纪律），
+        不得只看 then 分支放行。"""
+        ctx = CompileContext(available_fields=("人口",))
+        mismatched = compile_expression("if({人口} > 100, 1, 'x')", ctx)
+        assert static_type(mismatched) == "any"
+
+    def test_if_same_branch_types_stay_determined(self):
+        ctx = CompileContext(available_fields=("人口",))
+        same = compile_expression("if({人口} > 100, 1, 2)", ctx)
+        assert static_type(same) == "number"
+
+
+class TestGeometryPartsEvidence:
+    @staticmethod
+    def _ring(x):
+        return [[x, 30.0], [x + 1.0, 30.0], [x + 1.0, 31.0], [x, 31.0], [x, 30.0]]
+
+    def test_parts_counts_actual_components(self):
+        """MultiPolygon 的 parts 必须等于实际部件数，不得恒为 2。"""
+        one = {"type": "MultiPolygon", "coordinates": [[self._ring(104.0)]]}
+        three = {"type": "MultiPolygon", "coordinates": [
+            [self._ring(104.0)], [self._ring(106.0)], [self._ring(108.0)]]}
+        _v1, ev1 = measure_geometry(one, "area_km2", "geodesic", "", "EPSG:4326")
+        _v3, ev3 = measure_geometry(three, "area_km2", "geodesic", "",
+                                    "EPSG:4326")
+        assert ev1["parts"] == 1
+        assert ev3["parts"] == 3
+
+
+class TestRoundDigitsHugeInteger:
+    def test_huge_integer_digits_is_row_error_not_crash(self):
+        """digits 为超大整数时 float(d) 不得抛 OverflowError 逃出 evaluate_rows。"""
+        cols, _ = compile_columns(
+            [{"name": "r", "expression": "round({v}, {d})"}],
+            CompileContext(available_fields=("v", "d")))
+        batch = evaluate_rows([({"v": 1.5, "d": 10 ** 400}, None)],
+                              cols, None, EvalConfig())
+        assert batch.stats["r"].errors == 1
+        assert batch.rows[0]["r"] is None
+        assert batch.stats["r"].samples[0]["code"] == "CONVERSION_FAILED"
+
+
+class TestPadLeftWidth:
+    def _batch(self, expression):
+        cols, _ = compile_columns([{"name": "p", "expression": expression}],
+                                  CompileContext(available_fields=("代码",)))
+        return evaluate_rows([({"代码": "7"}, None)], cols, None, EvalConfig())
+
+    def test_null_width_returns_null(self):
+        batch = self._batch("pad_left({代码}, null)")
+        assert batch.rows[0]["p"] is None
+        assert batch.stats["p"].errors == 0
+
+    def test_fractional_width_is_row_error(self):
+        batch = self._batch("pad_left({代码}, 3.5)")
+        assert batch.rows[0]["p"] is None
+        assert batch.stats["p"].samples[0]["code"] == "CONVERSION_FAILED"
+
+
+class TestProgressReportsProcessedRows:
+    async def test_all_null_plan_progress_reaches_total(self):
+        """进度必须按已处理行数上报；computed_rows=0（全 null 结果）也不能
+        把进度卡在 0。"""
+        sid = "sess-fc-rev-progress"
+        ref = await _seed(sid)
+        plan = await _plan(sid, ref,
+                           [{"name": "空列", "expression": "coalesce(null, null)"}])
+        seen = []
+        await service._execute_locked(
+            plan, sid, project_id="",
+            progress=lambda done, total: seen.append((done, total)))
+        assert seen == [(4, 4)]

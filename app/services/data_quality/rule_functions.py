@@ -220,8 +220,10 @@ def rule_null_rate(ctx: RuleEvalContext) -> RuleOutcome:
     fail_at = float(ctx.params.get("fail_null_rate", 0.8))
     warn_at = float(ctx.params.get("max_null_rate", 0.5))
     rates = {k: c / total for k, c in null_counts.items()}
+    # 并列时按字段名裁决：fields 是 set，迭代序受字符串哈希随机化影响，
+    # 只用 value 作 key 会让最差字段在不同进程间漂移（消息/metric 非确定）。
     worst_field, worst_rate = max(
-        rates.items(), key=lambda kv: kv[1], default=("", 0.0)
+        rates.items(), key=lambda kv: (kv[1], str(kv[0])), default=("", 0.0)
     )
     worst = float(worst_rate)
     metric = {
@@ -529,8 +531,10 @@ def rule_primary_key_uniqueness(ctx: RuleEvalContext) -> RuleOutcome:
         return RuleOutcome(status="skipped", message="no_features")
     dups = {k: c for k, c in seen.items() if c > 1}
     dup_rows = sum(c for c in dups.values())
+    # 键名显式化：本规则计的是重复组内的**全部行数**，与
+    # rule_duplicate_features 的「超额行数」口径不同，不得同名混用。
     metric = {"field": field_name, "duplicate_keys": len(dups),
-              "duplicate_rows": dup_rows, "missing": missing,
+              "duplicate_group_rows": dup_rows, "missing": missing,
               "sample_keys": [k[:128] for k in sorted(dups)[:8]]}
     if dups:
         return RuleOutcome("fail", f"主键 '{field_name}' 重复 {len(dups)} 组（{dup_rows} 行）",
@@ -655,7 +659,9 @@ def rule_field_type_drift(ctx: RuleEvalContext) -> RuleOutcome:
             compatible = [t for t in non_null
                           if _COMPATIBLE.get((exp, t)) or exp == t
                           or (exp == "number" and t == "number")]
-            if non_null and not compatible:
+            # 只要存在不兼容的观测类型就漂移（声明 number 却半数是
+            # string 也必须报），而不是等「无任何兼容类型」才报。
+            if non_null and len(compatible) < len(non_null):
                 drifted[name] = f"expected={exp},got={','.join(sorted(non_null))}"
         elif len(non_null) > 1:
             drifted[name] = "mixed:" + ",".join(sorted(non_null))

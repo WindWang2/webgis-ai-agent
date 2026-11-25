@@ -47,10 +47,6 @@ MAX_PAGES = 512
 MAX_LAYERS = 256
 
 
-def _clamp(v: float, cap: float) -> float:
-    return max(0.0, min(float(v), cap))
-
-
 class ExportWork:
     """导出面形状输入（全部可选缺省 = 单页空导出）。防御式：负值钳 0。"""
 
@@ -158,7 +154,7 @@ def export_work_from_summary(summary) -> ExportWork:
                 return v
         return 0
 
-    dpi = summary.get("export_dpi", summary.get("dpi"))
+    dpi = summary.get("export_dpi") or summary.get("dpi")
     if not isinstance(dpi, (int, float)) or dpi <= 0:
         dpi = None
     return ExportWork(

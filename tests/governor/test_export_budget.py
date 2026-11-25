@@ -97,6 +97,12 @@ def test_summary_projection_lenient_keys():
     assert export_work_from_summary({"dpi": "x"}).dpi is None
 
 
+def test_summary_dpi_falls_back_when_export_dpi_is_none():
+    """export_dpi 键存在但为 None 时仍应回退 dpi 别名。"""
+    w = export_work_from_summary({"export_dpi": None, "dpi": 300})
+    assert w.dpi == 300.0
+
+
 def test_workflow_seam_export_node_declares_export_work():
     """workflow 节点 resources.export 申报 → 走同一 governor 通道语义。"""
     from app.services.workflow_runtime.estimate import (

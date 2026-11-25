@@ -115,7 +115,7 @@ def render_input_from_spec_summary(summary) -> RenderWorkInput:
                 return v
         return 0
 
-    dpi = summary.get("export_dpi", summary.get("dpi"))
+    dpi = summary.get("export_dpi") or summary.get("dpi")
     if not isinstance(dpi, (int, float)) or dpi <= 0:
         dpi = None
     return RenderWorkInput(

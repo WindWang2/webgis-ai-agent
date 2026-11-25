@@ -351,3 +351,51 @@ def test_scenario_radii_not_overridden_by_rule_parameters():
         radii = {z.zone_type: z.radius_m for z in zones}
         assert radii["direct"] == expected_direct
         assert radii["indirect"] == expected_indirect
+
+
+def test_step_decay_boundary_matches_step_intervals():
+    """P3: 3-tuple step intervals must use the same half-open bounds as evaluate_step_intervals."""
+    from app.services.spatial_decision.impact_engine import SpatialImpactEngine
+
+    engine = SpatialImpactEngine()
+    intervals = [
+        (0.0, 500.0, 20.0),
+        (500.0, 1500.0, 10.0),
+        (1500.0, 3000.0, 5.0),
+    ]
+
+    for distance in (0.0, 500.0, 1500.0, 3000.0):
+        assert engine.evaluate_step_decay(distance, intervals) == engine.evaluate_step_intervals(
+            distance, intervals
+        )
+
+    assert engine.evaluate_step_decay(500.0, intervals) == 10.0
+    assert engine.evaluate_step_decay(3000.0, intervals) == 0.0
+
+
+def test_single_element_rule_ranges_are_not_dropped():
+    """P3: a one-element pct_range/delta_range declares a constant, not zero change."""
+    from app.services.spatial_decision.metric_evaluator import MetricEvaluator
+
+    evaluator = MetricEvaluator()
+    pct_rule = DomainRule(
+        id="r_pct",
+        domain="test",
+        name="Single pct",
+        statement="constant pct",
+        parameters={"pct_range": [0.2]},
+    )
+    kind, bounds = evaluator.extract_rule_interval(rule=pct_rule)
+    assert kind == "pct"
+    assert bounds == (0.2, 0.2, 0.2)
+
+    abs_rule = DomainRule(
+        id="r_abs",
+        domain="test",
+        name="Single abs",
+        statement="constant abs",
+        parameters={"delta_range": [15.0]},
+    )
+    kind, bounds = evaluator.extract_rule_interval(rule=abs_rule)
+    assert kind == "abs"
+    assert bounds == (15.0, 15.0, 15.0)

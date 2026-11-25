@@ -24,6 +24,8 @@ import {
 } from "@/lib/utils/viewport-seq";
 const MAP_STATE_THROTTLE_MS = 2000;
 const MAX_SEEN_EVENT_IDS = 512;
+/** DUP-1 退避封顶：attempt 很大时单次睡眠不得无界增长（对照 outbox retryMaxMs）。 */
+const MAX_RECONNECT_BACKOFF_MS = 30_000;
 
 function cancellableSleep(ms: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) return Promise.resolve();
@@ -632,7 +634,10 @@ export function useMapBridge(
 
           if (!attemptError && !abruptClose) break; // clean end, nothing to resume
 
-          await cancellableSleep(baseDelayMs * 2 ** attempt, controller.signal); // backoff before the next attempt (cancellable, INV-9)
+          await cancellableSleep(
+            Math.min(baseDelayMs * 2 ** attempt, MAX_RECONNECT_BACKOFF_MS),
+            controller.signal,
+          ); // backoff before the next attempt (cancellable, INV-9)
           if (controller.signal.aborted || streamEpoch !== streamEpochRef.current) break;
         }
       } finally {

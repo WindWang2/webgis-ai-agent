@@ -73,7 +73,15 @@ def atomic_publish(delivery_id: str) -> Path:
     dst = final_dir(delivery_id)
     if not src.is_dir():
         raise FileNotFoundError(f"staging missing for delivery {delivery_id}")
-    os.replace(src, dst)
+    try:
+        os.replace(src, dst)
+    except OSError as e:
+        from app.services.data_delivery import contracts as dl_contracts
+        from app.services.data_delivery.service import DeliveryError
+
+        raise DeliveryError(
+            dl_contracts.ERR_PUBLISH_FAILED,
+            f"原子发布失败（终态目录已存在或不可替换）: {e}") from e
     return dst
 
 
@@ -189,7 +197,7 @@ async def register_session_artifact(
         from app.services.artifact_registry import register_artifact
 
         ref = f"ref:delivery/{delivery_id}"
-        record = await register_artifact(
+        await register_artifact(
             session_id,
             artifact_id=ref,
             artifact_type="data_delivery",
@@ -198,7 +206,7 @@ async def register_session_artifact(
             descriptor=descriptor,
             metadata=metadata,
         )
-        return ref if record is not None else ref
+        return ref
     except Exception as e:  # noqa: BLE001
         logger.warning("[data-delivery] ledger registration skipped for %s: %s",
                        delivery_id, e)

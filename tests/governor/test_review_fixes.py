@@ -267,6 +267,57 @@ class TestRegistrationCleanup:
         assert gov.snapshot()["channels"]["raster"]["in_flight"] == 0
 
 
+class TestManifestFailOpen:
+    def test_unreadable_manifest_starts_empty(self, monkeypatch):
+        """P3 回归：manifest 权限/目录类 OSError 也 fail-open（空预算表）。"""
+        import app.services.governor.config as config_mod
+
+        def boom(path=None):
+            raise PermissionError("manifest unreadable")
+
+        monkeypatch.setattr(config_mod, "load_manifest", boom)
+        gov = HarnessResourceGovernor(_config())
+        assert gov.ledger.budget_for("session") is None
+
+
+class TestCompleteBooksUnchargedActualDims:
+    @pytest.mark.asyncio
+    async def test_actual_dim_absent_from_charged_is_booked(self):
+        """P3 回归：actual 中未出现在 charged 的维也要入累计账。"""
+        gov = HarnessResourceGovernor(_config(), budgets=load_manifest(_MANIFEST))
+        est = ResourceEstimate(resource_class=ResourceClass.LIGHT, dims={
+            Dimension.WALL_TIME_S: DimValue.known(1.0)})
+        demand = ResourceDemand(session_id="net-1", estimate=est)
+        _, res, ticket = await gov.admit_and_reserve(demand)
+        await gov.complete(res, ticket, actual={
+            Dimension.WALL_TIME_S: 1.0,
+            Dimension.NETWORK_BYTES: 4096.0,
+        })
+        snap = gov.snapshot("net-1")
+        assert (snap["budgets"]["session"]["cumulative"]["network_bytes"]
+                == 4096.0)
+
+
+class TestStoragePressureSnapshotConsistency:
+    def test_pressure_and_level_come_from_one_reading(self):
+        """P3 回归：snapshot 的 pressure/level 必须同一读（TTL 到期不重取）。"""
+        from app.services.governor.storage_pressure import StoragePressureView
+
+        readings = iter([(1, 10), (10, 10)])
+        calls = {"n": 0}
+
+        def provider():
+            calls["n"] += 1
+            return next(readings)
+
+        view = StoragePressureView(provider=provider, cache_ttl_s=-1.0)
+        snap = view.snapshot()
+        assert snap["pressure"] == pytest.approx(0.1)
+        assert snap["level"] == "low"
+        assert snap["known"] is True
+        assert calls["n"] == 1
+
+
 class TestStoragePressureReadLock:
     def test_provider_call_does_not_hold_cache_lock(self):
         """P2 回归：慢 provider 不得在持锁状态下调用。

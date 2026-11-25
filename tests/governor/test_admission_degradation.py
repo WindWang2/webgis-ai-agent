@@ -237,6 +237,12 @@ class TestHealthView:
         assert hv.provider_state("anything") == "unknown"
         assert hv.is_open("anything") is False
 
+    def test_degraded_sources_only_returns_degraded(self):
+        hv = HealthView(_FakeBreakerRegistry(
+            {"osm": "open", "bing": "closed", "half": "half_open"}))
+        assert hv.degraded_sources(["osm", "bing", "half", "missing"]) == {
+            "osm": "open", "half": "half_open"}
+
     def test_registry_failure_is_fail_open(self):
         class _Boom:
             def state(self, _):

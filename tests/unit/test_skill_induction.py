@@ -38,6 +38,7 @@ from app.services.gis_harness.skills.contract import (
 from app.services.gis_skills.induction import (
     DYNAMIC_STATUS_ALLOWLIST,
     MAX_DYNAMIC_CAPABILITIES,
+    InducedParameter,
     InducedSkillStore,
     SandboxReport,
     SkillInductionEngine,
@@ -286,6 +287,21 @@ class TestTraceAnalyzerGate:
         assert "map_mutation_receipt" in mutation_steps[0].evidence_kinds
         assert "map_mutation_receipt" not in analysis.steps[-1].evidence_kinds
 
+    def test_non_numeric_duration_does_not_crash(self):
+        trace = _make_trace(turn_id="t-duration")
+        trace.tool_calls[0]["duration_ms"] = "slow"
+        analysis = analyze_trace(trace)
+        assert analysis.accepted is True
+        assert analysis.steps[0].duration_ms == 0.0
+
+    def test_non_numeric_counts_do_not_crash(self):
+        trace = _make_trace(turn_id="t-counts")
+        trace.artifacts = {"count": "many"}
+        trace.mutations = ["not", "a", "dict"]
+        analysis = analyze_trace(trace)
+        assert analysis.artifacts_count == 0
+        assert analysis.mutations_count == 0
+
 
 # ── 参数泛化 ─────────────────────────────────────────────────────────────
 
@@ -341,6 +357,38 @@ class TestParameterGeneralizer:
         model_cls = good_generalization.build_model()
         with pytest.raises(ValidationError):
             model_cls(**_variant_params(start_date="next Tuesday"))
+
+    @pytest.mark.parametrize("key", ["key", "auth", "cookie", "signature"])
+    def test_bare_sensitive_keys_never_generalized(self, key):
+        steps = GOOD_STEPS + [("upload_report_attachment", {key: "s3cr3t"})]
+        analysis = analyze_trace(
+            _make_trace(steps=steps, turn_id=f"t-bare-{key}"))
+        assert analysis.accepted is True
+        gen = generalize_parameters(analysis)
+        assert key not in {p.name for p in gen.parameters}
+        assert any(key in item and "sensitive_key" in item
+                   for item in gen.skipped)
+
+    @pytest.mark.parametrize("region", ["New York 市", " 成都市",
+                                        "St. Louis 市"])
+    def test_place_name_example_satisfies_its_own_pattern(self, region):
+        steps = [(n, dict(a)) for n, a in GOOD_STEPS]
+        steps[0][1]["region"] = region
+        outcome = SkillInductionEngine(store=None).induce(
+            _make_trace(steps=steps, turn_id="t-place-space"))
+        assert outcome.status == "induced"
+        assert outcome.rejection_codes == []
+
+    def test_longitude_key_gets_coordinate_bounds(self):
+        steps = [(n, dict(a)) for n, a in GOOD_STEPS]
+        steps[0][1]["longitude"] = 104.0
+        analysis = analyze_trace(_make_trace(steps=steps, turn_id="t-lon"))
+        gen = generalize_parameters(analysis)
+        param = {p.name: p for p in gen.parameters}["longitude"]
+        assert param.semantic_role == "coordinate"
+        assert param.constraints == {"ge": -180.0, "le": 180.0}
+        with pytest.raises(ValidationError):
+            gen.build_model()(**_variant_params(longitude=200.0))
 
 
 def _variant_params(*, region="绵阳市", threshold=0.1, **overrides) -> dict:
@@ -425,6 +473,27 @@ class TestProcedureCompiler:
             assert desc is not None, cap_id
             assert desc.status in DYNAMIC_STATUS_ALLOWLIST
 
+    def test_same_goal_distinct_topologies_get_distinct_ids(
+            self, good_analysis, good_generalization, fresh_registry):
+        base = compile_skill(good_analysis, good_generalization,
+                             registry=fresh_registry,
+                             domain="temporal_analysis")
+        narrower = analyze_trace(
+            _make_trace(steps=GOOD_STEPS[:5], turn_id="t-topo"))
+        other = compile_skill(narrower, generalize_parameters(narrower),
+                              registry=fresh_registry,
+                              domain="temporal_analysis")
+        assert narrower.goal_text == good_analysis.goal_text
+        assert other.contract.id != base.contract.id
+
+    def test_compile_without_completion_evidence_does_not_crash(
+            self, good_analysis, good_generalization, fresh_registry):
+        analysis = good_analysis.model_copy(deep=True)
+        analysis.steps[-1].evidence_kinds = []
+        compiled = compile_skill(analysis, good_generalization,
+                                 registry=fresh_registry)
+        assert compiled.contract.completion_evidence == []
+
 
 # ── 沙盒验证（静态 + 去毒 + 重放）────────────────────────────────────────
 
@@ -501,6 +570,20 @@ class TestSandboxValidator:
         assert scan_for_injection("drop ${HOME} table") is not None
         assert scan_for_injection(r"open C:\Windows\system32") is not None
         assert scan_for_injection("访问 https://evil.example") is not None
+
+    def test_reserved_parameter_name_rejected_not_crash(self, good_compiled,
+                                                        good_analysis):
+        compiled = good_compiled.model_copy(update={"parameters": [
+            InducedParameter(name="__config__", type="str",
+                             semantic_role="generic", example="x")]})
+        report = validate_compiled(
+            compiled, good_analysis,
+            variant_scenarios=[{"name": "reserved_name", "expect": "ok",
+                                "params": {"__config__": "x"}}])
+        assert report.accepted is False
+        variant = report.variant_results[0]
+        assert variant.passed is False
+        assert "param_schema" in variant.detail
 
 
 # ── 动态能力挂钩与 induced 资产隔离面 ────────────────────────────────────
@@ -579,6 +662,25 @@ class TestInducedSkillStore:
         assert store.load(good_compiled.contract.id) is None
         assert store.quarantine_ids() == [good_compiled.contract.id]
         assert store.list_ids() == []  # fail-closed：不进索引
+
+    def test_save_commits_atomically(self, good_compiled, tmp_path,
+                                     monkeypatch):
+        from app.services.gis_skills.induction import dynamic_provider
+        store = InducedSkillStore(tmp_path / "ind")
+        store.save(good_compiled)
+        target = store.root / f"{good_compiled.contract.id}.yaml"
+        before = target.read_text(encoding="utf-8")
+        changed = good_compiled.model_copy(
+            update={"yaml_text": before + "\n# v2\n"})
+
+        def _crash_before_commit(src, dst, *args, **kwargs):
+            raise OSError("simulated crash before commit")
+
+        monkeypatch.setattr(dynamic_provider.os, "replace",
+                            _crash_before_commit)
+        with pytest.raises(OSError):
+            store.save(changed)
+        assert target.read_text(encoding="utf-8") == before
 
 
 # ── 端到端编排与异常轨迹免疫 ─────────────────────────────────────────────

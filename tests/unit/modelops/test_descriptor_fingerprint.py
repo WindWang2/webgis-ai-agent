@@ -75,6 +75,21 @@ def test_descriptor_unseeded_policy_accepted_but_not_reuse_eligible(tiny_desc_fa
     assert d.random_seed_policy not in REUSE_ELIGIBLE_SEED_POLICIES
 
 
+def test_fingerprint_payload_includes_resource_declarations(tiny_desc_factory):
+    """资源声明（device_requirements/memory_estimate）同样进复用身份投影。"""
+    from app.lib.modelops.descriptor import DeviceRequirements, MemoryEstimate
+
+    base = tiny_desc_factory()
+    device_changed = tiny_desc_factory(
+        device_requirements=DeviceRequirements(required="cuda", min_vram_mb=8192)
+    )
+    memory_changed = tiny_desc_factory(
+        memory_estimate=MemoryEstimate(weights_bytes=4096)
+    )
+    assert base.fingerprint_payload() != device_changed.fingerprint_payload()
+    assert base.fingerprint_payload() != memory_changed.fingerprint_payload()
+
+
 # ── fingerprint：逐字段失效性（R1-M3 验收）───────────────────────────
 
 

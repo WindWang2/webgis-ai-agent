@@ -22,6 +22,18 @@ from app.lib.data.fingerprints import sha256_hex
 ECE_BINS = 10
 
 
+def _validate_label_range(labels: np.ndarray, num_classes: int, what: str) -> None:
+    """标签必须落在 [0, num_classes)；否则混淆矩阵/索引静默错列或越界。"""
+    if labels.size == 0:
+        return
+    lo = int(labels.min())
+    hi = int(labels.max())
+    if lo < 0 or hi >= num_classes:
+        raise ValueError(
+            f"{what} labels must be in [0, {num_classes}); got range [{lo}, {hi}]"
+        )
+
+
 # ── segmentation ─────────────────────────────────────────────────────
 
 
@@ -56,6 +68,8 @@ def segmentation_metrics(
     valid = (y_true != ignore_index) & (y_pred != ignore_index)
     t = y_true[valid].astype(np.int64)
     p = y_pred[valid].astype(np.int64)
+    _validate_label_range(t, num_classes, "segmentation true")
+    _validate_label_range(p, num_classes, "segmentation predicted")
     confusion = np.zeros((num_classes, num_classes), dtype=np.int64)
     if t.size:
         np.add.at(confusion, (t, p), 1)
@@ -74,8 +88,17 @@ def segmentation_metrics(
             round(2 * prec * rec / (prec + rec), 6) if prec + rec else 0.0
         )
         support.append(int(confusion[k, :].sum()))
-    valid_iou = [v for k, v in enumerate(iou) if support[k] > 0]
-    valid_f1 = [v for k, v in enumerate(f1) if support[k] > 0]
+    predicted_support = [int(confusion[:, k].sum()) for k in range(num_classes)]
+    # 类在真值或预测中出现即参与平均：模型凭空预测出的类计 0 分（否则
+    # 这些假阳性被排除在分母外，mIoU/macro-F1 系统性虚高）。
+    valid_iou = [
+        v for k, v in enumerate(iou)
+        if support[k] > 0 or predicted_support[k] > 0
+    ]
+    valid_f1 = [
+        v for k, v in enumerate(f1)
+        if support[k] > 0 or predicted_support[k] > 0
+    ]
     return SegmentationMetrics(
         iou_per_class=tuple(iou),
         f1_per_class=tuple(f1),
@@ -201,6 +224,8 @@ def classification_metrics(
 ) -> Dict[str, Any]:
     t = np.asarray(list(y_true), dtype=np.int64)
     p = np.asarray(list(y_pred), dtype=np.int64)
+    _validate_label_range(t, num_classes, "classification true")
+    _validate_label_range(p, num_classes, "classification predicted")
     acc = float((t == p).mean()) if t.size else 0.0
     recalls = []
     for k in range(num_classes):

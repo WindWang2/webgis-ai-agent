@@ -184,9 +184,25 @@ def dry_run_autofix(
                 if not isinstance(geometry, dict) or geometry.get("coordinates") in (None, []):
                     droppable += 1
                     continue
-                for _path, ring in _iter_fixable_rings(geometry):
+                rings = _iter_fixable_rings(geometry)
+                for _path, ring in rings:
                     if len(ring) >= 3 and not _ring_is_closed(ring):
                         closable += 1
+                # 与 apply 同口径：零面积外环（退化）也会被剔除，预览不得漏计
+                gtype = str(geometry.get("type") or "")
+                if gtype in ("Polygon", "MultiPolygon"):
+                    from app.services.data_quality.rule_functions import _ring_area
+                    exterior_areas = {
+                        path[0]: _ring_area([(point[0], point[1]) for point in ring])
+                        for path, ring in rings
+                        if path and (gtype == "Polygon" and len(path) == 1 and path[0] == 0
+                                     or gtype == "MultiPolygon" and len(path) == 2 and path[1] == 0)
+                    }
+                    if gtype == "MultiPolygon" and exterior_areas:
+                        if not any(area > 0.0 for area in exterior_areas.values()):
+                            droppable += 1
+                    elif exterior_areas and not any(exterior_areas.values()):
+                        droppable += 1
             preview["would_change"][op] = {
                 "drop_invalid_features": droppable,
                 "close_rings": closable,
@@ -274,6 +290,9 @@ def apply_autofix(
             kept: List[Dict[str, Any]] = []
             dropped = 0
             closed = 0
+            # 扫描窗必须在重赋值（features[:] = kept + features[max_scan:]）
+            # 之前冻结，否则 bounded_to 报的是删后长度而非实际扫描窗。
+            scanned_count = min(len(features), max_scan)
             for f in features[:max_scan]:
                 geometry = f.get("geometry") if isinstance(f, dict) else None
                 if not isinstance(geometry, dict) or geometry.get("coordinates") in (None, []):
@@ -312,7 +331,7 @@ def apply_autofix(
             # 保持未扫描尾部（超出 max_scan 的部分不动，证据诚实标注）
             features[:] = kept + features[max_scan:]
             entry.update({"dropped_features": dropped, "closed_rings": closed,
-                          "bounded_to": min(len(features), max_scan)})
+                          "bounded_to": scanned_count})
             evidence["changed"] = evidence.get("changed") or bool(dropped or closed)
         elif op == "reproject":
             target = str(step.params.get("target_crs") or "EPSG:4326")
@@ -363,7 +382,9 @@ def apply_autofix(
                         if fixedv is not None:
                             props[k] = fixedv
                             fixed_count += 1
-            entry.update({"redecoded_strings": fixed_count})
+            entry.update({"redecoded_strings": fixed_count,
+                          "bounded_to": min(len(features), max_scan),
+                          "truncated": len(features) > max_scan})
             evidence["changed"] = evidence.get("changed") or bool(fixed_count)
         elif op == "filter_null":
             name = str(step.params.get("field") or "")

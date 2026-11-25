@@ -116,6 +116,10 @@ class HarnessResourceGovernor:
         except FileNotFoundError:
             logger.info("governor budget manifest not found; starting empty")
             return {}
+        except OSError:
+            logger.warning("governor budget manifest unreadable; starting empty",
+                           exc_info=True)
+            return {}
         except ValueError:
             logger.warning("governor budget manifest invalid; starting empty",
                            exc_info=True)
@@ -336,10 +340,13 @@ class HarnessResourceGovernor:
                             dim.value, expected, float(observed))
                 # 归还语义：live 维按 actual（缺省 = charged 原样）归还；
                 # cumulative 维按 actual 入账（actual 缺省 = charged 估值 ——
-                # 估算消耗也是消耗，诚实计入账本）
+                # 估算消耗也是消耗，诚实计入账本）。actual 中未入账的维
+                # （如实测 NETWORK_BYTES）同样计入 —— 不静默丢弃实测消耗。
                 merged_actual: Dict[Dimension, float] = {
-                    dim: actual.get(dim, add) for dim, add in charged.items()
+                    dim: float(v) for dim, v in actual.items()
                 }
+                for dim, add in charged.items():
+                    merged_actual.setdefault(dim, add)
                 self.ledger.release(reservation, actual=merged_actual)
             if ticket is not None and release_slot:
                 cost = max(0.1, actual.get(Dimension.WALL_TIME_S, 1.0))

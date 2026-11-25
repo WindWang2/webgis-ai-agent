@@ -42,9 +42,14 @@ function main() {
     const spec: MapSpec = JSON.parse(rawSpec);
 
     let profile: SpatialMetaProfile | undefined;
-    if (profilePath && fs.existsSync(profilePath)) {
-      const rawProfile = fs.readFileSync(profilePath, "utf-8");
-      profile = JSON.parse(rawProfile);
+    if (profilePath) {
+      if (!fs.existsSync(profilePath)) {
+        // P3：显式 --profile 指向不存在文件时不能静默按无 profile 编译。
+        console.warn(`Profile not found: ${profilePath} — compiling without spatial profile`);
+      } else {
+        const rawProfile = fs.readFileSync(profilePath, "utf-8");
+        profile = JSON.parse(rawProfile);
+      }
     }
 
     const result = compileMapSpec(spec, profile);

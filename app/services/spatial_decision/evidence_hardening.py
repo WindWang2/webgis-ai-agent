@@ -35,11 +35,28 @@ def detect_rule_conflicts(
     now_str = reference_date or utc_now().date().isoformat()
 
     # 1. Temporal Validity Check
+    # Parse the reference date once: an unparseable reference date invalidates
+    # every temporal comparison and must not be reported as the rule's own
+    # validity date being unparseable (nor skip a rule's expiry silently).
+    try:
+        reference_day = datetime.fromisoformat(str(now_str).replace("/", "-").replace("Z", "+00:00")).date()
+    except ValueError:
+        conflicts.append({
+            "type": "temporal_invalid",
+            "rule_id": None,
+            "message": (
+                f"Reference date '{now_str}' is unparseable; "
+                "temporal validity checks skipped. Explicit review required."
+            ),
+        })
+        reference_day = None
+
     for r in rules:
+        if reference_day is None:
+            break
         p = r.parameters or {}
         valid_until = p.get("valid_until")
         try:
-            reference_day = datetime.fromisoformat(str(now_str).replace("/", "-").replace("Z", "+00:00")).date()
             expiry_day = datetime.fromisoformat(str(valid_until).replace("/", "-").replace("Z", "+00:00")).date() if valid_until else None
         except ValueError:
             conflicts.append({"type": "temporal_invalid", "rule_id": r.id, "message": "Rule validity date is unparseable; explicit review required."})

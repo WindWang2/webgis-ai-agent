@@ -411,6 +411,8 @@ class GeoModelDescriptor(BaseModel):
             "class_schema": self.class_schema.model_dump(mode="json") if self.class_schema else None,
             "spatial": self.spatial.model_dump(mode="json"),
             "temporal": self.temporal.model_dump(mode="json"),
+            "device_requirements": self.device_requirements.as_dict(),
+            "memory_estimate": self.memory_estimate.model_dump(mode="json"),
             "output_transform": self.output_transform.as_dict(),
             "artifact_format": self.artifact_format,
             "random_seed_policy": self.random_seed_policy,

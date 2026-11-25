@@ -169,3 +169,33 @@ def test_legacy_descriptor_gate_script_import_face():
 def test_gate_report_uses_module_manifest(manifest):
     """R1 review：复用 module 级 manifest，避免第三次全量 discovery 扫描。"""
     assert manifest.gate_report["total"] == manifest.counts["tools"]
+
+
+def test_missing_side_effect_never_projected_as_string_none():
+    """P3 review：side_effect 缺失不得投影成 "None"（会被富化闸误计已覆盖）。"""
+    from types import SimpleNamespace
+
+    from app.lib.quality.manifest import _gate_report, _tool_rows
+
+    descriptor = SimpleNamespace(
+        side_effect=None,
+        status="available",
+        tier=1,
+        requires_confirmation=False,
+        capabilities=("toy_cap",),
+        tags=("toy",),
+        latency_class="fast",
+        memory_class="low",
+        scale_class="medium",
+        deterministic=True,
+        execution_policy="",
+    )
+
+    class _Registry:
+        def descriptors(self):
+            return {"toy_tool": descriptor}
+
+    rows, findings = _tool_rows(_Registry(), {}, {})
+    assert rows[0]["side_effect"] == ""
+    assert any(f.code == "TOOL_DESCRIPTOR_INCOMPLETE" for f in findings)
+    assert _gate_report(rows)["fields"]["side_effect"]["coverage"] == 0

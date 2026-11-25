@@ -146,7 +146,7 @@ function sourceDefinitionsEqual(prev: unknown, next: unknown): boolean {
   const p = prev as Record<string, unknown>;
   const n = next as Record<string, unknown>;
 
-  // 短路 1：同数据版本 —— inlineData 不比较，其余键深比较。
+  // 短路 1：同数据版本 —— 非 inlineData 键深比较，inlineData 单独判等。
   const pRev = p.content_revision;
   const nRev = n.content_revision;
   const revisionUsable =
@@ -160,8 +160,9 @@ function sourceDefinitionsEqual(prev: unknown, next: unknown): boolean {
     // （HUD 合并 / ref-source-resolver 在 revision 不变时落地真实数据，
     // 或先以空占位上图）。只按 revision 判等会把 source:update 连同
     // 依赖图层的 recompile 一起跳过 —— 地图永远停在空占位。
-    // 指纹（WeakMap 缓存）兜底：空↔有、有↔变都能识别，同载荷零误报。
-    if (inlineDataFingerprint(p.inlineData) !== inlineDataFingerprint(n.inlineData)) {
+    // P3：指纹（32 位 FNV）只证明「不等」，不能证明「相等」—— 碰撞即
+    // 误判同载荷并跳过更新；这里必须深比较。
+    if (!isDeepEqual(p.inlineData, n.inlineData)) {
       return false;
     }
     return true;

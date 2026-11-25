@@ -47,6 +47,7 @@ FAILURE_CHIP_SIZE = "CHIP_SIZE"
 FAILURE_CLASS_SCHEMA = "CLASS_SCHEMA"
 FAILURE_PROMPT_MODE = "PROMPT_MODE"
 WARNING_NODATA_HEAVY = "NODATA_HEAVY"
+WARNING_RESOLUTION_UNKNOWN = "RESOLUTION_UNKNOWN"
 
 
 @dataclass(frozen=True)
@@ -231,6 +232,17 @@ def qualify(
         descriptor.spatial.resampling_policy
     )
     rng = descriptor.spatial.resolution_range
+    if rng is not None and profile.m_per_px <= 0:
+        # 未知分辨率（m_per_px=0）：无法完成 resolution 判定 —— 显式 warning
+        # 进 report/manifest，不静默跳过。
+        warnings.append(
+            CompatibilityFailure(
+                WARNING_RESOLUTION_UNKNOWN,
+                "input resolution unknown (m_per_px=0); model resolution range "
+                f"[{rng.min_m_per_px}, {rng.max_m_per_px}] was not checked",
+                fix_hint="declare the raster resolution to validate model scale",
+            )
+        )
     if rng is not None and profile.m_per_px > 0:
         if not rng.contains(profile.m_per_px):
             if allow_reproject:

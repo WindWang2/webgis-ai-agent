@@ -774,7 +774,8 @@ async def _handle_reorderlayers(ctx: MutationContext) -> HandlerOut:
     leftover = [
         layer
         for layer in current
-        if isinstance(layer, dict) and str(layer.get("id") or "") not in matched_ids
+        if not isinstance(layer, dict)
+        or str(layer.get("id") or "") not in matched_ids
     ]
     if not matched_ordered:
         return MapSpecResult(
@@ -918,9 +919,37 @@ async def _handle_setlayout(ctx: MutationContext) -> HandlerOut:
                     "(gis_harness.components)."
                 ),
             )
+        bad_priority = [
+            str(c.get("id"))
+            for c in intent.components
+            if isinstance(c, dict)
+            and c.get("priority") is not None
+            and (
+                not isinstance(c.get("priority"), (int, float))
+                or isinstance(c.get("priority"), bool)
+            )
+        ]
+        if bad_priority:
+            # priority 参与确定性排序；非数值（如 "high"）与缺省 0 混排会在
+            # sorted 处抛 TypeError —— 在此确定性拒绝，不留 500。
+            return MapSpecResult(
+                is_error=True,
+                origin=origin,
+                error_msg=(
+                    "layout.components priority must be numeric: "
+                    + ", ".join(bad_priority[:5])
+                ),
+                correction_hint=(
+                    "priority 是数值排序键（小值先渲染）；"
+                    "非数值优先级无法确定性排序。"
+                ),
+            )
         layout["components"] = sorted(
             intent.components,
-            key=lambda c: (c.get("priority", 0), c.get("id", "")),
+            key=lambda c: (
+                c.get("priority") if c.get("priority") is not None else 0,
+                c.get("id", ""),
+            ),
         )
     if intent.component_links is not None:
         # ADR-0214 D2：实例边整表写入（确定性拒绝非法/超限，

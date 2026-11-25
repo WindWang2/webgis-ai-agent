@@ -2,8 +2,8 @@
  * Changed-lane mapping for the journey E2E lane (quality-e2e-v9, ADR-0146).
  *
  * The PR smoke gate runs only the smoke subset, and only when the diff can
- * plausibly affect it. Mapping keys are PREFIX keys matched with
- * `f === key || f.startsWith(key + '/')` — the exact contract that #1216
+ * plausibly affect it. Mapping keys are PREFIX keys (no trailing slash)
+ * matched with `f === key || f.startsWith(key + '/')` — the exact contract that #1216
  * showed must never silently regress to non-matching keys: every key here is
  * covered by frontend/tests/e2e-lanes/changed-lanes.test.ts asserting the
  * intended files actually match (#1216-class bug = key exists but never
@@ -20,16 +20,16 @@ export const SMOKE_JOURNEYS = ['j1-upload-analyze-export', 'j4-storymap-share', 
 const PREFIX_MAP = [
   // The lane's own assets: run the full smoke set (helpers/fixtures changes
   // can affect every journey).
-  { key: 'frontend/e2e/', effect: 'smoke' },
+  { key: 'frontend/e2e', effect: 'smoke' },
   // Shell surfaces the smoke journeys drive.
-  { key: 'frontend/components/', effect: 'smoke' },
-  { key: 'frontend/app/', effect: 'smoke' },
+  { key: 'frontend/components', effect: 'smoke' },
+  { key: 'frontend/app', effect: 'smoke' },
   // Transport/store/auth contract changes can break journeys via fixtures.
-  { key: 'frontend/lib/', effect: 'smoke' },
+  { key: 'frontend/lib', effect: 'smoke' },
   // Copy is not cosmetic: journey selectors are `getByRole`/`getByText` strings
   // that come straight out of frontend/messages/*.json — a retranslated label
   // silently breaks a journey without touching a line of component code.
-  { key: 'frontend/messages/', effect: 'smoke' },
+  { key: 'frontend/messages', effect: 'smoke' },
   // Playwright config itself.
   { key: 'frontend/playwright.config.ts', effect: 'smoke' },
   // The lane's own workflow stays self-triggering (a broken lane config is
@@ -56,7 +56,7 @@ export function mapChangedFiles(files) {
     return { run: false, reason: 'diff touches only neutral paths (docs / other-lane CI)', grep: '', journeys: [] };
   }
   for (const { key, effect } of PREFIX_MAP) {
-    const hit = list.some((f) => f === key || f.startsWith(key));
+    const hit = list.some((f) => f === key || f.startsWith(key + '/'));
     if (hit) {
       if (effect === 'smoke') {
         return {
