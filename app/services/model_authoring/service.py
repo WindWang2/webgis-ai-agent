@@ -352,9 +352,13 @@ class ModelAuthoringService:
             if e.code != "REVISION_CONFLICT":
                 raise
             latest = await self.get_draft(project_id, model_slug)
-            if latest is not None \
-                    and latest.get("latest_published_package_id") == row["package_id"] \
-                    and latest.get("latest_published_version") == row["version"]:
+            if latest is None:
+                # 竞态窗口：重读前草稿被 CAS 删除（R2-3）—— 包已发布
+                # 是既成事实，指针无法写 → stale 回执，不 500。
+                pointer_stale = True
+                updated = draft
+            elif (latest.get("latest_published_package_id") == row["package_id"]
+                  and latest.get("latest_published_version") == row["version"]):
                 updated = latest
             else:
                 try:

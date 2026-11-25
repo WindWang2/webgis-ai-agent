@@ -3241,7 +3241,9 @@
   "__model__": "ModelPublishResponse",
   "findings": "array<object>",
   "fingerprint": "string",
+  "next_draft_revision": "integer|null",
   "package_id": "string",
+  "pointer_stale": "boolean",
   "success": "boolean",
   "version": "string"
  },

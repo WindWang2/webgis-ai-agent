@@ -1,8 +1,12 @@
 """模型作者域 REST 契约测试（TestClient smoke）。
 
-端点可达、认证强制（401）、项目写权限（403）、slug 冲突（409）、
-CAS 冲突（409）、验证 findings 投影。发布/实例化链依赖 compile 模块
-（同域），随本域单测一起回归。持久层用临时 SQLite 工厂注入 service 单例。
+端点可达、认证强制（401）、slug 冲突（409）、CAS 冲突（409）、验证
+findings 投影。注意：本文件的 fixture 把 `_authorize_project_write`
+monkeypatch 成放行 —— 项目写权限（403）路径由
+`tests/unit/model_authoring/test_r1_r2_regressions.py`（服务层项目派生）
+与真实 route 闸的探针覆盖；此处专注契约形状。发布/实例化链依赖 compile
+模块（同域），随本域单测一起回归。持久层用临时 SQLite 工厂注入 service
+单例。
 """
 from __future__ import annotations
 

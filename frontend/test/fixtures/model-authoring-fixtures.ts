@@ -54,7 +54,7 @@ export const sampleDocument: ModelDocument = {
 };
 
 export const sampleDraft: ModelDraft = {
-  id: 1,
+  id: 'draft-1',
   project_id: 'proj-1',
   model_slug: 'runoff_suitability',
   name: '径流适宜性',
@@ -85,7 +85,7 @@ export const emptyDocument: ModelDocument = {
 
 export const emptyDraft: ModelDraft = {
   ...sampleDraft,
-  id: 2,
+  id: 'draft-2',
   model_slug: 'fresh_model',
   name: '新模型',
   document: emptyDocument,

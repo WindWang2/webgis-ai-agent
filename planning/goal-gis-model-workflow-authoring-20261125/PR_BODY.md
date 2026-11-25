@@ -40,8 +40,8 @@
 - 迁移：`alembic heads` 单头；upgrade→downgrade→upgrade 循环验证
 - 前端：pnpm typecheck（零新增错误）/ eslint 定向 / vitest 定向 + i18n 完整性 / 生产 build
 实测（2026-11-26，本 worktree）：
-- 后端：model_authoring 143 + Pi journey 1 绿（含 heavy 真实 driver e2e）；workflow_runtime 376 绿；api_contract 绿；extensions+gis_tool_conformance 2816 绿（NDVI 1 失败=master 预存）；gis_harness 3623 绿（4 失败=master 预存 catalog 指纹漂移，基线 worktree 逐字节复现）
-- 前端：typecheck 零新增（基线 5 错 diff 为空）；eslint 3 警告与 master 逐字节一致；vitest 全量 5796 绿 / 3 失败=master 预存（geoai×2 + i18n 占位符×1）；生产 build 通过
+- 后端：model_authoring 151（含 8 条 R1/R2 回归网）+ Pi journey 1 绿（含 heavy 真实 driver e2e）；workflow_runtime 376 绿；api_contract 58 绿 + 1 skip（schemathesis 环境闸）；extensions+gis_tool_conformance 2816 绿（NDVI 1 失败=master 预存）；gis_harness 3623 绿（4 失败=master 预存 catalog 指纹漂移，基线 worktree 逐字节复现）
+- 前端：typecheck **冷缓存**与基线逐字节一致（R2 指出 incremental 缓存假象风险，已按冷缓存复验）；eslint 3 警告与 master 逐字节一致；vitest 全量 5796 绿 / 3 失败=master 预存（geoai×2 + i18n 占位符×1）；生产 build 通过
 - 迁移：alembic heads 单头 m0111；upgrade→downgrade→upgrade 循环验证；model_drafts 零漂移（master 唯一漂移 lifecycle_policies 为预存）
 
 ## 独立评审
@@ -50,7 +50,10 @@
   - P2-1 作者端口规则与运行时绑定门分歧 → 静态规则改为绑定门忠实镜像（elevation→terrain_surface；删除把正确接线标可疑的 warning）；前后端同构；
   - P2-2 publish 指针竞态孤儿态 → 幂等收尾 + pointer_stale 回执；P2-3 slug 文案插值；P2-4 primary_output 悬空 → wire id + validate_typed_dag 出口自检；
   - P3：IntegrityError 归一/ref 超长 typed 拒绝/remove_param NOT_FOUND/无草稿可实例化已发布包/文档计数修正等。
-- R2 复审：（复审完成后填写）
+- R2 复审（另一独立 agent，2026-11-26）：R1 全部 10 项逐条独立探针验证 **closed**（含 P1-1 双层复验：route 403 真闸 + service 实例归属项目派生）；新增 2 P2 + 4 P3 已全部修复：
+  - R2-1 pointer_stale 回执被出边界口剥离 → ModelPublishResponse/路由/Pi 工具三处补齐（契约快照已刷新）；
+  - R2-2 前端 fixtures id 类型回归 → 修复后**冷缓存** typecheck 与 master 基线逐字节一致；
+  - R2-3 publish 删稿竞态 500 → None 分支 stale 回执；R2-4 → 新增 test_r1_r2_regressions.py 8 条回归测试固化探针结论 + test_api docstring 修正；R2-5 文档端口语义段更新；R2-6 数字表述修正。
 
 ## 未完成/跳过
 （定稿时如实填）

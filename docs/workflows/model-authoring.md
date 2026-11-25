@@ -34,10 +34,11 @@ Instance（既有 workflow_runtime：绑定门/波次 driver/复用指纹/重算
 | 节点参数引用 | 值字符串 `"$param:<name>"` → 运行时经 `node_params` 注入既有 driver 合并点 |
 | 上限 | 节点 ≤32（编辑器；runtime 64 余量给编译扩展）、边 ≤64、输出 ≤8、文档 ≤256KB |
 
-端口兼容（作者面静态近似；运行时绑定门以真实 descriptor 复核）：
-宽类型 `feature_collection` 双向可逆；analysis 输入缺省宽类型；output 汇点
-空 artifact_type + required=False（收口点不做基数门——descriptor 契约
-非 FC 载荷 feature_count 恒 0）。
+端口兼容（**运行时绑定门语义的忠实镜像**，前后端同构）：同类型直通；
+output 汇点空 artifact_type + required=False（收口点不做基数门——
+descriptor 契约非 FC 载荷 feature_count 恒 0）；宽端口
+`feature_collection` 只收 feature_set 类源（`_ANY_FEATURE_CATEGORIES`
+同门）；宽喂窄/窄喂窄≠/未知类型运行时必拒，静态同样拒绝。
 
 ## 版本与发布（受限声明式项目 scope）
 

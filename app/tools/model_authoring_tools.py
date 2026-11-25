@@ -484,7 +484,9 @@ def register_model_authoring_tools(registry: ToolRegistry) -> None:
                 {"findings": e.extra.get("findings", [])}
                 if e.extra.get("findings") else {}))
         return {"success": True, "package_id": out["package_id"],
-                "version": out["version"], "fingerprint": out["fingerprint"]}
+                "version": out["version"], "fingerprint": out["fingerprint"],
+                "pointer_stale": out.get("pointer_stale", False),
+                "next_draft_revision": out.get("next_draft_revision")}
 
     # ── 7：实例化 + 绑定 + 运行 ──────────────────────────────────────
 

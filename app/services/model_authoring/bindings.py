@@ -55,6 +55,18 @@ class ModelInstanceBinder:
             raise BindingError(
                 "TOO_MANY_BINDINGS",
                 f"{len(bindings)} exceeds {MAX_BINDINGS_PER_CALL}")
+        # 输入形状检查先于 DB/dag 工作（fail fast； malformed ref 不触发
+        # 实例/包解析）。
+        for node_id, ref in bindings.items():
+            if not str(ref or "").strip():
+                raise BindingError(
+                    "EMPTY_REF", f"node {node_id} binding ref is empty")
+            if len(str(ref)) > 96:
+                # 节点行 bound_ref 列有界（96）；截断会让 driver 透传查
+                # 不到 —— typed 拒绝而非静默截断（P3-4）。
+                raise BindingError(
+                    "REF_TOO_LONG",
+                    f"node {node_id} ref exceeds 96 chars")
         store = self._runtime.store
         inst = await asyncio.to_thread(
             store.get_instance, instance_id, owner_scope)
@@ -81,14 +93,13 @@ class ModelInstanceBinder:
     ) -> Dict[str, Any]:
         store = self._runtime.store
         ref = str(ref or "").strip()
+        # 形状已在 bind_inputs 前置校验（EMPTY_REF/REF_TOO_LONG 抛
+        # BindingError）；此处保留防御性回执路径。
         if not ref:
             return {"node": node_id, "ok": False, "code": "EMPTY_REF",
                     "bound_ref": ""}
         if len(ref) > 96:
-            # 节点行 bound_ref 列有界（96）；截断会让 driver 透传查不到
-            # —— typed 拒绝而非静默截断（P3-4）。
-            return {"node": node_id, "ok": False,
-                    "code": "REF_TOO_LONG",
+            return {"node": node_id, "ok": False, "code": "REF_TOO_LONG",
                     "bound_ref": ""}
         if kinds.get(node_id) != "data_input":
             return {"node": node_id, "ok": False,

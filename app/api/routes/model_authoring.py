@@ -143,6 +143,10 @@ class ModelPublishResponse(BaseModel):
     package_id: str
     version: str
     fingerprint: str
+    # 指针写入诚实回执（R2-1）：stale = 包已发布但草稿指针因并发编辑
+    # 未能写到本版本（幂等收尾语义，不构成发布失败）。
+    pointer_stale: bool = False
+    next_draft_revision: Optional[int] = None
     findings: List[Dict[str, Any]] = Field(default_factory=list)
 
 
@@ -381,6 +385,8 @@ async def publish_model(
                        if e.extra.get("findings") else {})})
     return {"success": True, "package_id": out["package_id"],
             "version": out["version"], "fingerprint": out["fingerprint"],
+            "pointer_stale": out.get("pointer_stale", False),
+            "next_draft_revision": out.get("next_draft_revision"),
             "findings": out["findings"]}
 
 
