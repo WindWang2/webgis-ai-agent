@@ -50,7 +50,7 @@ cd frontend && pnpm lint && pnpm test               # lint 0 warnings；626 file
 
 - **R1 冷审**（独立 reviewer，反例注入 CE1–CE4 + 值级测试抽查）：结论「需修复后合并」——2×P1（传播 stale-upsert 回退 paint；成员会话无归属校验可越权改写他人 MapSpec）+ 3×P2（幂等键含 frozen_at / 可比角色缺单位静默通过 / simulated_data 真实路径不可达）+ 6×P3。
 - **修复**（commit 7cc5b02a4）：全部 P0/P1/P2 关闭 + 可修 P3 落地（typed superseded / 缓存 QA 失效条目 / preview 死分支 / 指纹键名 / series_name 透传）；2 项 P3 如实披露不修（no-op 传播报 failed —— 词表已被测试与前端 receipts 编码；命名查重 creator-scoped —— 保守 fail-closed）。新增 5 个 R1 回归负例（color+ramp 不回退 / 跨用户拒绝 / freeze 证据隐藏 / 幂等键稳定 / UNIT_UNDECLARED）。
-- **R2 复审**（另一位未参与实现与 R1 的 reviewer，独立运行回归与自有反例）：见 PR 说明附注（合并前结论）。
+- **R2 复审**（另一位未参与实现与 R1 的 reviewer，独立运行回归与 6 条自有反例——含 phantom→foreign 升级路径探测）：结论**可合并**，无 P0–P2 遗留；R1 全部修复逐项验证通过（5 条回归测试 + 218 项三域套件由 R2 亲自复跑）。3 条 P3 备注：①前端 MapSeriesPayload TS 缺 simulated_data（已补，8050980ea）；②attach 门归属锚 create/upsert 语义分叉（双侧均 fail-closed，仅语义备注）；③freeze-plan optional auth 与 submit 强制 401 不对称（均安全）。user_id=None 调用面全量收口核查通过（REST 7 处 + tools 6 处全部传身份）。
 - Pi live 旅程披露：本 worktree `vendor/pi` submodule 未检出（空目录），方向 04 的既有 Pi 旅程本为 opt-in 门控（PI_JOURNEY_E2E=1 + 构建产物，绝不静默绿）。本任务能力面经**真实 ToolRegistry.dispatch**（生产派发入口，Pi 长尾经 webgis_execute 同达）全链验证；live Pi 进程冒烟按仓库既有纪律属阻塞，如实登记。
 
 ## 与并行工作/既有能力的边界
