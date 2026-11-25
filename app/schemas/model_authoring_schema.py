@@ -134,7 +134,7 @@ class ModelParamSpec(BaseModel):
         if self.kind == "field" and not self.input_node:
             raise ValueError("field param requires input_node")
         if self.kind not in ("enum", "field") and self.input_node:
-            raise ValueError("input_node only valid for field/time_window params")
+            raise ValueError("input_node only valid for field params")
         if self.kind == "field" and self.input_node:
             _check_slug(self.input_node)
         if (

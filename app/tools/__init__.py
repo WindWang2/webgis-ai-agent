@@ -145,6 +145,7 @@ _TOOL_MODULES = [
     # goal-02：多步 GIS 分析工作流编排工具面（plan/run/status/recompute；
     # 独立模块防并发冲突；执行真相=registry.dispatch）
     ("app.tools.analysis_workflow_tools", "register_analysis_workflow_tools"),
+    ("app.tools.model_authoring_tools", "register_model_authoring_tools"),
     # Track B（M14）：图层浏览/聚合只读工具面（分页/typed 过滤/视口统计）
     ("app.tools.layer_browse_tools", "register_layer_browse_tools"),
     # GOAL 01：空间语义与量纲可信契约只读工具面（inspect_spatial_semantics；

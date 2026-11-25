@@ -33,7 +33,7 @@ from app.core.idempotency import IdempotencyMiddleware
 from prometheus_client import Counter
 from app.api.v2 import V1_SUNSET_DATE, build_v2_router
 from app.core.rate_limiter import get_rate_limiter
-from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer, auth as auth_routes, static as static_routes, pi_tools, templates, raster as raster_routes, metrics, project as project_routes, data_fabric, jobs as jobs_routes, local_data, mapspec_mutations, interaction_events as interaction_events_routes, analysis_graph as analysis_graph_routes, geocompute as geocompute_routes, workflow_resume as workflow_resume_routes, lakehouse as lakehouse_routes, workflow_runtime as workflow_runtime_routes, feature_edits as feature_edits_routes
+from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer, auth as auth_routes, static as static_routes, pi_tools, templates, raster as raster_routes, metrics, project as project_routes, data_fabric, jobs as jobs_routes, local_data, mapspec_mutations, interaction_events as interaction_events_routes, analysis_graph as analysis_graph_routes, geocompute as geocompute_routes, workflow_resume as workflow_resume_routes, lakehouse as lakehouse_routes, workflow_runtime as workflow_runtime_routes, feature_edits as feature_edits_routes, model_authoring as model_authoring_routes
 from app.api.routes import atlas_jobs as atlas_jobs_routes  # noqa: E402  # 批量图册发布
 from app.api.routes import skill_jobs as skill_job_routes  # noqa: E402  # G30 技能作业工作台
 from app.api.routes import mission_runtime as mission_runtime_routes  # noqa: E402  # ADR-0197
@@ -1265,6 +1265,7 @@ app.include_router(lakehouse_datasets_routes.router, prefix="/api/v1", tags=["La
 app.include_router(extensions_marketplace_routes.router, prefix="/api/v1", tags=["Extension Marketplace / 扩展市场（只读）"])
 app.include_router(geocompute_routes.router, prefix="/api/v1", tags=["GeoCompute / 执行平面"])
 app.include_router(workflow_runtime_routes.router, prefix="/api/v1", tags=["Workflow Runtime V5"])
+app.include_router(model_authoring_routes.router, prefix="/api/v1", tags=["Model Authoring / 模型构建器"])
 app.include_router(mission_runtime_routes.router, prefix="/api/v1", tags=["Mission Runtime"])
 app.include_router(project_runtime_routes.router, prefix="/api/v1", tags=["Project Runtime"])  # ADR-0226
 app.include_router(project_data_refresh_routes.router, prefix="/api/v1", tags=["Project Data Refresh (G10)"])
