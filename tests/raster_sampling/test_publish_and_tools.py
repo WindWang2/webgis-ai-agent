@@ -70,6 +70,14 @@ def test_thin_series_noop_under_limit():
     assert facts["method"] == "none"
 
 
+def test_thin_series_trim_over_limit_keeps_last_endpoint():
+    """P3：保留点超 limit 时截断仍必保末点（不丢最后站位）。"""
+    pts = [{"x": float(i), "y": None, "sid": f"s{i}"} for i in range(20)]
+    thinned, facts = thin_series(pts, limit=5)
+    assert facts["kept"] == 5
+    assert [p["x"] for p in thinned] == [0.0, 1.0, 2.0, 3.0, 19.0]
+
+
 def test_build_display_curves_gap_breaks_between_parts():
     """part 断口在曲线上体现为 gap 标记（不跨空间跳跃连线）。"""
     rows = []

@@ -44,17 +44,6 @@ _MAPSPEC_REVISION_KEY = "_cartographic_mutation_revision"  # lifecycle_engine.py
 #: H09 — user-edit projection vocabulary. ``hide`` is intentionally absent:
 #: the existing ``user_hidden_layers`` path owns it (ADR-0215 D6); this
 #: projection captures everything else the user durably decided.
-_EDIT_PRESENTATION_KINDS = {
-    "PatchLayerPresentationIntent": "presentation",
-    "PatchLayerStyleIntent": "presentation",
-    "PatchComponentIntent": "presentation",
-    "RemoveComponentIntent": "presentation",
-    "DuplicateComponentIntent": "presentation",
-    "RebindComponentIntent": "presentation",
-    "ApplyVisualHealPatchIntent": "presentation",
-    "RestoreStyleIntent": "presentation",
-    "SetLayoutIntent": "presentation",
-}
 _EDIT_KIND_BY_INTENT = {
     "PatchLayerPresentationIntent": "show",     # visible=True / opacity
     "PatchLayerStyleIntent": "restyle",

@@ -708,7 +708,12 @@ class AmapProvider:
             for loc in step.get("polyline", "").split(";"):
                 parts = loc.split(",")
                 if len(parts) == 2:
-                    gcj_polyline.append([float(parts[0]), float(parts[1])])
+                    # #P3：非数值坐标（如 "abc,def"）旧实现 float() 裸
+                    # ValueError 穿透 with_fallback 崩工具；按畸形点跳过。
+                    try:
+                        gcj_polyline.append([float(parts[0]), float(parts[1])])
+                    except (TypeError, ValueError):
+                        continue
 
         # One CRS pass: GCJ-02 → WGS84 over the whole polyline.
         if gcj_polyline:
@@ -741,7 +746,11 @@ class AmapProvider:
                 for loc in (step.get("polyline", "") or "").split(";"):
                     parts = loc.split(",")
                     if len(parts) == 2:
-                        gcj_polyline.append([float(parts[0]), float(parts[1])])
+                        # #P3：同 _shape_route —— 非数值坐标跳过而非 ValueError 崩工具。
+                        try:
+                            gcj_polyline.append([float(parts[0]), float(parts[1])])
+                        except (TypeError, ValueError):
+                            continue
             for bl in seg.get("bus", {}).get("buslines", []) or []:
                 steps_out.append({
                     "instruction": bl.get("name", ""),
@@ -751,7 +760,11 @@ class AmapProvider:
                 for loc in (bl.get("polyline", "") or "").split(";"):
                     parts = loc.split(",")
                     if len(parts) == 2:
-                        gcj_polyline.append([float(parts[0]), float(parts[1])])
+                        # #P3：同 _shape_route —— 非数值坐标跳过而非 ValueError 崩工具。
+                        try:
+                            gcj_polyline.append([float(parts[0]), float(parts[1])])
+                        except (TypeError, ValueError):
+                            continue
 
         # One CRS pass: GCJ-02 → WGS84 over the whole polyline.
         if gcj_polyline:
@@ -784,7 +797,15 @@ class AmapProvider:
             # NOTE: deliberately kept in GCJ-02 (source CRS) here — the single
             # transform_geojson pass below normalizes the whole FC, points
             # included. Pre-converting would cause a double shift.
-            lng, lat = (float(center[0]), float(center[1])) if len(center) == 2 else (0.0, 0.0)
+            # #P3：center 为 "abc,def" 等非数值时 float() 旧实现会崩工具；
+            # 与缺点位同语义回退 (0,0)。
+            if len(center) == 2:
+                try:
+                    lng, lat = float(center[0]), float(center[1])
+                except (TypeError, ValueError):
+                    lng, lat = 0.0, 0.0
+            else:
+                lng, lat = 0.0, 0.0
 
             if return_geometry == "polygon":
                 # 高德行政区划边界字段名为 'polyline'

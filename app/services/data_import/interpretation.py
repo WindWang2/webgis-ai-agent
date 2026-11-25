@@ -257,6 +257,20 @@ def _cell_to_str(v: Any) -> str:
         return str(v)
 
 
+def _dedupe_header(names: List[str]) -> List[str]:
+    """重名表头去重（与 pandas read_csv 同口径：name / name.1 / name.2）。
+
+    不去重会在行 dict 推导时静默合并同名列（后值覆盖前值）—— 丢数据。
+    """
+    counts: Dict[str, int] = {}
+    out: List[str] = []
+    for name in names:
+        n = counts.get(name, 0)
+        counts[name] = n + 1
+        out.append(name if n == 0 else f"{name}.{n}")
+    return out
+
+
 def _read_xlsx_rows(
     path, sheet: str, interp: TableInterpretation, row_limit: int, cancel: CancelCheck
 ) -> Tuple[List[Dict[str, str]], Optional[int], bool, Optional[int], Optional[int]]:
@@ -299,9 +313,9 @@ def _read_xlsx_rows(
             if not header:
                 if all(v is None or str(v).strip() == "" for v in row):
                     continue  # 跳过表头前的空行（header_row 语义由前端行选择决定）
-                header = [
+                header = _dedupe_header([
                     _cell_to_str(v).strip() or f"col{i + 1}" for i, v in enumerate(row)
-                ]
+                ])
                 continue
             if data_count % budgets.COMMIT_CANCEL_CHECK_ROWS == 0:
                 cancel()

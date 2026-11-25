@@ -270,15 +270,21 @@ def _ref_kind(ref: str) -> str:
     return _REF_KIND.get(m.group(1), "chart") if m else "chart"
 
 
-def _harvest_widgets(steps: Sequence[TraceStep], arc_role: ArcRole):
-    """从桶内步骤收集联动图表（ref 去重，chart dict 优先为 data）。"""
+def _harvest_widgets(steps: Sequence[TraceStep], arc_role: ArcRole,
+                     *, seen: Optional[set] = None,
+                     auto_id_start: int = 0):
+    """从桶内步骤收集联动图表（ref 去重，chart dict 优先为 data）。
+
+    跨桶共享 ``seen`` 与 ``auto_id_start``：同一 ref 在全 spec 只登记一次，
+    无 ref 图表的自动 id 连续编号（重复 id 会让前端按 id 取图表歧义）。
+    """
     widgets: List[LinkedWidget] = []
-    seen: set = set()
+    seen = set() if seen is None else seen
     for step in steps:
         chart = step.payload.get("chart")
         ref = step.payload.get("ref") if isinstance(step.payload.get("ref"), str) else ""
         if isinstance(chart, Mapping):
-            wid = ref or f"widget-chart-{len(widgets) + 1}"
+            wid = ref or f"widget-chart-{auto_id_start + len(widgets) + 1}"
             if wid not in seen:
                 seen.add(wid)
                 widgets.append(LinkedWidget(
@@ -333,10 +339,13 @@ def _format_stat_value(value: Any) -> str:
 def _build_chapter(arc_role: ArcRole, steps: Sequence[TraceStep],
                    fallback_bbox: Optional[Sequence[float]],
                    step_bboxes: Sequence[Optional[List[float]]],
-                   *, scene_enabled: bool = False):
+                   *, scene_enabled: bool = False,
+                   widget_seen: Optional[set] = None,
+                   widget_auto_id_start: int = 0):
     bbox = _union_bbox(step_bboxes) or fallback_bbox or _DEFAULT_BBOX
     narrative = _chapter_narrative(arc_role, steps)
-    widgets = _harvest_widgets(steps, arc_role)
+    widgets = _harvest_widgets(steps, arc_role, seen=widget_seen,
+                               auto_id_start=widget_auto_id_start)
     view = plan_camera_for_bbox(bbox, arc_role)
     view.pop("aspect", None)
     # G3D05 v1.1：高程证据在场时按弧角色投影场景档；缺证据不写 scene
@@ -390,7 +399,13 @@ def _chapters_from_messages(messages: Sequence[Mapping[str, Any]],
 
 
 def _message_content(message: Mapping[str, Any]) -> str:
-    """消息正文安全取值：None/非字符串一律折叠为空串（绝不渲染 'None'）。"""
+    """消息正文安全取值：None/非字符串一律折叠为空串（绝不渲染 'None'）。
+
+    非 Mapping 元素属调用方契约违背（路由映射 422），不静默跳过。
+    """
+    if not isinstance(message, Mapping):
+        raise ValueError(
+            f"message must be a mapping, got {type(message).__name__}")
     content = message.get("content")
     return content if isinstance(content, str) else ""
 
@@ -451,6 +466,8 @@ def compile_story_map(
         turn_id = turn_id or str(trace.get("turn_id", "") or "")
         all_widgets: List[LinkedWidget] = []
         chapters, keyframes, audios = [], [], []
+        # 跨弧桶共享的 widget 去重集/自动 id 起点（id 必须全 spec 唯一）。
+        widget_seen: set = set()
         # Single-pass extraction: every payload's vertex scan is reused for the
         # session union and that step's chapter union. Re-scanning each bucket
         # doubled the worst-case GeoJSON walk with identical output.
@@ -468,6 +485,8 @@ def compile_story_map(
             chapter, kf, ws, audio = _build_chapter(
                 arc_role, bucket, session_bbox, bucket_bboxes,
                 scene_enabled=scene_enabled,
+                widget_seen=widget_seen,
+                widget_auto_id_start=len(all_widgets),
             )
             chapters.append(chapter)
             keyframes.append(kf)

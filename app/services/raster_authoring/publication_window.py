@@ -79,12 +79,14 @@ class WindowRenderResult:
 
 
 def _cache_key(path: str, stat_key: Tuple[int, int], spec: RasterExpressionSpec,
-               view_bounds: Sequence[float], out_w: int, out_h: int) -> str:
+               view_bounds: Sequence[float], out_w: int, out_h: int,
+               max_side: int, decode_budget_px: int) -> str:
     raw = "|".join([
         path, str(stat_key[0]), str(stat_key[1]), spec.style_id,
         spec.data_revision,
         ",".join(f"{float(v):.7f}" for v in view_bounds),
         str(int(out_w)), str(int(out_h)),
+        str(int(max_side)), str(int(decode_budget_px)),
     ])
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
@@ -142,14 +144,22 @@ def render_publication_window(
             "frozen raster expression payload is not a valid RasterExpressionSpec",
         ) from exc
 
-    view = [float(v) for v in view_bounds_wsen]
+    try:
+        view = [float(v) for v in view_bounds_wsen]
+    except (TypeError, ValueError) as exc:
+        raise RasterExpressionError(
+            "RENDER_FAILED", "invalid publication view bounds for raster window",
+        ) from exc
     if len(view) != 4 or not all(np.isfinite(view)) or view[0] >= view[2] \
             or view[1] >= view[3]:
         raise RasterExpressionError(
             "RENDER_FAILED", "invalid publication view bounds for raster window",
         )
 
-    key = _cache_key(path, (stat.st_mtime_ns, stat.st_size), spec, view, out_w, out_h)
+    key = _cache_key(
+        path, (stat.st_mtime_ns, stat.st_size), spec, view, out_w, out_h,
+        max_side, decode_budget_px,
+    )
     with _WINDOW_CACHE_LOCK:
         hit = _WINDOW_CACHE.get(key)
     if hit is not None:
@@ -215,6 +225,11 @@ def _render_window(
         atol=max(1e-3, |nodata|·1e-6) 与 GDAL 自身 NODATA 判定同量级。
         """
         if nodata_val is None:
+            valid = np.ones(arr.shape, dtype=bool)
+        elif np.isnan(float(nodata_val)):
+            # GDAL 允许浮点栅格声明 NODATA=nan；nan 与任何值比较恒 False，
+            # 不能走哨兵容差分支（否则全部像元判为 nodata → 整层透明）。
+            # nan 本身由下方 isfinite 兜底判无效。
             valid = np.ones(arr.shape, dtype=bool)
         else:
             tol = max(1e-3, abs(float(nodata_val)) * 1e-6)

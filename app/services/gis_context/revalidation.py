@@ -154,9 +154,11 @@ def revalidate_claims(
 
     Bounded to ``max_claims`` ids per call; every id produces exactly one
     receipt. The engine re-reads the claim, re-checks basis dataset
-    liveness (via ``token_resolver(ref_id) -> live token | None`` — the
-    hot path binds it to ``live_version_token``) and re-runs the
-    deterministic verifier — caller-supplied narrative is never consulted.
+    liveness (via ``token_resolver(authority_id) -> live token | None`` —
+    the hot path binds it to ``live_version_token``; the id is the dataset's
+    resolved ``authority_id``, which is what its fingerprint was recorded
+    under) and re-runs the deterministic verifier — caller-supplied
+    narrative is never consulted.
     """
     receipts: List[RevalidationReceipt] = []
     for cid in claim_ids[:max(0, int(max_claims))]:
@@ -202,7 +204,7 @@ def revalidate_claims(
                 if not ds.version_fingerprint:
                     continue
                 try:
-                    live = token_resolver(ds.ref_id)
+                    live = token_resolver(ds.authority_id or ds.ref_id)
                 except Exception:  # noqa: BLE001 — liveness is a guard
                     live = None
                 if live is None:

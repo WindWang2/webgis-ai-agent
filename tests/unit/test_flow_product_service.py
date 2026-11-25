@@ -178,3 +178,36 @@ async def test_inspect_is_bounded_and_source_scoped():
     with pytest.raises(FlowServiceError):
         await inspect_flow_source(sid, _config(od_table_ref="missing"))
     await session_data_manager.clear_session(sid)
+
+
+@pytest.mark.asyncio
+async def test_restyle_with_negative_fixed_domain_nonlinear_transform_does_not_crash():
+    sid, _ = await _session_with_source()
+    built = await preview(sid, _config())
+    assert built["cache_hit"] == "miss"
+    for transform in ("sqrt", "log1p"):
+        restyled = await preview(
+            sid, _config(weight_domain=(-10.0, -1.0), weight_transform=transform))
+        assert restyled["cache_hit"] == "analysis"
+        edge_fc = await session_data_manager.get(sid, restyled["edge_ref"])
+        assert all(
+            f["properties"]["weight_encoded"] == 0.0
+            for f in edge_fc["features"]
+        )
+    await session_data_manager.clear_session(sid)
+
+
+@pytest.mark.asyncio
+async def test_repeated_preview_after_style_variant_hits_preview_cache():
+    sid, _ = await _session_with_source()
+    styled = await preview(sid, _config(width_max_px=12, palette=["#000000", "#ffffff"]))
+    assert styled["cache_hit"] == "miss"
+    # 同一 config 首次经 analysis 缓存 restyle 落产品后，产品指纹必须与
+    # build 路径一致（full_key），再次预览才能命中 preview 缓存。
+    base = await preview(sid, _config())
+    assert base["cache_hit"] == "analysis"
+    repeat = await preview(sid, _config())
+    assert repeat["cache_hit"] == "preview"
+    assert repeat["product_ref"] == base["product_ref"]
+    assert repeat["product_fingerprint"] == base["product_fingerprint"]
+    await session_data_manager.clear_session(sid)

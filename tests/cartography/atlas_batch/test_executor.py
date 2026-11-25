@@ -241,3 +241,74 @@ def test_busy_assembly_typed_failure_keeps_cache(atlas_exports, atlas_job_db,
     assert compile_counter["count"] == 0
     assert result["cache_hits"] == 2
     assert result["page_count_pdf"] == 2
+
+
+def test_atomic_write_cleans_tempfile_on_replace_failure(tmp_path, monkeypatch):
+    """os.replace 失败不得残留无 .svg 后缀的临时文件（逐出按后缀回收）。"""
+    from app.services.atlas_batch import executor as ex_mod
+
+    target = tmp_path / "product.pdf"
+
+    def _fail_replace(src, dst):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(ex_mod.os, "replace", _fail_replace)
+    with pytest.raises(OSError):
+        ex_mod._atomic_write(str(target), b"<svg/>")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_cache_write_oserror_is_typed_page_failure(atlas_exports, atlas_job_db,
+                                                   atlas_spec_store, monkeypatch):
+    """缓存写 IO 失败（磁盘满/权限/并发删除）→ 页级证据 + typed failed。"""
+    from app.services.atlas_batch import executor as ex_mod
+
+    atlas_spec_store["set_document"](district_document(districts=1))
+
+    def _disk_full(path, data):
+        raise OSError(28, "No space left on device", str(path))
+
+    monkeypatch.setattr(ex_mod, "_atomic_write", _disk_full)
+    job_id = _make_job(atlas_job_db)
+    with pytest.raises(AtlasJobError) as ei:
+        execute_atlas_job(job_id)
+    assert ei.value.code == "atlas_pages_failed"
+    assert "atlas_page_io_error" in ei.value.message
+
+    rec = _get_job(atlas_job_db, job_id)
+    pages = rec.result_summary["pages"]
+    assert pages
+    assert all(p["status"] == "failed" for p in pages)
+    assert all("atlas_page_io_error" in (p["error"] or "") for p in pages)
+
+
+def test_page_record_svg_bytes_counts_utf8_bytes(atlas_exports, atlas_job_db,
+                                                 atlas_spec_store, monkeypatch):
+    """预算记账（96MB 累积）必须按 UTF-8 字节而非字符数。"""
+    from app.services.atlas_batch import executor as ex_mod
+    from app.services.publication_export import (
+        PageCompileFailure,
+        PageCompileOutcome,
+    )
+
+    atlas_spec_store["set_document"](district_document(districts=1))
+    svg = '<svg xmlns="http://www.w3.org/2000/svg"><text>金牛区小学分布</text></svg>'
+
+    def _fake_compile(document, page, pub_ir, **kw):
+        if not page.cover:
+            raise PageCompileFailure("atlas_page_skipped", "forced failure")
+        return PageCompileOutcome(
+            svg=svg, width_mm=page.paper.width_mm,
+            height_mm=page.paper.height_mm, page=page)
+
+    monkeypatch.setattr(ex_mod, "compile_atlas_page", _fake_compile)
+    job_id = _make_job(atlas_job_db)
+    with pytest.raises(AtlasJobError):
+        execute_atlas_job(job_id)
+
+    rec = _get_job(atlas_job_db, job_id)
+    rendered = [p for p in rec.result_summary["pages"]
+                if p["status"] == "rendered"]
+    assert len(rendered) == 1
+    assert rendered[0]["svg_bytes"] == len(svg.encode("utf-8"))
+    assert rendered[0]["svg_bytes"] > len(svg)

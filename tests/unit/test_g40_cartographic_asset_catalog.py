@@ -189,3 +189,113 @@ def test_list_assets_kind_filter_and_pagination(db):
     # 跨 owner 不可见
     other, total2 = svc.list_assets(db, user_id="u2", org_id=None)
     assert total2 == 0
+
+
+# ── 评审修复回归（孤儿 blob / rollback / LIMIT / 非对象 mapspec） ─────────
+
+class _RecordingStore:
+    """只记录 put_blob 的 BlobStore 替身（孤儿 blob 断言用）。"""
+
+    def __init__(self):
+        self.puts = []
+
+    def put_blob(self, key, blob, media_type="json"):
+        self.puts.append(key)
+
+
+def test_rejected_document_never_reaches_blob_store(db, monkeypatch):
+    """被拒（digest/kind/字节预算）文档不得先落 BlobStore 留下孤儿 blob。"""
+    store = _RecordingStore()
+    monkeypatch.setattr(svc, "_content_store", lambda: store)
+
+    bad_digest = _doc().model_copy(
+        update={"content_digest": "sha256:" + "0" * 64})
+    with pytest.raises(svc.CartographicAssetError) as ei:
+        svc.create_asset(db, document=bad_digest, creator_id="u1")
+    assert ei.value.reason == "asset_document_error"
+    assert store.puts == []
+
+    asset, _ = svc.create_asset(db, document=_doc(), creator_id="u1")
+    assert len(store.puts) == 1
+    store.puts.clear()
+    tile_svg = (b'<svg viewBox="0 0 12 12">'
+                b'<path d="M0 6 L12 6" stroke="#333333" stroke-width="1.5"/></svg>')
+    tex = import_svg_asset(tile_svg, kind="area_texture", name="tex")
+    with pytest.raises(svc.CartographicAssetError) as ei:
+        svc.new_version(db, asset.id, document=tex, user_id="u1")
+    assert ei.value.reason == "asset_kind_mismatch"
+    assert store.puts == []
+
+    monkeypatch.setattr(svc, "MAX_ASSET_JSON_BYTES", 16)
+    with pytest.raises(svc.CartographicAssetError) as ei:
+        svc.create_asset(db, document=_doc("oversize"), creator_id="u1")
+    assert ei.value.reason == "asset_document_error"
+    assert store.puts == []
+
+
+def test_create_asset_flush_failure_keeps_caller_pending_writes(db, monkeypatch):
+    """flush 失败只回滚本资产插入（savepoint），不丢调用方未提交写入。"""
+    from app.models.cartographic_symbol_asset import CartographicSymbolAsset
+
+    conflict_hex = "f" * 32
+    conflict_id = "cartoasset." + conflict_hex
+    db.add(CartographicSymbolAsset(
+        id=conflict_id, creator_id="u1", visibility="private",
+        name="prior", kind="point_symbol", status="draft",
+        latest_revision=0, current_revision=0))
+
+    class _FixedUUID:
+        hex = conflict_hex
+
+    monkeypatch.setattr(svc.uuid, "uuid4", lambda: _FixedUUID())
+    store = _RecordingStore()
+    monkeypatch.setattr(svc, "_content_store", lambda: store)
+
+    with pytest.raises(svc.CartographicAssetError) as ei:
+        svc.create_asset(db, document=_doc(), creator_id="u1")
+    assert ei.value.reason == "asset_conflict"
+    assert db.get(CartographicSymbolAsset, conflict_id) is not None
+
+
+def test_list_assets_pages_in_sql(db, monkeypatch):
+    """分页必须在 SQL 层 LIMIT，不得全量回传后在 Python 切片。"""
+    from sqlalchemy import event
+
+    monkeypatch.setattr(svc, "_content_store", lambda: _RecordingStore())
+    for i in range(3):
+        svc.create_asset(db, document=_doc(f"p{i}"), creator_id="u1",
+                         publish=True)
+    statements = []
+
+    def _capture(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(db.bind, "before_cursor_execute", _capture)
+    try:
+        items, total = svc.list_assets(db, user_id="u1", org_id=None, limit=1)
+    finally:
+        event.remove(db.bind, "before_cursor_execute", _capture)
+    assert total == 3 and len(items) == 1
+    asset_selects = [
+        s for s in statements
+        if "cartographic_symbol_assets" in s
+        and s.lstrip().upper().startswith("SELECT")]
+    assert any(" LIMIT " in s.upper() for s in asset_selects), asset_selects
+
+
+@pytest.mark.parametrize("payload", [[1, 2], "not-an-object", 42])
+def test_reference_scan_tolerates_non_object_mapspec_json(
+        db, tmp_path, monkeypatch, payload):
+    """mapspec.json 合法但非对象：引用扫描跳过，删除走 typed 结果而非崩。"""
+    asset, _ = svc.create_asset(db, document=_doc(), creator_id="u1",
+                                publish=True)
+    svc.new_version(db, asset.id, document=_doc("v2"), user_id="u1",
+                    publish=True)
+    store = tmp_path / "mapspecs"
+    store.mkdir()
+    sid_dir = store / "sess-bad"
+    sid_dir.mkdir()
+    (sid_dir / "mapspec.json").write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setenv("MAPSPEC_STORAGE_DIR", str(store))
+    out = svc.delete_asset_version(db, asset.id, 1, user_id="u1")
+    assert out["deleted"] is True

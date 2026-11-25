@@ -248,7 +248,9 @@ async def commit_member(
             )
             if transformed and ev:
                 ev.transform_target = "EPSG:4326"
-            payload_bytes = len(json.dumps(fc, ensure_ascii=False))
+            # 单次全量序列化：预算测长与 outputs 副本复用同一字符串
+            fc_json = json.dumps(fc, ensure_ascii=False)
+            payload_bytes = len(fc_json)
             if payload_bytes > budgets.MAX_MEMBER_OUTPUT_BYTES:
                 raise CommitError(
                     "OUTPUT_BUDGET_EXCEEDED",
@@ -288,9 +290,7 @@ async def commit_member(
                 out_path = staging.outputs_dir(state) / (
                     staging.member_safe_name(member.member_key) + ".geojson"
                 )
-                out_path.write_text(
-                    json.dumps(fc, ensure_ascii=False), encoding="utf-8"
-                )
+                out_path.write_text(fc_json, encoding="utf-8")
             except OSError as e:  # noqa: BLE001 — outputs 副本失败不阻断
                 state.notes.append(f"{member.display_name}: outputs 副本写入失败（{e}）")
         else:

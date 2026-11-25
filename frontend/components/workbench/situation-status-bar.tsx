@@ -161,7 +161,7 @@ export function SituationStatusBar(): React.ReactElement {
       });
     }
     // 5) 等待地图验证
-    const behind = view.inconsistencies.some(
+    const behind = (view.inconsistencies ?? []).some(
       (i) => i.code === 'observed_behind_desired' || i.code === 'observation_missing',
     );
     if (behind) {

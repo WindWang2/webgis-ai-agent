@@ -372,13 +372,6 @@ def _resolve_capture_target(
             mission_id = str(getattr(ctx, "mission_id", "") or "")[:64]
         except Exception:  # noqa: BLE001 — no turn context is a clean miss
             mission_id = ""
-    if not org and mission_id:
-        try:
-            from app.services.gis_context.hotpath import _tenant_scan
-
-            org = _tenant_scan(session_id)[:64]
-        except Exception:  # noqa: BLE001
-            org = ""
     return mission_id, org
 
 

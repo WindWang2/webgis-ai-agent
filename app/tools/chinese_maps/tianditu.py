@@ -225,13 +225,19 @@ class TiandituProvider:
     async def search_poi_around(
         self, center: list, radius_m: int, keyword: str, types: str, limit: int
     ) -> dict:
+        # #P3：count 旧实现仅 min(limit, 50)，limit=0/负数/非整数会原样发往
+        # Tianditu（静默空结果或 ValueError）。与 search_poi 一致钳到 [1,50]。
+        try:
+            _clamped = max(1, min(int(limit), 50))
+        except (TypeError, ValueError):
+            _clamped = 20
         payload = {
             "keyWord": keyword or types,
             "queryRadius": str(radius_m),
             "pointLonlat": f"{center[0]},{center[1]}",
             "queryType": "3",  # 周边搜索
             "start": "0",
-            "count": str(min(limit, 50)),
+            "count": str(_clamped),
         }
         post_str = json.dumps(payload, ensure_ascii=False)
         data = await self._get("/v2/search", {"postStr": post_str, "type": "query"})
@@ -248,7 +254,7 @@ class TiandituProvider:
             },
             provider="tianditu",
             src_crs=self.SRC_CRS,
-            limit=limit,
+            limit=_clamped,
             extra_envelope={"center": center, "radius_m": radius_m},
         )
 
@@ -372,11 +378,19 @@ class TiandituProvider:
             except Exception:
                 return None
 
+        def _coord(d: dict, key: str) -> float:
+            """#P3：lnt/lat 键存在但为 null/"" 时 float() 会抛 TypeError/
+            ValueError 逃逸 typed 错误契约；按缺点位回退 0.0。"""
+            try:
+                return float(d.get(key))
+            except (TypeError, ValueError):
+                return 0.0
+
         for d in districts:
             # 主项
             main_geom = _parse_points(d.get("points", ""))
             if not main_geom:
-                lng, lat = float(d.get("lnt", 0)), float(d.get("lat", 0))
+                lng, lat = _coord(d, "lnt"), _coord(d, "lat")
                 main_geom = {"type": "Point", "coordinates": [lng, lat]}
 
             features.append({
@@ -398,7 +412,7 @@ class TiandituProvider:
                     # 这里我们先尝试解析，如果没有则存为点
                     c_geom = _parse_points(c.get("points", ""))
                     if not c_geom:
-                        c_lng, c_lat = float(c.get("lnt", 0)), float(c.get("lat", 0))
+                        c_lng, c_lat = _coord(c, "lnt"), _coord(c, "lat")
                         c_geom = {"type": "Point", "coordinates": [c_lng, c_lat]}
 
                     features.append({

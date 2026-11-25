@@ -98,6 +98,7 @@ def _extract_features(payload: Any) -> Tuple[Dict[str, Dict[str, Any]], FeatureI
     indexed: Dict[str, Dict[str, Any]] = {}
     kind = FeatureIdKind.STABLE
     truncated = len(rows) > MAX_FEATURES_IN_SNAPSHOT
+    duplicate_id = False
     for row in rows[:MAX_FEATURES_IN_SNAPSHOT]:
         if not isinstance(row, dict):
             continue
@@ -111,10 +112,18 @@ def _extract_features(payload: Any) -> Tuple[Dict[str, Dict[str, Any]], FeatureI
         if fid in (None, ""):
             kind = FeatureIdKind.NONE
             continue  # 不把行位置当身份
-        indexed[str(fid)] = {
+        key_id = str(fid)
+        if key_id in indexed:
+            # 重复稳定 ID：逐要素身份不唯一，后写胜会静默吞掉前一条内容，
+            # 故整体拒绝逐要素对齐（降级为不可精确判定 + truncated 披露）。
+            duplicate_id = True
+            continue
+        indexed[key_id] = {
             "properties": dict(props),
             "geometry": row.get("geometry"),
         }
+    if duplicate_id:
+        return {}, FeatureIdKind.NONE, True
     if kind is FeatureIdKind.NONE and indexed:
         # 混合（部分有 ID）：整体不可逐要素对齐，不伪造精确差异
         return {}, FeatureIdKind.NONE, True

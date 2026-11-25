@@ -93,9 +93,21 @@ def _evidence_view(record: Dict[str, Any]) -> Dict[str, Any]:
 def _atomic_write(path: str, data: bytes) -> None:
     """临时文件 + os.replace（与既有导出纪律一致：半文件不可见）。"""
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with tempfile.NamedTemporaryFile(dir=os.path.dirname(path), delete=False) as tmp:
-        tmp.write(data)
-    os.replace(tmp.name, path)
+    tmp_name: Optional[str] = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=os.path.dirname(path), delete=False) as tmp:
+            tmp_name = tmp.name
+            tmp.write(data)
+        os.replace(tmp_name, path)
+    except BaseException:
+        # 写/替换失败不得残留无 .svg 后缀的临时文件（缓存逐出按后缀回收，
+        # 残留即无界增长）。
+        if tmp_name is not None:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+        raise
 
 
 def _write_owner_sidecar(exports_dir: str, filename: str, owner_id: str) -> None:
@@ -283,9 +295,7 @@ def execute_atlas_job(
     attempt = int(meta["attempt"])
     exports_dir = str(ensure_exports_root())
     work_dir = os.path.join(exports_dir, "atlas_jobs", str(int(job_id)))
-    attempt_dir = os.path.join(work_dir, f"attempt-{attempt}")
     cache_dir = os.path.join(exports_dir, "atlas_jobs", "cache")
-    os.makedirs(attempt_dir, exist_ok=True)
     os.makedirs(cache_dir, exist_ok=True)
 
     def _progress(pct: int, message: str) -> None:
@@ -350,6 +360,10 @@ def execute_atlas_job(
                     _cache_evict(cache_dir)
                 except PageCompileFailure as pcf:
                     error = f"{pcf.code}: {pcf.detail}"
+                except OSError as ex:
+                    # 缓存落盘 IO 失败（磁盘满/权限/并发删除）→ 页级 typed
+                    # 失败证据化，不走无类型异常绕过 result_summary。
+                    error = f"atlas_page_io_error: {ex}"
             record: Dict[str, Any] = {
                 "page_id": binding.page_id,
                 "title": binding.title,
@@ -361,7 +375,7 @@ def execute_atlas_job(
                 # 竞态下裸读会 FileNotFoundError；总量受 96MB 累积预算约束，
                 # 与同步链同口径）。持久面只落缓存目录（跨 job 复用）。
                 "svg": svg,
-                "svg_bytes": len(svg) if svg else 0,
+                "svg_bytes": len(svg.encode("utf-8")) if svg else 0,
                 "feature_count": binding.feature_count,
                 "diagnostics": diagnostics,
                 # R1-P3：页级降级 = 本页 warning/error 诊断（manifest 投影源）

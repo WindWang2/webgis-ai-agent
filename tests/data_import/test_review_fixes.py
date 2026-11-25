@@ -386,3 +386,109 @@ async def test_p2_gpkg_attribute_layer_typed_error(env, tmp_path):
     r = out["receipts"][member.member_key]
     assert r["status"] == "failed"
     assert r["error_code"] == "VECTOR_GEOMETRY_MISSING"
+
+
+def test_p3_xlsx_duplicate_headers_preserved(tmp_path):
+    """P3（data-integrity）：xlsx 重名表头不得静默合并（后值覆盖前值）。"""
+    from openpyxl import Workbook
+
+    from app.services.data_import.interpretation import interpret_table
+    from app.services.data_import.models import TableInterpretation
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "s"
+    ws.append(["a", "a", "b", "a"])
+    ws.append([1, 2, 3, 4])
+    p = tmp_path / "dup.xlsx"
+    wb.save(p)
+
+    result = interpret_table(p, TableInterpretation(), sheet="s", row_limit=10)
+    # 与 CSV（pandas）同口径：a / a.1 / b / a.2
+    assert result.columns == ["a", "a.1", "b", "a.2"]
+    assert result.records[0].properties == {
+        "a": "1", "a.1": "2", "b": "3", "a.2": "4",
+    }
+
+
+async def test_p3_discovery_failure_keeps_placeholder_member(env, tmp_path):
+    """P3（api-contract）：发现失败的文件不得从成员清单消失。"""
+    state = await env.create_batch(SESSION, "u", [("broken.xlsx", b"not-an-xlsx")])
+    assert len(state.members) == 1
+    m = state.members[0]
+    assert m.source_id == "src-1"
+    assert m.display_name == "broken.xlsx"
+    assert m.unsupported_reason
+    assert m.unsupported_reason.startswith("discovery_failed:")
+    assert state.status == BatchStatus.INSPECTED
+    assert any("发现失败" in n for n in state.notes)
+
+
+async def test_p3_invalid_interpretation_mode_rejected(env, tmp_path):
+    """P3（api-contract）：非法 mode 必须 typed 拒绝，不得静默当纯表。"""
+    csv = make_csv_bytes([[116.3, 39.8]], ["x", "y"])
+    state = await env.create_batch(SESSION, "u", [("m.csv", csv)])
+    key = state.members[0].member_key
+    with pytest.raises(DataImportError) as ei:
+        await env.save_plan(state.batch_id, SESSION, {key: {"mode": "kml"}})
+    assert ei.value.code == "BAD_INTERPRETATION"
+    # 合法 mode 不受影响
+    await env.save_plan(state.batch_id, SESSION, {key: {"mode": "table"}})
+
+
+async def test_p3_list_batches_reclaims_orphan_staging(env, tmp_path):
+    """P3（resource-leak）：无 batch.json 的孤儿目录过期后必须回收。"""
+    import os
+    from datetime import datetime, timedelta, timezone
+
+    from app.services.data_import.models import new_batch_id
+
+    root = staging.batches_root()
+
+    def _orphan(session_id: str, expires_at: str) -> Path:
+        d = root / new_batch_id()
+        d.mkdir()
+        (d / "owner.json").write_text(
+            json.dumps({
+                "batch_id": d.name,
+                "session_id": session_id,
+                "user_fingerprint": "u",
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "expires_at": expires_at,
+            }),
+            encoding="utf-8",
+        )
+        return d
+
+    now = datetime.now(timezone.utc)
+    past = (now - timedelta(hours=1)).isoformat(timespec="seconds")
+    future = (now + timedelta(hours=1)).isoformat(timespec="seconds")
+    expired_own = _orphan(SESSION, past)
+    fresh_own = _orphan(SESSION, future)
+    expired_other = _orphan("sess-other", past)
+    # 更早的崩溃（owner.json 也没写成）：按目录 mtime 超过 TTL 判定
+    old_no_owner = root / new_batch_id()
+    old_no_owner.mkdir()
+    old_ts = (now - timedelta(hours=budgets.BATCH_TTL_HOURS + 1)).timestamp()
+    os.utime(old_no_owner, (old_ts, old_ts))
+    fresh_no_owner = root / new_batch_id()
+    fresh_no_owner.mkdir()
+
+    staging.list_batch_states(SESSION)
+
+    assert not expired_own.exists()
+    assert not old_no_owner.exists()
+    assert fresh_own.exists()
+    assert expired_other.exists()
+    assert fresh_no_owner.exists()
+
+
+def test_p3_member_safe_name_truncation_keeps_distinct():
+    """P3（data-integrity）：>150 字符成员键截断后不得同名（产物会互相覆盖）。"""
+    base = "c:src-1:zipset:" + "d" * 300
+    a = staging.member_safe_name(base + ":a")
+    b = staging.member_safe_name(base + ":b")
+    assert a != b
+    assert len(a) <= 150 and len(b) <= 150
+    # 短键行为不变
+    assert staging.member_safe_name("f:src-1") == "f_src-1"

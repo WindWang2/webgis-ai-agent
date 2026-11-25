@@ -160,9 +160,11 @@ async def with_fallback(
         exclude: providers to skip entirely (e.g. ``{"tianditu"}`` for
             capabilities it doesn't support — the declarative capability matrix
             lives in the Protocol, not here).
-        no_key_msg: the error string returned when no provider had a key or all
-            failed. Per-tool overrides preserve prior messages
-            (e.g. plan_route's "未配置高德或百度 API Key…").
+        no_key_msg: the error string returned when no provider had a key. When
+            providers were configured and attempted but all failed, a truthful
+            "all configured providers failed" error (with the first failure
+            detail) is returned instead — claiming "no key configured" there
+            would be false (P3).
         tool_name: used only for the warning log, to aid debugging.
     """
     label = f"{tool_name} " if tool_name else ""
@@ -202,7 +204,10 @@ async def with_fallback(
             result["fallback_from"] = origin
         return stamp_fetched_at(result, p)
     if first_error is not None:
-        return {"error": f"{no_key_msg}（{first_error}）"}
+        # P3：只要真的尝试过 provider（无论配置了几家），就说明 key 是配了的；
+        # 此时沿用 no_key_msg（默认「未配置任何地图 API Key」）会谎称未配 key。
+        # 全部已配置 provider 失败 → 诚实报告已尝试者与首个失败原因。
+        return {"error": f"所有已配置的地图服务商均失败（已尝试 {', '.join(attempted)}）：{first_error}"}
     return {"error": no_key_msg}
 
 

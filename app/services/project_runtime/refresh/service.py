@@ -274,10 +274,11 @@ class ProjectDataRefreshService:
             user_id=user_id, establish_baseline=establish_baseline,
         )
         inv = facts["inventory"]
+        # inventory 只枚举仍存在的来源行（已删除/失权来源不在清单内），
+        # 因此 missing 没有可枚举集合；不再保留恒为 0 的伪统计。
         counts = {
             "changed": sum(1 for i in inv.items if i.verdict == "changed"),
             "unchanged": sum(1 for i in inv.items if i.verdict == "unchanged"),
-            "missing": sum(1 for i in inv.items if i.state.value == "missing"),
             "unverifiable": sum(1 for i in inv.items
                                 if i.verdict == "unverifiable" or
                                 i.evidence in (EvidenceLevel.NONE, EvidenceLevel.TIMESTAMP_ONLY)),
@@ -291,7 +292,7 @@ class ProjectDataRefreshService:
         return CheckReceipt(
             project_id=project_id, checked_at=facts["meta"]["checked_at"],
             sources_total=len(inv.items), changed=counts["changed"],
-            unchanged=counts["unchanged"], missing=counts["missing"],
+            unchanged=counts["unchanged"], missing=0,
             unverifiable=counts["unverifiable"], inventory=inv,
             stale=counts["changed"] > 0, warnings=warnings[:16],
             truncated=inv.truncated,
@@ -437,10 +438,6 @@ class ProjectDataRefreshService:
     async def status(self, *, project_id: str, proposal_id: str,
                      user_id: str) -> Dict[str, Any]:
         proposal = self._require_proposal(project_id, proposal_id, user_id)
-        candidate = None
-        for item in await self.store.list_proposals(project_id):
-            if item["proposal_id"] == proposal_id:
-                break
         cid = f"g10c-{proposal.proposal_id}"
         candidate = self.store.load_candidate(project_id, cid)
         return {

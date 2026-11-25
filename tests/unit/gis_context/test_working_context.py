@@ -70,6 +70,23 @@ def test_payload_over_budget_fails_closed(monkeypatch):
         big.payload()
 
 
+def test_payload_trim_does_not_mutate_live_context(monkeypatch):
+    """Over-budget serialization trims the serialized copy only — the
+    caller's live rings stay intact for rendering and rebase."""
+    import app.services.gis_context.working_context as wcm
+
+    wc = GISWorkingContext(mission_id="msn-trim")
+    for i in range(6):
+        wc.add_user_edit(layer_id=f"L{i}", kind="hide", turn_id="t1",
+                         detail="d" * 60)
+    before = [e.model_dump() for e in wc.user_edits]
+
+    monkeypatch.setattr(wcm, "MAX_PAYLOAD_BYTES", 600)
+    data = wc.payload()
+    assert len(json.dumps(data, separators=(",", ":")).encode()) <= 600
+    assert [e.model_dump() for e in wc.user_edits] == before
+
+
 def test_user_edit_dedup_and_append_only_seq():
     wc = GISWorkingContext(mission_id="msn-ue")
     assert wc.add_user_edit(layer_id="L1", kind="hide", turn_id="t1")

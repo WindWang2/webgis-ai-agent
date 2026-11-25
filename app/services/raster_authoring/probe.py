@@ -92,7 +92,17 @@ def _read_pixel(
     from rasterio.windows import Window
 
     results: List[Dict[str, Any]] = []
-    with rasterio.open(source.path) as src:
+    try:
+        src_handle = rasterio.open(source.path)
+    except (rasterio.errors.RasterioIOError, OSError) as exc:
+        # resolve_source 成功后文件被删/损坏：typed 化，绝不冒成 500。
+        raise RasterExpressionError(
+            "SOURCE_UNAVAILABLE",
+            "raster source is no longer readable for pixel probing",
+            status_code=404,
+            correction_hint="Re-register the raster reference from a readable file.",
+        ) from exc
+    with src_handle as src:
         inv = ~src.transform
         width, height = int(src.width), int(src.height)
         for (sx, sy) in coords:

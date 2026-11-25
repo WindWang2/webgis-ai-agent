@@ -102,7 +102,9 @@ def _collect_latitudes(payloads: dict[str, GeoJSONFeatureCollection]) -> List[fl
             if not geom:
                 continue
             for coord in _iter_coords(geom.get("coordinates")):
-                lats.append(float(coord[1]))
+                lat = float(coord[1])
+                if math.isfinite(lat):
+                    lats.append(lat)
     return lats
 
 
@@ -273,6 +275,16 @@ def diff_layers(
         branch_by_key = {
             _feature_key(f): (f, s) for f, s in zip(branch_feats, branch_shapes)
         }
+        for side, feats, indexed in (
+            ("baseline", base_feats, base_by_key),
+            ("branch", branch_feats, branch_by_key),
+        ):
+            if len(indexed) != len(feats):
+                logger.warning(
+                    "[whatif] layer %s %s: %d duplicate feature key(s) collapsed "
+                    "in diff pairing (counts/areas undercounted)",
+                    layer_id, side, len(feats) - len(indexed),
+                )
 
         diff = GeometryDiff(layer_id=layer_id)
         for key, (feat, shp) in branch_by_key.items():
@@ -395,6 +407,8 @@ def _facility_buffer_union(
             try:
                 radius = float(cast(float | str, radius))
             except (TypeError, ValueError):
+                radius = radius_m
+            if not math.isfinite(radius) or radius < 0:
                 radius = radius_m
             try:
                 pt = _project_shapes([feat], lat0)[0]

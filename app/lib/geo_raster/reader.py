@@ -291,6 +291,11 @@ class RasterReader:
     def read_band(self, band: int = 1) -> np.ndarray:
         """Whole-band read via the budget guard (see read_full)."""
         ds = self._ds()
+        band = int(band)
+        if not (1 <= band <= ds.count):
+            raise RasterReaderError(
+                f"band {band} out of range (1..{ds.count}) for {self.uri!r}"
+            )
         m = self.metadata()
         # review W2: one band, not width*height*ALL bands
         return self._budgeted_read(
@@ -317,6 +322,11 @@ class RasterReader:
         """Read a whole decimated overview level (-1 = coarsest). Raises for
         out-of-range levels instead of silently clamping."""
         ds = self._ds()
+        band = int(band)
+        if not (1 <= band <= ds.count):
+            raise RasterReaderError(
+                f"band {band} out of range (1..{ds.count}) for {self.uri!r}"
+            )
         ovs = ds.overviews(band) if ds.count else []
         if not ovs:
             raise RasterReaderError("dataset has no overviews")

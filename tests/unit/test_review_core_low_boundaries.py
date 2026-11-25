@@ -63,6 +63,18 @@ def test_error_classifier_shared_from_neutral_module():
     assert not is_error_like_result({"success": True, "error": "partial"})
 
 
+def test_result_warnings_string_is_one_warning_not_per_character():
+    from app.lib.runtime.result_contract import inspect_tool_result
+    view = inspect_tool_result({"warnings": "budget nearly exhausted"})
+    assert view.warnings == ("budget nearly exhausted",)
+
+
+def test_ref_keyed_values_are_collected_without_ref_prefix():
+    from app.lib.runtime.result_contract import inspect_tool_result
+    assert inspect_tool_result({"chartRef": "chart-42"}).ref_ids == ("chart-42",)
+    assert inspect_tool_result({"note": "chart-42"}).ref_ids == ()
+
+
 def test_blob_corruption_is_rejected_before_first_byte(tmp_path):
     from app.services.durable_blob_store import FilesystemBlobStore, BlobDigestMismatch
     store = FilesystemBlobStore(tmp_path)

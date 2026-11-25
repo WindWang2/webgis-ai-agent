@@ -107,6 +107,7 @@ export function applySourcePatch(
   const nextN = next.features?.length ?? 0;
   if (prevN > cap || nextN > cap) {
     source.setData(next);
+    recordDataPlaneEvent('patch-fallback', { reason: 'diff-cap' });
     return { op: 'setData', added: 0, updated: 0, removed: 0, reason: 'diff-cap' };
   }
 

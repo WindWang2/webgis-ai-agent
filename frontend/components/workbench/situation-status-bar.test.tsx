@@ -220,6 +220,20 @@ describe('SituationStatusBar', () => {
     const chip = screen.getByTestId('situation-chip-scope');
     expect(chip.textContent).toMatch(/scopeNone|无分析范围|No analysis scope/);
   });
+
+  it('renders when the projection omits the inconsistencies field', async () => {
+    mockedFetch.mockImplementation(async (path: string) =>
+      path.endsWith('/situation')
+        ? _situationView({ inconsistencies: undefined })
+        : _turnChain());
+    render(<SituationStatusBar />);
+    await waitFor(() => {
+      expect(screen.getByTestId('situation-status-bar').getAttribute('data-situation-status'))
+        .toBe('ready');
+    });
+    expect(screen.getByTestId('situation-chip-scope')).toBeTruthy();
+    expect(screen.queryByTestId('situation-chip-verifying')).toBeNull();
+  });
 });
 
 

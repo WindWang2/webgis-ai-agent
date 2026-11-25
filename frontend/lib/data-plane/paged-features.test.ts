@@ -55,6 +55,19 @@ describe('fetchFeaturePage', () => {
     expect(page.featureCount).toBe(10_000);
   });
 
+  it('pagination without has_more but with next_cursor is never reported complete', async () => {
+    // 缺省方向必须朝「不完整」：nextCursor 非空却 isComplete=true 自相矛盾。
+    apiFetchMock.mockResolvedValueOnce({
+      type: 'FeatureCollection',
+      features: [{ type: 'Feature', id: 1, geometry: null, properties: {} }],
+      pagination: { next_cursor: 'c2' },
+      revision: 3,
+    });
+    const page = await fetchFeaturePage({ sessionId: 's', refId: 'r' });
+    expect(page.nextCursor).toBe('c2');
+    expect(page.isComplete).toBe(false);
+  });
+
   it('maps 409 revision conflict to PagedRevisionConflict with the current revision', async () => {
     const err = new Error('conflict') as Error & Record<string, unknown>;
     err.status = 409;

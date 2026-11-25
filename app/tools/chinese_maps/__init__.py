@@ -224,27 +224,37 @@ async def _child_districts_online(keywords: str, return_geometry: str, provider:
     # Polygon 模式：并发请求每个子级的边界
     import asyncio
     tasks = []
+    task_names = []
     for s in sub_units:
         name = s.get("name")
         if name:
+            task_names.append(name)
             tasks.append(_AMAP.district(name, level=s.get("level", "district"), return_geometry="polygon"))
 
     results = await asyncio.gather(*tasks, return_exceptions=True)
     all_features = []
-    for r in results:
+    # P3：return_exceptions=True 曾让异常与 error dict 被静默丢弃——部分下级
+    # 边界缺失时调用方只看到缩水的 count。显式披露失败项。
+    failures: list[str] = []
+    for name, r in zip(task_names, results):
         if isinstance(r, dict) and "features" in r:
             all_features.extend(r["features"])
+        elif isinstance(r, dict):
+            failures.append(f"{name}: {r.get('error') or r}")
+        else:
+            failures.append(f"{name}: {r}")
 
-    return stamp_fetched_at(
-        {
-            "type": "FeatureCollection",
-            "features": all_features,
-            "count": len(all_features),
-            "provider": "amap",
-            "parent": keywords
-        },
-        "amap",
-    )
+    payload = {
+        "type": "FeatureCollection",
+        "features": all_features,
+        "count": len(all_features),
+        "provider": "amap",
+        "parent": keywords,
+    }
+    if failures:
+        payload["errors"] = failures
+        payload["missing_count"] = len(failures)
+    return stamp_fetched_at(payload, "amap")
 
 
 @cached_tool(ttl=GEOCODE_CACHE_TTL_S)
@@ -703,6 +713,18 @@ def register_chinese_map_tools(registry: ToolRegistry):
 
         if len(target_poly) < 3:
             return {"error": "多边形至少需要 3 个坐标点"}
+
+        # P3：仅校验点数不够——[[lng,lat],[lng,lat],[lng]] 这类缺分量/非数值
+        # 的畸形点会穿透到 provider 的 p[0]/p[1]（amap.py:146 / baidu.py:126），
+        # IndexError/TypeError 崩工具而非干净报错。
+        for p in target_poly:
+            if (
+                not isinstance(p, (list, tuple))
+                or len(p) < 2
+                or not isinstance(p[0], (int, float))
+                or not isinstance(p[1], (int, float))
+            ):
+                return {"error": "多边形坐标点必须是 [经度, 纬度] 数值对"}
 
         if not keyword and not types:
             return {"error": "keyword 与 types 至少提供一个"}

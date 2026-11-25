@@ -384,3 +384,142 @@ def test_r1_p1_rebind_multi_source_never_writes_foreign_token_to_unmatched_layer
     )
     assert single["layers"][0]["data_binding"] == {"logical_id": "dataset:only",
                                                    "version_token": "vOnly"}
+
+
+# ── P3 修复回归（本波 7 条发现中的行为性缺陷） ──────────────────────
+
+@pytest.mark.asyncio
+async def test_p3_candidate_without_fingerprint_is_blocked():
+    """execution.py:188 —— 未设 candidate_fingerprint 必须 fail-closed。"""
+    from app.lib.data.fingerprints import canonical_fingerprint
+    from app.services.project_runtime.refresh.contracts import CandidateStatus
+    from app.services.project_runtime.refresh.execution import commit_candidate
+    from app.services.project_runtime.refresh.records import RefreshCandidate
+
+    current_doc = {"title": "base", "layers": []}
+    prop = RefreshProposal(
+        proposal_id="g10p-p3fp", project_id="proj-x", session_id="sess-x",
+        owner_id="owner", mapspec_revision=3,
+        mapspec_fingerprint=canonical_fingerprint(current_doc),
+        proposal_fingerprint="g10:abc",
+    )
+    port = InMemoryMapSpecPort(copy.deepcopy(current_doc), revision=3)
+    candidate = RefreshCandidate(
+        candidate_id="g10c-g10p-p3fp", proposal_id="g10p-p3fp",
+        project_id="proj-x", status=CandidateStatus.PARTIAL,
+        candidate_fingerprint="", adoptable=True,
+    )
+    receipt, _before = await commit_candidate(
+        port=port, proposal=prop, candidate=candidate,
+        candidate_doc={"title": "candidate", "layers": [{"id": "L1"}]},
+        current_versions={}, owner_id="owner",
+    )
+    assert receipt.status == "blocked"
+    assert port.commits == []
+
+
+def test_p3_plan_truncation_disclosed_and_consistent():
+    """impact.py:224 —— >64 节点时计划列表/裁决/预算必须一致且披露。"""
+    from app.services.project_runtime.refresh.contracts import SourceDiff
+
+    dag = {"nodes": [{"node_id": f"n{i}", "parameters": []} for i in range(100)],
+           "edges": []}
+    diff = SourceDiff(logical_id="ds://schools", change_class="unknown",
+                      evidence=ChangeEvidence.UNKNOWN,
+                      seed_targets=["recipe"])
+    plan = build_refresh_plan(diffs=[diff], dag=dag)
+    assert plan.conservative is True
+    assert len(plan.recompute) == 64
+    assert plan.estimated_budget["recompute_nodes"] == 64
+    assert plan.estimated_budget["estimated_tool_calls"] == 64
+    assert set(plan.decisions) == set(plan.recompute)
+    assert any("truncated to 64" in w for w in plan.warnings)
+
+
+def test_p3_duplicate_feature_ids_disable_exact_alignment():
+    """sources.py:114 —— 重复稳定 ID 不得后写胜/静默丢行。"""
+    from types import SimpleNamespace
+
+    from app.services.project_runtime.refresh.sources import (
+        _extract_features,
+        build_snapshot,
+    )
+
+    payload = {"type": "FeatureCollection", "features": [
+        {"id": "dup", "properties": {"v": 1}, "geometry": "POINT(1 1)"},
+        {"id": "dup", "properties": {"v": 2}, "geometry": "POINT(1 1)"},
+    ]}
+    features, kind, truncated = _extract_features(payload)
+    assert features == {}
+    assert kind is FeatureIdKind.NONE
+    assert truncated is True
+
+    row = SimpleNamespace(id="ds-x", name="x", version_fingerprint="fp",
+                          source_type="upload", crs="", quality_status="")
+    snap = build_snapshot(logical_id="dataset:ds-x", row=row, descriptor={},
+                          payload=payload)
+    assert snap.features == {}
+    assert snap.truncated is True
+
+
+def test_p3_release_lease_removes_token_file():
+    """store.py:288 —— release 必须删除 lease 令牌文件（不是永久残留）。"""
+    from app.services.project_runtime.refresh import store as store_mod
+
+    store = RefreshStore()
+    ok, _holder = store.acquire_lease("proj-r1", "g10p-x-exec")
+    assert ok
+    lease = store_mod._dir("proj-r1") / "g10p-x-exec.lease"
+    assert lease.is_file()
+    store.release_lease("proj-r1", "g10p-x-exec")
+    assert not lease.exists()
+
+
+@pytest.mark.asyncio
+async def test_p3_cap_sweep_removes_only_stale_unlocked_leases():
+    """store.py:301 —— cap 清理需回收陈旧 lease，且不得误删仍被持有的 lease。"""
+    import os
+    import time
+
+    from app.services.project_runtime.refresh import store as store_mod
+
+    store = RefreshStore()
+    d = store_mod._dir("proj-r1")
+    d.mkdir(parents=True, exist_ok=True)
+    stale = d / "g10p-old-exec.lease"
+    stale.write_text("{}", encoding="utf-8")
+    fresh = d / "g10p-new-exec.lease"
+    fresh.write_text("{}", encoding="utf-8")
+    old = time.time() - 7200
+    os.utime(stale, (old, old))
+    ok, _holder = store.acquire_lease("proj-r1", "g10p-active-exec")
+    assert ok
+    active = d / "g10p-active-exec.lease"
+    os.utime(active, (old, old))
+
+    await store._enforce_cap("proj-r1")
+
+    assert not stale.exists()
+    assert fresh.exists()
+    assert active.exists(), "actively held lease must never be swept"
+    store.release_lease("proj-r1", "g10p-active-exec")
+
+
+@pytest.mark.asyncio
+async def test_p3_status_does_not_scan_all_proposals():
+    """service.py:441 —— status() 不得为死循环全量 glob/解析 proposal。"""
+    store = RefreshStore()
+    prop = RefreshProposal(proposal_id="g10p-status", project_id="proj-r1",
+                           owner_id="u-r1", proposal_fingerprint="g10:abc")
+    assert await store.save_proposal(prop)
+
+    async def _forbidden(project_id):
+        raise AssertionError("status() must not list all proposals")
+
+    store.list_proposals = _forbidden  # type: ignore[assignment]
+    svc = ProjectDataRefreshService(
+        store=store, port=InMemoryMapSpecPort({}, revision=0))
+    data = await svc.status(project_id="proj-r1", proposal_id="g10p-status",
+                            user_id="u-r1")
+    assert data["proposal_status"] == "preview"
+    assert data["candidate_status"] == "not_started"

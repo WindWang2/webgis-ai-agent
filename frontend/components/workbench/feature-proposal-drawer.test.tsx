@@ -4,7 +4,7 @@
  * 语义：dialog role、aria-live 播报、radio 组。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 vi.mock('@/lib/api/feature-proposals', () => ({
@@ -230,5 +230,142 @@ describe('FeatureProposalDrawer', () => {
     await waitFor(() => {
       expect(screen.getByTestId('feature-proposal-recovery')).toBeTruthy();
     });
+  });
+
+  it('clears stale resolutions when the diff reloads after submit', async () => {
+    const nextConflict = {
+      conflict_id: 'field:wf1-x:name',
+      kind: 'field_value_conflict',
+      wfid: 'wf1-x',
+      field: 'name',
+      base: { presence: 'present', value: 'a' },
+      current: { presence: 'present', value: 'b' },
+      proposed: { presence: 'present', value: 'c' },
+    };
+    mocked(listFeatureProposals).mockResolvedValue([summary()]);
+    mocked(getFeatureProposalDetail).mockResolvedValue(detail());
+    mocked(getFeatureProposalDiff)
+      .mockResolvedValueOnce(diff())
+      .mockResolvedValue(diff({
+        conflict_report: {
+          verdict: 'conflicted',
+          conflicts: [nextConflict],
+          unresolved_conflicts: [nextConflict],
+          satisfied: [],
+          independent_current_changes: { count: 1, deleted: 0, created: 0, geometry: 0 },
+          identity: { provable: true },
+          current_changed: true,
+        },
+      }));
+    mocked(submitFeatureProposalResolutions).mockResolvedValue({ proposal: summary(), applied: [] });
+    const user = userEvent.setup();
+    render(<FeatureProposalDrawer open onClose={vi.fn()} />);
+    await waitFor(() => {
+      expect(screen.getByTestId('feature-proposal-item-fpr-abc123')).toBeTruthy();
+    });
+    await user.click(screen.getByTestId('feature-proposal-item-fpr-abc123'));
+    await waitFor(() => {
+      expect(screen.getByTestId('feature-proposal-conflicts')).toBeTruthy();
+    });
+    await user.click(screen.getAllByRole('radio')[0]);
+    await user.click(screen.getByTestId('feature-proposal-submit-resolutions'));
+    await waitFor(() => {
+      expect(mocked(submitFeatureProposalResolutions)).toHaveBeenCalled();
+    });
+    // 重载后的新冲突尚未裁决：旧决议必须已清空，按钮回到禁用。
+    await waitFor(() => {
+      expect(screen.getByTestId('feature-proposal-submit-resolutions')).toBeDisabled();
+    });
+  });
+
+  it('surfaces load-more diff failures as an alert instead of an unhandled rejection', async () => {
+    mocked(listFeatureProposals).mockResolvedValue([summary()]);
+    mocked(getFeatureProposalDetail).mockResolvedValue(detail());
+    mocked(getFeatureProposalDiff)
+      .mockResolvedValueOnce(diff({
+        candidate_deltas: [{ wfid: 'wf1-x', fields: {} }],
+        candidate_delta_count: 3,
+      }))
+      .mockRejectedValueOnce(new Error('boom'));
+    const user = userEvent.setup();
+    render(<FeatureProposalDrawer open onClose={vi.fn()} />);
+    await waitFor(() => {
+      expect(screen.getByTestId('feature-proposal-item-fpr-abc123')).toBeTruthy();
+    });
+    await user.click(screen.getByTestId('feature-proposal-item-fpr-abc123'));
+    await user.click(await screen.findByRole('button', { name: '加载更多' }));
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toContain('加载提案详情失败');
+    });
+  });
+
+  it('does not duplicate deltas when load-more resolves the same page twice', async () => {
+    const cleanReport = {
+      verdict: 'clean' as const, conflicts: [], unresolved_conflicts: [], satisfied: [],
+      independent_current_changes: { count: 0, deleted: 0, created: 0, geometry: 0 },
+      identity: { provable: true }, current_changed: false,
+    };
+    const pageTwo = diff({
+      candidate_deltas: [{ wfid: 'wf2-x', fields: {} }],
+      candidate_delta_count: 3,
+      page: 2,
+      conflict_report: cleanReport,
+    });
+    mocked(listFeatureProposals).mockResolvedValue([summary()]);
+    mocked(getFeatureProposalDetail).mockResolvedValue(detail());
+    mocked(getFeatureProposalDiff)
+      .mockResolvedValueOnce(diff({
+        candidate_deltas: [{ wfid: 'wf1-x', fields: {} }],
+        candidate_delta_count: 3,
+        conflict_report: cleanReport,
+      }))
+      .mockResolvedValue(pageTwo);
+    const user = userEvent.setup();
+    render(<FeatureProposalDrawer open onClose={vi.fn()} />);
+    await waitFor(() => {
+      expect(screen.getByTestId('feature-proposal-item-fpr-abc123')).toBeTruthy();
+    });
+    await user.click(screen.getByTestId('feature-proposal-item-fpr-abc123'));
+    await user.click(await screen.findByRole('button', { name: '加载更多' }));
+    await waitFor(() => {
+      expect(screen.getAllByText('wf2-x')).toHaveLength(1);
+    });
+    await user.click(screen.getByRole('button', { name: '加载更多' }));
+    await waitFor(() => {
+      expect(screen.getAllByText('wf2-x')).toHaveLength(1);
+    });
+  });
+
+  it('drops a late detail response from a previously selected proposal', async () => {
+    let resolveDetail!: (value: ProposalDetail) => void;
+    let resolveDiff!: (value: ProposalDiff) => void;
+    const delayedDetail = new Promise<ProposalDetail>((resolve) => { resolveDetail = resolve; });
+    const delayedDiff = new Promise<ProposalDiff>((resolve) => { resolveDiff = resolve; });
+    mocked(listFeatureProposals).mockResolvedValue([
+      summary({ proposal_id: 'fpr-a', title: '提案A' }),
+      summary({ proposal_id: 'fpr-b', title: '提案B' }),
+    ]);
+    mocked(getFeatureProposalDetail).mockImplementation(async (id) =>
+      id === 'fpr-a' ? delayedDetail : detail({ proposal_id: 'fpr-b', title: '提案B' }));
+    mocked(getFeatureProposalDiff).mockImplementation(async (id) =>
+      id === 'fpr-a' ? delayedDiff : diff({ proposal_id: 'fpr-b' }));
+    const user = userEvent.setup();
+    render(<FeatureProposalDrawer open onClose={vi.fn()} />);
+    await waitFor(() => {
+      expect(screen.getByTestId('feature-proposal-item-fpr-a')).toBeTruthy();
+    });
+    await user.click(screen.getByTestId('feature-proposal-item-fpr-a'));
+    await user.click(screen.getByRole('button', { name: /返回列表/ }));
+    await user.click(screen.getByTestId('feature-proposal-item-fpr-b'));
+    await waitFor(() => {
+      expect(screen.getByText('提案B')).toBeTruthy();
+    });
+    await act(async () => {
+      resolveDetail(detail({ proposal_id: 'fpr-a', title: '提案A' }));
+      resolveDiff(diff({ proposal_id: 'fpr-a' }));
+    });
+    // A 的慢响应到达时不得覆盖 B 的详情。
+    expect(screen.getByText('提案B')).toBeTruthy();
+    expect(screen.queryByText('提案A')).toBeNull();
   });
 });

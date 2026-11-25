@@ -89,7 +89,7 @@ class RasterSource:
             return "session_ref"
         if self.uri.startswith("artifact://"):
             return "project_artifact"
-        if self.uri.startswith(("/vsicurl/", "/vsis3/", "/vsigs/", "http://", "https://")):
+        if self.uri.startswith(("/vsi", "http://", "https://")):
             return "remote"
         return "local_file"
 

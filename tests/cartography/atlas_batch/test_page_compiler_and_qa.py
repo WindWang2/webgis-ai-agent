@@ -37,6 +37,31 @@ def test_inject_escapes_xml_and_malformed_svg_untouched():
                               page_title="x", width_px=10, height_px=10) == "<svg/>"
 
 
+def test_compile_atlas_page_svg_bytes_is_utf8_bytes(monkeypatch):
+    """svg_bytes 计 UTF-8 字节（中文页题下字符数会低估 2-3 倍）。"""
+    from types import SimpleNamespace
+
+    from app.services.atlas_batch import page_compiler as pc
+    from app.services.publication_export import PageCompileOutcome
+
+    svg = '<svg xmlns="http://www.w3.org/2000/svg"><text>金牛区</text></svg>'
+    page = SimpleNamespace(
+        cover=False, print_layout=None, page_number=1, page_count=2,
+        page_id="cat_金牛区", title="金牛区",
+        paper=SimpleNamespace(width_px=100, height_px=100,
+                              width_mm=25.0, height_mm=25.0),
+    )
+    monkeypatch.setattr(
+        pc, "compile_publication_page",
+        lambda *a, **k: PageCompileOutcome(
+            svg=svg, width_mm=25.0, height_mm=25.0, page=page))
+    out = pc.compile_atlas_page(
+        {}, page, None, frames_lookup=[], target_dpi=300, max_labels=400,
+        svg_budget_remaining=10 ** 9)
+    assert out.svg_bytes == len(out.svg.encode("utf-8"))
+    assert out.svg_bytes > len(out.svg)
+
+
 class _B:
     """最小 binding 形状（QA 只读这些字段）。"""
 

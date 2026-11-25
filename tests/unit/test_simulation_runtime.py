@@ -968,3 +968,23 @@ def test_resume_rejects_changed_time_step():
     config = _hydro_cfg(n=10).model_copy(update={"dt_seconds": 10.0})
     with pytest.raises(SimulationStateError, match="dt_seconds"):
         SimulationRuntime.from_checkpoint(rt.to_checkpoint(), config)
+
+
+def test_graph_to_features_truncation_keeps_top_values():
+    """截断口径与抽象契约/栅格实现一致：按值降序取前 N（P3 回归）。"""
+    from app.services.simulation.state import GraphStateMatrix
+
+    edges = [
+        NetworkEdgeSpec(
+            edge_id=f"e{i}", tail=f"n{i}", head=f"n{i + 1}", length_m=100.0,
+            capacity_veh_h=1000.0, free_flow_speed_kmh=40.0,
+        )
+        for i in range(4)
+    ]
+    state = GraphStateMatrix(
+        GraphTopology.from_edges(edges),
+        {"v": np.array([1.0, 5.0, 2.0, 9.0])},
+    )
+    feats, _bbox, truncated = state.to_features("v", max_features=2)
+    assert truncated is True
+    assert [f["properties"]["edge_id"] for f in feats] == ["e3", "e1"]

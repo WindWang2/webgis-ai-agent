@@ -7,6 +7,7 @@ import os
 import numpy as np
 import pytest
 
+from app.services.raster_sampling import freeze as rs_freeze
 from app.services.raster_sampling import service as rs_service
 from app.services.raster_sampling import store as rs_store
 from app.services.raster_sampling.contracts import RasterSamplingError
@@ -632,3 +633,48 @@ async def test_results_streamed_filters_preserve_facts(
         include_curves=False, band=999)
     assert empty["pagination"]["filtered_rows"] == 0
     assert empty["rows"] == []
+
+
+# ── P3：_latest_job 不被会话任务窗口挤出 ────────────────────────────
+
+def test_latest_job_finds_plan_beyond_200_session_tasks(rs_env):
+    """同会话 >200 条执行任务时，旧 plan 的 job 仍能查到。"""
+    from app.models.db_model import AnalysisTask
+
+    with rs_env["sync_factory"]() as db:
+        db.add(AnalysisTask(
+            task_type="raster_sampling_execute", session_id=SESS,
+            parameters={"plan_id": "plan-old"}, status="completed"))
+        db.commit()
+        db.add_all([
+            AnalysisTask(task_type="raster_sampling_execute",
+                         session_id=SESS,
+                         parameters={"plan_id": f"plan-other-{i}"},
+                         status="completed")
+            for i in range(250)
+        ])
+        db.commit()
+
+    job = rs_service._latest_job_sync(SESS, "plan-old")
+    assert job is not None
+    assert job["params"]["plan_id"] == "plan-old"
+
+
+# ── P3：非 dict geometry 走 typed 通道（不抛 AttributeError） ────────
+
+def test_canonical_fc_digest_tolerates_malformed_geometry():
+    digest = rs_freeze._canonical_fc_digest({
+        "type": "FeatureCollection",
+        "features": [{"id": "a", "geometry": "bogus",
+                      "properties": {"k": "v"}}],
+    })
+    assert isinstance(digest, str) and digest
+
+
+def test_pick_line_feature_malformed_geometry_typed_reject():
+    with pytest.raises(RasterSamplingError) as ei:
+        rs_freeze.pick_line_feature({
+            "type": "FeatureCollection",
+            "features": [{"id": "a", "geometry": ["bogus"]}],
+        }, "")
+    assert ei.value.code == "INVALID_GEOMETRY"

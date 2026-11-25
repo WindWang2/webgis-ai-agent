@@ -185,8 +185,9 @@ async def commit_candidate(
             proposal_fingerprint=proposal.proposal_fingerprint,
             warnings=["candidate not adoptable: hard semantic errors or unresolved conflicts"],
         ), current_doc
-    if candidate.candidate_fingerprint and candidate.candidate_fingerprint != \
-            canonical_fingerprint(candidate_doc):
+    # R1-P2 同款 fail-closed：未设指纹的候选不得因 and 短路而免检。
+    if (not candidate.candidate_fingerprint
+            or candidate.candidate_fingerprint != canonical_fingerprint(candidate_doc)):
         return AdoptionReceipt(
             proposal_id=proposal.proposal_id, action="adopt", status="blocked",
             warnings=["candidate document fingerprint mismatch"],

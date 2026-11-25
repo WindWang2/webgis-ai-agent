@@ -482,6 +482,34 @@ async def test_binding_preview_apply_undo_cycle():
     assert stored2["paint"]["color"] == "#2563eb"
 
 
+async def test_binding_idempotent_replay_reports_no_new_commit():
+    """同 mutation_id 重放不是新写入：committed/mutations/can_undo 如实为 0。"""
+    from app.services.cartographic_assets.binding import apply_binding
+
+    sid = await _seed_session(
+        [{"id": "pts", "source": "pts", "type": "circle", "paint": {}}],
+        {"pts": _pts_source()})
+    rev0 = await _current_revision(sid)
+    plan = {
+        "asset_id": "cartoasset.builtin.triangle", "revision": 1,
+        "kind": "point_symbol", "params": {"size_px": 16}}
+
+    first = await apply_binding(
+        sid, "pts", plan, expected_revision=rev0, origin="user", actor="t",
+        mutation_id="m-dedup-1")
+    assert first["committed"] is True and first["mutations"] == 1
+    assert first["can_undo"] is True and "deduplicated" not in first
+
+    replay = await apply_binding(
+        sid, "pts", plan, expected_revision=rev0, origin="user", actor="t",
+        mutation_id="m-dedup-1")
+    assert replay["deduplicated"] is True
+    assert replay["committed"] is False
+    assert replay["mutations"] == 0
+    assert replay["can_undo"] is False
+    assert replay["revision"] == first["revision"]
+
+
 async def test_s22_locked_layer_agent_rejected_and_visibility_kept():
     from app.services.cartographic_assets.binding import apply_binding
 

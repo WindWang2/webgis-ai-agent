@@ -82,7 +82,17 @@ def batch_root(batch_id: str, data_dir: Optional[str] = None) -> Path:
 
 
 def member_safe_name(member_key: str) -> str:
-    return _MEMBER_SAFE_RE.sub("_", member_key)[:150] or "member"
+    safe = _MEMBER_SAFE_RE.sub("_", member_key)
+    if len(safe) <= 150:
+        return safe or "member"
+    # 截断必须保持区分度：超长键（zipset 目录+basename）截断后若同名，
+    # outputs/diag 产物会互相覆盖 —— 追加原键短哈希
+    import hashlib
+
+    digest = hashlib.sha1(
+        member_key.encode("utf-8"), usedforsecurity=False
+    ).hexdigest()[:12]
+    return f"{safe[:137]}-{digest}"
 
 
 def compute_sha256(data: bytes) -> str:
@@ -255,17 +265,58 @@ def assert_owner(state: ImportBatchState, session_id: Optional[str]) -> ImportBa
     return state
 
 
+def _cleanup_orphan(child: Path, session_id: str) -> None:
+    """回收 stage_files 在写 batch.json 前崩溃留下的孤儿目录。
+
+    只回收可归属本会话且已过期的目录；owner.json 缺失时按目录 mtime 超过
+    批次 TTL 回收。他人会话 / 未过期目录保守保留（防误删在飞 staging）。
+    """
+    try:
+        owner: Optional[Dict[str, Any]] = json.loads(
+            (child / "owner.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        owner = None
+    if not isinstance(owner, dict):
+        owner = None
+    if owner is not None:
+        if str(owner.get("session_id") or "") != session_id:
+            return
+        try:
+            exp = datetime.fromisoformat(str(owner.get("expires_at") or ""))
+        except ValueError:
+            return
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        expired = datetime.now(timezone.utc) >= exp
+    else:
+        try:
+            mtime = datetime.fromtimestamp(child.stat().st_mtime, tz=timezone.utc)
+        except OSError:
+            return
+        expired = (
+            datetime.now(timezone.utc) - mtime
+            >= timedelta(hours=budgets.BATCH_TTL_HOURS)
+        )
+    if expired:
+        shutil.rmtree(child, ignore_errors=True)
+
+
 def list_batch_states(
     session_id: str, *, data_dir: Optional[str] = None
 ) -> List[ImportBatchState]:
-    """列出会话的批次（惰性清理过期目录）。"""
+    """列出会话的批次（惰性清理过期/孤儿目录）。"""
     out: List[ImportBatchState] = []
     root = batches_root(data_dir)
     for child in sorted(root.iterdir()):
         if not child.is_dir():
             continue
         state = load_state(child.name, data_dir=data_dir)
-        if state is None or state.session_id != session_id:
+        if state is None:
+            # 无 batch.json（stage_files 崩溃残留）→ 过期后回收，不再永久泄漏
+            _cleanup_orphan(child, session_id)
+            continue
+        if state.session_id != session_id:
             continue
         if is_expired(state):
             expire_batch(state.batch_id, data_dir=data_dir)

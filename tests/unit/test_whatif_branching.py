@@ -14,6 +14,7 @@
 投影细节无关；同纬度线段长度同乘 cos(lat0)，比率断言精确成立。
 """
 import json
+import logging
 import math
 import uuid
 
@@ -1118,3 +1119,114 @@ async def test_t15_compare_branches_end_to_end_wires_matrix_and_report():
     assert overlay["features"], "至少包含分支新增要素"
     sign_values = {f["properties"].get("impact_sign") for f in overlay["features"]}
     assert sign_values <= {"positive", "negative", "neutral"}
+
+
+# ─────────────── P3 回归：缺值/非有限输入与重复键披露 ───────────────
+
+
+def test_report_render_tolerates_none_numeric_fields():
+    """advice/coverage/ROI 数值为 None 时渲染不抛 TypeError（P3 回归）。"""
+    base = {
+        "branches": [{"branch_id": "A", "title": "方案 A", "hypothesis": "h"}],
+        "metric_matrix": {},
+        "metric_delta_pct": {},
+        "metric_names": {},
+        "geometry_summary": {},
+        "gaps": [],
+    }
+    coverage_none = {
+        **base,
+        "geometry_summary": {
+            "A": {"_coverage": {"gained_area_m2": None, "lost_area_m2": None}}
+        },
+    }
+    assert "覆盖增益 0.00 m²" in render_comparison_markdown(coverage_none)
+
+    confidence_none = {
+        **base,
+        "advice": {"recommended_branch_id": "A", "confidence": None},
+    }
+    assert "置信度 0.00" in render_comparison_markdown(confidence_none)
+
+    cost_none = {
+        **base,
+        "advice": {
+            "roi_sensitivity": [
+                {
+                    "branch_id": "A",
+                    "metric_key": "k",
+                    "delta_pct": 1.0,
+                    "cost_proxy": None,
+                    "roi_index": 2.0,
+                }
+            ]
+        },
+    }
+    assert "| 0.0 |" in render_comparison_markdown(cost_none)
+
+
+def test_diff_layers_ignores_nonfinite_latitudes():
+    """单个 NaN 纬度不得污染 lat0 并清零整层面积（P3 回归）。"""
+    base = _poly_fc(
+        [
+            ("f1", 104.0, 30.6, 0.001, {}),
+            ("bad", 104.05, float("nan"), 0.001, {}),
+        ]
+    )
+    branch = _poly_fc(
+        [
+            ("f1", 104.0, 30.6, 0.001, {}),
+            ("bad", 104.05, float("nan"), 0.001, {}),
+            ("f2", 104.02, 30.6, 0.001, {}),
+        ]
+    )
+    summary = diff_layers({"zones": base}, {"zones": branch})["zones"].summary()
+    assert summary["added"] == 1
+    assert summary["added_area_m2"] > 0.0
+
+
+def test_facility_buffer_tolerates_nonfinite_service_radius():
+    """service_radius_m 为 inf/NaN 时回退默认半径，不抛 ValueError（P3 回归）。"""
+    fc = _point_fc([("clinic", 104.0, 30.6, {"service_radius_m": float("inf")})])
+    coverage = diff_layers({"clinic": fc}, {"clinic": fc})["_coverage"]
+    assert coverage["gained_area_m2"] == 0.0
+    assert coverage["lost_area_m2"] == 0.0
+
+
+def test_diff_layers_warns_on_duplicate_feature_keys(caplog):
+    """同层重复 properties.id 的覆盖合并必须告警，不得完全静默（P3 回归）。"""
+    base = _poly_fc(
+        [
+            ("dup", 104.0, 30.6, 0.001, {}),
+            ("dup", 104.01, 30.6, 0.001, {}),
+        ]
+    )
+    with caplog.at_level(
+        logging.WARNING,
+        logger="app.services.simulation.whatif.spatial_diff_engine",
+    ):
+        diffs = diff_layers({"zones": base}, {"zones": {}})
+    assert "duplicate feature key" in caplog.text
+    assert len(diffs["zones"].removed_features) == 1
+
+
+@pytest.mark.asyncio
+async def test_branch_meta_revision_refresh_tolerates_missing_state(monkeypatch):
+    """get_map_state 返回 None 时 refresh 不得抛 AttributeError（P3 回归）。"""
+    from app.services.simulation.whatif import branch_manager as bm
+
+    async def _missing(_session_id):
+        return None
+
+    monkeypatch.setattr(bm.session_data_manager, "get_map_state", _missing)
+    meta = bm.ScenarioBranchMeta(
+        branch_id="A",
+        parent_session_id="parent",
+        branch_session_id="parent__wif_A",
+        fork_revision=0,
+        forked_at="2026-01-01T00:00:00Z",
+        baseline_fingerprint="fp",
+        last_revision=7,
+    )
+    refreshed = await bm.ScenarioBranchManager()._refresh_meta_revision(meta)
+    assert refreshed.last_revision == 7

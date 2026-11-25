@@ -196,3 +196,15 @@ def test_shorter_than_step_line_keeps_endpoints():
         station_step=100.0, include_vertices=True, plan_id="p10")
     chain = sorted(s.chainage_m for s in out.stations)
     assert chain == [0.0, 5.0]
+
+
+def test_line_malformed_vertex_shape_typed_reject():
+    """P3：坐标元素形状非法时给 typed INVALID_GEOMETRY（不裸抛
+    IndexError/TypeError）。"""
+    for coords in ([1, 2], [[1, 2], [3]], [[1, 2], [[3], 4]]):
+        feature = {"geometry": {"type": "LineString", "coordinates": coords}}
+        with pytest.raises(RasterSamplingError) as ei:
+            st.build_line_stations(
+                feature, crs="EPSG:32633", distance_mode="planar_metric",
+                station_step=10.0, include_vertices=True, plan_id="p-bad")
+        assert ei.value.code == "INVALID_GEOMETRY"

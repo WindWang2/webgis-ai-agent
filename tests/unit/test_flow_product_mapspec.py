@@ -201,6 +201,37 @@ async def test_flow_apply_is_atomic_idempotent_and_preserves_user_presentation()
     await session_data_manager.clear_session(session_id)
 
 
+@pytest.mark.asyncio
+async def test_flow_apply_refuses_non_finite_artifact_profile(monkeypatch):
+    import app.services.spatial_meta_profiler as profiler
+
+    monkeypatch.setattr(profiler, "profile_from_descriptor", lambda descriptor: {
+        "bbox": [float("nan"), 0.0, 1.0, 1.0],
+        "crs": None,
+        "crs_status": "unknown",
+        "featureCount": 1,
+        "geometryTypes": [],
+        "fields": {},
+        "fields_status": "unknown",
+        "suggestedView": {},
+        "temporalProfile": None,
+    })
+    session_id = f"flow-map-{uuid.uuid4().hex[:8]}"
+    engine = MapSpecLifecycleEngine()
+    product_ref, _ = await _seed_product(session_id)
+    initialized = await engine.apply_mutation(session_id, InitProjectIntent())
+    result = await engine.apply_mutation(
+        session_id,
+        ApplyFlowProductIntent(product_ref=product_ref, family_id="odf_demo"),
+        origin="agent",
+        expected_revision=initialized.mutation_revision,
+        mutation_id="flow-apply-nan-profile",
+    )
+    assert result.is_error
+    assert result.error_code == "FLOW_PRODUCT_INVALID"
+    await session_data_manager.clear_session(session_id)
+
+
 def test_flow_apply_http_body_uses_the_same_intent():
     from app.schemas.mapspec_mutation_schema import ApplyFlowProductBody
     from app.services.mapspec.intent_codec import body_to_intent

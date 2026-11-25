@@ -2,6 +2,10 @@ import { describe, it, expect, vi } from 'vitest';
 
 import { applySourcePatch } from '@/lib/data-plane/patch';
 import type { GeoJsonSourcePatchTarget } from '@/lib/data-plane/patch';
+import {
+  getDataPlaneSnapshot,
+  resetDataPlaneObservabilityForTests,
+} from '@/lib/data-plane/observability';
 import type { FeatureCollectionLike } from '@/lib/mapspec-runtime/source-diff';
 
 type TestFeature = FeatureCollectionLike['features'][number];
@@ -135,6 +139,17 @@ describe('applySourcePatch — decision matrix', () => {
     const app = applySourcePatch(src, fc(...big), fc(...big.slice(1)));
     expect(app.op).toBe('setData');
     expect(app.reason).toBe('diff-cap');
+  });
+
+  it('diff-cap fallback is recorded in the ledger (reason diff-cap, not invisible)', () => {
+    resetDataPlaneObservabilityForTests();
+    const src = makeSource();
+    const big = Array.from({ length: 3000 }, (_, i) => feat(i));
+    applySourcePatch(src, fc(...big), fc(...big.slice(1)));
+    const snap = getDataPlaneSnapshot();
+    expect(snap.counters.patchFallbacks).toBe(1);
+    expect(snap.recent.some((e) => e.kind === 'patch-fallback' && e.reason === 'diff-cap')).toBe(true);
+    resetDataPlaneObservabilityForTests();
   });
 
   it('null geometry features are diff-safe (no crash, stable path)', () => {

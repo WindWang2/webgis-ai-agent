@@ -411,6 +411,39 @@ class TestBriefPreflightVerdicts:
         assert numeric.refs == ["fact-unver"]
         assert report.outcome == "draft_exportable"
 
+    def _map_spec(self, center):
+        return MapBriefSpec.model_validate({
+            "chapters": [{"id": "c1", "title": "t", "narrative": "n",
+                          "arc_role": "introduction"}],
+            "blocks": [{"id": "blk-map", "chapter_id": "c1",
+                        "kind": "map_view",
+                        "map_view": {"center": center, "zoom": 4.0,
+                                     "mapspec_fingerprint": "fp-1"}}],
+            "facts": [],
+        })
+
+    def _coverage(self, spec, bbox):
+        report = run_preflight(
+            spec, records={"ref:x": {"status": "valid", "bbox": bbox}},
+            payloads={}, widget_data={}, mapspec_available=True)
+        return next(i for i in report.items
+                    if i.check == "map_version_coverage")
+
+    def test_antimeridian_bbox_camera_not_reported_outside(self):
+        # e<w 表示跨 ±180°（camera_planner 同语义）：中心 -180 在覆盖内。
+        item = self._coverage(self._map_spec([-180.0, 0.0]),
+                              [170.0, -10.0, -170.0, 10.0])
+        assert item.refs == []
+
+    def test_malformed_bbox_elements_do_not_break_preflight(self):
+        # 元素非数值/None/NaN 不得把预检变成 500，也不得毒化覆盖比较。
+        spec = self._map_spec([116.4, 39.9])
+        for bbox in ([1.0, "x", 3.0, 4.0],
+                     [1.0, 2.0, 3.0, None],
+                     [1.0, float("nan"), 3.0, 4.0]):
+            item = self._coverage(spec, bbox)
+            assert item.refs == [], bbox
+
 
 # ── 4. 草稿编译（服务壳，loader 打桩） ────────────────────────────────
 

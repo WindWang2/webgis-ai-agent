@@ -505,7 +505,11 @@ async def apply_binding(
         mapspec_fingerprint=result.mapspec_fingerprint,
         can_undo=True)
     if getattr(result, "duplicate", False):
+        # 幂等重放不是新写入：如实报 0 次 mutation、不可再 undo 一次。
         receipt["deduplicated"] = True
+        receipt["committed"] = False
+        receipt["can_undo"] = False
+        receipt["mutations"] = 0
     return receipt
 
 

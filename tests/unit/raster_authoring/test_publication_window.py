@@ -248,6 +248,19 @@ class TestNoOverlapAndNodata:
         assert px[:16, :8, 3].max() == 0, "nodata 半区必须透明"
         assert px[:16, 8:, 3].min() == 255, "有效半区必须不透明"
 
+    def test_nan_nodata_keeps_finite_pixels_visible(self, owner_root):
+        """GDAL 允许 NODATA=nan：有限像元必须可绘制，不能整层透明。"""
+        rows, cols = np.mgrid[0:8, 0:8]
+        values = (rows * 10 + cols).astype("float32")
+        path = _regional_tif(owner_root, values=values[None], nodata=float("nan"))
+        res = render_publication_window(
+            str(path), _stat_key(path), _spec_payload(),
+            [10.0, 15.0, 20.0, 25.0], 16, 16,
+        )
+        assert res.all_nodata is False
+        px = _png_pixels(res.png_bytes)
+        assert px[..., 3].min() == 255, "nan nodata 不得把有限像元判为无效"
+
     def test_rgb_all_channels_valid_rule(self, owner_root):
         """RGB：任一通道 nodata → 该像元透明（黑色填充不冒充实测）。"""
         rows, cols = np.mgrid[0:8, 0:8]
@@ -303,6 +316,17 @@ class TestFrozenIdentityAndBounds:
             )
         assert ei.value.code == "RENDER_FAILED"
 
+    def test_non_numeric_view_bounds_typed_reject(self, owner_root):
+        """视图含 None/"" 时必须走 typed RENDER_FAILED，而不是裸 TypeError。"""
+        rows, cols = np.mgrid[0:8, 0:8]
+        path = _regional_tif(owner_root, values=(rows * 10 + cols).astype("float32")[None])
+        with pytest.raises(RasterExpressionError) as ei:
+            render_publication_window(
+                str(path), _stat_key(path), _spec_payload(),
+                [None, 15.0, 20.0, 25.0], 8, 8,
+            )
+        assert ei.value.code == "RENDER_FAILED"
+
     def test_max_side_truncation_disclosed(self, owner_root):
         rows, cols = np.mgrid[0:8, 0:8]
         path = _regional_tif(owner_root, values=(rows * 10 + cols).astype("float32")[None])
@@ -325,3 +349,14 @@ class TestFrozenIdentityAndBounds:
         # 不同窗口（视图不同）绝不串缓存
         c = render_publication_window(*args[:3], [11.0, 15.0, 20.0, 25.0], 64, 64)
         assert c.png_bytes != a.png_bytes
+
+    def test_cache_isolated_by_render_limits(self, owner_root):
+        """缓存键必须含 max_side/decode_budget_px：上限不同的调用不得串结果。"""
+        rows, cols = np.mgrid[0:8, 0:8]
+        path = _regional_tif(owner_root, values=(rows * 10 + cols).astype("float32")[None])
+        args = (str(path), _stat_key(path), _spec_payload(),
+                [10.0, 15.0, 20.0, 25.0], 64, 64)
+        capped = render_publication_window(*args, max_side=32)
+        full = render_publication_window(*args, max_side=64)
+        assert capped.width == 32 and capped.truncated
+        assert full.width == 64 and not full.truncated

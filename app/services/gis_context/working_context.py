@@ -511,14 +511,17 @@ class GISWorkingContext(BaseModel):
             "findings", "accepted_assumptions", "rejected_alternatives",
             "unresolved_constraints",
         )
+        # Serialize once, then trim the serialized copy — payload() is a
+        # read and must never delete records from the caller's live rings
+        # (rendering and rebase keep using that object).
+        data = self.model_dump(mode="json", exclude_none=True)
         for _ in range(64):
-            data = self.model_dump(mode="json", exclude_none=True)
             raw = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
             if len(raw.encode("utf-8")) <= MAX_PAYLOAD_BYTES:
                 return data
             trimmed = False
             for name in rings:
-                rows = getattr(self, name, None)
+                rows = data.get(name)
                 if rows:
                     del rows[0]
                     trimmed = True

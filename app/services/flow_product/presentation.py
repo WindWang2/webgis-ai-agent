@@ -24,9 +24,15 @@ def encode_weight(weight: float, transform: str, domain: Iterable[float]) -> flo
     if not math.isfinite(weight) or not math.isfinite(d0) or not math.isfinite(d1) or d1 <= d0:
         return 0.0
     if transform == "sqrt":
-        value = (math.sqrt(max(0.0, weight)) - math.sqrt(max(0.0, d0))) / (math.sqrt(d1) - math.sqrt(d0))
+        lo, hi = math.sqrt(max(0.0, d0)), math.sqrt(max(0.0, d1))
+        if hi <= lo:
+            return 0.0
+        value = (math.sqrt(max(0.0, weight)) - lo) / (hi - lo)
     elif transform == "log1p":
-        value = (math.log1p(max(0.0, weight)) - math.log1p(max(0.0, d0))) / (math.log1p(d1) - math.log1p(d0))
+        lo, hi = math.log1p(max(0.0, d0)), math.log1p(max(0.0, d1))
+        if hi <= lo:
+            return 0.0
+        value = (math.log1p(max(0.0, weight)) - lo) / (hi - lo)
     else:
         value = (weight - d0) / (d1 - d0)
     return round(min(1.0, max(0.0, value)), 6)

@@ -29,10 +29,28 @@ async def persist_snapshot_artifact(
         {**artifact["sidecar"], "filename": filename},
         ensure_ascii=False, sort_keys=True,
     ).encode("utf-8")
-    await asyncio.to_thread(
-        _persist_export_file, f"{filename}.sidecar.json", sidecar, ".json"
-    )
-    await asyncio.to_thread(_set_export_owner, filename, principal)
+    try:
+        await asyncio.to_thread(
+            _persist_export_file, f"{filename}.sidecar.json", sidecar, ".json"
+        )
+        await asyncio.to_thread(_set_export_owner, filename, principal)
+    except Exception:
+        # 侧车/所有权登记失败：删除已落盘产物，别在导出目录留不可归属的
+        # 孤儿文件（无 owner 侧车 → 既有 GC/下载鉴权都无法处理它）。
+        import os
+
+        from app.services import export_paths
+
+        try:
+            root = str(export_paths.ensure_exports_root())
+            for name in (f"{filename}.sidecar.json", f"{filename}.owner", filename):
+                try:
+                    os.unlink(os.path.join(root, name))
+                except OSError:
+                    pass
+        except Exception:  # noqa: BLE001 - 清理尽力而为，不掩盖原始错误
+            pass
+        raise
     # 恒签发能力 URL：登录用户的 Bearer 不会随 window.open/<img> 导航携带，
     # 裸路径必然 401（既有 /export 的匿名会话已用同款 HMAC 能力）。
     download_path = f"/api/v1/export/download/{filename}"

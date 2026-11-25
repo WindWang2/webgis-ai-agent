@@ -1867,6 +1867,17 @@ def build_regression() -> List[Dict[str, Any]]:
                 )
             )
 
+    if not ols_lists:
+        cases.append(
+            error_case(
+                "ols_list_args_rejected",
+                f"{reg_mod}:_ols_core",
+                _probe_code(_ols_core, [1.0, 2.0], [[1.0, 1.0], [1.0, 2.0]]),
+                args=[[1.0, 2.0], [[1.0, 1.0], [1.0, 2.0]]],
+                note="ndarray-only 契约：list 入参类型化拒绝（运行器局限）",
+            )
+        )
+
     # --- JB 正态性：n/6·(S² + (K−3)²/4) 手算公式复算 --------------------
     x_n, y_n = _ols_fixtures()["noisy2var"]
     resid_n = _ols_reference(y_n, x_n)["residuals"]
@@ -2582,10 +2593,11 @@ def build_regression() -> List[Dict[str, Any]]:
 # 运行器限制（重要，详见最终报告）：terrain.py 的**全部公开入口**
 # （tpi/roughness/curvature/d8/flow_accumulation/fill/dinf/twi/spi/ls/
 # openness/geomorphons/landform/hillshade/horizon/svf/…）返回
-# ``(result, meta)`` 二元组 —— 冻结运行器的 select 只能下钻 dict/list/
-# ndarray，元组不可下钻。因此本域的**数值** case 落在模块的纯数学
-# 基元层（积分图 box-sums、坡度角换算、SCA、几何morphon 决策表、
-# 地平线射线行走、D8 邻域距离、拓扑序、bilinear 采样），参考值全部
+# ``(result, meta)`` 二元组 —— 冻结运行器的 select 可下钻 dict/list/
+# ndarray/tuple（science-v5 的 ``0.x``/``1.x`` 即下钻二元组）。本域的
+# **数值** case 选定在模块的纯数学基元层（积分图 box-sums、坡度角换算、
+# SCA、几何morphon 决策表、地平线射线行走、D8 邻域距离、拓扑序、
+# bilinear 采样），参考值全部
 # 由独立 numpy/手写循环复算；公开入口用类型化错误语义回归覆盖
 # （EDGE_POLICY / 护栏 / 哨兵语义的守卫面）。
 
@@ -4591,7 +4603,7 @@ def build_network() -> List[Dict[str, Any]]:
         w_ref = [math.exp(-0.5 * ((r + 0.5) ** 2)) for r in range(zones)]
         cases.append(
             case(
-                f"e2sfca_weights_z{zones}_first",
+                f"e2sfca_weights_z{zones}_first_c30",
                 f"{N_ACC}:NetworkAccessibilityService._e2sfca_zone_weights",
                 r9(w_ref[0]),
                 args=[30.0, zones],
@@ -4676,7 +4688,7 @@ def build_network() -> List[Dict[str, Any]]:
     ):
         cases.append(
             case(
-                f"parse_metrics_{metrics.lower()}",
+                f"parse_metrics_{_id_tag(metrics)}",
                 f"{N_CEN}:_parse_metrics",
                 want,
                 args=[metrics],
@@ -4773,7 +4785,7 @@ def build_network() -> List[Dict[str, Any]]:
     ):
         cases.append(
             case(
-                f"normalize_break_unit_{raw.strip().lower().replace(' ', '_')}",
+                f"normalize_break_unit_{_id_tag(raw)}",
                 f"{N_SA}:_normalize_break_unit",
                 want,
                 args=[raw],
@@ -8008,6 +8020,7 @@ def build_science_v5() -> List[Dict[str, Any]]:
             kwargs={"neighbors1": 12, "neighbors2": 8},
             select="metadata.lmc.rho",
             rtol=1e-9,
+            anchor=True,
             note="内部 fit_lmc + 批量堆叠求解黄金路径（挑战 R0-#3 语义）",
         )
     )
@@ -8019,6 +8032,7 @@ def build_science_v5() -> List[Dict[str, Any]]:
             args=[primary, "v", secondary, "w", 7],
             kwargs={"neighbors1": 12, "neighbors2": 8},
             select="metadata.variance_range.1",
+            anchor=True,
         )
     )
     cases.append(
@@ -8030,6 +8044,7 @@ def build_science_v5() -> List[Dict[str, Any]]:
             kwargs={"neighbors1": 12, "neighbors2": 8},
             select="metadata.uncertainty.estimator",
             kind="exact",
+            anchor=True,
         )
     )
     cases.append(
@@ -8041,6 +8056,7 @@ def build_science_v5() -> List[Dict[str, Any]]:
             kwargs={"neighbors1": 12, "neighbors2": 8},
             select="metadata.execution_plan.variant_id",
             kind="exact",
+            anchor=True,
         )
     )
 
@@ -8065,6 +8081,7 @@ def build_science_v5() -> List[Dict[str, Any]]:
             args=[fc, "v", 7, 12, 42, 8],
             select="metadata.backend",
             kind="exact",
+            anchor=True,
             note="auto → plan_execution(raster_cells) → numpy_batched 决策链",
         )
     )
@@ -8075,6 +8092,7 @@ def build_science_v5() -> List[Dict[str, Any]]:
             r9(ometa["ensemble_std_range"][1]),
             args=[fc, "v", 7, 12, 42, 8],
             select="metadata.ensemble_std_range.1",
+            anchor=True,
         )
     )
     cases.append(
@@ -8085,6 +8103,7 @@ def build_science_v5() -> List[Dict[str, Any]]:
             args=[fc, "v", 7, 12, 42, 8],
             select="metadata.uncertainty.estimator",
             kind="exact",
+            anchor=True,
         )
     )
 
@@ -8131,6 +8150,7 @@ def build_science_v5() -> List[Dict[str, Any]]:
             ],
             kwargs={"temporal_range_sec": 5 * 86400.0},
             select="metadata.variance_range.1",
+            anchor=True,
         )
     )
     cases.append(
@@ -8148,6 +8168,7 @@ def build_science_v5() -> List[Dict[str, Any]]:
             kwargs={"temporal_range_sec": 5 * 86400.0},
             select="metadata.uncertainty.estimator",
             kind="exact",
+            anchor=True,
         )
     )
     cases.append(
@@ -8165,6 +8186,7 @@ def build_science_v5() -> List[Dict[str, Any]]:
             kwargs={"temporal_range_sec": 5 * 86400.0},
             select="metadata.execution_plan.variant_id",
             kind="exact",
+            anchor=True,
         )
     )
 
@@ -8190,6 +8212,7 @@ def build_science_v5() -> List[Dict[str, Any]]:
             kwargs={"window": 5},
             select="features.sos_idx.0.0",
             kind="exact",
+            anchor=True,
             note="正弦 0.1+0.2sin：thr=0.1 → 首越切片 1；SG 平滑后峰值 t=6",
         )
     )
@@ -8202,6 +8225,7 @@ def build_science_v5() -> List[Dict[str, Any]]:
             kwargs={"window": 5},
             select="features.peak_time.0.0",
             kind="exact",
+            anchor=True,
         )
     )
     cases.append(
@@ -8212,6 +8236,7 @@ def build_science_v5() -> List[Dict[str, Any]]:
             args=[stack.tolist(), times_h],
             kwargs={"window": 5},
             select="features.amplitude.0.0",
+            anchor=True,
         )
     )
     a_stack = np.ones((12, 2, 2))
@@ -8224,6 +8249,7 @@ def build_science_v5() -> List[Dict[str, Any]]:
             r9(float(an["features"]["anomaly_last"][0, 0])),
             args=[a_stack.tolist(), np.arange(12.0).tolist()],
             select="features.anomaly_last.0.0",
+            anchor=True,
             note="11×1 + 1×3：mean=7/6、std=√(1/3)=0.57735 → z=3.17543",
         )
     )
@@ -8278,6 +8304,7 @@ def build_science_v5() -> List[Dict[str, Any]]:
             kwargs={"levels": 2},
             select="1.distinct_codes",
             kind="exact",
+            anchor=True,
         )
     )
     cases.append(
@@ -8289,6 +8316,7 @@ def build_science_v5() -> List[Dict[str, Any]]:
             kwargs={"levels": 2},
             select="1.code_distribution",
             kind="exact",
+            anchor=True,
             note="码分布冻结（含二位码结构：父×10+位，位 ≤8）",
         )
     )
@@ -8301,6 +8329,7 @@ def build_science_v5() -> List[Dict[str, Any]]:
             kwargs={"levels": 2},
             select=f"0.{outlet[0]}.{outlet[1]}",
             kind="exact",
+            anchor=True,
             note="出口像元位码（level-1 干流段）",
         )
     )
@@ -8313,6 +8342,7 @@ def build_science_v5() -> List[Dict[str, Any]]:
             args=[d8_json, acc_list],
             select="0.is_consistent",
             kind="exact",
+            anchor=True,
             note="epsilon 填洼后合成流域：拓扑一致汇总位",
         )
     )
@@ -8324,6 +8354,7 @@ def build_science_v5() -> List[Dict[str, Any]]:
             args=[d8_json, acc_list],
             select="0.cycles",
             kind="exact",
+            anchor=True,
         )
     )
     cases.append(
@@ -8334,6 +8365,7 @@ def build_science_v5() -> List[Dict[str, Any]]:
             args=[d8_json, acc_list],
             select="0.accumulation_violations",
             kind="exact",
+            anchor=True,
         )
     )
 
@@ -8365,7 +8397,8 @@ def write_domain(name: str, cases: List[Dict[str, Any]]) -> None:
         json.dumps(
             payload, ensure_ascii=False, indent=1, sort_keys=True, allow_nan=False
         )
-        + "\n"
+        + "\n",
+        encoding="utf-8",
     )
     print(f"wrote {out.relative_to(ROOT)} ({len(cases)} cases)")
 

@@ -162,11 +162,15 @@ def describe(source: RasterSource, *, histogram_bands: Optional[List[int]] = Non
         )
     stats_indexes = list(range(1, min(source.band_count, 3) + 1))
     stats = band_stats(source, stats_indexes) if stats_indexes else None
-    histograms = [
-        histogram(source, int(b), buckets or 32) for b in histogram_bands
-        if 1 <= int(b) <= source.band_count
-    ]
+    requested_bands = [int(b) for b in histogram_bands]
+    in_range_bands = [b for b in requested_bands if 1 <= b <= source.band_count]
+    histograms = [histogram(source, b, buckets or 32) for b in in_range_bands]
     disclosures: List[str] = []
+    if len(in_range_bands) != len(requested_bands):
+        disclosures.append(
+            "histogram_bands_out_of_range: requested bands outside "
+            f"1..{source.band_count} were omitted from the histograms"
+        )
     if not source.crs:
         disclosures.append("no_crs: coordinate queries cannot be georeferenced")
     if any(not b.get("unit") for b in band_list):

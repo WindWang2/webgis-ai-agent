@@ -626,15 +626,14 @@ def _latest_job_sync(session_id: str, plan_id: str) -> Optional[Dict[str, Any]]:
             select(AnalysisTask).where(
                 AnalysisTask.task_type == "raster_sampling_execute",
                 AnalysisTask.session_id == session_id,
-            ).order_by(AnalysisTask.id.desc()).limit(200)
+                AnalysisTask.parameters["plan_id"].as_string() == plan_id,
+            ).order_by(AnalysisTask.id.desc()).limit(1)
         ).scalars().all()
         out = None
-        for job in row:
-            params = job.parameters if isinstance(job.parameters, dict) else {}
-            if params.get("plan_id") == plan_id:
-                out = {"job_id": str(job.id), "status": str(job.status),
-                       "params": params}
-                break
+        if row:
+            params = row[0].parameters if isinstance(row[0].parameters, dict) else {}
+            out = {"job_id": str(row[0].id), "status": str(row[0].status),
+                   "params": params}
         db.commit()
     return out
 

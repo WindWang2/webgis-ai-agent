@@ -205,6 +205,31 @@ def test_claim_rejected_on_basis_drift():
                for c in receipts[0].checks)
 
 
+def test_claim_liveness_resolves_by_authority_id():
+    """The fingerprint was recorded under the resolved authority id (an alias
+    when the ref_id did not resolve); liveness must query that same id, or a
+    drifted alias-backed dataset is silently skipped and the claim restored."""
+    from app.services.gis_context.working_context import BasisDataset
+
+    wc = _wc(basis_overrides={"datasets": [
+        BasisDataset(ref_id="ref:schools", alias="schools_alias",
+                     content_revision="rev-1",
+                     version_fingerprint="sha-accepted",
+                     authority_id="schools_alias"),
+    ]})
+    _stale_via_engine(wc)
+
+    def resolver(authority_id):
+        return "sha-moved" if authority_id == "schools_alias" else None
+
+    receipts = revalidate_claims(
+        wc, ["claim-1"], claim_store=_supported_claim_store(),
+        token_resolver=resolver, turn_id="t1")
+    assert receipts[0].verdict == "rejected"
+    assert receipts[0].reject_reason == "basis_advanced"
+    assert wc.findings[0].status == "stale"
+
+
 def test_claim_unknown_and_not_stale_targets():
     wc = _wc()
     receipts = revalidate_claims(wc, ["claim-nope"], claim_store=ClaimStore())

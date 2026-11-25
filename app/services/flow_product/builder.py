@@ -188,7 +188,9 @@ def _parse_node_table(
             if len(coords) < 2:
                 continue
             props = f.get("properties") or {}
-            nid = props.get(config.node_id_field, f.get("id"))
+            nid = props.get(config.node_id_field)
+            if nid is None:
+                nid = f.get("id")
             put(nid, coords[0], coords[1], props.get("name"))
         return table
     raise FlowProductError("节点表结构不识别（需要 rows 列表或 Point FeatureCollection）")
@@ -304,13 +306,15 @@ def _encode(weight: float, transform: str, d0: float, d1: float) -> float:
     if d1 <= d0:
         return 0.0
     if transform == "sqrt":
-        v = (math.sqrt(max(0.0, weight)) - math.sqrt(max(0.0, d0))) / (
-            math.sqrt(d1) - math.sqrt(d0)
-        )
+        lo, hi = math.sqrt(max(0.0, d0)), math.sqrt(max(0.0, d1))
+        if hi <= lo:
+            return 0.0
+        v = (math.sqrt(max(0.0, weight)) - lo) / (hi - lo)
     elif transform == "log1p":
-        v = (math.log1p(max(0.0, weight)) - math.log1p(max(0.0, d0))) / (
-            math.log1p(d1) - math.log1p(d0)
-        )
+        lo, hi = math.log1p(max(0.0, d0)), math.log1p(max(0.0, d1))
+        if hi <= lo:
+            return 0.0
+        v = (math.log1p(max(0.0, weight)) - lo) / (hi - lo)
     else:
         v = (weight - d0) / (d1 - d0)
     return round(min(1.0, max(0.0, v)), 6)
@@ -354,6 +358,13 @@ def build_flow_product(
     # Time window [start, end)
     win_start = _parse_time(config.time_start, tz) if config.time_start else None
     win_end = _parse_time(config.time_end, tz) if config.time_end else None
+    if config.time_field:
+        for label, raw, parsed in (("time_start", config.time_start, win_start),
+                                   ("time_end", config.time_end, win_end)):
+            if raw and parsed is None:
+                raise FlowProductError(
+                    f"无法解析 {label} '{raw}'：需要 ISO-8601 时间（如 2024-01-01T00:00:00Z）"
+                )
     time_active = bool(config.time_field and (win_start or win_end))
 
     cat_field = config.category_field
