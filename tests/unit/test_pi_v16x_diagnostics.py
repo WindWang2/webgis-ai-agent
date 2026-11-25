@@ -136,6 +136,18 @@ def test_documented_wire_vocabulary_produces_zero_warn(caplog):
                    if r.get("kind") == "unmapped" or "unmapped" in str(r)), snap
 
 
+def test_diag_stats_kind_cap_overflows_to_single_key():
+    """R2-P3：MAX_KINDS 封顶——record() 的 kind 维度有上界（wire 路径的
+    kind 词表封闭不会触顶；此测试直接驱动 record 保护未来调用方）。"""
+    stats = em._BoundedEventStats()
+    for i in range(em._BoundedEventStats.MAX_KINDS + 10):
+        stats.record(f"alien_kind_{i}", {"i": str(i)})
+    snap = stats.snapshot()
+    assert len(snap["counts"]) == em._BoundedEventStats.MAX_KINDS + 1
+    assert snap["counts"].get("_overflow") == 10
+    assert f"alien_kind_0" in snap["counts"]  # 首个超顶前的键保留
+
+
 def test_diag_stats_reset():
     em.map_event_to_sse({"type": "whatever_unknown"}, session_id="s")
     em.reset_vendor_event_diagnostics()
