@@ -346,6 +346,10 @@ _NAME_OVERRIDES: Dict[str, str] = {
     # feature_edit_tools 残余：数据集供给是数据获取；血缘是只读检视
     "vector_dataset_provision": "data_access",
     "vector_feature_lineage": "inspection",
+    # 共享拓扑约束面（goal-gis-topology-authoring）：三个只读工具
+    "inspect_edit_constraints": "inspection",
+    "get_impact": "inspection",
+    "revalidate": "inspection",
 }
 
 #: 分类有限集合（审计与披露依赖）
