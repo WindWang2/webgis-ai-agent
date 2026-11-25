@@ -101,6 +101,10 @@
   "__model__": "SelectionReleaseResponse",
   "released": "boolean"
  },
+ "DELETE /api/v1/model-authoring/projects/{project_id}/models/{model_slug}": {
+  "__model__": "ModelDeleteResponse",
+  "success": "boolean"
+ },
  "DELETE /api/v1/projects/artifacts/{artifact_id}/pin": {
   "__model__": "ArtifactPinResponse",
   "artifact_id": "string",
@@ -1201,6 +1205,35 @@
   "note": "null|string",
   "truncated": "boolean|null",
   "type": "null|string"
+ },
+ "GET /api/v1/model-authoring/capabilities": {
+  "__model__": "CapabilitiesResponse",
+  "capabilities": "array<ModelCapabilityEntry>",
+  "data_roles": "array<string>",
+  "success": "boolean",
+  "transform_ops": "array<string>"
+ },
+ "GET /api/v1/model-authoring/projects/{project_id}/catalog": {
+  "__model__": "ModelCatalogResponse",
+  "models": "array<object>",
+  "success": "boolean"
+ },
+ "GET /api/v1/model-authoring/projects/{project_id}/models": {
+  "__model__": "ModelListResponse",
+  "models": "array<object>",
+  "success": "boolean"
+ },
+ "GET /api/v1/model-authoring/projects/{project_id}/models/{model_slug}": {
+  "__model__": "ModelDraftResponse",
+  "draft": "object",
+  "success": "boolean"
+ },
+ "GET /api/v1/model-authoring/projects/{project_id}/models/{model_slug}/export": {
+  "__model__": "ModelExportResponse",
+  "document": "object",
+  "format": "string",
+  "format_version": "string",
+  "success": "boolean"
  },
  "GET /api/v1/print-layout/capabilities": {
   "__model__": "PrintLayoutCapabilitiesResponse",
@@ -3178,6 +3211,47 @@
   "ref_id": "string",
   "revision": "integer|null"
  },
+ "POST /api/v1/model-authoring/instances/{instance_id}/run": {
+  "__model__": "ModelRunResponse",
+  "node_params": "object",
+  "run": "object",
+  "success": "boolean"
+ },
+ "POST /api/v1/model-authoring/projects/{project_id}/models": {
+  "__model__": "ModelDraftResponse",
+  "draft": "object",
+  "success": "boolean"
+ },
+ "POST /api/v1/model-authoring/projects/{project_id}/models/import": {
+  "__model__": "ModelDraftResponse",
+  "draft": "object",
+  "success": "boolean"
+ },
+ "POST /api/v1/model-authoring/projects/{project_id}/models/{model_slug}/instantiate": {
+  "__model__": "ModelInstantiateResponse",
+  "bindings": "object",
+  "instance": "object",
+  "model_slug": "string",
+  "node_params": "object",
+  "package": "object",
+  "params_resolved": "object",
+  "success": "boolean"
+ },
+ "POST /api/v1/model-authoring/projects/{project_id}/models/{model_slug}/publish": {
+  "__model__": "ModelPublishResponse",
+  "findings": "array<object>",
+  "fingerprint": "string",
+  "package_id": "string",
+  "success": "boolean",
+  "version": "string"
+ },
+ "POST /api/v1/model-authoring/projects/{project_id}/models/{model_slug}/validate": {
+  "__model__": "ModelValidateResponse",
+  "document_fingerprint": "string",
+  "findings": "array<object>",
+  "success": "boolean",
+  "valid": "boolean"
+ },
  "POST /api/v1/print-layout/apply": {
   "__model__": "PrintLayoutProposalReceipt",
   "adopted_values": "null|object",
@@ -4121,6 +4195,11 @@
   "__model__": "GeorefPlanResponse",
   "plan": "GeorefDraftPlan",
   "source": "GeorefSourceRecord|null"
+ },
+ "PUT /api/v1/model-authoring/projects/{project_id}/models/{model_slug}": {
+  "__model__": "ModelDraftResponse",
+  "draft": "object",
+  "success": "boolean"
  },
  "PUT /api/v1/projects/{project_id}": {
   "__model__": "ProjectResponse",

@@ -167,6 +167,43 @@ class ModelImportRequest(BaseModel):
     payload: Dict[str, Any]
 
 
+class ModelDeleteResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    success: bool
+
+
+class ModelInstantiateResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    success: bool
+    model_slug: str
+    package: Dict[str, Any]
+    params_resolved: Dict[str, Any]
+    node_params: Dict[str, Dict[str, Any]]
+    bindings: Dict[str, Dict[str, Any]]
+    instance: Dict[str, Any]
+
+
+class ModelRunResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    success: bool
+    run: Dict[str, Any]
+    node_params: Dict[str, Dict[str, Any]]
+
+
+class ModelCatalogResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    success: bool
+    models: List[Dict[str, Any]]
+
+
+class ModelExportResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    success: bool
+    format: str
+    format_version: str
+    document: Dict[str, Any]
+
+
 # ── 能力目录（作者面只读投影）────────────────────────────────────────
 
 
@@ -285,7 +322,8 @@ async def update_model(
     return {"success": True, "draft": draft}
 
 
-@router.delete("/projects/{project_id}/models/{model_slug}")
+@router.delete("/projects/{project_id}/models/{model_slug}",
+             response_model=ModelDeleteResponse)
 async def delete_model(
     project_id: str, model_slug: str, expected_revision: int,
     user: Dict[str, Any] = Depends(get_current_user),
@@ -346,7 +384,8 @@ async def publish_model(
             "findings": out["findings"]}
 
 
-@router.post("/projects/{project_id}/models/{model_slug}/instantiate")
+@router.post("/projects/{project_id}/models/{model_slug}/instantiate",
+             response_model=ModelInstantiateResponse)
 async def instantiate_model(
     project_id: str, model_slug: str, body: ModelInstantiateRequest,
     user: Dict[str, Any] = Depends(get_current_user),
@@ -383,7 +422,8 @@ async def instantiate_model(
     return {"success": True, **out}
 
 
-@router.post("/instances/{instance_id}/run")
+@router.post("/instances/{instance_id}/run",
+             response_model=ModelRunResponse)
 async def run_instance(
     instance_id: str, body: ModelRunRequest,
     project_id: str = "",
@@ -404,7 +444,8 @@ async def run_instance(
 # ── 目录 / 版本 ──────────────────────────────────────────────────────
 
 
-@router.get("/projects/{project_id}/catalog")
+@router.get("/projects/{project_id}/catalog",
+             response_model=ModelCatalogResponse)
 async def model_catalog(
     project_id: str,
     limit: int = 50,
@@ -420,7 +461,8 @@ async def model_catalog(
 # ── 导入 / 导出（小型模型文档；导入只建草稿，绝不自动执行）────────────
 
 
-@router.get("/projects/{project_id}/models/{model_slug}/export")
+@router.get("/projects/{project_id}/models/{model_slug}/export",
+             response_model=ModelExportResponse)
 async def export_model(
     project_id: str, model_slug: str,
     user: Dict[str, Any] = Depends(get_current_user),
