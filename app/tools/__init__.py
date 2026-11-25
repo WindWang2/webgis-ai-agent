@@ -185,6 +185,8 @@ _TOOL_MODULES = [
     ("app.tools.turn_context_tools", "register_turn_context_tools"),
     # 制图设计规范（goal-carto-design-series WP1；Pi 与 UI 共用 design_specs service）
     ("app.tools.design_spec_tools", "register_design_spec_tools"),
+    # 设计规范 × 地图应用面（WP2：提取/推荐/绑定校验/dry-run 应用）
+    ("app.tools.design_spec_tools", "register_map_design_tools"),
 
 ]
 

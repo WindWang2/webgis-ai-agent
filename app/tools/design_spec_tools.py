@@ -40,8 +40,26 @@ def _guard(fn):
     内省生成 schema，丢了 __wrapped__ 会退化成 args/kwargs 泛化面。
     """
     import functools
+    import inspect
 
     from fastapi import HTTPException
+
+    if inspect.iscoroutinefunction(fn):
+        @functools.wraps(fn)
+        async def async_wrapper(*args, **kwargs):
+            try:
+                return await fn(*args, **kwargs)
+            except HTTPException:
+                raise
+            except DesignSpecError as exc:
+                payload = exc.error_payload()
+                payload["correction_hint"] = _hint_for(exc)
+                return payload
+            except Exception as exc:  # noqa: BLE001
+                return {"success": False, "code": "design_spec_unexpected_error",
+                        "message": str(exc)[:300]}
+
+        return async_wrapper
 
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
@@ -331,3 +349,192 @@ def register_design_spec_tools(registry: ToolRegistry) -> None:
                 "message": f"unknown action: {action}",
                 "correction_hint": "create_version | publish | retire | deprecate_version",
             }
+
+
+def register_map_design_tools(registry: ToolRegistry) -> None:
+    """注册设计规范 × 地图 应用面工具（WP2：提取/推荐/绑定校验/应用）。
+
+    与 WP1 权威面共用 service 层；apply 默认 dry-run（显式 confirm 才落图）。
+    """
+
+    @tool(
+        registry, name="webgis_map_design_extract",
+        tier=2, domains=["cartography"],
+        description=(
+            "从一张真实已提交的地图（会话权威 MapSpec）提取可复用制图设计规范草案。"
+            "仅提取可移植表达（色带 id/分类方法与类数/组件存在性/受控字体/纸张），"
+            "具体分类断点是数据值，绝不进入规范；ref: 数据游标与会话选择被排除并披露。"
+            "草案不自动落库 —— 修改 name 后经 webgis_design_spec_create 显式保存。"
+            "\n何时用：用户说『把这张图的风格做成规范/模板，给系列其他图用』。"
+        ),
+        param_descriptions={"session_id": "会话 ID（必须已提交权威 MapSpec；缺省=当前会话）"},
+        side_effect="pure", deterministic=True, network=False,
+        latency_class="fast", memory_class="light", scale_class="small",
+        output_semantic_type="text", result_size_policy="inline_small",
+        tags=("设计规范", "提取", "系列地图"),
+        failure_modes=("invalid_args", "not_found"),
+        required_context=("map_state",),
+    )
+    @_guard
+    async def webgis_map_design_extract(session_id: str = "") -> dict:
+        from app.tools.upload_tools import _resolve_session_id
+
+        from app.services.design_specs.extract import extract_design_spec_draft
+
+        session = _resolve_session_id(session_id)
+        if not session:
+            return {"success": False, "code": "session_forbidden",
+                    "message": "session_id 未通过归属校验（与当前会话不符或无会话上下文）",
+                    "correction_hint": "在目标地图会话内调用本工具"}
+        result = await extract_design_spec_draft(str(session))
+        return {"success": True, **result}
+
+    @tool(
+        registry, name="webgis_map_design_recommend",
+        tier=2, domains=["cartography"],
+        description=(
+            "按结构化事实推荐设计规范与地图模型（确定性，无 LLM 打分）。"
+            "facts 键：purposes（distribution/statistic/flow/change/comparison/"
+            "composition）、geometry_kind（polygon/point/line/raster）、statistic"
+            "（count/rate/density/category/continuous/temporal/uncertainty）、"
+            "denominator（{available: bool}）、map_models、mediums。"
+            "\n纪律：density/rate 缺分母证据 → 不推荐密度族并给澄清问题；"
+            "候选带适配证据与不可用原因。"
+        ),
+        param_descriptions={"facts": "结构化事实字典（见描述）"},
+        side_effect="pure", deterministic=True, network=False,
+        latency_class="fast", memory_class="light", scale_class="small",
+        output_semantic_type="text", result_size_policy="inline_small",
+        tags=("设计规范", "推荐"),
+        failure_modes=("invalid_args",),
+    )
+    @_guard
+    def webgis_map_design_recommend(facts: dict) -> dict:
+        from app.services.design_specs.recommend import recommend_design
+
+        owner, org_id, _role = _actor_context()
+        return recommend_design(facts, user_id=owner, org_id=org_id)
+
+    @tool(
+        registry, name="webgis_map_design_check_bindings",
+        tier=2, domains=["cartography"],
+        description=(
+            "校验规范数据角色 → 字段绑定（跨图可比性）。bindings 元素："
+            "{role, session_id, layer_id, field}。校验字段存在性/值型/全零/"
+            "负值/单位契约；读不到会话如实 not_evaluated（绝不伪造通过）。"
+            "\n何时用：系列图绑定另一地区/时相不同字段名之前。"
+        ),
+        param_descriptions={
+            "spec_id": "设计规范 id",
+            "bindings": "绑定列表 [{role, session_id, layer_id, field}]",
+        },
+        side_effect="pure", deterministic=True, network=False,
+        latency_class="fast", memory_class="light", scale_class="small",
+        output_semantic_type="text", result_size_policy="inline_small",
+        tags=("设计规范", "绑定", "可比性"),
+        failure_modes=("invalid_args", "not_found"),
+    )
+    @_guard
+    async def webgis_map_design_check_bindings(spec_id: str, bindings: list) -> dict:
+        from app.core.database import SessionLocal
+
+        from app.services.design_specs.binding import validate_role_bindings
+        from app.services.design_specs.versioning import (
+            design_spec_visible,
+            get_spec,
+        )
+
+        owner, org_id, _role = _actor_context()
+        with SessionLocal() as db:
+            spec = get_spec(db, str(spec_id))
+            if not design_spec_visible(spec, owner, org_id):
+                return {"success": False, "code": "DESIGN_SPEC_NOT_FOUND",
+                        "message": "design spec not found",
+                        "correction_hint": "规范不存在或对当前调用者不可见"}
+            payload = spec.payload or {}
+        return await validate_role_bindings(list(bindings)[:32], payload)
+
+    @tool(
+        registry, name="webgis_map_design_apply",
+        tier=2, domains=["cartography"], side_effect="state_mutation",
+        description=(
+            "把设计规范应用到一张地图（会话权威 MapSpec，经既有 mutation/CAS 链）。"
+            "默认 dry_run=True：只产出计划与逐层预览回执，零 mutation；"
+            "dry_run=False 时逐层真实提交（样式轴一次一层 CAS；缺组件 upsert CAS；"
+            "forbidden 组件只报冲突不删除）。用户锁定字段（spec overrides.locked "
+            "与 locked_fields 参数）被跳过并逐条披露。"
+            "\n何时用：『把这个规范套用到这张图/系列每张图』。逐图调用，返回逐项回执。"
+        ),
+        param_descriptions={
+            "session_id": "目标会话（必须已提交权威 MapSpec）",
+            "spec_id": "设计规范 id",
+            "dry_run": "true=只预览（默认）；false=真实应用",
+            "expected_revision": "dry_run=false 时必填（CAS 令牌；webgis_state_get 可查）",
+            "locked_fields": "逐图额外锁定（palettes/classification_method/typography/required_components）",
+            "role_field": "只应用到绑定该字段的专题层（缺省=全部专题层）",
+        },
+        deterministic=True, network=False,
+        latency_class="medium", memory_class="medium", scale_class="medium",
+        output_semantic_type="text", result_size_policy="inline_small",
+        data_mutations=("session_state",),
+        tags=("设计规范", "应用", "系列地图"),
+        failure_modes=("invalid_args", "not_found", "superseded", "forbidden"),
+        required_context=("map_state",),
+    )
+    @_guard
+    async def webgis_map_design_apply(
+        session_id: str = "",
+        spec_id: str = "",
+        dry_run: bool = True,
+        expected_revision: Optional[int] = None,
+        locked_fields: Optional[list] = None,
+        role_field: Optional[str] = None,
+    ) -> dict:
+        from app.core.database import SessionLocal
+        from app.tools.upload_tools import _resolve_session_id
+
+        from app.services.design_specs.apply import (
+            apply_design_spec,
+            dry_run_apply,
+        )
+        from app.services.design_specs.errors import DesignSpecError
+        from app.services.design_specs.versioning import (
+            design_spec_visible,
+            get_spec,
+        )
+
+        session = _resolve_session_id(session_id)
+        if not session:
+            return {"success": False, "code": "session_forbidden",
+                    "message": "session_id 未通过归属校验（与当前会话不符或无会话上下文）",
+                    "correction_hint": "在目标地图会话内调用本工具"}
+        owner, org_id, _role = _actor_context()
+        with SessionLocal() as db:
+            spec = get_spec(db, str(spec_id))
+            if not design_spec_visible(spec, owner, org_id):
+                return {"success": False, "code": "DESIGN_SPEC_NOT_FOUND",
+                        "message": "design spec not found",
+                        "correction_hint": "规范不存在或对当前调用者不可见"}
+            payload = spec.payload or {}
+        locks = tuple(str(x) for x in (locked_fields or []))
+        if dry_run:
+            result = await dry_run_apply(
+                str(session), payload, locked_fields=locks, role_field=role_field,
+            )
+            return {"success": True, "dry_run": True, **result}
+        if expected_revision is None:
+            return {"success": False, "code": "invalid_args",
+                    "message": "dry_run=false 需要 expected_revision（CAS 令牌）",
+                    "correction_hint": "先 webgis_state_get 查当前 revision，或用 dry_run 预览"}
+        try:
+            result = await apply_design_spec(
+                str(session), payload,
+                expected_revision=int(expected_revision),
+                locked_fields=locks, role_field=role_field,
+                origin="agent", actor="design_spec_tool",
+            )
+        except DesignSpecError as exc:
+            payload_err = exc.error_payload()
+            payload_err["correction_hint"] = _hint_for(exc)
+            return payload_err
+        return {"success": True, "dry_run": False, **result}

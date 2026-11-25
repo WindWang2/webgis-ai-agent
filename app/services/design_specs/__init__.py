@@ -34,6 +34,7 @@ from app.services.design_specs.versioning import (
     retire_spec,
 )
 
+# WP2 增量（提取/推荐/绑定/应用）—— 延迟导入面，避免包导入拖入渲染栈
 __all__ = [
     "DESIGN_SPEC_VERSION",
     "DesignSpecV1",

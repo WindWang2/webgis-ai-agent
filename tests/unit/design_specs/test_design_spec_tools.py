@@ -158,3 +158,47 @@ class TestDispatch:
             assert not result["success"]
             assert result["code"] == "DESIGN_SPEC_NOT_FOUND"
             assert result["correction_hint"]
+
+
+class TestMapDesignToolsRegistered:
+    def test_wp2_tools_registered(self, registry):
+        schemas = {s.get("function", {}).get("name") for s in registry.get_schemas()}
+        assert {
+            "webgis_map_design_extract",
+            "webgis_map_design_recommend",
+            "webgis_map_design_check_bindings",
+            "webgis_map_design_apply",
+        } <= schemas
+
+    async def test_recommend_dispatch_with_denominator_gate(self, registry):
+        with _owner_ctx():
+            result = await registry.dispatch(
+                "webgis_map_design_recommend",
+                {"facts": {"purposes": ["distribution"], "geometry_kind": "point",
+                           "statistic": "density", "denominator": {"available": False}}},
+            )
+            assert result["recommender_version"]
+            assert any(c["code"] == "DENOMINATOR_MISSING" for c in result["clarifications"])
+
+    async def test_apply_requires_owned_session(self, registry):
+        # #2156 fail-closed 语义：无 runtime 绑定时，LLM 提供的 session_id
+        # 一律拒绝（不能点名他人会话）
+        with _owner_ctx():
+            result = await registry.dispatch(
+                "webgis_map_design_apply",
+                {"session_id": "not-my-session", "spec_id": "any"},
+            )
+            assert not result["success"]
+            assert result["code"] == "session_forbidden"
+
+    async def test_apply_with_bound_session_and_missing_spec(self, registry):
+        from app.lib.runtime.context import bind_runtime_context
+
+        with _owner_ctx(), bind_runtime_context(session_id="sess-dspec-tools"):
+            result = await registry.dispatch(
+                "webgis_map_design_apply",
+                {"session_id": "sess-dspec-tools", "spec_id": "missing-spec"},
+                "sess-dspec-tools",
+            )
+            assert not result["success"]
+            assert result["code"] == "DESIGN_SPEC_NOT_FOUND"
