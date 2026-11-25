@@ -86,6 +86,12 @@ def _load_cache_entry(key: str) -> Optional[Dict[str, Any]]:
     return entry
 
 
+def _invalidate_cache_entry(key: str) -> None:
+    """删除损坏的缓存登记（同键下次直接重渲染）。"""
+    with contextlib.suppress(Exception):
+        _cache_entry_path(key).unlink()
+
+
 def _write_cache_entry(key: str, artifacts: List[Dict[str, Any]]) -> None:
     path = _cache_entry_path(key)
     with contextlib.suppress(Exception):
@@ -330,14 +336,17 @@ async def execute_series_production(
             if cached is not None:
                 artifacts = [MemberArtifactRecord(**a) for a in cached["artifacts"]]
                 qa = qa_member_artifacts([a.model_dump() for a in artifacts], member.title)
-                results.append(MemberResult(
-                    member_id=member.member_id,
-                    status="cached_reused" if qa.ok else "failed",
-                    code=None if qa.ok else "CACHE_QA_FAILED",
-                    artifacts=artifacts, qa=qa, cache_key=key,
-                    member_fingerprint=current_fp[:64],
-                ))
-                continue
+                if qa.ok:
+                    results.append(MemberResult(
+                        member_id=member.member_id,
+                        status="cached_reused",
+                        artifacts=artifacts, qa=qa, cache_key=key,
+                        member_fingerprint=current_fp[:64],
+                    ))
+                    continue
+                # R1-P3：缓存条目产物损坏 → 失效该条目（重渲染），
+                # 不在同键上反复失败到逐出。
+                _invalidate_cache_entry(key)
             produced = await _render_member(
                 member, document, formats, dpi, cancel_check=cancel_check,
             )

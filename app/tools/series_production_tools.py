@@ -73,7 +73,8 @@ def register_series_production_tools(registry: ToolRegistry) -> None:
         async def _freeze():
             with SessionLocal() as db:
                 return await build_freeze_plan(
-                    db, str(series_id), spec_version=spec_version)
+                    db, str(series_id), spec_version=spec_version,
+                    user_id=owner)
 
         try:
             freeze_payload = asyncio.run(_freeze())
@@ -97,6 +98,7 @@ def register_series_production_tools(registry: ToolRegistry) -> None:
         result = submit_series_production(
             plan, freeze_payload=freeze_payload,
             origin_session_id=(str(session_id)[:255] if session_id else None),
+            series_name=str(getattr(series, "name", "") or ""),
         )
         return {
             "success": True,

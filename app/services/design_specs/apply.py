@@ -362,9 +362,12 @@ async def apply_design_spec(
                 revision = new_revision
         except Exception as exc:  # noqa: BLE001 —— 单层失败如实记录，继续其余
             message = str(exc)
-            status = "failed"
-            if "superseded" in message.lower() or "revision" in message.lower():
+            # R1-P3：typed 判定（异常 code 属性），不再靠 message 关键词猜
+            code = str(getattr(exc, "code", "") or "")
+            if code.upper() == "SUPERSEDED" or "superseded" in message.lower():
                 status = "superseded"
+            else:
+                status = "failed"
             items.append({
                 "kind": "style",
                 "layer_id": action["layer_id"],

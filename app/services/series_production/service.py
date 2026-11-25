@@ -13,6 +13,7 @@ def submit_series_production(
     *,
     freeze_payload: Dict[str, Any],
     origin_session_id: Optional[str] = None,
+    series_name: str = "",
 ) -> Dict[str, Any]:
     """提交 durable job（幂等键含 freeze 载荷）。
 
@@ -29,7 +30,13 @@ def submit_series_production(
     from app.services.series_production.tasks import run_series_production
 
     params = job_params(plan)
-    params["freeze_plan"] = freeze_payload
+    # R1-P2：幂等键派生自 params —— 剔除 wall-clock/描述字段（frozen_at/note），
+    # 同一冻结输入的重复提交才复用同一 job 行（digest 语义承诺）。
+    sanitized = {
+        k: v for k, v in freeze_payload.items() if k not in ("frozen_at", "note")
+    }
+    sanitized["series_name"] = str(series_name or plan.name or "")[:255]
+    params["freeze_plan"] = sanitized
     return submit_durable_job(
         celery_task=run_series_production,
         task_type=SERIES_TASK_TYPE,

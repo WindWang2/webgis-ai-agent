@@ -93,10 +93,11 @@ def _make_fc(prefix="zone", n=6) -> dict:
     return {"type": "FeatureCollection", "features": features}
 
 
-async def _seed_member_session(*, with_print_layout: bool) -> tuple:
+async def _seed_member_session(*, with_print_layout: bool, owner: str = "sp-owner") -> tuple:
     """生产式建会话：内联 GeoJSON 面层 + 可选最小 print_layout 计划。"""
     import asyncio
 
+    from app.core.database import SessionLocal
     from app.services.gis_world_state.mutation import apply_gis_mutation
     from app.services.mapspec.intents import (
         InitProjectIntent,
@@ -107,6 +108,13 @@ async def _seed_member_session(*, with_print_layout: bool) -> tuple:
     from app.services.series_production.fingerprint import document_fingerprint
 
     session_id = "sess-sp-" + uuid.uuid4().hex[:10]
+    # R1-P1：成员会话归属行（execute 门要求 authenticated-owned）
+    from app.models.db_model import Conversation
+
+    with SessionLocal() as db:
+        db.merge(Conversation(id=session_id, user_id=owner,
+                              title="series production seed"))
+        db.commit()
     result = await apply_gis_mutation(
         session_id, InitProjectIntent(view={"zoom": 10}), origin="agent", actor="test:sp",
     )

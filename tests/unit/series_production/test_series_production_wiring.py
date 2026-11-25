@@ -99,8 +99,8 @@ async def test_series_production_e2e_submit_job_manifest(
                 "members": [],
             }
             # 先建两个会话再补成员（成员引用真实 session_id）
-            sid_a, fp_a, _ = await _seed_member_session(with_print_layout=True)
-            sid_b, fp_b, _ = await _seed_member_session(with_print_layout=True)
+            sid_a, fp_a, _ = await _seed_member_session(with_print_layout=True, owner="sp-e2e-owner")
+            sid_b, fp_b, _ = await _seed_member_session(with_print_layout=True, owner="sp-e2e-owner")
             payload["members"] = [
                 {"member_id": "m1", "title": "图A", "session_id": sid_a},
                 {"member_id": "m2", "title": "图B", "session_id": sid_b},
@@ -110,7 +110,8 @@ async def test_series_production_e2e_submit_job_manifest(
 
         # 2) 冻结计划（WP3 权威）→ 桥接 → 提交 durable job
         with SessionLocal() as db:
-            freeze_payload = await build_freeze_plan(db, series_id)
+            freeze_payload = await build_freeze_plan(db, series_id,
+                                                     user_id="sp-e2e-owner")
         plan = freeze_plan_from_series_payload(freeze_payload)
         assert len(plan.members) == 2
         assert plan.members[0].mapspec_fingerprint == fp_a
@@ -176,7 +177,7 @@ async def test_tool_submit_registered_and_dispatches(
 
     try:
         with SessionLocal() as db:
-            sid, fp, _ = await _seed_member_session(with_print_layout=True)
+            sid, fp, _ = await _seed_member_session(with_print_layout=True, owner="sp-tool-user")
             spec = __import__(
                 "app.services.design_specs.versioning", fromlist=["create_spec"]
             ).create_spec(

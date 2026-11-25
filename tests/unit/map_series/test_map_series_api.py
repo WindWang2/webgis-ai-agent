@@ -39,6 +39,11 @@ def _setup():
             db, {"spec_version": "design_spec.v1", "name": "API宿主规范"},
             creator_id="ms-owner",
         )
+        # R1-P1：成员会话归属行（helpers.series_payload 的固定幽灵会话 id）
+        from app.models.db_model import Conversation
+
+        for sid in ("sess-series-m1", "sess-series-m2"):
+            db.merge(Conversation(id=sid, user_id="ms-owner", title="api seed"))
         db.merge(User(id="ms-owner", username="ms-owner", email="ms-owner@example.com",
                       password_hash="x", role="viewer", is_active=True))
         db.commit()
@@ -286,6 +291,12 @@ class TestTools:
                 db, {"spec_version": "design_spec.v1", "name": "工具宿主规范"},
                 creator_id="ms-owner",
             )
+            db.commit()
+            # R1-P1：成员会话归属行（工具 create 以 origin owner 身份挂载）
+            from app.models.db_model import Conversation
+
+            db.merge(Conversation(id="sess-tool-m1", user_id="ms-owner",
+                                  title="tool seed"))
             db.commit()
             payload = series_payload(
                 name="工具系列", design_spec_id=spec.id,

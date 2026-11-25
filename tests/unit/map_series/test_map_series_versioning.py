@@ -30,6 +30,10 @@ def db():
     Base.metadata.create_all(bind=Engine)
     with SessionLocal() as session:
         # pin 目标设计规范（WP1 权威行；id 由权威生成）
+        from app.models.db_model import Conversation
+
+        for sid in ("sess-series-m1", "sess-series-m2"):
+            session.merge(Conversation(id=sid, user_id="series-owner", title="v seed"))
         spec = create_design_spec(
             session,
             {"spec_version": "design_spec.v1", "name": "系列宿主规范"},

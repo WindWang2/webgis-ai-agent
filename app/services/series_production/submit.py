@@ -36,11 +36,15 @@ def freeze_plan_from_series_payload(
     for member in freeze_payload.get("members") or []:
         if not isinstance(member, dict):
             continue
-        data_fps = {
-            str(k)[:80]: (str(v.get("fingerprint") or v)[:80]
-                          if isinstance(v, dict) else str(v)[:80])
-            for k, v in (member.get("data_fingerprints") or {}).items()
-        }
+        # freeze 值形状：{kind, value|ref_digest|content_digest|type}
+        data_fps: Dict[str, str] = {}
+        for k, v in (member.get("data_fingerprints") or {}).items():
+            if isinstance(v, dict):
+                digest = (v.get("value") or v.get("ref_digest")
+                          or v.get("content_digest") or v.get("type") or "")
+                data_fps[str(k)[:80]] = str(digest)[:80]
+            else:
+                data_fps[str(k)[:80]] = str(v)[:80]
         members.append({
             "member_id": str(member.get("member_id") or "")[:40],
             "title": str(member.get("title") or "")[:160],
@@ -56,7 +60,8 @@ def freeze_plan_from_series_payload(
     return validate_freeze_plan_payload({
         "spec_version": "series_freeze_plan.v1",
         "series_id": str(freeze_payload.get("series_id") or "")[:36],
-        "name": str(freeze_payload.get("name") or "")[:255],
+        "name": str(freeze_payload.get("series_name")
+                    or freeze_payload.get("name") or "")[:255],
         "design_spec_id": spec_pin.get("design_spec_id"),
         "design_spec_version": spec_pin.get("version"),
         "output": output,

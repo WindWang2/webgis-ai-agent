@@ -237,7 +237,8 @@ def series_member_op(
                 return {"success": True, "op": "remove", "member_id": body.member_id}
             if body.member is None:
                 raise HTTPException(status_code=400, detail="op=upsert 需要 member")
-            series = upsert_member(db, series_id, body.member, can_write=lambda s: True)
+            series = upsert_member(db, series_id, body.member, can_write=lambda s: True,
+                                   user_id=actor_ids(user if isinstance(user, dict) else None)[0])
             return {
                 "success": True,
                 "op": "upsert",
@@ -259,7 +260,9 @@ async def series_consistency(
     with SessionLocal() as db:
         _visible_series_or_404(db, series_id, user)
         try:
-            result = await run_series_consistency(db, series_id)
+            result = await run_series_consistency(
+                db, series_id,
+                user_id=actor_ids(user if isinstance(user, dict) else None)[0])
         except Exception as exc:  # noqa: BLE001
             raise _map_error(exc)
         return {"success": True, **result}
@@ -276,9 +279,11 @@ async def series_propagation_preview(
 
     with SessionLocal() as db:
         _visible_series_or_404(db, series_id, user)
+        caller_id = actor_ids(user if isinstance(user, dict) else None)[0]
         try:
             result = await build_propagation_preview(
-                db, series_id, spec_version=body.spec_version, intents=body.intents
+                db, series_id, spec_version=body.spec_version, intents=body.intents,
+                user_id=caller_id,
             )
         except Exception as exc:  # noqa: BLE001
             raise _map_error(exc)
@@ -304,6 +309,7 @@ async def series_propagation_apply(
                 spec_version=body.spec_version,
                 intents=body.intents,
                 actor=actor,
+                user_id=str(user.get("user_id") or "") if isinstance(user, dict) else None,
                 expected_revisions=body.expected_revisions,
             )
         except Exception as exc:  # noqa: BLE001
@@ -322,8 +328,10 @@ async def series_freeze_plan(
 
     with SessionLocal() as db:
         _visible_series_or_404(db, series_id, user)
+        caller_id = actor_ids(user if isinstance(user, dict) else None)[0]
         try:
-            plan = await build_freeze_plan(db, series_id, spec_version=body.spec_version)
+            plan = await build_freeze_plan(
+                db, series_id, spec_version=body.spec_version, user_id=caller_id)
         except Exception as exc:  # noqa: BLE001
             raise _map_error(exc)
         return {"success": True, "freeze_plan": plan}

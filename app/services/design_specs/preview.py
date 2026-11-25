@@ -54,9 +54,10 @@ def build_design_spec_preview(
             continue
         supported.append(target)
 
-    # 纸张 profile 真实性（print 链）。
+    # 纸张 profile 真实性（声明即校验 —— OUTPUT_TARGETS 词表无 "print"，
+    # 旧分支恒 False 是死代码，R1-P3）。
     paper = (effective.get("output") or {}).get("paper_profile")
-    if paper and "print" in (effective.get("output") or {}).get("targets", []) :
+    if paper:
         from app.lib.cartography.publication_ir import PAGE_PROFILES
 
         if str(paper) not in PAGE_PROFILES:

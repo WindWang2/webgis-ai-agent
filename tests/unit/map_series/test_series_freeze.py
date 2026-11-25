@@ -5,6 +5,8 @@ import json
 
 import pytest
 
+USER = "series-owner"
+
 from app.services.map_series.freeze import FREEZE_PLAN_VERSION, build_freeze_plan
 from app.services.map_series.store import create_series
 from tests.unit.map_series.helpers import series_payload
@@ -36,7 +38,7 @@ async def test_freeze_plan_materializes_members(db, session_factory, host_spec):
         output={"targets": ["png", "pdf"], "dpi": 300},
     )
     series = create_series(db, payload, creator_id="series-owner")
-    plan = await build_freeze_plan(db, series.id)
+    plan = await build_freeze_plan(db, series.id, user_id=USER)
 
     assert plan["plan_version"] == FREEZE_PLAN_VERSION
     assert plan["series_id"] == series.id
@@ -84,7 +86,7 @@ async def test_freeze_plan_never_embeds_ref_cursors(db, session_factory, host_sp
         members=[{"member_id": "m1", "title": "引用图", "session_id": "sess-frz-b"}],
     )
     series = create_series(db, payload, creator_id="series-owner")
-    plan = await build_freeze_plan(db, series.id)
+    plan = await build_freeze_plan(db, series.id, user_id=USER)
     text = json.dumps(plan, ensure_ascii=False)
     assert "ref:dataset/some-cursor-9" not in text  # 游标不进计划
     entry = plan["members"][0]

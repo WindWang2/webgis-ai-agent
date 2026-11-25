@@ -8,11 +8,13 @@ simulated（同 tests/cartography/atlas_batch/fixtures.py 的 district
 from __future__ import annotations
 
 import shutil
+
+from app.core.database import SessionLocal
 from typing import Any, Dict, List, Optional
 
 import pytest
 
-from app.core.database import Base, Engine, SessionLocal
+from app.core.database import Base, Engine
 from app.services.gis_world_state.mutation import apply_gis_mutation
 from app.services.mapspec.intents import (
     SetLayoutIntent,
@@ -60,9 +62,20 @@ async def seed_member_session(
     with_stops_no_legend: bool = False,
     symbol_asset_revision: Optional[int] = None,
     bounds: Optional[List[float]] = None,
+    owner: Optional[str] = None,
 ) -> str:
-    """真实引擎建成员会话（每次全新 spec；返回 sid）。"""
+    """真实引擎建成员会话（每次全新 spec；返回 sid）。
+
+    ``owner``：会话 Conversation 行归属用户（R1-P1 归属门要求真实
+    authenticated 行 —— 与生产一致：活会话必有 Conversation）。
+    """
     await session_data_manager.clear_session(sid)
+    if owner:
+        from app.models.db_model import Conversation
+
+        with SessionLocal() as db:
+            db.merge(Conversation(id=sid, user_id=owner, title="seed member"))
+            db.commit()
     shutil.rmtree(BASE_STORAGE_DIR / sid, ignore_errors=True)
 
     legend: Dict[str, Any] = {
@@ -146,6 +159,8 @@ async def session_factory():
 
     async def _create(sid: str, **kw: Any) -> str:
         sids.append(sid)
+        # R1-P1：默认归属系列测试的统一 creator（显式 owner 可覆盖）
+        kw.setdefault("owner", "series-owner")
         return await seed_member_session(sid, **kw)
 
     yield _create
@@ -174,6 +189,10 @@ def db():
         session.query(CartographyMapSeries).delete()
         session.query(CartographyDesignSpecVersion).delete()
         session.query(CartographyDesignSpec).delete()
+        from app.models.db_model import Conversation
+
+        session.query(Conversation).filter(
+            Conversation.id.like("sess-%")).delete(synchronize_session=False)
         session.commit()
 
 

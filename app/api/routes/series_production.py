@@ -55,7 +55,9 @@ async def submit_series_production(
     try:
         with SessionLocal() as db:
             freeze_payload = await build_freeze_plan(
-                db, body.series_id, spec_version=body.spec_version)
+                db, body.series_id, spec_version=body.spec_version,
+                user_id=str(owner),
+            )
     except MapSeriesError as exc:
         raise HTTPException(status_code=400, detail=str(exc)[:240])
     unresolvable = freeze_payload.get("unresolvable_member_ids") or []
@@ -71,7 +73,10 @@ async def submit_series_production(
             },
         )
     plan = freeze_plan_from_series_payload(freeze_payload)
-    result = submit_series_production(plan, freeze_payload=freeze_payload)
+    result = submit_series_production(
+        plan, freeze_payload=freeze_payload,
+        series_name=str(getattr(series, "name", "") or ""),
+    )
     return {
         "success": True,
         "status": result.get("status", "submitted"),

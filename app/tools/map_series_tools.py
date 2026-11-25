@@ -263,7 +263,7 @@ def register_map_series_tools(registry: ToolRegistry) -> None:
             if member is None:
                 return {"success": False, "code": "invalid_args",
                         "message": "action=upsert 需要 member 字典"}
-            series = upsert_member(db, str(series_id), member)
+            series = upsert_member(db, str(series_id), member, user_id=owner)
             return {
                 "success": True,
                 "action": "upsert",
@@ -301,7 +301,8 @@ def register_map_series_tools(registry: ToolRegistry) -> None:
         owner, org_id, _role = _actor_context()
         with SessionLocal() as db:
             get_series_checked(db, str(series_id), owner, org_id)
-            result = await run_series_consistency(db, str(series_id), intents=intents)
+            result = await run_series_consistency(
+                db, str(series_id), intents=intents, user_id=owner)
             return {"success": True, **result}
 
     @tool(
@@ -337,7 +338,8 @@ def register_map_series_tools(registry: ToolRegistry) -> None:
         with SessionLocal() as db:
             get_series_checked(db, str(series_id), owner, org_id)
             result = await build_propagation_preview(
-                db, str(series_id), spec_version=spec_version, intents=intents
+                db, str(series_id), spec_version=spec_version, intents=intents,
+                user_id=owner,
             )
             return {"success": True, **result}
 
@@ -393,6 +395,7 @@ def register_map_series_tools(registry: ToolRegistry) -> None:
                 spec_version=spec_version,
                 intents=intents,
                 actor=owner,
+                user_id=owner,
                 expected_revisions=expected_revisions,
             )
             return {"success": True, **result}

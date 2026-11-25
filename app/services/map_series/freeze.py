@@ -60,6 +60,7 @@ async def build_freeze_plan(
     series_id: str,
     *,
     spec_version: Optional[int] = None,
+    user_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """物化冻结计划 JSON（只读；不渲染、不生产）。
 
@@ -98,6 +99,13 @@ async def build_freeze_plan(
         if not isinstance(member, dict) or not member.get("enabled", True):
             continue
         session_id = str(member.get("session_id") or "")
+        # R1-P1：非归属成员的会话证据不进冻结计划（fail-closed；
+        # 无调用者身份 = execute 门全拒，不泄露任何成员证据）
+        from app.services.map_series.store import member_session_authorization
+
+        if member_session_authorization(db, [member], user_id=user_id)["denied"]:
+            unresolvable.append(str(member.get("member_id") or ""))
+            continue
         mapspec = await ms_service.load_member_mapspec(session_id)
         if mapspec is None:
             unresolvable.append(str(member.get("member_id") or ""))
@@ -123,6 +131,9 @@ async def build_freeze_plan(
         "plan_version": FREEZE_PLAN_VERSION,
         "series_id": series.id,
         "frozen_at": datetime.now(timezone.utc).isoformat(),
+        "simulated_data": bool(getattr(series, "payload", {}).get("simulated_data")
+                               if isinstance(getattr(series, "payload", None), dict)
+                               else False),
         "structural_digest": series.structural_digest,
         "spec_pin": spec_pin,
         "dimension": plan_payload.get("dimension") or {},

@@ -154,6 +154,20 @@ def create_series(
     # 缺省 pin 在解析时点回写进 payload —— 之后 latest 前移不影响本 pin。
     payload = dict(payload)
     payload["design_spec_version"] = spec_version
+    # R1-P1：初始成员的会话必须归属创建者（跨会话聚合的 fail-closed 门）。
+    auth = member_session_authorization(
+        db, [m for m in (payload.get("members") or []) if isinstance(m, dict)],
+        user_id=creator_id, mode="attach",
+    )
+    if auth["denied"]:
+        raise MapSeriesValidationError(
+            "member sessions are not owned by the creator",
+            violations=[{
+                "field": f"members.{m['member_id']}.session_id",
+                "ref": m["session_id"],
+                "reason": "SESSION_NOT_OWNED",
+            } for m in auth["denied"][:8]],
+        )
 
     series = CartographyMapSeries(
         org_id=org_id,
@@ -184,12 +198,54 @@ def create_series(
     return series
 
 
+def member_session_authorization(
+    db: Any,
+    members: List[Dict[str, Any]],
+    *,
+    user_id: Optional[str],
+    mode: str = "execute",
+) -> Dict[str, Any]:
+    """成员会话归属校验（R1-P1；#2156 fail-closed 纪律的跨会话扩展）。
+
+    - ``mode="attach"``（create/add_member）：只拒绝**存在归属证据的他人
+      会话**（Conversation 行存在且 owner ≠ 调用者，含匿名行 —— 服务层
+      无法验证匿名令牌）。尚不存在的会话（phantom/未来会话）允许挂载，
+      由执行面（freeze/apply）按「行缺失即拒」兜底。
+    - ``mode="execute"``（consistency/freeze/preview/apply/production）：
+      必须 authenticated-owned（行存在且 owner == 调用者）；匿名/legacy/
+      缺失行一律拒绝 —— 跨会话读取证据或改写 spec 不是匿名会话的语义。
+    """
+    from app.models.db_model import Conversation
+
+    allowed: List[Dict[str, Any]] = []
+    denied: List[Dict[str, str]] = []
+    for member in members:
+        if not isinstance(member, dict):
+            continue
+        sid = str(member.get("session_id") or "")
+        conv = db.get(Conversation, sid) if sid else None
+        owner = getattr(conv, "user_id", None) if conv is not None else None
+        if mode == "attach":
+            ok = conv is None or (owner and user_id and str(owner) == str(user_id))
+        else:
+            ok = bool(owner and user_id and str(owner) == str(user_id))
+        if ok:
+            allowed.append(member)
+        else:
+            denied.append({
+                "member_id": str(member.get("member_id") or "")[:40],
+                "session_id": sid[:64],
+            })
+    return {"allowed": allowed, "denied": denied}
+
+
 def upsert_member(
     db: Any,
     series_id: str,
     member: Dict[str, Any],
     *,
     can_write: Optional[Callable[[Any], bool]] = None,
+    user_id: Optional[str] = None,
 ) -> CartographyMapSeries:
     """增/改单个成员（按 member_id 替换；整计划重校验；主行前移，不落版本）。"""
     series = get_series(db, series_id)
@@ -203,6 +259,16 @@ def upsert_member(
         raise MapSeriesValidationError(
             "members may not carry design spec pins",
             violations=[{"field": f"members.{target_id}", "ref": "", "reason": "MEMBER_SPEC_PIN_FORBIDDEN"}],
+        )
+    auth = member_session_authorization(db, [member], user_id=user_id, mode="attach")
+    if auth["denied"]:
+        raise MapSeriesValidationError(
+            "member session is not owned by the caller",
+            violations=[{
+                "field": f"members.{target_id}.session_id",
+                "ref": str(auth["denied"][0].get("session_id") or "")[:64],
+                "reason": "SESSION_NOT_OWNED",
+            }],
         )
     replaced = False
     next_members: List[Dict[str, Any]] = []
@@ -268,6 +334,20 @@ def create_version(
     # 缺省 pin 在解析时点回写进 payload —— 之后 latest 前移不影响本 pin。
     payload = dict(payload)
     payload["design_spec_version"] = spec_version
+    # R1-P1：初始成员的会话必须归属创建者（跨会话聚合的 fail-closed 门）。
+    auth = member_session_authorization(
+        db, [m for m in (payload.get("members") or []) if isinstance(m, dict)],
+        user_id=series.creator_id, mode="attach",
+    )
+    if auth["denied"]:
+        raise MapSeriesValidationError(
+            "member sessions are not owned by the series creator",
+            violations=[{
+                "field": f"members.{m['member_id']}.session_id",
+                "ref": m["session_id"],
+                "reason": "SESSION_NOT_OWNED",
+            } for m in auth["denied"][:8]],
+        )
 
     if parent_version_id is not None:
         parent = db.get(CartographyMapSeriesVersion, parent_version_id)

@@ -361,6 +361,7 @@ async def build_propagation_preview(
     series_id: str,
     *,
     spec_version: Optional[int] = None,
+    user_id: Optional[str] = None,
     intents: Dict[str, Any],
 ) -> Dict[str, Any]:
     """传播预览（只读）：受影响成员 / 将变更字段 / 锁定 / 不可解析 / eligibility。"""
@@ -368,7 +369,18 @@ async def build_propagation_preview(
     typed = parse_intents(intents)
     members = _series_member_pairs(plan_payload)
     out_members: List[Dict[str, Any]] = []
+    from app.services.map_series.store import member_session_authorization
+
+    auth = member_session_authorization(db, [m for m in members if isinstance(m, dict)], user_id=user_id)
+    denied_ids = {d["member_id"] for d in auth["denied"]}
     for member in members:
+        if str(member.get("member_id") or "") in denied_ids:
+            # R1-P1：非归属成员不读其会话证据（fail-closed，不泄露）
+            entry = plan_member(member, None, typed)
+            entry["unresolvable"] = True
+            entry["reason"] = "session_not_owned"
+            out_members.append(entry)
+            continue
         mapspec = await ms_service.load_member_mapspec(str(member.get("session_id") or ""))
         revision = await ms_service.member_revision(str(member.get("session_id") or ""))
         entry = plan_member(member, mapspec, typed)
@@ -387,42 +399,53 @@ async def build_propagation_preview(
 # ── apply：逐图 CAS，绝不宣称原子批量 ────────────────────────────────
 
 
+def _replace_layer(working: Dict[str, Any], layer_id: str, merged: Dict[str, Any]) -> None:
+    """本地演进副本中替换层（后续 change 从已演进状态出图，R1-P1）。"""
+    for i, layer in enumerate(working.get("layers") or []):
+        if isinstance(layer, dict) and str(layer.get("id")) == str(layer_id):
+            working["layers"][i] = merged
+            return
+
+
 def _build_engine_intents(
-    mapspec: Dict[str, Any],
+    working: Dict[str, Any],
     change: Dict[str, Any],
     typed: PropagationIntents,
 ) -> List[Any]:
-    """单条 plan change → 既有通道的 engine intent 列表（同通道逐笔 CAS）。"""
+    """单条 plan change → 既有通道的 engine intent 列表（同通道逐笔 CAS）。
+
+    ``working`` 是**本地演进副本**（深拷贝 + 每笔 upsert 同步回写）：
+    同成员多意图（palette→classification→…）必须从已演进状态出图，
+    否则后笔整层 upsert 会回退前笔已落的 paint/legend（R1-P1 反例 1）。
+    palette 的 color+ramp 合并为**单笔** upsert —— patch+stale-upsert
+    会让回执与实际 mutation 不一致。
+    """
     name = change["intent"]
     out: List[Any] = []
     if name == "palette":
-        from app.services.mapspec.intents import (
-            PatchLayerStyleIntent,
-            UpsertLayerIntent,
-        )
+        from app.services.mapspec.intents import UpsertLayerIntent
 
         pi = typed.palette
         assert pi is not None  # noqa: S101 — plan 已保证
-        layer = _layer_by_id(mapspec, pi.target_layer_id) or {}
+        layer = _layer_by_id(working, pi.target_layer_id) or {}
+        merged = dict(layer)
         if pi.color:
-            out.append(
-                PatchLayerStyleIntent(
-                    layer_id=pi.target_layer_id,
-                    paint={_paint_color_key(layer): pi.color},
-                )
-            )
+            paint = dict(layer.get("paint") or {})
+            paint[_paint_color_key(layer)] = pi.color
+            merged["paint"] = paint
         if pi.ramp:
-            patched = dict(layer)
-            legend = dict(patched.get("legend_spec") or {})
+            legend = dict(merged.get("legend_spec") or {})
             legend["colors"] = list(pi.ramp)
-            patched["legend_spec"] = legend
-            out.append(UpsertLayerIntent(layer=patched))
+            merged["legend_spec"] = legend
+        if pi.color or pi.ramp:
+            out.append(UpsertLayerIntent(layer=merged))
+            _replace_layer(working, pi.target_layer_id, merged)
     elif name == "classification":
         from app.services.mapspec.intents import UpsertLayerIntent
 
         ci = typed.classification
         assert ci is not None  # noqa: S101
-        layer = _layer_by_id(mapspec, ci.target_layer_id) or {}
+        layer = _layer_by_id(working, ci.target_layer_id) or {}
         patched = dict(layer)
         legend = dict(patched.get("legend_spec") or {})
         legend["method"] = ci.method
@@ -433,6 +456,7 @@ def _build_engine_intents(
         legend.pop("breaks", None)
         patched["legend_spec"] = legend
         out.append(UpsertLayerIntent(layer=patched))
+        _replace_layer(working, ci.target_layer_id, patched)
     elif name == "components":
         from app.services.mapspec.intents import (
             PatchComponentIntent,
@@ -482,8 +506,12 @@ async def _apply_intent_set(
     session_id = str(member.get("session_id") or "")
     current_rev = expected_revision
     applied: List[Dict[str, Any]] = []
+    # 本地演进副本：同成员多意图从已演进状态出图（R1-P1）
+    import copy as _copy
+
+    working = _copy.deepcopy(mapspec) if isinstance(mapspec, dict) else {}
     for change in plan["changes"]:
-        engine_intents = _build_engine_intents(mapspec, change, typed)
+        engine_intents = _build_engine_intents(working, change, typed)
         if not engine_intents:
             continue
         for intent_obj in engine_intents:
@@ -547,6 +575,7 @@ async def apply_propagation(
     series_id: str,
     *,
     spec_version: Optional[int] = None,
+    user_id: Optional[str] = None,
     intents: Dict[str, Any],
     actor: str = "map-series",
     expected_revisions: Optional[Dict[str, int]] = None,
@@ -557,9 +586,25 @@ async def apply_propagation(
     members = _series_member_pairs(plan_payload)
     expected_revisions = expected_revisions or {}
     receipts: List[Dict[str, Any]] = []
+    from app.services.map_series.store import member_session_authorization
+
+    auth = member_session_authorization(db, [m for m in members if isinstance(m, dict)], user_id=user_id)
+    denied_ids = {d["member_id"] for d in auth["denied"]}
     for member in members:
         member_id = str(member.get("member_id") or "")
         session_id = str(member.get("session_id") or "")
+        if member_id in denied_ids:
+            # R1-P1：绝不以 agent 身份改写他人会话的 MapSpec
+            receipts.append(
+                {
+                    "member_id": member_id,
+                    "status": "failed",
+                    "revision": None,
+                    "error": "member session is not owned by the caller",
+                    "code": "SESSION_NOT_OWNED",
+                }
+            )
+            continue
         try:
             mapspec = await ms_service.load_member_mapspec(session_id)
             plan = plan_member(member, mapspec, typed)

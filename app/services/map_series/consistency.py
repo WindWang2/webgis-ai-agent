@@ -125,6 +125,7 @@ async def run_series_consistency(
     series_id: str,
     *,
     intents: Optional[Dict[str, Any]] = None,
+    user_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """运行系列一致性检查 → ``{findings, ok}``（ok = 无 error 级 findings）。
 
@@ -189,8 +190,30 @@ async def run_series_consistency(
 
     # ── 成员会话证据 ────────────────────────────────────────────────────
     evidence: Dict[str, Dict[str, Any]] = {}
+    # R1-P1：跨会话证据只对归属成员可见（fail-closed；不可见 = 跳过+披露，
+    # 绝不泄露他人会话的指纹/方法/色带/bounds）。
+    from app.services.map_series.store import member_session_authorization
+
+    auth = member_session_authorization(
+        db, [m.model_dump() for m in plan.members if m.enabled], user_id=user_id,
+    )
+    denied_member_ids = {d["member_id"] for d in auth["denied"]}
     for member in plan.members:
         if not member.enabled:
+            continue
+        if member.member_id in denied_member_ids:
+            findings.append(
+                _finding(
+                    "SESSION_NOT_OWNED",
+                    "warning",
+                    (
+                        f"member '{member.member_id}' session is not owned by "
+                        "the caller — evidence withheld (not_evaluated)"
+                    ),
+                    member_id=member.member_id,
+                    fix_hint="由会话属主执行一致性检查，或移除该成员",
+                )
+            )
             continue
         mapspec = await ms_service.load_member_mapspec(member.session_id)
         if mapspec is None:
@@ -231,6 +254,23 @@ async def run_series_consistency(
                 role_members.setdefault(role, []).append(member.member_id)
     for role, member_ids in role_members.items():
         role_unit = comparable_roles.get(role)
+        # R1-P2：可比角色未声明契约单位 → 静默通过会让 unit 契约形同虚设
+        # —— 至少 warning 披露（≥2 个成员绑同一可比角色时才有比较语义）。
+        if not role_unit and len(member_ids) >= 2:
+            findings.append(
+                _finding(
+                    "UNIT_UNDECLARED",
+                    "warning",
+                    (
+                        f"comparable role '{role}' is bound by "
+                        f"{len(member_ids)} members but the spec declares no "
+                        "contract unit — cross-map unit comparability is "
+                        "not enforced"
+                    ),
+                    member_id=member_ids[0],
+                    fix_hint="在规范 data_roles 中为该角色声明 unit（comparable_across_maps）",
+                )
+            )
         observed: Dict[str, Optional[str]] = {}
         for mid in member_ids:
             ev = evidence.get(mid)

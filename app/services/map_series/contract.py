@@ -247,6 +247,9 @@ class MapSeriesV1(_SeriesModel):
     #: 可选版本 pin；缺省 = 创建/落版本时的 latest（解析时点记录）。
     design_spec_version: Optional[int] = Field(default=None, ge=1)
     members: List[SeriesMember] = Field(default_factory=list)
+    #: 数据来源披露（R1-P2）：合成/测试数据必须置 true —— 冻结计划与
+    #: series manifest 恒如实传播（披露字段，不是开关）。
+    simulated_data: bool = False
     comparability: ComparabilityContract = Field(default_factory=ComparabilityContract)
     dimension: SeriesDimension = Field(default_factory=SeriesDimension)
     output: SeriesOutput = Field(default_factory=SeriesOutput)

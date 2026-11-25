@@ -92,6 +92,14 @@ async def _seed_member(session_id: str, field: str, counts: list, color: str) ->
         actor="test:flagship",
     )
     assert not result.is_error, result.error_msg
+    # R1-P1：成员会话归属行（跨会话系列按 authenticated-owned 门校验）
+    from app.core.database import SessionLocal
+    from app.models.db_model import Conversation
+
+    with SessionLocal() as db:
+        db.merge(Conversation(id=session_id, user_id="flagship-owner",
+                              title="flagship member"))
+        db.commit()
     fc = _fc(session_id[-6:], counts, field=field)
     ref_id = await session_data_manager.store(
         session_id, {"kind": "geojson", "geojson": fc}, prefix="result",
@@ -197,7 +205,7 @@ async def test_flagship_three_map_series_full_journey(
 
         # ── 3) 冻结前一致性检查（真实跨图检查）
         with SessionLocal() as db:
-            report = await run_series_consistency(db, series_id)
+            report = await run_series_consistency(db, series_id, user_id="flagship-owner")
         codes = {f["code"] for f in report["findings"]}
         assert report["ok"] or codes, report
         # 三成员同为 quantiles（种子一致性）→ 不应有分类冲突
@@ -209,10 +217,11 @@ async def test_flagship_three_map_series_full_journey(
         ylorrd = resolve_palette_colors("YlOrRd")[:6]
         intents = {"palette": {"target_layer_id": "thematic", "ramp": ylorrd}}
         with SessionLocal() as db:
-            preview = await build_propagation_preview(db, series_id, intents=intents)
+            preview = await build_propagation_preview(db, series_id, intents=intents, user_id="flagship-owner")
             assert preview.get("members"), preview
             result = await apply_propagation(
-                db, series_id, intents=intents, actor="flagship-owner")
+                db, series_id, intents=intents, actor="flagship-owner",
+                user_id="flagship-owner")
         assert result["summary"]["committed"] >= 2, result
         for receipt in result["receipts"]:
             assert receipt["status"] in ("committed", "skipped_locked",
@@ -220,7 +229,7 @@ async def test_flagship_three_map_series_full_journey(
 
         # ── 5) 冻结（传播后的新指纹）
         with SessionLocal() as db:
-            freeze_payload = await build_freeze_plan(db, series_id)
+            freeze_payload = await build_freeze_plan(db, series_id, user_id="flagship-owner")
         assert not freeze_payload["unresolvable_member_ids"]
         plan = freeze_plan_from_series_payload(freeze_payload)
         assert len(plan.members) == 3
