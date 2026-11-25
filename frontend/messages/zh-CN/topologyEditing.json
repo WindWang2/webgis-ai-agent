@@ -1,0 +1,41 @@
+{
+  "sharedVertexMode": {
+    "title": "共享顶点编辑",
+    "help": "拖动共享顶点将同步更新相邻要素（以服务端预览为准）"
+  },
+  "ops": {
+    "moveSharedVertex": "移动共享顶点",
+    "insertSharedVertex": "插入共享顶点",
+    "deleteSharedVertex": "删除共享顶点",
+    "reshapeSharedEdge": "重塑共享边",
+    "connectEndpoint": "连接端点"
+  },
+  "impactSection": {
+    "touched": "影响要素 {count}",
+    "neighbors": "邻接 {count}",
+    "truncated": "邻接清单已截断",
+    "newViolations": "新增违规 {count}（阻断）",
+    "existingViolations": "基线存量 {count}（披露）",
+    "blockedCrossDataset": "跨数据集不支持原子提交：本笔提交仅覆盖单一数据集范围",
+    "areaDelta": "面积变化 {delta} m²",
+    "lengthDelta": "长度变化 {delta} m"
+  },
+  "constraints": {
+    "sharedEdges": "共享边 {count}",
+    "junctionNodes": "交汇节点 {count}",
+    "danglingEndpoints": "悬挂端点 {count}",
+    "matchMode": {
+      "exact": "精确匹配",
+      "tolerance": "容差 {tolerance} m"
+    },
+    "levelField": "层级字段 {field}",
+    "vertexCount": "顶点 {count}"
+  },
+  "revalidate": {
+    "button": "复验拓扑约束",
+    "revalidating": "复验中…",
+    "resultClean": "复验通过：{total} 条基线违规",
+    "resultFindings": "复验发现 {count} 条问题（基线 {total}）",
+    "checkedWfids": "已检查 {count} 个要素"
+  }
+}

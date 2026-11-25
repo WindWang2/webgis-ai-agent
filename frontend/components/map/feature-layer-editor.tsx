@@ -10,6 +10,9 @@ import { registerEscapeHandler } from '@/lib/utils/escape-stack';
  * - 手势期间的几何只进本地 draft 源（wb-feedit-*），零 REST；手势结束
  *   经 layer-edit-bridge 走 preview→approve 服务端事务（一次手势一次
  *   revision）；Escape 取消不落任何服务端写入（V04/V05）；
+ * - 共享顶点拖拽（ADR-0300）：inline 源抓到与其它要素重合的顶点时本地
+ *   只做临时高亮（wb-shared-hl-*），提交改走 move_shared_vertex 由服务端
+ *   权威重算传播范围 —— 前端共享检测不是第二真相；
  * - 图层渲染真相仍在 MapSpec/HUD 行 —— 提交成功后由回执驱动的
  *   refreshDatasetLayer 收敛，本组件不自行向权威层写数据；
  * - 状态面板（底部）用具体对象和动作描述；技术细节（ref/CAS）只在
@@ -33,9 +36,18 @@ const DRAFT_SOURCE = 'wb-feedit-src';
 const DRAFT_LINE_LAYER = 'wb-feedit-draft-line';
 const DRAFT_POINT_LAYER = 'wb-feedit-draft-point';
 const EDIT_COLOR = '#f59e0b';
+/* ADR-0300 共享顶点拖拽：受影响邻接要素的临时高亮（半透明橙）。 */
+const SHARED_HL_SOURCE = 'wb-shared-hl-src';
+const SHARED_HL_FILL_LAYER = 'wb-shared-hl-fill';
+const SHARED_HL_LINE_LAYER = 'wb-shared-hl-line';
+const SHARED_HL_COLOR = '#f97316';
+/** 高亮渲染上限（有界渲染：超出只提示，不整层铺开）。 */
+const SHARED_HL_MAX_FEATURES = 8;
 
 /** 空图层行的稳定引用（`?? []` 每渲染新数组会让 useCallback 依赖抖动）。 */
 const EMPTY_LAYER_ROWS: unknown[] = [];
+/** 共享高亮的稳定空引用（identity 相等让 setState 不触发无效重渲染）。 */
+const EMPTY_FEATURES: GeoJSON.Feature[] = [];
 
 type Draft =
   | { kind: 'line' | 'polygon' | 'split'; points: [number, number][] }
@@ -68,6 +80,51 @@ function ringOf(geometry: GeoJSON.Geometry): [number, number][] {
   if (geometry.type === 'Polygon') return geometry.coordinates[0].map((c) => [c[0], c[1]]);
   if (geometry.type === 'Point') return [[geometry.coordinates[0], geometry.coordinates[1]]];
   return [];
+}
+
+/**
+ * 几何全部顶点坐标（共享检测用；Polygon 含洞环、Multi* 含全部部件 ——
+ * 与服务端 shared_topology 索引的登记范围一致）。
+ */
+function geometryVertexCoords(geometry: GeoJSON.Geometry): [number, number][] {
+  if (geometry.type === 'Point') return [[geometry.coordinates[0], geometry.coordinates[1]]];
+  if (geometry.type === 'LineString' || geometry.type === 'MultiPoint') {
+    return geometry.coordinates.map((c) => [c[0], c[1]]);
+  }
+  if (geometry.type === 'Polygon' || geometry.type === 'MultiLineString') {
+    return geometry.coordinates.flatMap((ring) => ring.map((c) => [c[0], c[1]] as [number, number]));
+  }
+  if (geometry.type === 'MultiPolygon') {
+    return geometry.coordinates.flatMap((poly) =>
+      poly.flatMap((ring) => ring.map((c) => [c[0], c[1]] as [number, number])),
+    );
+  }
+  return [];
+}
+
+/**
+ * 共享顶点的临时检测（ADR-0300；仅驱动地图高亮预览 —— 服务端 plan
+ * preview 会权威重算传播范围，前端不造第二真相）：在被编辑图层行的
+ * inline 源里扫描其它要素是否持有与被抓顶点完全一致的坐标
+ * （首经纬度精确相等；闭合重复点坐标相同，天然视同同一位逻辑顶点）。
+ */
+function findSharedVertexNeighbors(
+  features: GeoJSON.Feature[],
+  editFeatureId: string,
+  coord: [number, number],
+): GeoJSON.Feature[] {
+  const neighbors: GeoJSON.Feature[] = [];
+  for (const f of features) {
+    if (!f.geometry || f.geometry.type === 'GeometryCollection') continue;
+    const fid = featureIdFromProperties(
+      f.properties as Record<string, unknown> | null,
+      (f as { id?: unknown }).id,
+    );
+    if (fid && fid === editFeatureId) continue;
+    const shared = geometryVertexCoords(f.geometry).some(([x, y]) => x === coord[0] && y === coord[1]);
+    if (shared) neighbors.push(f);
+  }
+  return neighbors;
 }
 
 /**
@@ -112,6 +169,13 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
   /** 拖拽手势跨 effect 重建存活（onDown 置位 / onUp 复位并提交）。 */
   const draggingIndexRef = useRef(-1);
   const geometryAtDragStartRef = useRef<GeoJSON.Geometry | null>(null);
+  /**
+   * ADR-0300：本次拖拽抓到的顶点是否共享（onDown 临时检测置位；坐标是
+   * move_shared_vertex 的 at 参数）。临时预览 —— 权威传播由服务端重算。
+   */
+  const sharedDragRef = useRef<{ at: [number, number] } | null>(null);
+  /** 共享顶点拖拽期间的受影响邻接要素（驱动临时高亮源）。 */
+  const [sharedHighlight, setSharedHighlight] = useState<GeoJSON.Feature[]>(EMPTY_FEATURES);
   const [splitTarget, setSplitTarget] = useState<string | null>(null);
   const draftRef = useRef<Draft>(null);
   const [, forceRender] = useState(0);
@@ -124,7 +188,11 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
   /* R3 P2-6：工具切换清理过期手势目标（split 目标随 split 工具退出而清）。 */
   useEffect(() => {
     if (tool !== 'split_feature' && splitTarget) setSplitTarget(null);
-    if (tool !== 'edit_vertices' && vertexTarget) setVertexTarget(null);
+    if (tool !== 'edit_vertices') {
+      if (vertexTarget) setVertexTarget(null);
+      sharedDragRef.current = null;
+      setSharedHighlight(EMPTY_FEATURES);
+    }
   }, [tool, splitTarget, vertexTarget]);
 
   const targetLayer = layers.find((l) => l.id === editTarget?.layerId);
@@ -286,6 +354,42 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
     }
     source.setData({ type: 'FeatureCollection', features } as never);
   }, [mapReady, getMap, editTarget, vertexTarget, status, selectionGen]);
+
+  /* ─── 共享顶点拖拽：邻接要素临时高亮源（本地预览，非共享真相） ─── */
+  useEffect(() => {
+    const map = getMap();
+    if (!map || !mapReady || !editTarget) return;
+    if (sharedHighlight.length) {
+      if (!map.getSource(SHARED_HL_SOURCE)) {
+        map.addSource(SHARED_HL_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      }
+      if (!map.getLayer?.(SHARED_HL_FILL_LAYER)) {
+        map.addLayer({
+          id: SHARED_HL_FILL_LAYER,
+          type: 'fill',
+          source: SHARED_HL_SOURCE,
+          paint: { 'fill-color': SHARED_HL_COLOR, 'fill-opacity': 0.25 },
+        });
+      }
+      if (!map.getLayer?.(SHARED_HL_LINE_LAYER)) {
+        map.addLayer({
+          id: SHARED_HL_LINE_LAYER,
+          type: 'line',
+          source: SHARED_HL_SOURCE,
+          paint: { 'line-color': SHARED_HL_COLOR, 'line-width': 2 },
+        });
+      }
+      const source = map.getSource(SHARED_HL_SOURCE) as GeoJSONSource | undefined;
+      source?.setData({ type: 'FeatureCollection', features: sharedHighlight } as never);
+    }
+    return () => {
+      // 高亮清空 / 目标切换 / 卸载时摘除自管层（不动权威层）
+      for (const id of [SHARED_HL_FILL_LAYER, SHARED_HL_LINE_LAYER]) {
+        if (map.getLayer?.(id)) map.removeLayer(id);
+      }
+      if (map.getSource(SHARED_HL_SOURCE)) map.removeSource(SHARED_HL_SOURCE);
+    };
+  }, [mapReady, getMap, editTarget, sharedHighlight]);
 
   const parseAttributes = useCallback((): Record<string, unknown> | string => {
     const raw = attributesJson.trim();
@@ -471,6 +575,18 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
       if (hit < 0) return;
       draggingIndexRef.current = hit;
       geometryAtDragStartRef.current = vt.geometry;
+      sharedDragRef.current = null;
+      setSharedHighlight(EMPTY_FEATURES);
+      // ADR-0300：仅 inline 源做共享顶点临时检测（MVT 行无内联要素，不参与；
+      // 高亮只是视觉预览 —— 权威传播由服务端 plan preview 重算）。
+      const inline = (layers.find((l) => l.id === editTarget?.layerId)?.source as { features?: GeoJSON.Feature[] } | undefined)?.features;
+      if (inline?.length) {
+        const neighbors = findSharedVertexNeighbors(inline, vt.featureId, vertices[hit]);
+        if (neighbors.length) {
+          sharedDragRef.current = { at: [vertices[hit][0], vertices[hit][1]] };
+          setSharedHighlight(neighbors.slice(0, SHARED_HL_MAX_FEATURES));
+        }
+      }
       if (typeof m.dragPan?.disable === 'function') m.dragPan.disable();
     };
     const onMove = (e: MapMouseEvent) => {
@@ -486,11 +602,28 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
       if (draggingIndexRef.current < 0 || !vt) return;
       const target = vt;
       const before = geometryAtDragStartRef.current;
+      const shared = sharedDragRef.current;
+      const dragIndex = draggingIndexRef.current;
       draggingIndexRef.current = -1;
       geometryAtDragStartRef.current = null;
+      sharedDragRef.current = null;
+      setSharedHighlight(EMPTY_FEATURES);
       const m = getMap();
       if (typeof m?.dragPan?.enable === 'function') m.dragPan.enable();
       if (before && JSON.stringify(before) !== JSON.stringify(target.geometry)) {
+        if (shared) {
+          // ADR-0300：共享顶点 → 服务端权威传播 op（plan preview 不合则显式失败）。
+          const moved = ringOf(target.geometry)[dragIndex];
+          await submit(
+            [{ op: 'move_shared_vertex', at: shared.at, to: moved ? [moved[0], moved[1]] : shared.at }],
+            {
+              featureIds: [target.featureId],
+              labelKey: 'topologyEditing.sharedVertexMode.title',
+              what: t('topologyEditing.sharedVertexMode.title'),
+            },
+          );
+          return;
+        }
         await submit(
           [{ op: 'replace_geometry', geometry: target.geometry }],
           { featureIds: [target.featureId], labelKey: 'map.edit.editVertices', what: t('map.edit.editVertices') },
@@ -509,7 +642,7 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
       window.removeEventListener('mouseup', onUpWindow);
       if (typeof map.dragPan?.enable === 'function') map.dragPan.enable();
     };
-  }, [tool, mapReady, getMap, editTarget, submit, t]);
+  }, [tool, mapReady, getMap, editTarget, layers, submit, t]);
 
   /* ─── 键盘：Enter 完成 / Escape 取消（不落服务端写入） ─── */
   useEffect(() => {
@@ -524,6 +657,17 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
       } else if (e.key === 'Escape') {
         e.preventDefault();
         if (draftRef.current) { draftRef.current = null; bump(); return; } // V05：取消草稿零写入
+        if (draggingIndexRef.current >= 0) {
+          // 拖拽中 Escape（含共享顶点拖拽）：取消手势，零服务端写入 ——
+          // 复位拖拽 refs/高亮并恢复底图拖动，onUp 因此提前返回。
+          draggingIndexRef.current = -1;
+          geometryAtDragStartRef.current = null;
+          sharedDragRef.current = null;
+          setSharedHighlight(EMPTY_FEATURES);
+          const m = getMap();
+          if (typeof m?.dragPan?.enable === 'function') m.dragPan.enable();
+          return;
+        }
         if (vertexTarget) { setVertexTarget(null); return; }
         if (splitTarget) { setSplitTarget(null); return; }
         setActiveMapTool(null);
@@ -533,7 +677,7 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
     const nonEscape = (event: KeyboardEvent) => { if (event.key !== 'Escape') onKeyDown(event); };
     window.addEventListener('keydown', nonEscape);
     return () => { unregister(); window.removeEventListener('keydown', nonEscape); };
-  }, [editTarget, completeDraft, vertexTarget, splitTarget, setActiveMapTool, bump]);
+  }, [editTarget, completeDraft, vertexTarget, splitTarget, setActiveMapTool, bump, getMap]);
 
   /* ─── merge：按当前 selection（≥2）提交 ─── */
   const mergeSelection = useCallback(async () => {
@@ -566,6 +710,11 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
           {t('map.edit.stop')}
         </button>
       </div>
+      {sharedHighlight.length > 0 && (
+        <span className="text-ink-secondary" data-testid="feature-edit-shared-hint">
+          {t('topologyEditing.sharedVertexMode.help')}
+        </span>
+      )}
       {drawing && (
         <div className="flex items-start gap-2">
           {contractRules ? (

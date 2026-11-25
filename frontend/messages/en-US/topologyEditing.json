@@ -1,0 +1,41 @@
+{
+  "sharedVertexMode": {
+    "title": "Shared vertex editing",
+    "help": "Dragging a shared vertex updates the neighboring features too (server preview is authoritative)"
+  },
+  "ops": {
+    "moveSharedVertex": "Move shared vertex",
+    "insertSharedVertex": "Insert shared vertex",
+    "deleteSharedVertex": "Delete shared vertex",
+    "reshapeSharedEdge": "Reshape shared edge",
+    "connectEndpoint": "Connect endpoint"
+  },
+  "impactSection": {
+    "touched": "{count} features touched",
+    "neighbors": "{count} neighbors",
+    "truncated": "Neighbor list truncated",
+    "newViolations": "{count} new violations (blocking)",
+    "existingViolations": "{count} baseline violations (disclosed)",
+    "blockedCrossDataset": "Cross-dataset atomic commit is not supported: this edit is scoped to a single dataset",
+    "areaDelta": "Area change {delta} m²",
+    "lengthDelta": "Length change {delta} m"
+  },
+  "constraints": {
+    "sharedEdges": "{count} shared edges",
+    "junctionNodes": "{count} junction nodes",
+    "danglingEndpoints": "{count} dangling endpoints",
+    "matchMode": {
+      "exact": "Exact match",
+      "tolerance": "Tolerance {tolerance} m"
+    },
+    "levelField": "Level field {field}",
+    "vertexCount": "{count} vertices"
+  },
+  "revalidate": {
+    "button": "Revalidate constraints",
+    "revalidating": "Revalidating…",
+    "resultClean": "Revalidation passed: {total} baseline violations",
+    "resultFindings": "Revalidation found {count} findings (baseline {total})",
+    "checkedWfids": "{count} features checked"
+  }
+}
