@@ -468,3 +468,66 @@ class TestLineNetworkJourney:
             resp = await client.post(f"/api/v1/chat/sessions/{s}/feature-edits/{ref}/revalidate", json={})
             assert resp.status_code == 200
             assert resp.json()["rules"] == []
+
+
+class TestR2Fixes:
+    """R2 复审修复的批准链路回归（N1 信封层级提交一致性 / N2 提交门严重度感知）。"""
+
+    @pytest.mark.asyncio
+    async def test_n1_envelope_level_field_commit_parity(self, app, client, store) -> None:
+        """R2-N1：信封 level_field + op 未声明 → 提交与预览同一索引（批准即所见）。"""
+        with _patched_store(store):
+            s = sid()
+            road = {"type": "Feature", "id": "road-0", "geometry": {"type": "LineString", "coordinates": [
+                [lon(0), lat(7)], [lon(4), lat(7)],
+            ]}, "properties": {"level": 0}}
+            ramp = {"type": "Feature", "id": "road-1", "geometry": {"type": "LineString", "coordinates": [
+                [lon(4), lat(7)], [lon(8), lat(7)],
+            ]}, "properties": {"level": 1}}
+            env = {"geojson": {"type": "FeatureCollection", "features": [road, ramp]}, "level_field": "level"}
+            ref = await _seed(store, s, env)
+            plan = await _preview(client, s, ref, [
+                {"op": "move_shared_vertex", "at": [lon(4), lat(7)], "dx_m": 2.0, "dy_m": 0.0},
+            ], feature_ids=["road-1"])
+            assert plan["committable"] is True
+            resp = await client.post(
+                f"/api/v1/chat/sessions/{s}/feature-edits/plans/{plan['plan_id']}/decision",
+                json={"action": "approve"},
+            )
+            assert resp.status_code == 200, resp.text
+            receipt = resp.json()["receipt"]
+            # 提交与预览同一索引：只动声明层（预览 touched=1 → 提交 changed=1）
+            assert len(receipt["changed_wfids"]) == 1, receipt
+            payload = await store.get(s, ref)
+            feats = {f["id"]: f for f in payload["geojson"]["features"]}
+            # 层级守卫：同坐标两节点未合并 —— 坐标查询按 exact 首写语义命中
+            # 先声明的 road-0；road-1（另一层级）逐字节不变。
+            assert feats["road-1"]["geometry"]["coordinates"][0] == [lon(4), lat(7)], "另一层级逐字节不变"
+            assert feats["road-0"]["geometry"]["coordinates"][1] != [lon(4), lat(7)]
+
+    @pytest.mark.asyncio
+    async def test_n2_disclosed_existing_overlap_commits(self, app, client, store) -> None:
+        """R2-N2：存量重叠披露（不实质扩大）的共享编辑可经批准提交。"""
+        with _patched_store(store):
+            s = sid()
+            overlapping_d = {
+                "type": "Feature", "id": "parcel-D",
+                "geometry": {"type": "Polygon", "coordinates": [ring(0.5, 0.2, 2.5, 0.8)]},
+                "properties": {"name": "D"},
+            }
+            env = {"geojson": {"type": "FeatureCollection", "features": [PARCEL_A, PARCEL_B, overlapping_d]},
+                   "topology": {"rules": ["no_overlap"], "tolerance_m": 1.0}}
+            ref = await _seed(store, s, env)
+            plan = await _preview(client, s, ref, [
+                {"op": "move_shared_vertex", "at": [lon(2), lat(1)], "dx_m": 0.0, "dy_m": 3.0},
+            ], feature_ids=["parcel-A"])
+            ctx = plan.get("topology_context") or {}
+            assert ctx.get("new_violations") == 0 and ctx.get("existing_violations") >= 1
+            assert plan["committable"] is True
+            resp = await client.post(
+                f"/api/v1/chat/sessions/{s}/feature-edits/plans/{plan['plan_id']}/decision",
+                json={"action": "approve"},
+            )
+            assert resp.status_code == 200, f"存量披露（不扩大）必须可提交: {resp.text[:200]}"
+            receipt = resp.json()["receipt"]
+            assert receipt["kind"] == "apply"

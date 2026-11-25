@@ -851,7 +851,21 @@ def build_plan(
     if has_shared_ops and deltas:
         from app.services.feature_edit.contracts import MAX_IMPACT_NEIGHBORS
 
-        idx, idx_findings = build_shared_index(preview_fc)
+        # R2-N5：邻接投影与 op 求值同匹配参数（首个共享 op 的声明 + 信封
+        # 默认）—— 否则容差/层级模式下 affected_neighbors 会漏报。
+        first_shared = next(
+            (op for op in derive_ops if isinstance(op, dict) and op.get("op") in SHARED_GEOMETRY_OPS),
+            {},
+        )
+        idx, idx_findings = build_shared_index(
+            preview_fc,
+            tolerance_m=first_shared.get("tolerance_m"),
+            level_field=first_shared.get("level_field") or (
+                payload.get("level_field")
+                if isinstance(payload, dict) and isinstance(payload.get("level_field"), str)
+                else None
+            ),
+        )
         delta_wfids = {str(d.get("wfid")) for d in deltas if isinstance(d, dict) and d.get("wfid")}
         neighbor_rows: List[Dict[str, Any]] = []
         if idx is not None and not idx_findings:

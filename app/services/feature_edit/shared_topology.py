@@ -660,21 +660,31 @@ def _apply_vertex_edit(
             target_coords = _coords_at(new_geometry, addr)
             if target_coords is None or k >= len(target_coords):
                 continue
-            if _has_z(target_coords) and not z_allowed:
-                findings.append(
-                    finding("invalid_op", f"{op_name} on Z-coordinate path is not supported", wfid=wfid)
-                )
-                return []
-            seen_paths.add(path_i)
-            was_closed = kind == "ring" and len(target_coords) >= 4 and target_coords[0] == target_coords[-1]
-            if mutate(target_coords, kind, (path_i, k)) is False:
-                refused.append(wfid)
-                continue
-            # 环闭合同步：索引按逻辑顶点登记（闭环首尾只记 0 位），移动共享
-            # 顶点后必须把闭合重复点同步为最新坐标，否则环开口。
-            if was_closed and target_coords[0] != target_coords[-1]:
-                target_coords[-1] = list(target_coords[0])
-            applied = True
+        was_closed = kind == "ring" and len(target_coords) >= 4 and target_coords[0] == target_coords[-1]
+        # Point/MultiPoint 成员的坐标是扁平 [x,(z)]（R2-N4：直接送入
+        # list-of-lists 变换会 TypeError）—— 归一为单顶点视图，mutate 后写回。
+        is_flat_point = (
+            kind == "point"
+            and bool(target_coords)
+            and isinstance(target_coords[0], (int, float))
+        )
+        view: List[List[Any]] = [list(target_coords)] if is_flat_point else target_coords
+        if _has_z(view) and not z_allowed:
+            findings.append(
+                finding("invalid_op", f"{op_name} on Z-coordinate path is not supported", wfid=wfid)
+            )
+            return []
+        seen_paths.add(path_i)
+        if mutate(view, "point" if is_flat_point else kind, (path_i, 0 if is_flat_point else k)) is False:
+            refused.append(wfid)
+            continue
+        if is_flat_point:
+            target_coords[:] = view[0]
+        # 环闭合同步：索引按逻辑顶点登记（闭环首尾只记 0 位），移动共享
+        # 顶点后必须把闭合重复点同步为最新坐标，否则环开口。
+        if was_closed and target_coords[0] != target_coords[-1]:
+            target_coords[-1] = list(target_coords[0])
+        applied = True
         if refused:
             break  # all-or-nothing：任一拒绝即放弃
         if not applied:
@@ -916,14 +926,19 @@ def delete_shared_vertex(
         k = ref[1]
         closed = kind == "ring" and len(coords) >= 4 and coords[0] == coords[-1]
         if kind == "point":
-            return False  # 点要素的唯一定点不可删
+            return False  # 点要素的唯一定点不可删（all-or-nothing 披露）
         if closed and len(coords) - 1 < 4:
             return False  # 环删除后至少 3 个不同顶点（4 位置含闭合）
         if kind == "line" and len(coords) - 1 < 2:
             return False
         coords.pop(k)
-        if kind == "ring" and coords[0] != coords[-1]:
-            coords.append(list(coords[0]))  # 再闭合
+        if kind == "ring" and closed:
+            # R2-N3：pop(0) 后指向被删节点的旧闭合重复仍在环内（形成回到
+            # 已删顶点的缝隙边）—— 先移除该重复，再以新首点闭合。
+            if coords[0] != coords[-1]:
+                coords.pop()
+            if coords[0] != coords[-1]:
+                coords.append(list(coords[0]))
         return True
 
     deltas = _apply_vertex_edit(

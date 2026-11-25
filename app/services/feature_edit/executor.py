@@ -310,6 +310,13 @@ async def commit_plan(
             plan_seed=plan_id,
             geometry_type=_declared_geometry_type(payload),
             contract_fields=contract_fields,
+            # R2-N1：信封级 level_field 与预览侧同源（build_plan 同款提取）——
+            # 缺失会造成预览/提交解析不同索引，批准后静默应用不同几何。
+            shared_level_field=(
+                payload.get("level_field")
+                if isinstance(payload, dict) and isinstance(payload.get("level_field"), str)
+                else None
+            ),
         )
         if derive_findings:
             # 数据在预览后仍变了内容形态（同指纹不应发生——防御面）。
@@ -351,20 +358,38 @@ async def commit_plan(
 
         # G14/WP06：提交期拓扑复核（预览已查；指纹 CAS 后仍复核 = 防御面，
         # 规则声明随载荷走 —— envelope 变化即数据变化，由上方 CAS 拒绝）。
-        from app.services.feature_edit.topology import check_topology, extract_topology_declaration
+        # 共享拓扑编辑（R2-N2）：提交门与预览同语义 —— 严重度感知的基线/
+        # 新增分离（存量披露不阻断、新增/实质扩大阻断）；非共享 op 保持
+        # 既有「任何违规即阻断」。
+        from app.services.feature_edit.contracts import SHARED_GEOMETRY_OPS
+        from app.services.feature_edit.topology import (
+            check_topology,
+            extract_topology_declaration,
+            split_topology_findings,
+        )
 
         topology_declaration = extract_topology_declaration(payload)
         if topology_declaration.get("rules") and deltas:
             affected = list(
                 set(plan.get("target_wfids") or [])
-                | {d.get("wfid") for d in deltas if isinstance(d, dict) and d.get("presence") == "created"}
+                | {d.get("wfid") for d in deltas if isinstance(d, dict) and d.get("wfid")}
             )
-            topo_findings = check_topology(new_fc, [w for w in affected if w], topology_declaration)
-            if topo_findings:
+            affected = [w for w in affected if w]
+            topo_findings = check_topology(new_fc, affected, topology_declaration)
+            shared_ops_present = any(
+                isinstance(op, dict) and op.get("op") in SHARED_GEOMETRY_OPS
+                for op in (plan.get("ops") or [])
+            )
+            if shared_ops_present:
+                baseline_findings = check_topology(fc, affected, topology_declaration)
+                new_topo, _existing_topo = split_topology_findings(baseline_findings, topo_findings)
+            else:
+                new_topo = topo_findings
+            if new_topo:
                 raise FeatureEditBlocked(
                     "topology_violation",
-                    "edit violates the dataset's declared topology rules",
-                    {"findings": topo_findings[:8]},
+                    "edit introduces new violations of the dataset's declared topology rules",
+                    {"findings": new_topo[:8]},
                 )
 
         fp_after = compute_payload_fingerprint(new_payload)

@@ -875,3 +875,68 @@ class TestR1Fixes:
         # exact 首写语义命中先声明要素（wf-R0）；若守卫缺失则两侧同步
         # （touched == {R0, R1}）。
         assert touched == {"wf-R0"}
+
+
+class TestR2Fixes:
+    def test_n3_delete_ring_first_vertex_no_stale_duplicate(self) -> None:
+        """R2-N3：闭环 0 位顶点删除后，环内不得残留指向被删节点的旧重复。"""
+        data = fc(PARCEL_A)
+        index = indexed(data)
+        deltas, findings, _s = delete_shared_vertex(
+            data, index, {"op": "delete_shared_vertex", "at": [lon(0), lat(0)]}
+        )
+        assert findings == [], findings
+        rc = deltas[0]["geometry_after"]["coordinates"][0]
+        assert rc[0] == rc[-1], "环保持闭合"
+        # 除新闭合点（复用 v1）外，不允许出现指向被删顶点 (0,0) 的残留
+        assert all(p != [lon(0), lat(0)] for p in rc[1:-1]), f"陈旧重复残留: {rc}"
+
+    def test_n4_move_with_point_member_no_crash(self) -> None:
+        """R2-N4：共享坐标上有 Point 要素成员 → move 正常（点随动），不崩。"""
+        p = {"type": "Feature", "geometry": {"type": "Point", "coordinates": [lon(2), lat(0)]},
+             "properties": {"_wfid": "wf-P", "name": "桩"}}
+        data = fc(PARCEL_A, PARCEL_B, p)
+        index = indexed(data)
+        node, _ = index.node_at(lon(2), lat(0))
+        assert node is not None
+        assert any(m[0] == "wf-P" for m in node.members), "点成员入索引"
+        deltas, findings, summary = move_shared_vertex(
+            data, index, {"op": "move_shared_vertex", "at": [lon(2), lat(0)], "dx_m": 5.0, "dy_m": 0.0}
+        )
+        assert findings == [], findings
+        assert {d["wfid"] for d in deltas} == {"wf-A", "wf-B", "wf-P"}
+        moved_point = next(d for d in deltas if d["wfid"] == "wf-P")
+        # 点坐标已随动且保持扁平结构（GeoJSON Point coordinates=[x,y]）
+        assert isinstance(moved_point["geometry_after"]["coordinates"][0], float)
+        assert moved_point["geometry_after"]["coordinates"] != moved_point["geometry_before"]["coordinates"]
+
+    def test_n4_delete_with_point_member_refused_atomically(self) -> None:
+        """R2-N4b：delete 触及点成员 → typed 拒绝（all-or-nothing），不崩。"""
+        p = {"type": "Feature", "geometry": {"type": "Point", "coordinates": [lon(2), lat(1)]},
+             "properties": {"_wfid": "wf-P"}}
+        data = fc(PARCEL_A, PARCEL_B, PARCEL_C, p)
+        index = indexed(data)
+        deltas, findings, _s = delete_shared_vertex(
+            data, index, {"op": "delete_shared_vertex", "at": [lon(2), lat(1)]}
+        )
+        assert deltas == []
+        assert any(f["code"] == "invalid_op" and "refused" in f["message"] for f in findings)
+
+    def test_n5_impact_index_uses_op_tolerance(self) -> None:
+        """R2-N5：impact 邻接投影与 op 同匹配参数（容差模式不漏报邻面）。"""
+        b_ring = [[lon(2) + 4.5e-7, lat(0)], [lon(3), lat(0)], [lon(3), lat(1)], [lon(2) + 4.5e-7, lat(1)], [lon(2) + 4.5e-7, lat(0)]]
+        data = fc(PARCEL_A, poly("wf-B", b_ring))
+        payload = {"geojson": data}
+        plan, findings = build_plan(
+            ref_id="ref:x",
+            payload=payload,
+            ops=[{"op": "move_shared_vertex", "at": [lon(2), lat(0)], "dx_m": 1.0, "dy_m": 0.0, "tolerance_m": 2.0}],
+            requested_ids=["wf-A"],
+            selection=None,
+            dataset_fingerprint="fp-n5",
+            content_revision=1,
+        )
+        assert findings == []
+        impact = plan["impact"]
+        neighbor_wfids = {n["wfid"] for n in impact["affected_neighbors"]}
+        assert "wf-B" in neighbor_wfids, "容差模式邻接不漏报"
