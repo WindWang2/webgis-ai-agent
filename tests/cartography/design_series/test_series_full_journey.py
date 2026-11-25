@@ -171,7 +171,6 @@ async def test_flagship_three_map_series_full_journey(
                 creator_id="flagship-owner",
             )
             # ── 2) 三个真实成员会话（不同字段名：primaries/schools_num/sch_total）
-            sessions = {}
             fields = {"city-a": "primaries", "city-b": "schools_num",
                       "city-c": "sch_total"}
             for sid, field in fields.items():
