@@ -110,6 +110,32 @@ def test_auto_retry_events_enter_typed_diagnostics():
     assert fail_entry["success"] == "0" and "secret" not in fail_entry["final_error"]
 
 
+def test_documented_wire_vocabulary_produces_zero_warn(caplog):
+    """R1-P1-1 负例：v1.6.1 docs/json.md 全部文档化事件类型经过 mapper
+    都不得产生 unmapped WARN/计数（含每 turn 必达的 5 个冗余投影事件）。"""
+    documented = [
+        "agent_start", "agent_end", "agent_settled", "turn_start", "turn_end",
+        "message_start", "message_update", "message_end",
+        "tool_execution_start", "tool_execution_update", "tool_execution_end",
+        "queue_update", "entry_appended", "session_info_changed",
+        "thinking_level_changed", "compaction_start", "compaction_end",
+        "auto_retry_start", "auto_retry_end",
+        "summarization_retry_scheduled", "summarization_retry_attempt_start",
+        "summarization_retry_finished", "bash_execution_update",
+        "extension_error",
+    ]
+    with caplog.at_level(logging.WARNING, logger=em.__name__):
+        for etype in documented:
+            em.map_event_to_sse({"type": etype}, session_id="s")
+    snap = em.vendor_event_diagnostics()
+    # 有 handler 的事件会合法记录自己的诊断段（脱敏 unknown 缺省值）——
+    # 本负例只锁「文档化词表零 unmapped WARN/计数」。
+    assert "unmapped_event" not in snap["counts"], snap
+    assert not any("unmapped" in k for k in snap["counts"]), snap
+    assert not any(r.get("type") for r in snap["recent"]
+                   if r.get("kind") == "unmapped" or "unmapped" in str(r)), snap
+
+
 def test_diag_stats_reset():
     em.map_event_to_sse({"type": "whatever_unknown"}, session_id="s")
     em.reset_vendor_event_diagnostics()

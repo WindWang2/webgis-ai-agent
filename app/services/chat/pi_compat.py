@@ -116,10 +116,18 @@ _CAPABILITY_MIN_VERSION: dict[PiCapability, str] = {
 
 
 def _version_tuple(version: str) -> tuple[int, ...] | None:
+    """数字元组（忽略 prerelease 段）。prerelease 排序语义在
+    ``capabilities_for_version`` 里处理（R1-P3-3：``1.6.1-rc.1`` 是
+    ``1.6.1`` 的**低**版本，不得等值授能）。"""
     m = re.match(r"^v?(\d+)\.(\d+)\.(\d+)", version)
     if not m:
         return None
     return tuple(int(x) for x in m.groups())
+
+
+def _has_prerelease(version: str) -> bool:
+    """``1.2.3-rc.1``/``1.2.3+build`` → True（``1.2.3`` → False）。"""
+    return bool(re.search(r"^v?\d+\.\d+\.\d+[-+]", version))
 
 
 @dataclass(frozen=True)
@@ -170,11 +178,17 @@ def capabilities_for_version(
     应自行决定降级。
     """
     got = _version_tuple(observed_version) if observed_version else None
+    # semver：同基础版本的 prerelease 严格低于正式版（1.6.1-rc.1 < 1.6.1）——
+    # got 带 prerelease 时只有基础版本**严格大于**需求版本才授能。
+    got_is_prerelease = bool(observed_version) and _has_prerelease(observed_version)
     supported: set[PiCapability] = set()
     evidence: dict[str, str] = {}
     for cap, min_version in _CAPABILITY_MIN_VERSION.items():
         need = _version_tuple(min_version)
-        if got is not None and need is not None and got >= need:
+        ok = got is not None and need is not None and got >= need
+        if ok and got_is_prerelease and got == need:
+            ok = False
+        if ok:
             supported.add(cap)
             evidence[cap.value] = f"entry_probe>={min_version}" if version_source == "entry_probe" else f"{version_source}>={min_version}"
         else:
@@ -189,14 +203,25 @@ def capabilities_for_version(
 
 def pi_capability_snapshot(
     entry_path: str | None = None,
+    *,
+    observed_version: str | None = None,
+    version_source: str = "",
 ) -> PiCapabilitySnapshot:
-    """身份事实 + 带外版本探针 → 能力快照（探针是唯一的 spawn，pi_rpc_client 所有）。"""
+    """身份事实 + 带外版本探针 → 能力快照（探针是唯一的 spawn，pi_rpc_client 所有）。
+
+    ``observed_version`` 允许调用方注入已探明的版本事实（如
+    ``PiVendorIdentity.observed_version``，避免 doctor 对同一入口 spawn 两次）。
+    """
+    if observed_version is not None:
+        return capabilities_for_version(observed_version, version_source or "entry_probe")
     version, source = probe_pi_entry_version(
         Path(entry_path) if entry_path else None
     )
     if version is None:
         # 带外探针失败 → 退回 git describe（tag 推断，证据弱一档）。
-        describe = _describe()
+        # R1-P1-2：探针失败正是"未构建/无 node"降级场景，_describe 需要
+        # vendor 目录参数（env override 在场时必须与事实来源一致）。
+        describe = _describe(_vendor_root()[0])
         if describe:
             tag = re.match(r"^v(\d+\.\d+\.\d+)", describe)
             if tag:
@@ -226,7 +251,7 @@ class PiVendorIdentity:
     observed_version: str | None = None  # entry --version probe
     observed_version_source: str = "unknown"  # "entry_probe" | "unknown"
     entry_sha256_16: str | None = None  # first 16 hex of the entry file digest
-    manifest_state: str = "unknown"  # "absent"|"consistent"|"pin_mismatch"|"entry_drift"|"unparsed"
+    manifest_state: str = "unknown"  # "absent"|"consistent"|"manifest_only"|"pin_mismatch"|"entry_drift"|"unparsed"
     manifest_pin: str | None = None  # pin recorded by .build-manifest.json
 
     @property
@@ -489,6 +514,13 @@ def log_pi_vendor_identity() -> "PiVendorIdentity | None":
             "protocol compatibility is only guaranteed for the recorded tag",
             line,
         )
+    elif ident.meets_floor is False:
+        # R1-P3-7：floor 违例比 manifest/entry 观测项更严重——先于它们发 WARN，
+        # 不被 elif 链屏蔽。
+        logger.warning(
+            "%s — below the bridge protocol floor; upgrade the submodule pin",
+            line,
+        )
     elif ident.manifest_state in ("pin_mismatch", "unparsed"):
         logger.warning(
             "%s — build manifest disagreement (%s; manifest pin=%s); "
@@ -500,11 +532,6 @@ def log_pi_vendor_identity() -> "PiVendorIdentity | None":
             "%s — entry digest differs from build manifest (entry_drift): "
             "upstream esbuild output is not byte-reproducible, so a plain "
             "rebuild also explains this; rebuild refreshes the manifest",
-            line,
-        )
-    elif ident.meets_floor is False:
-        logger.warning(
-            "%s — below the bridge protocol floor; upgrade the submodule pin",
             line,
         )
     else:

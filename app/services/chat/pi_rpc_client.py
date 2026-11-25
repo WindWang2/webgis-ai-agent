@@ -261,9 +261,12 @@ class PiStderrDiagnostics:
 
     def record(self, line: str) -> None:
         try:
-            from app.utils.security import redact_paths
+            from app.utils.security import redact_paths, sanitize_error_msg
 
-            redacted = redact_paths(line)
+            # R1-P3-4（防御纵深）：redact_paths 之外再过 sanitize_error_msg
+            # （Bearer/密钥形 token 打码）——当前 stderr 来源虽不含 header
+            # 原文，诊断面不该依赖来源假设。
+            redacted = redact_paths(sanitize_error_msg(line))
         except Exception:  # noqa: BLE001 — 诊断记录绝不打断读循环
             redacted = line
         self._lines.append(redacted[: self.MAX_LINE_CHARS])

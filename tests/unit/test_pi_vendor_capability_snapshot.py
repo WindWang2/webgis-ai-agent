@@ -10,8 +10,10 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 
+import pytest
 
 from app.services.chat import pi_compat
 from app.services.chat.pi_compat import (
@@ -77,9 +79,55 @@ def test_snapshot_evidence_names_its_source():
 
 
 def test_snapshot_prerelease_version_parses_prefix():
-    """上游 prerelease（如 1.7.0-rc.1）按主版本判定，不抛异常。"""
+    """上游 prerelease（如 1.7.0-rc.1）按基础版本判定，不抛异常。"""
     caps = capabilities_for_version("1.7.0-rc.1", "entry_probe")
     assert caps.has(PiCapability.RPC_LINE_SCAN_FIX)
+
+
+def test_snapshot_prerelease_of_same_base_is_strictly_lower():
+    """R1-P3-3（semver）：同基础版本的 prerelease 严格低于正式版——
+    1.6.1-rc.1 不得等值授能 v1.6.1 能力；跨基础版本（1.7.0-rc.1）不受影响。"""
+    caps = capabilities_for_version("1.6.1-rc.1", "entry_probe")
+    assert not caps.has(PiCapability.PROVIDER_FAILURE_EVENTS)
+    assert not caps.has(PiCapability.RPC_LINE_SCAN_FIX)
+    # 更低需求的能力不受影响（基础版本 1.6.1 > v1.6.0/v1.5.x）
+    assert caps.has(PiCapability.EXTENSION_ERROR_EVENTS)
+    # build metadata 同理不得等值授能
+    caps2 = capabilities_for_version("1.6.1+build.7", "entry_probe")
+    assert not caps2.has(PiCapability.PROVIDER_FAILURE_EVENTS)
+
+
+def test_snapshot_falls_back_to_describe_when_probe_fails(monkeypatch, tmp_path):
+    """R1-P1-2 负例：entry 探针失败（未构建/无 node）时回退 git describe
+    证据——不得 TypeError 崩溃（此前 _describe() 缺 vendor_dir 参数）。"""
+    from app.services.chat import pi_compat as pc
+
+    # 真 checkout 的 git describe 可用；探针强制失败。
+    called = {}
+    def _fail_probe(_entry=None):
+        called["probe"] = True
+        return None, "unknown"
+    monkeypatch.setattr(pc, "probe_pi_entry_version", _fail_probe)
+    vendor_dir = pc.VENDOR_PI_DIR
+    caps = pc.pi_capability_snapshot(entry_path=str(tmp_path / "nonexistent.js"))
+    assert called.get("probe") is True
+    assert caps.version_source == "describe"
+    # describe --tags --long 形如 "v1.6.1-0-gef4a1cfcc" → 截取 "v1.6.1"
+    #（前缀保留；能力判定按数字元组比较，v 前缀无影响）。
+    assert caps.observed_version == "v1.6.1"
+    assert caps.has(PiCapability.PROVIDER_FAILURE_EVENTS)
+    assert vendor_dir.exists()  # 事实来源与 override 解析一致
+
+
+def test_snapshot_accepts_injected_version_without_probe(monkeypatch):
+    """P3-5：注入版本事实时不再 spawn 探针（doctor 复用 identity 结果）。"""
+    from app.services.chat import pi_compat as pc
+    def _no_spawn(_entry=None):  # pragma: no cover — 被调用即失败
+        raise AssertionError("probe must not run when version is injected")
+    monkeypatch.setattr(pc, "probe_pi_entry_version", _no_spawn)
+    caps = pc.pi_capability_snapshot(observed_version="1.6.1", version_source="entry_probe")
+    assert caps.version_source == "entry_probe"
+    assert caps.has(PiCapability.DECISION_MODEL_CLASSIFY)
 
 
 # ── 2. vendor 树形态（gitlink vs symlink 回归类）────────────────────────────
@@ -274,6 +322,10 @@ def test_vendor_root_ignores_invalid_override(tmp_path, monkeypatch):
 
 # ── live 本 checkout 的真相（gitlink 已恢复 @v1.6.1）─────────────────────────
 
+@pytest.mark.skipif(
+    shutil.which("node") is None,
+    reason="entry --version probe needs node on PATH (lane contract: self-skip)",
+)
 def test_this_checkout_is_gitlink_at_v161():
     """本仓库 checkout 自身：vendor/pi 必须已是 gitlink 且 describe=v1.6.1。
 

@@ -55,13 +55,14 @@ symlink 修复 + **v1.6.0** pin + ADR-0300 + C17–C20。本任务按新授权�
      实测）、`observed_version`（`node <rpc-entry> --version` 真探针，来源
      `entry_probe`）、`entry_sha256`（入口文件内容指纹，short 形式）。
    - 新增 `PiCapabilitySnapshot`：封闭词表 `PiCapability`（tool_search/codemode/
-     nested_tool_events/ordered_shutdown/prompt_disposition/agent_settled/
+     nested_tool_events/ordered_shutdown/prompt_disposition/
      compaction_events/auto_retry_events/provider_failure_events(v1.6.1)/
      extension_error_events(v1.6.0)/abort_batch_terminal(v1.6.0)/
      rpc_session_lifecycle_fix(v1.6.0)/unreported_diagnostics(v1.6.0)/
      decision_model_classify(v1.6.1)/rpc_line_scan_fix(v1.6.1)），静态
      feature→min-version 表为唯一映射点，观测版本 ≥ min 判 supported；
-     每项附 evidence（`entry_probe@1.6.1` / `floor_table` / `unknown`）。
+     每项附 evidence（`entry_probe>=vX.Y.Z` / `describe>=vX.Y.Z` /
+     `observed<vX.Y.Z` / `unknown`——与代码实现字面一致）。
      消费方一律查 `caps.has(...)`，禁止在业务代码里散落版本号比较。
    - symlink 形态显式诊断：`tree_mode != 160000` 时 identity 给出
      `vendor_tree_not_gitlink` 有界原因码，doctor FAIL（不再是静默 unknown）。

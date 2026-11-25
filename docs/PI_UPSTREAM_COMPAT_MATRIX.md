@@ -113,7 +113,7 @@
   ① `bash` 响应加性 `fullOutputError`（本仓不经 RPC bash 命令）；
   ② `get_last_assistant_text` 语义澄清——跳过 aborted/failed turn 或仅工具
   调用的无文本消息（本仓无该命令消费点，`rg` 零命中）。
-- **新能力（本仓消费，C17–C22）**：见下表。
+- **新能力（本仓消费，C17–C24）**：见下表。
 - **破坏性变化（评估不触及本仓消费面）**：① v1.6.0 扩展组件 `render()`
   返回 `readonly string[]`——`app/extensions/webgis-tools/index.mjs` 不实现
   自定义组件渲染，不受影响；② v1.6.1 `notices.*` 设置替换
@@ -126,7 +126,7 @@
   内容寻址 chunk hash，重建换 hash（manifest entry_drift 观测性 WARN，
   pin 对账不受影响）。
 
-### 新增契约面（C17–C22）
+### 新增契约面（C17–C24）
 
 | # | 上游契约（版本） | 本仓库消费点 | 契约测试 |
 |---|---|---|---|
@@ -147,4 +147,4 @@
 | v1.5.0 | PR #1973（ADR-0282） | 两段加载/prompt disposition/pi-schema 校验等契约面以此为准 |
 | v1.5.1 | G12（ADR-0288） | 原生工具发现/嵌套调用/有序停机契约面（C11–C16）以此为准；floor 下限 |
 | v1.5.2 | G22（2026-11-11） | pin-only 升级；消费面零漂移（§4 正式裁决）；interactive missing-cwd UX/导入清理不触及 rpc 面 |
-| **v1.6.1**（当前） | goal-pi-native-gis-host-20261125（ADR-0301，2026-11-26） | 先修 #2169 symlink 回归再升 pin；消费面零漂移（§4.5 裁决，json/rpc/rpc-extension-ui 文档逐字节一致）；新契约面 C17–C22（供应链守卫/manifest/版本探针/能力快照/v1.6.x 生命周期与 provider 事件）|
+| **v1.6.1**（当前） | goal-pi-native-gis-host-20261125（ADR-0301，2026-11-26） | 先修 #2169 symlink 回归再升 pin；消费面零漂移（§4.5 裁决，json/rpc/rpc-extension-ui 文档逐字节一致）；新契约面 C17–C24（供应链守卫/manifest/版本探针/能力快照/v1.6.x 生命周期与 provider 事件）|

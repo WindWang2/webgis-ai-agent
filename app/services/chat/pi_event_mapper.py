@@ -68,6 +68,10 @@ _DIAG_MAX_RECENT = 32
 class _BoundedEventStats:
     """进程级有界事件统计：计数按类型聚合，摘录环形保留。"""
 
+    #: 不同 kind 键数上界（R1-P3-9：防异常 vendor 用无限新类型撑爆 dict；
+    #: 词表封闭时远达不到）。
+    MAX_KINDS = 64
+
     def __init__(self, max_recent: int = _DIAG_MAX_RECENT) -> None:
         import threading
 
@@ -78,6 +82,8 @@ class _BoundedEventStats:
 
     def record(self, kind: str, detail: dict[str, str]) -> None:
         with self._lock:
+            if kind not in self._counts and len(self._counts) >= self.MAX_KINDS:
+                kind = "_overflow"
             self._counts[kind] = self._counts.get(kind, 0) + 1
             self._recent.append(detail)
             del self._recent[:-self._max_recent]
@@ -156,7 +162,17 @@ def _handle_unknown_event(
 #: vendor 文档化的词表里、本仓**有意不映射**为 SSE 的事件（高频/宿主侧
 #: 自行处理）。集合依据 v1.6.1 docs/json.md 事件总表；vendor 新增的
 #: 未文档化事件不会命中集合 → 走 WARN 计数路径。
+#: agent_start/turn_*/message_start/message_end 是每 turn 必达的文档化
+#: 事件（宿主从 agent_end/agent_settled/message_update 取权威值，这五个
+#: 的冗余投影不进 SSE）——漏列会让每个 turn 刷 9 条 WARN 并冲空诊断
+#: 摘录环（R1-P1-1 实测）。
 KNOWN_UNMAPPED_EVENTS = frozenset({
+    "agent_start",
+    "turn_start",
+    "turn_end",
+    "message_start",
+    "message_end",
+    "tool_execution_update",
     "queue_update",
     "bash_execution_update",
     "entry_appended",

@@ -1702,6 +1702,9 @@ jobs:
         run: |
           echo "⚠️ registry 中未找到 ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.PREV_SHA }}，回退从源码构建"
           PI_PIN="$(git ls-tree "$(git rev-parse "${{ env.PREV_SHA }}^{commit}")" vendor/pi | awk '{print $3}')"
+          # R1-P3-8：PREV_SHA 不可解析时 PI_PIN 为空串——空 --build-arg 会覆盖
+          # ARG 默认值并把清单 pin 记成空。兜底 unknown（诚实缺席）。
+          : "${PI_PIN:=unknown}"
           docker build --build-arg PI_VENDOR_PIN="$PI_PIN" -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:rollback -f Dockerfile.prod .
 
       - name: Configure SSH Access

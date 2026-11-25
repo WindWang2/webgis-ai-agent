@@ -35,6 +35,16 @@ async def get_metrics_digest(_user: dict = Depends(require_admin)) -> Dict[str, 
     except Exception:  # noqa: BLE001 — 指标段缺席不影响既有 digest
         pi_surface = {}
 
+    # ADR-0301 D5 / R1-P2-1：vendor 事件诊断段（extension_error / unmapped
+    # event / auto_retry 的有界 typed 计数与脱敏摘录）—— mapper 环的生产
+    # 读路径（与 pi_surface 同模式：进程内、只读、缺席不影响 digest）。
+    try:
+        from app.services.chat.pi_event_mapper import vendor_event_diagnostics
+
+        pi_vendor_events = vendor_event_diagnostics()
+    except Exception:  # noqa: BLE001 — 指标段缺席不影响既有 digest
+        pi_vendor_events = {}
+
     return {
         "success": True,
         "tool_metrics": snapshot,
@@ -43,4 +53,5 @@ async def get_metrics_digest(_user: dict = Depends(require_admin)) -> Dict[str, 
         "harness_enabled": harness_metrics is not None,
         "harness_metrics": harness_metrics,
         "pi_surface": pi_surface,
+        "pi_vendor_events": pi_vendor_events,
     }

@@ -98,7 +98,13 @@ def check_vendor() -> Report:
     )
 
     ident = pi_vendor_identity()
-    caps = pi_capability_snapshot(ident.entry_path)
+    # R1-P3-5：复用 identity 已探明的版本事实（identity 内部已 spawn 探针），
+    # 不对同一入口重复 spawn。
+    caps = pi_capability_snapshot(
+        ident.entry_path,
+        observed_version=ident.observed_version,
+        version_source=ident.observed_version_source,
+    )
     facts = {
         "head": ident.head_commit,
         "describe": ident.describe,
@@ -163,6 +169,17 @@ def check_vendor() -> Report:
             "", facts,
         )
     if ident.head_commit is None:
+        # R1-P2-3：gitless 镜像的清单 pin 未记录（build-arg 缺席 → "unknown"）
+        # 时不得给 PASS 措辞——清单在场但 pin 证据缺失，降为 WARN 如实披露。
+        if ident.manifest_pin in (None, "", "unknown"):
+            return Report(
+                "vendor", WARN,
+                "no git metadata (image) and build manifest pin unrecorded "
+                f"(got {ident.manifest_pin or 'empty'}); pin evidence limited "
+                "to filesystem facts — pass PI_VENDOR_PIN at image build",
+                "build with production.yml (auto-resolves gitlink SHA) or "
+                "--build-arg PI_VENDOR_PIN=<gitlink-sha>", facts,
+            )
         return Report(
             "vendor", PASS,
             f"manifest pin ok ({ident.manifest_pin}); no git metadata (image); "

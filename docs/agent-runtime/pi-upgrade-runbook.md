@@ -1,7 +1,7 @@
 # Pi vendor 升级 / 降级 Runbook（ADR-0301）
 
 > 适用范围：`vendor/pi` 子模块的升级、降级、构建与供应链故障排查。
-> 契约依据：`docs/PI_UPSTREAM_COMPAT_MATRIX.md`（C1–C22）、`docs/adr/0301-pi-v161-native-gis-host.md`。
+> 契约依据：`docs/PI_UPSTREAM_COMPAT_MATRIX.md`（C1–C24）、`docs/adr/0301-pi-v161-native-gis-host.md`。
 > 纪律：不擅自升级——每个 pin 移动必须附矩阵裁决 + 契约车道证据。
 
 ## 0. 术语
