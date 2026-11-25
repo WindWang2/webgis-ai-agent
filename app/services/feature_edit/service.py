@@ -136,12 +136,18 @@ async def _constraint_payload(session_id: str, ref_id: str) -> Any:
 
 
 def _apply_match_defaults(ops: List[Dict[str, Any]], tolerance_m: Any, level_field: Any) -> List[Dict[str, Any]]:
-    """调用级匹配规则默认注入（op 未显式声明时才补 —— op 级优先）。"""
+    """调用级匹配规则默认注入（op 未显式声明时才补 —— op 级优先）。
+
+    仅注入**共享拓扑 op**（R1-F8：snap_to_ref 等既有 op 有自己的容差语义，
+    注入会让 impact 投影偏离真实 preview 路径）。
+    """
     import copy as _copy
+
+    from app.services.feature_edit.contracts import SHARED_GEOMETRY_OPS
 
     out = _copy.deepcopy(ops)
     for op in out:
-        if not isinstance(op, dict):
+        if not isinstance(op, dict) or op.get("op") not in SHARED_GEOMETRY_OPS:
             continue
         if tolerance_m is not None and op.get("tolerance_m") is None:
             op["tolerance_m"] = tolerance_m

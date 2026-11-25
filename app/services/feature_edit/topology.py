@@ -247,25 +247,54 @@ def topology_finding_identity(f: "EditFinding") -> Optional[Tuple[str, ...]]:
 
 
 def split_topology_findings(
-    before: List[EditFinding], after: List[EditFinding]
+    before: List[EditFinding],
+    after: List[EditFinding],
+    *,
+    growth_ratio: float = 1.05,
+    growth_min_m2: float = 0.5,
 ) -> Tuple[List[EditFinding], List[EditFinding]]:
-    """基线/新增违规分离（共享拓扑编辑的披露纪律）。
+    """基线/新增违规分离（共享拓扑编辑的披露纪律），**严重度感知**。
 
-    返回 (new_findings, existing_findings)：after 中身份键不在 before 里的
-    是本次编辑**新增**（阻断）；已有的延续基线（披露、不阻断，与验收
-    「允许已知基线违规须披露」一致）。无身份键的 finding 一律按新增处理。
+    返回 (new_findings, existing_findings)：
+    - after 中身份键不在 before 里 → 本次编辑**新增**（阻断）；
+    - 身份键相同但违规量实质扩大（no_overlap 的重叠面积：相对增长 >5% 且
+      绝对增长 >0.5 m² —— 确定性阈值，R1-F3：同等身份下的面积增长若按
+      身份去重会被静默豁免，违背「新增影响须阻断」语义）→ 视为新增；
+    - 其余延续基线 → 存量（披露、不阻断）。
+    无身份键的 finding（预算截断等否定性信号）一律按新增保守处理。
     """
-    baseline_ids = {topology_finding_identity(f) for f in before}
-    baseline_ids.discard(None)
+    baseline_area: Dict[Tuple[str, ...], float] = {}
+    baseline_ids: set = set()
+    for f in before:
+        ident = topology_finding_identity(f)
+        if ident is None:
+            continue
+        baseline_ids.add(ident)
+        area = _finding_area_m2(f)
+        if area is not None:
+            baseline_area[ident] = max(baseline_area.get(ident, 0.0), area)
     new: List[EditFinding] = []
     existing: List[EditFinding] = []
     for f in after:
         ident = topology_finding_identity(f)
-        if ident is not None and ident in baseline_ids:
-            existing.append(f)
-        else:
+        if ident is None or ident not in baseline_ids:
             new.append(f)
+            continue
+        area = _finding_area_m2(f)
+        base = baseline_area.get(ident)
+        if area is not None and base is not None and area > base * growth_ratio and (area - base) > growth_min_m2:
+            new.append(f)
+        else:
+            existing.append(f)
     return new, existing
+
+
+def _finding_area_m2(f: "EditFinding") -> Optional[float]:
+    detail = f.get("detail") if isinstance(f.get("detail"), dict) else {}
+    value = detail.get("overlap_area_m2")
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return None
 
 
 def _near_affected(geom: Any, affected: set, by_wfid: Dict[str, Any]) -> bool:

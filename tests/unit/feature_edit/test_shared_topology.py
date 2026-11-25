@@ -628,20 +628,24 @@ class TestPlanIntegration:
         assert ctx["existing_violations"] == 0
 
     def test_baseline_violation_disclosed_not_blocking(self) -> None:
-        # A 与 D 预先重叠（基线存量）；共享节点移动不产生新违规 → 可提交+披露
+        # A 与 D 预先重叠（基线存量）；共享节点移动**不实质改变**该对重叠
+        # （向 A 内侧移动 → 重叠收缩）→ 可提交 + 披露（R1-F3 语义：实质
+        # 扩大会阻断；收缩/持平仅披露）。
         overlapping_d = poly("wf-D", ring(0.5, 0.2, 2.5, 0.8))
         data = fc(PARCEL_A, PARCEL_B, overlapping_d)
         payload = self._payload(data, {"rules": ["no_overlap"], "tolerance_m": 1.0})
         plan, findings = build_plan(
             ref_id="ref:x",
             payload=payload,
-            ops=[{"op": "move_shared_vertex", "at": [lon(2), lat(1)], "dx_m": 3.0, "dy_m": 3.0}],
+            # 纯北上移：A/B 相关边保持 x=2 或 y≈1，A∩D/B∩D/C∩D 三对重叠均
+            # 不实质变化（斜向移动会让边界扫入邻面 —— F3 语义正确阻断那种
+            # 情形，见 TestR1Fixes::test_f3_overlap_growth_blocks）
+            ops=[{"op": "move_shared_vertex", "at": [lon(2), lat(1)], "dx_m": 0.0, "dy_m": 3.0}],
             requested_ids=["wf-A"],
             selection=None,
             dataset_fingerprint="fp-test",
             content_revision=1,
         )
-        # (2,1) 是三面交汇点 —— 只动 A/B/C 交界，不触碰 A∩D 对
         assert not any(f["code"] == "topology_violation" for f in findings), f"unexpected: {findings}"
         ctx = plan["topology_context"]
         assert ctx["baseline_total"] >= 1, "baseline A∩D overlap counted"
@@ -677,28 +681,28 @@ class TestPlanIntegration:
     def test_journal_undo_roundtrip_restores_original(self) -> None:
         data = fc(PARCEL_A, PARCEL_B)
         payload = self._payload(data)
+        # 两 op 引用互不相交的节点/边（R1-F2：前序 op 移动后引用旧坐标会被
+        # typed 拒绝 —— 确定性重放测试用独立定位）
+        plan_ops = [
+            {"op": "move_shared_vertex", "at": [lon(2), lat(0)], "dx_m": 5.0, "dy_m": 0.0},
+            {"op": "insert_shared_vertex", "edge": {"between": [[lon(2), lat(1)], [lon(3), lat(1)]]}, "at": [lon(2.5), lat(1)]},
+        ]
         plan, findings = build_plan(
             ref_id="ref:x",
             payload=payload,
-            ops=[
-                {"op": "move_shared_vertex", "at": [lon(2), lat(0)], "dx_m": 5.0, "dy_m": 0.0},
-                {"op": "insert_shared_vertex", "edge": {"between": [[lon(2), lat(0)], [lon(2), lat(1)]]}, "at": [lon(2), lat(0.5)]},
-            ],
+            ops=plan_ops,
             requested_ids=["wf-A"],
             selection=None,
             dataset_fingerprint="fp-test",
             content_revision=1,
         )
         assert findings == []
-        assert len(plan["preview"]) == 4  # 2 op × 2 触及要素（undo 用 op 重放验证）
+        assert len(plan["preview"]) == 3  # op1×2 面 + op2×1 面（单侧边插入）
         from app.services.feature_edit.plan import derive_changes
 
         re_deltas, _schema, re_findings, _summaries, _lineage = derive_changes(
             copy.deepcopy(data),
-            [
-                {"op": "move_shared_vertex", "at": [lon(2), lat(0)], "dx_m": 5.0, "dy_m": 0.0},
-                {"op": "insert_shared_vertex", "edge": {"between": [[lon(2), lat(0)], [lon(2), lat(1)]]}, "at": [lon(2), lat(0.5)]},
-            ],
+            plan_ops,
             ["wf-A"],
             {},
             plan_seed="seed-undo-1",
@@ -728,3 +732,146 @@ class TestSplitTopologyFindings:
         truncated = [{"code": "topology_violation", "message": "x", "detail": {"rule": "no_overlap", "truncated": True}}]
         new, existing = split_topology_findings(truncated, truncated)
         assert new and not existing
+
+
+# ── R1 冷审修复回归（R1-F1..F9） ────────────────────────────────────────────
+
+class TestR1Fixes:
+    def test_f1_rename_field_wire_contract_via_model(self) -> None:
+        """R1-F1：rename_field 的历史 wire 契约（顶层 from/to）必须经 REST schema 可用。"""
+        from app.schemas.feature_edit_schema import EditOpModel
+
+        op = EditOpModel.model_validate({"op": "rename_field", "from": "a", "to": "b"})
+        dumped = op.model_dump_op()
+        assert dumped["from"] == "a" and dumped["to"] == "b"
+        assert "from_field" not in dumped and "to_field" not in dumped
+        # 共享 op 的 to 目标坐标不受影响
+        shared = EditOpModel.model_validate({"op": "move_shared_vertex", "at": [0, 0], "to": [1, 1]})
+        assert shared.model_dump_op()["to"] == [1, 1]
+
+    def test_f2_index_invalidated_between_ops(self) -> None:
+        """R1-F2：多 op plan 中前序 op 改坐标后，后续 vertex ref 寻址不得命中陈旧位置。"""
+        data = fc(PARCEL_A, PARCEL_B)
+        ops = [
+            {"op": "move_shared_vertex", "at": [lon(2), lat(0)], "dx_m": 5.0, "dy_m": 0.0},
+            {"op": "delete_shared_vertex", "at": [lon(2), lat(1)]},
+            {"op": "move_shared_vertex", "at": {"wfid": "wf-B", "path_index": 0, "vertex_index": 1}, "dx_m": 3.0, "dy_m": 0.0},
+        ]
+        deltas, findings, _summaries, _lineage = None, None, None, None
+        from app.services.feature_edit.plan import derive_changes
+
+        deltas, _schema, findings, _sums, _lineage = derive_changes(
+            copy.deepcopy(data), ops, ["wf-A"], {}, plan_seed="r1f2"
+        )
+        # 任何几何结果都必须合法（陈旧索引造成的错位编辑会被合法性门拦截，
+        # 或按新索引正确执行 —— 两者都不允许产生静默错位 delta）
+        applied, _wf = apply_deltas_to_features(copy.deepcopy(data["features"]), deltas)
+        from shapely.geometry import shape as _shape
+
+        for f in applied:
+            g = _shape(f["geometry"])
+            assert g.is_valid or g.geom_type in ("LineString", "MultiLineString")
+
+    def test_f3_overlap_growth_blocks(self) -> None:
+        """R1-F3：基线违规对的重叠面积实质扩大 → 视为新增（阻断）。"""
+        from app.services.feature_edit.topology import split_topology_findings
+
+        def finding_pair(area_m2: float) -> dict:
+            return {
+                "code": "topology_violation",
+                "message": "features overlap",
+                "detail": {"rule": "no_overlap", "wfid": "wf-A", "other_wfid": "wf-D", "overlap_area_m2": area_m2},
+            }
+
+        baseline = [finding_pair(100.0)]
+        same = [finding_pair(102.0)]  # +2%：存量（披露）
+        grown = [finding_pair(120.0)]  # +20%：新增（阻断）
+        new_e, exist_e = split_topology_findings(baseline, same)
+        assert new_e == [] and len(exist_e) == 1
+        new_g, exist_g = split_topology_findings(baseline, grown)
+        assert len(new_g) == 1 and exist_g == []
+
+    def test_f4_multilinestring_connect_moves_only_resolved_part(self) -> None:
+        """R1-F4：MultiLineString 的 connect 只动解析到的 part。"""
+        ml = {
+            "type": "Feature",
+            "geometry": {"type": "MultiLineString", "coordinates": [
+                [[lon(0), lat(0)], [lon(1), lat(0)]],
+                [[lon(5), lat(5)], [lon(6), lat(5)]],
+            ]},
+            "properties": {"_wfid": "wf-ML"},
+        }
+        target = {
+            "type": "Feature",
+            "geometry": {"type": "LineString", "coordinates": [[lon(1) + 4e-4, lat(0)], [lon(2), lat(0)]]},
+            "properties": {"_wfid": "wf-T"},
+        }
+        data = fc(ml, target)
+        index = indexed(data)
+        deltas, findings, _s = connect_endpoint(
+            data, index,
+            {
+                "op": "connect_endpoint",
+                "endpoint": {"wfid": "wf-ML", "vertex_index": 1},  # part 0 的尾顶点
+                "to": {"wfid": "wf-T", "end": "start"},
+                "tolerance_m": 45.0,
+            },
+        )
+        assert findings == [], findings
+        parts = deltas[0]["geometry_after"]["coordinates"]
+        assert parts[0][-1][0] == lon(1) + 4e-4, "解析 part 被连接"
+        assert parts[1] == [[lon(5), lat(5)], [lon(6), lat(5)]], "另一 part 逐字节不变"
+
+    def test_f5_delete_refusal_all_or_nothing(self) -> None:
+        """R1-F5：部分要素拒绝（三角形最少顶点守卫）→ typed finding + 零 delta。"""
+        triangle = poly("wf-T", [[lon(0), lat(0)], [lon(2), lat(0)], [lon(1), lat(1)], [lon(0), lat(0)]])
+        square = poly("wf-S", ring(2, 0, 4, 1))
+        data = fc(triangle, square)
+        index = indexed(data)
+        deltas, findings, _s = delete_shared_vertex(
+            data, index, {"op": "delete_shared_vertex", "at": [lon(2), lat(0)]}
+        )
+        assert deltas == [], "all-or-nothing：拒绝时零 delta"
+        assert any(f["code"] == "invalid_op" and "refused" in f["message"] for f in findings)
+        assert any(f["detail"].get("wfids") == ["wf-T"] for f in findings if isinstance(f.get("detail"), dict))
+
+    def test_f6_op_level_tolerance_reaches_index(self) -> None:
+        """R1-F6：op 级 tolerance_m 真实进入索引构建（容差合并生效）。"""
+        b_ring = [[lon(2) + 4.5e-7, lat(0)], [lon(3), lat(0)], [lon(3), lat(1)], [lon(2) + 4.5e-7, lat(1)], [lon(2) + 4.5e-7, lat(0)]]
+        data = fc(PARCEL_A, poly("wf-B", b_ring))
+        payload = {"geojson": data}
+        plan, findings = build_plan(
+            ref_id="ref:x",
+            payload=payload,
+            ops=[{"op": "move_shared_vertex", "at": [lon(2), lat(0)], "dx_m": 2.0, "dy_m": 0.0, "tolerance_m": 2.0}],
+            requested_ids=["wf-A"],
+            selection=None,
+            dataset_fingerprint="fp-r1",
+            content_revision=1,
+        )
+        assert findings == [], findings
+        assert plan["committable"] is True
+        touched = {d["wfid"] for d in plan["preview"]}
+        assert touched == {"wf-A", "wf-B"}, "容差合并后两侧同步"
+
+    def test_f7_dataset_envelope_level_field_default(self) -> None:
+        """R1-F7：数据集信封声明 level_field → 共享索引默认应用层级守卫。"""
+        road_lower = line("wf-R0", [[lon(0), lat(5)], [lon(4), lat(5)]], level=0)
+        ramp_upper = line("wf-R1", [[lon(4), lat(5)], [lon(8), lat(5)]], level=1)
+        data = fc(road_lower, ramp_upper)
+        payload = {"geojson": data, "level_field": "level"}
+        plan, findings = build_plan(
+            ref_id="ref:x",
+            payload=payload,
+            ops=[{"op": "move_shared_vertex", "at": [lon(4), lat(5)], "dx_m": 2.0, "dy_m": 0.0}],
+            requested_ids=["wf-R1"],
+            selection=None,
+            dataset_fingerprint="fp-r1",
+            content_revision=1,
+        )
+        assert findings == []
+        touched = {d["wfid"] for d in plan["preview"]}
+        # 信封层级守卫生效的证明：同坐标两节点**未合并** —— 坐标查询按
+        # exact 首写语义命中先声明要素（wf-R0）；若守卫缺失则两侧同步
+        # （touched == {R0, R1}）。
+        assert touched == {"wf-R0"}

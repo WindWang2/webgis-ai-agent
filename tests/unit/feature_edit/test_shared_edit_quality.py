@@ -107,14 +107,25 @@ class TestProperties:
 
     def test_same_seed_replay_identical(self) -> None:
         """同种子重放恒等：preview 与 commit 走同一 derive 路径，字节一致。"""
+        # 两 op 引用互不相交的节点/边（R1-F2 语义：op1 移动 (2,1) 后，引用
+        # 旧坐标的 op2 会被 typed 拒绝 —— fail-closed 是修复后的正确行为）
+        ops = [
+            {"op": "move_shared_vertex", "at": [lon(2), lat(0)], "dx_m": 3.0, "dy_m": 0.0},
+            {"op": "insert_shared_vertex", "edge": {"between": [[lon(2), lat(1)], [lon(3), lat(1)]]}, "at": [lon(2.5), lat(1)]},
+        ]
+        d1, _s1, f1, _o1, _l1 = derive_changes(json.loads(json.dumps(TRI)), ops, ["wf-A"], {}, plan_seed="seed-q1")
+        d2, _s2, f2, _o2, _l2 = derive_changes(json.loads(json.dumps(TRI)), ops, ["wf-A"], {}, plan_seed="seed-q1")
+        assert f1 == f2 == [], f"{f1} / {f2}"
+        assert _deltas_json(d1) == _deltas_json(d2), "同种子重放必须字节一致"
+
+    def test_stale_coordinate_reference_after_move_rejected(self) -> None:
+        """R1-F2 语义钉：前序 op 移动节点后，引用其旧坐标的后序 op typed 拒绝。"""
         ops = [
             {"op": "move_shared_vertex", "at": [lon(2), lat(1)], "dx_m": 3.0, "dy_m": 0.0},
             {"op": "insert_shared_vertex", "edge": {"between": [[lon(2), lat(0)], [lon(2), lat(1)]]}, "at": [lon(2), lat(0.5)]},
         ]
-        d1, _s1, f1, _o1, _l1 = derive_changes(json.loads(json.dumps(TRI)), ops, ["wf-A"], {}, plan_seed="seed-q1")
-        d2, _s2, f2, _o2, _l2 = derive_changes(json.loads(json.dumps(TRI)), ops, ["wf-A"], {}, plan_seed="seed-q1")
-        assert f1 == f2 == []
-        assert _deltas_json(d1) == _deltas_json(d2), "同种子重放必须字节一致"
+        _d, _s, findings, _o, _l = derive_changes(json.loads(json.dumps(TRI)), ops, ["wf-A"], {}, plan_seed="seed-stale")
+        assert any(f["code"] == "shared_node_not_found" for f in findings), findings
 
     def test_shared_structure_invariant_after_move(self) -> None:
         """共享结构不变量：编辑后共享顶点坐标仍精确一致（无裂缝/重叠源头）。"""

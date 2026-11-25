@@ -51,17 +51,19 @@ class EditOpModel(BaseModel):
     def _route_from_to(cls, data: Any) -> Any:
         """rename_field 的 `from`/`to` 与共享 op 的 `to`（目标坐标）分流。
 
-        rename_field：顶层 from/to → from_field/to_field（历史 wire 契约不变）；
-        其余 op：`to` 落到共享 op 的目标坐标字段。extra=forbid 保持 —— 未分流
-        的裸 from/to 键对 rename 之外的 op 显式 422。
+        rename_field：顶层 from/to 复制进 from_field/to_field 后**移除原键**
+        （R1-F1：extra=forbid 下残留原键会把 master 上可用的 rename wire
+        契约 422 掉）；其余 op：`to` 落到共享 op 的目标坐标字段。未分流的
+        裸 from/to 键对 rename 之外的 op 显式 422。
         """
         if not isinstance(data, dict):
             return data
         if data.get("op") == "rename_field":
+            data = dict(data)  # 不改调用方输入
             if "from" in data and "from_field" not in data:
-                data = {**data, "from_field": data["from"]}
+                data["from_field"] = data.pop("from")
             if "to" in data and "to_field" not in data:
-                data = {**data, "to_field": data["to"]}
+                data["to_field"] = data.pop("to")
         return data
 
     def model_dump_op(self) -> Dict[str, Any]:

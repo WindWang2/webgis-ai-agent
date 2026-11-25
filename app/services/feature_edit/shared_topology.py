@@ -634,8 +634,14 @@ def _apply_vertex_edit(
     z_allowed: bool,
     op_name: str,
 ) -> List[FeatureDelta]:
-    """按要素应用顶点级变更（mutate(coords, kind, ref) 原地修改），产出 deltas。"""
+    """按要素应用顶点级变更（mutate(coords, kind, ref) -> bool 原地修改）。
+
+    all-or-nothing（R1-F5）：任一触及要素拒绝（最少顶点/收尾边/点顶点等
+    守卫）→ typed finding 指名拒绝要素并**放弃全部 delta** —— 绝不提交
+    「部分要素改了、部分静默没改」的不对称结果。
+    """
     deltas: List[FeatureDelta] = []
+    refused: List[str] = []
     for wfid in sorted(by_feature):
         geometry = _feature_geometry(fc, wfid)
         if geometry is None:
@@ -661,12 +667,16 @@ def _apply_vertex_edit(
                 return []
             seen_paths.add(path_i)
             was_closed = kind == "ring" and len(target_coords) >= 4 and target_coords[0] == target_coords[-1]
-            mutate(target_coords, kind, (path_i, k))
+            if mutate(target_coords, kind, (path_i, k)) is False:
+                refused.append(wfid)
+                continue
             # 环闭合同步：索引按逻辑顶点登记（闭环首尾只记 0 位），移动共享
             # 顶点后必须把闭合重复点同步为最新坐标，否则环开口。
             if was_closed and target_coords[0] != target_coords[-1]:
                 target_coords[-1] = list(target_coords[0])
             applied = True
+        if refused:
+            break  # all-or-nothing：任一拒绝即放弃
         if not applied:
             continue
         geom_after = _validated_shape(new_geometry, findings, wfid)
@@ -675,6 +685,15 @@ def _apply_vertex_edit(
         if _coords_equal(geometry, new_geometry):
             continue
         deltas.append({"wfid": wfid, "geometry_before": geometry, "geometry_after": new_geometry})
+    if refused:
+        findings.append(
+            finding(
+                "invalid_op",
+                f"{op_name} refused for some touched features (all-or-nothing atomicity)",
+                wfids=sorted(set(refused))[:8],
+            )
+        )
+        return []
     return deltas
 
 
@@ -729,8 +748,9 @@ def move_shared_vertex(
         findings.append(budget)
         return [], findings, {"op": op_name}
 
-    def mutate(coords: List[List[Any]], kind: str, ref: Tuple[int, int]) -> None:
+    def mutate(coords: List[List[Any]], kind: str, ref: Tuple[int, int]) -> bool:
         _replace_vertex(coords, ref[1], to_x, to_y)
+        return True
 
     deltas = _apply_vertex_edit(
         fc, index, _members_by_feature(node.members), findings, mutate,
@@ -845,14 +865,16 @@ def insert_shared_vertex(
         findings.append(budget)
         return [], findings, {"op": op_name}
 
-    def mutate(coords: List[List[Any]], kind: str, ref: Tuple[int, int]) -> None:
+    def mutate(coords: List[List[Any]], kind: str, ref: Tuple[int, int]) -> bool:
         k = ref[1]
         closed = kind == "ring" and len(coords) >= 4 and coords[0] == coords[-1]
         insert_idx = k + 1
         if closed and k == len(coords) - 1:
             insert_idx = len(coords) - 1  # 收尾边：插在闭合点之前，保持闭合
-        if insert_idx <= len(coords):
-            coords.insert(insert_idx, [ix, iy])
+        if insert_idx > len(coords):
+            return False
+        coords.insert(insert_idx, [ix, iy])
+        return True
 
     deltas = _apply_vertex_edit(
         fc, index, _members_by_feature(members), findings, mutate,
@@ -890,18 +912,19 @@ def delete_shared_vertex(
         findings.append(budget)
         return [], findings, {"op": op_name}
 
-    def mutate(coords: List[List[Any]], kind: str, ref: Tuple[int, int]) -> None:
+    def mutate(coords: List[List[Any]], kind: str, ref: Tuple[int, int]) -> bool:
         k = ref[1]
         closed = kind == "ring" and len(coords) >= 4 and coords[0] == coords[-1]
         if kind == "point":
-            return  # 点要素的唯一定点不可删（调用方披露）
+            return False  # 点要素的唯一定点不可删
         if closed and len(coords) - 1 < 4:
-            return  # 环删除后至少 3 个不同顶点（4 位置含闭合）
+            return False  # 环删除后至少 3 个不同顶点（4 位置含闭合）
         if kind == "line" and len(coords) - 1 < 2:
-            return
+            return False
         coords.pop(k)
         if kind == "ring" and coords[0] != coords[-1]:
             coords.append(list(coords[0]))  # 再闭合
+        return True
 
     deltas = _apply_vertex_edit(
         fc, index, _members_by_feature(node.members), findings, mutate,
@@ -982,13 +1005,14 @@ def reshape_shared_edge(
         findings.append(budget)
         return [], findings, {"op": op_name}
 
-    def mutate(coords: List[List[Any]], kind: str, ref: Tuple[int, int]) -> None:
+    def mutate(coords: List[List[Any]], kind: str, ref: Tuple[int, int]) -> bool:
         k = ref[1]
         if k + 1 >= len(coords):
-            return  # 收尾边闭环位（b 在 0 位）：插入语义不同，本 op 不支持收尾边
+            return False  # 收尾边闭环位（b 在 0 位）：插入语义不同，本 op 拒绝（all-or-nothing 披露）
         forward = _same_coord(coords[k], (node_a.x, node_a.y))
         pts = new_pts if forward else list(reversed(new_pts))
         coords[k + 1 : k + 1] = [[x, y] for (x, y) in pts]
+        return True
 
     deltas = _apply_vertex_edit(
         fc, index, _members_by_feature(edge.members), findings, mutate,
@@ -1042,7 +1066,7 @@ def connect_endpoint(
     findings.extend(end_findings)
     if end_findings or end_loc is None:
         return [], findings, {"op": op_name}
-    end_wfid, end_x, end_y = end_loc
+    end_wfid, end_path_i, end_k, end_x, end_y = end_loc
 
     target = op.get("to")
     target_xy: Optional[Tuple[float, float]] = None
@@ -1052,7 +1076,8 @@ def connect_endpoint(
         findings.extend(tgt_findings)
         if tgt_findings or tgt_loc is None:
             return [], findings, {"op": op_name}
-        target_wfid, target_xy = tgt_loc[0], (tgt_loc[1], tgt_loc[2])
+        target_wfid = tgt_loc[0]
+        target_xy = (tgt_loc[3], tgt_loc[4])
     else:
         c = _coord_of(target)
         if c is None:
@@ -1097,22 +1122,18 @@ def connect_endpoint(
     new_geometry = _copy.deepcopy(geometry)
     moved = False
     paths_meta = index.paths.get(end_wfid) or []
-    end_at_last = _endpoint_at_last(op.get("endpoint"))
-    for path_i in range(len(paths_meta)):
-        _pi, old_coords, addr, kind = paths_meta[path_i]
-        if kind != "line" or not old_coords:
-            continue
-        target_coords = _coords_at(new_geometry, addr)
-        if target_coords is None:
-            continue
-        k = (len(old_coords) - 1) if end_at_last else 0
-        if k >= len(target_coords):
-            continue
-        if _has_z(target_coords):
-            findings.append(finding("invalid_op", "connect on Z-coordinate path is not supported", wfid=end_wfid))
-            return [], findings, {"op": op_name}
-        target_coords[k] = [target_xy[0], target_xy[1]]
-        moved = True
+    # 只动解析到的那个 part（R1-F4：MultiLineString 逐 part 瞬移会以零
+    # findings 静默破坏其它 part —— 距离检查只对解析端点做过）。
+    if end_path_i < len(paths_meta):
+        _pi, old_coords, addr, kind = paths_meta[end_path_i]
+        if kind == "line" and old_coords:
+            target_coords = _coords_at(new_geometry, addr)
+            if target_coords is not None and end_k < len(target_coords):
+                if _has_z(target_coords):
+                    findings.append(finding("invalid_op", "connect on Z-coordinate path is not supported", wfid=end_wfid))
+                    return [], findings, {"op": op_name}
+                target_coords[end_k] = [target_xy[0], target_xy[1]]
+                moved = True
     if not moved:
         findings.append(finding("invalid_op", "no line endpoint was moved (endpoint spec mismatch)"))
         return [], findings, {"op": op_name}
@@ -1177,6 +1198,7 @@ def vertex_delta_summary(deltas: List[FeatureDelta]) -> Dict[str, Any]:
     per_feature: List[Dict[str, Any]] = []
     area_delta = 0.0
     length_delta = 0.0
+    truncated = len(deltas) > MAX_SHARED_TOUCHED_FEATURES
     for d in deltas[:MAX_SHARED_TOUCHED_FEATURES]:
         rec: Dict[str, Any] = {"wfid": d.get("wfid")}
         gb, ga = d.get("geometry_before"), d.get("geometry_after")
@@ -1200,6 +1222,8 @@ def vertex_delta_summary(deltas: List[FeatureDelta]) -> Dict[str, Any]:
             rec["measure"] = "unavailable"
         per_feature.append(rec)
     summary: Dict[str, Any] = {"touched": per_feature}
+    if truncated:
+        summary["truncated"] = True  # 度量投影截断披露（R1-F9；delta 本身不截断）
     if area_delta:
         summary["area_delta_m2"] = round(area_delta, 3)
     if length_delta:
@@ -1344,8 +1368,13 @@ def _edge_segment_coords(
 
 def _locate_line_endpoint(
     index: SharedTopologyIndex, spec: Any
-) -> Tuple[Optional[Tuple[str, float, float]], List[EditFinding]]:
-    """endpoint spec → (wfid, x, y)。{wfid, end: start|end} 或 {wfid, vertex_index}。"""
+) -> Tuple[Optional[Tuple[str, int, int, float, float]], List[EditFinding]]:
+    """endpoint spec → (wfid, path_i, k, x, y)。
+
+    {wfid, end: start|end} 解析到**第一条线 path** 的首/尾顶点；{wfid,
+    vertex_index} 解析到首个含该下标的线 path。path 级精确解析（R1-F4：
+    MultiLineString 的连接只动解析到的那个 part，绝不逐 part 瞬移）。
+    """
     if not isinstance(spec, dict):
         return None, [finding("invalid_op", "endpoint must be {wfid, end|vertex_index}")]
     wfid = _resolve_wfid(index, spec.get("wfid"))
@@ -1374,7 +1403,7 @@ def _locate_line_endpoint(
         return None, [finding("invalid_op", "endpoint requires end: start|end or vertex_index")]
     coords = paths[target_path][1]
     p = coords[target_k]
-    return (wfid, float(p[0]), float(p[1])), []
+    return (wfid, target_path, target_k, float(p[0]), float(p[1])), []
 
 
 def _endpoint_at_last(spec: Any) -> bool:

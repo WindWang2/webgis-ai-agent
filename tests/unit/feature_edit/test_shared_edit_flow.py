@@ -406,3 +406,65 @@ class TestConstraintRoutes:
                 json={"target": {"mode": "explicit", "ref_id": ref}, "ops": [{"op": "teleport_feature"}]},
             )
             assert resp.status_code == 422, "词表外 op schema 层拒绝"
+
+
+class TestLineNetworkJourney:
+    """线网 REST 旅程（R1 审查补强：connect_endpoint 走真实事务链）。"""
+
+    @pytest.mark.asyncio
+    async def test_connect_endpoint_rest_journey(self, app, client, store) -> None:
+        with _patched_store(store):
+            s = sid()
+            l1 = {"type": "Feature", "id": "road-1", "geometry": {"type": "LineString", "coordinates": [
+                [lon(0), lat(5)], [lon(2), lat(5)],
+            ]}, "properties": {"name": "西段"}}
+            l2 = {"type": "Feature", "id": "road-2", "geometry": {"type": "LineString", "coordinates": [
+                [lon(2) + 5e-4, lat(5)], [lon(4), lat(5)],
+            ]}, "properties": {"name": "东段"}}
+            net = {"geojson": {"type": "FeatureCollection", "features": [l1, l2]}}
+            ref = await _seed(store, s, net)
+
+            # 1) 影响投影（线网断头连接的影响面）
+            resp = await client.post(
+                f"/api/v1/chat/sessions/{s}/feature-edits/{ref}/impact",
+                json={"ops": [{
+                    "op": "connect_endpoint",
+                    "endpoint": {"wfid": "road-1", "end": "end"},
+                    "to": {"wfid": "road-2", "end": "start"},
+                    "tolerance_m": 45.0,
+                }], "feature_ids": ["road-1"]},
+            )
+            assert resp.status_code == 200, resp.text
+            assert resp.json()["committable"] is True
+
+            # 2) 预览 → 审批 → 提交
+            plan = await _preview(client, s, ref, [{
+                "op": "connect_endpoint",
+                "endpoint": {"wfid": "road-1", "end": "end"},
+                "to": {"wfid": "road-2", "end": "start"},
+                "tolerance_m": 45.0,
+            }], feature_ids=["road-1"])
+            assert plan["committable"] is True
+            resp = await client.post(
+                f"/api/v1/chat/sessions/{s}/feature-edits/plans/{plan['plan_id']}/decision",
+                json={"action": "approve"},
+            )
+            assert resp.status_code == 200, resp.text
+
+            # 3) 权威结果：断头消除（road-1 端点 = road-2 首端，逐字节一致）
+            payload = await store.get(s, ref)
+            feats = {f["id"]: f for f in payload["geojson"]["features"]}
+            assert feats["road-1"]["geometry"]["coordinates"][-1] == \
+                feats["road-2"]["geometry"]["coordinates"][0]
+
+            # 4) undo 恢复断头原状
+            resp = await client.post(f"/api/v1/chat/sessions/{s}/feature-edits/{ref}/undo")
+            assert resp.status_code == 200
+            payload = await store.get(s, ref)
+            feats = {f["id"]: f for f in payload["geojson"]["features"]}
+            assert feats["road-1"]["geometry"]["coordinates"][-1] == [lon(2), lat(5)]
+
+            # 5) 复检：数据集无声明规则 → 明确说明（declared-rules-only）
+            resp = await client.post(f"/api/v1/chat/sessions/{s}/feature-edits/{ref}/revalidate", json={})
+            assert resp.status_code == 200
+            assert resp.json()["rules"] == []

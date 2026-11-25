@@ -266,6 +266,7 @@ def derive_changes(
     plan_seed: str = "",
     geometry_type: Optional[str] = None,
     contract_fields: Optional[frozenset] = None,
+    shared_level_field: Optional[str] = None,
 ) -> Tuple[List[FeatureDelta], List[RenameField], List[EditFinding], List[OperationSummary], List[Dict[str, Any]]]:
     """对已物化 fc 顺序求 ops 的完整 diff（preview 与 commit 同一路径）。
 
@@ -289,17 +290,25 @@ def derive_changes(
     field_profiles = profile_fields(working)
     seed = plan_seed or "unseeded"
     # 共享拓扑索引（goal-gis-topology-authoring）：首个共享 op 时对 working
-    # 惰性构建；结构性 delta（成员变化）后失效重建 —— 索引永远镜像当前态。
-    shared_index: Optional[SharedTopologyIndex] = None
-    shared_index_valid = False
+    # 惰性构建；任何 delta 后失效重建（R1-F2）—— 索引永远镜像当前态。
+    # 匹配参数（tolerance_m/level_field）按 op 声明，参数对为缓存键（R1-F6）；
+    # 未声明时回落数据集信封的 level_field 默认（R1-F7）。
+    shared_indexes: Dict[Tuple[Optional[float], Optional[str]], Tuple[Optional[SharedTopologyIndex], bool]] = {}
 
-    def _shared_index_for(fc_current: GeoJSONFeatureCollection) -> Tuple[Optional[SharedTopologyIndex], List[EditFinding]]:
-        nonlocal shared_index, shared_index_valid
-        if shared_index_valid and shared_index is not None:
-            return shared_index, []
-        idx, idx_findings = build_shared_index(fc_current)
-        shared_index = idx
-        shared_index_valid = idx is not None
+    def _shared_index_for(
+        fc_current: GeoJSONFeatureCollection,
+        tolerance_m: Any = None,
+        level_field: Any = None,
+    ) -> Tuple[Optional[SharedTopologyIndex], List[EditFinding]]:
+        key = (
+            float(tolerance_m) if isinstance(tolerance_m, (int, float)) and not isinstance(tolerance_m, bool) else None,
+            str(level_field) if isinstance(level_field, str) and level_field else None,
+        )
+        cached = shared_indexes.get(key)
+        if cached is not None and cached[1]:
+            return cached[0], []
+        idx, idx_findings = build_shared_index(fc_current, tolerance_m=tolerance_m, level_field=level_field)
+        shared_indexes[key] = (idx, idx is not None)
         return idx, idx_findings
     for op_index, op in enumerate(ops):
         if not isinstance(op, dict) or op.get("op") not in EDIT_OPS:
@@ -481,8 +490,15 @@ def derive_changes(
                 else:
                     op_summaries.append({"op": kind, "parents": len(merge_targets)})
         elif kind in ("move_shared_vertex", "insert_shared_vertex", "delete_shared_vertex", "reshape_shared_edge", "connect_endpoint"):
-            # 共享拓扑编辑：目标无关（op 自带定位），索引对当前 working 态构建。
-            idx, idx_findings = _shared_index_for(working)
+            # 共享拓扑编辑：目标无关（op 自带定位）；匹配参数按 op 声明，
+            # 未声明回落数据集信封默认（level_field 可在数据集级声明桥/隧
+            # 分层 —— R1-F7；容差无数据集级默认，显式声明才启用）。
+            envelope_level_field = shared_level_field
+            idx, idx_findings = _shared_index_for(
+                working,
+                tolerance_m=op.get("tolerance_m"),
+                level_field=op.get("level_field") or envelope_level_field,
+            )
             findings.extend(idx_findings)
             if idx is not None and not idx_findings:
                 applier = {
@@ -503,12 +519,11 @@ def derive_changes(
             feats, _ = apply_deltas_to_features(working.get("features") or [], deltas)
             feats, _ = apply_schema_ops_to_features(feats, schema_ops)
             working = {**working, "features": feats}
-            if any(
-                isinstance(d, dict) and d.get("presence") in ("created", "removed")
-                for d in deltas
-            ):
-                # 共享索引镜像要素集合 —— 结构性变化后必须重建。
-                shared_index_valid = False
+            # 共享索引镜像**坐标级**当前态（R1-F2）：任何 delta（含 update 的
+            # 顶点位移）都会让既有索引的成员定位/边关系失真 —— 多 op plan 里
+            # 陈旧 member_nid 会改到错误顶点并逃逸拓扑检查。一律全缓存失效
+            # 重建（预算由 MAX_SHARED_INDEX_NODES 闸住，op 数 ≤8 有界）。
+            shared_indexes.clear()
             if schema_ops:
                 # R1 P2-5：rename 改变字段面 —— 校验证据必须随工作视图重算
                 # （否则 rename 后按旧 profile 误拒/静默重建旧列）。
@@ -713,6 +728,11 @@ def build_plan(
         plan_seed=plan_id,
         geometry_type=_declared_geometry_type(payload),
         contract_fields=contract_fields,
+        shared_level_field=(
+            payload.get("level_field")
+            if isinstance(payload, dict) and isinstance(payload.get("level_field"), str)
+            else None
+        ),
     )
     findings.extend(derive_findings)
     # ── G44：active 合同的候选态门禁（与完整评估同一 validator 内核）────
