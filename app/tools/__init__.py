@@ -187,6 +187,8 @@ _TOOL_MODULES = [
     ("app.tools.design_spec_tools", "register_design_spec_tools"),
     # 设计规范 × 地图应用面（WP2：提取/推荐/绑定校验/dry-run 应用）
     ("app.tools.design_spec_tools", "register_map_design_tools"),
+    # 系列地图作者计划与一致性（goal-carto-design-series WP3；Pi 与 UI 共用 map_series service）
+    ("app.tools.map_series_tools", "register_map_series_tools"),
 
 ]
 

@@ -1207,6 +1207,9 @@ app.include_router(g47_routes.router, prefix="/api/v1", tags=["Dorling 圆面积
 # 制图设计规范（goal-carto-design-series WP1；UI 与 Pi 共用同一 service/存储权威）
 from app.api.routes import design_specs as design_specs_routes  # noqa: E402
 app.include_router(design_specs_routes.router, prefix="/api/v1", tags=["制图设计规范"])
+# 系列地图作者计划与一致性（goal-carto-design-series WP3；同一权威）
+from app.api.routes import map_series as map_series_routes  # noqa: E402
+app.include_router(map_series_routes.router, prefix="/api/v1", tags=["系列地图计划"])
 app.include_router(report.router, prefix="/api/v1", tags=["报告生成"])
 app.include_router(chat.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(mapspec_mutations.router, prefix="/api/v1", tags=["AI对话"])

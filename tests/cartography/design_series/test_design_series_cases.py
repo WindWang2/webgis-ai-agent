@@ -91,7 +91,6 @@ class TestCase2DistrictComparison:
         spec = case["spec_payload"]
 
         def _doc(field: str, unit: str = "所"):
-            fc = case["fixtures"]["city_a"] if field == "primaries" else case["fixtures"]["city_b"]
             return {
                 "version": "1.1",
                 "sources": {"src": {"type": "geojson", "profile": {
