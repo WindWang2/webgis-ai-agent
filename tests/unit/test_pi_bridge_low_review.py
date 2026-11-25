@@ -69,6 +69,57 @@ async def test_policy_abort_task_retained_and_failure_observed(monkeypatch, capl
     assert "Pi policy abort failed" in caplog.text
 
 
+@pytest.mark.asyncio
+async def test_late_callback_journal_task_is_strongly_retained(monkeypatch):
+    """A late-callback journal task must stay strongly referenced until it
+    completes; a bare fire-and-forget create_task may be GC'd mid-flight."""
+    from app.tools.registry import ToolRegistry
+    import app.services.chat.engine_instance as engines
+    import app.services.chat.pi_post_dispatch as disclosure
+
+    registry = ToolRegistry()
+    registry.register(
+        "review_pure", "review", lambda: {"summary": "ok"},
+        parameters={"type": "object", "properties": {}},
+    )
+    monkeypatch.setattr(bridge, "get_tool_registry", lambda: registry)
+    monkeypatch.setattr(engines, "try_get_chat_engine", lambda: None)
+    monkeypatch.setattr(
+        disclosure, "apply_post_dispatch_disclosure",
+        AsyncMock(return_value=disclosure.DisclosureOutcome()),
+    )
+
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def slow_late(*_args, **_kwargs):
+        started.set()
+        await release.wait()
+
+    monkeypatch.setattr(bridge, "_hk_record_late_callback", slow_late)
+    bridge._active_turns["late-retained"] = bridge._ActiveTurnEntry(
+        session_id="late-retained", turn_id="turn-new", token=None, run_id="run-new",
+    )
+    before = set(pi_bridge_tasks._pending_aborts)
+    try:
+        result = await bridge.dispatch_tool(bridge.PiToolRequest(
+            toolCallId="late-retained-tc", name="webgis_execute",
+            sessionId="late-retained", verifiedTurnId="turn-old",
+            arguments={"toolName": "review_pure", "arguments": {}},
+        ))
+        assert not result.isError
+        await asyncio.wait_for(started.wait(), 1)
+        retained = pi_bridge_tasks._pending_aborts - before
+        assert len(retained) == 1
+    finally:
+        release.set()
+        await asyncio.gather(
+            *(pi_bridge_tasks._pending_aborts - before), return_exceptions=True,
+        )
+        await asyncio.sleep(0)
+        bridge._active_turns.pop("late-retained", None)
+    assert retained.isdisjoint(pi_bridge_tasks._pending_aborts)
+
+
 def test_cleanup_preserves_other_sessions_and_anonymous_bucket():
     cache = {("a", "tool"): 1, ("b", "tool"): 2, ("", "tool"): 3, "": 4, (): 5}
     bridge._pop_session_entries(cache, "a")

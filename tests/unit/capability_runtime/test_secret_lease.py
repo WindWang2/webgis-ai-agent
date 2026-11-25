@@ -197,6 +197,18 @@ class TestScopedResolve:
             LEASE_CREDENTIAL_MISSING
 
 
+class TestSetSecretProviderNoneFallback:
+    def test_none_falls_back_to_env_adapter(self, monkeypatch):
+        """``set_secret_provider(None)`` 必须回落 env adapter(文档契约),
+        而不是把 provider 置空导致 acquire 静默 credential_missing。"""
+        monkeypatch.setenv("GIS_TOOL_SECRET_ENV_FALLBACK", "fallback-secret")
+        mgr = get_secret_lease_manager()
+        set_secret_provider(None)
+        r = mgr.acquire("env-fallback")
+        assert r.ok
+        assert mgr.resolve(r.lease) == "fallback-secret"
+
+
 class TestDefaultTtl:
     def test_default_ttl_short(self):
         assert DEFAULT_LEASE_TTL_S <= 600.0  # 短期租约语义

@@ -459,3 +459,33 @@ async def test_p2_cancel_uses_scanned_active_job_when_state_job_id_missing(
         stored = await DurableJobStore.get(db, job_id)
         await db.commit()
     assert stored is not None and stored.status == "cancelled"
+
+
+async def test_reused_active_job_reports_idempotent_reuse(ops_env):
+    """回归（P3）：幂等命中仍活跃的 job（create 与 runner 启动之间崩溃的补
+    启动路径）时如实返回 idempotent_reuse=True，与终态复用分支（283-294）
+    语义一致，不再谎报为新建。"""
+    from app.services.data_operations import import_jobs as ij
+    from app.services.data_operations.runner import submit_async_job
+
+    svc, state, keys = await _seed_batch(ops_env)
+    from app.services.data_import import staging
+
+    fresh = staging.load_state(state.batch_id)
+    key = ij.build_idempotency_key(
+        ij.JobActor(), fresh.batch_id, fresh.plan_version,
+        {k: fresh.plan_hashes.get(k, "") for k in keys},
+        receipt_state={},
+    )
+    job_id, _, reused0 = submit_async_job(
+        task_type=ij.TASK_TYPE, kind="data_import",
+        display_name="crash-residual", params={"batch_id": state.batch_id},
+        idempotency_key=key, session_id=SESS)
+    assert reused0 is False
+
+    out = await svc.start_commit(state.batch_id, SESS, background=True)
+    assert out["job_id"] == str(job_id)
+    assert out["idempotent_reuse"] is True
+    task = svc._commit_tasks.get(state.batch_id)
+    if task is not None:
+        await asyncio.wait_for(asyncio.shield(task), timeout=60)

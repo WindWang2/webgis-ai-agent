@@ -84,6 +84,10 @@ def register_topology_workbench_tools(registry: ToolRegistry) -> None:
         user_id, org_id, ctx_session = _caller()
         if not user_id and not (session_id or ctx_session):
             return _fail("MISSING_IDENTITY", "工具上下文缺少用户身份与会话（无法归属规则集）")
+        if isinstance(rules, list) and len(rules) > _MAX_RULES:
+            return _fail(
+                "INVALID_ARGS", f"规则数组超过上限（{_MAX_RULES} 条）；请拆分为多个规则集"
+            )
         from app.services.topology_workbench.service import (
             WorkbenchError,
             create_ruleset,
@@ -161,7 +165,14 @@ def register_topology_workbench_tools(registry: ToolRegistry) -> None:
         if not isinstance(bindings, dict) or not bindings:
             return _fail("INVALID_ARGS", "bindings 必须是非空对象（角色名 → 绑定）")
         if anchor:
-            bindings = await _rebind_inline_payloads(bindings, str(anchor))
+            try:
+                bindings = await _rebind_inline_payloads(bindings, str(anchor))
+            except Exception as exc:  # noqa: BLE001 — store 失败按 _fail 契约回执，不穿出工具
+                return _fail(
+                    "STORE_FAILED",
+                    f"绑定载荷无法存回会话（{type(exc).__name__}）；"
+                    "请缩减绑定载荷或检查会话后重试",
+                )
         from app.services.topology_workbench.service import WorkbenchError, submit_run
         try:
             result = await submit_run(
@@ -430,7 +441,7 @@ def register_topology_workbench_tools(registry: ToolRegistry) -> None:
             return _fail(
                 "REPAIR_UNSUPPORTED",
                 candidates.get("unsupported_reason") or "该问题没有可自动预览的修复候选",
-                candidates=candidates["candidates"],
+                candidates=candidates.get("candidates") or [],
             )
         sid = session_id or ctx_session
         if not sid:

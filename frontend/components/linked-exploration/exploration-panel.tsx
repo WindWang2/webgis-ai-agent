@@ -118,6 +118,7 @@ export function ExplorationPanel({ sessionId, ownerToken = null }: PanelProps) {
   // ─── generation 拦截（E23/E24）──────────────────────────────────────────
   const generation = useSyncExternalStoreExploration();
   const previewSeq = useRef(0);
+  const inspectSeq = useRef(0);
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const sourceLayer = useMemo(
@@ -143,6 +144,7 @@ export function ExplorationPanel({ sessionId, ownerToken = null }: PanelProps) {
 
   // ─── inspect（源冻结 + 字段候选） ────────────────────────────────────────
   useEffect(() => {
+    const seq = ++inspectSeq.current;
     if (!sourceRef) {
       setInspect({ status: 'idle' });
       return;
@@ -151,6 +153,7 @@ export function ExplorationPanel({ sessionId, ownerToken = null }: PanelProps) {
     const abort = new AbortController();
     setInspect({ status: 'loading' });
     client.inspect(sessionId, sourceRef, abort.signal).then((data) => {
+      if (seq !== inspectSeq.current) return;         // 旧源响应（已发起新请求）
       if (getExplorationEpoch() !== epoch) return;
       setInspect({ status: 'ready', data });
       // 重绑 revision（权威锚）
@@ -159,7 +162,7 @@ export function ExplorationPanel({ sessionId, ownerToken = null }: PanelProps) {
         bindExploration(sourceRef, data.anchor.content_revision, mapspecLayerId, { keep: true });
       }
     }).catch((err) => {
-      if (abort.signal.aborted) return;
+      if (seq !== inspectSeq.current || abort.signal.aborted) return;
       const e = asLinkedExplorationError(err);
       setInspect({ status: 'error', code: e.code, message: e.message });
     });
@@ -167,8 +170,13 @@ export function ExplorationPanel({ sessionId, ownerToken = null }: PanelProps) {
   }, [client, sessionId, sourceRef, mapspecLayerId]);
 
   // ─── 视图列表 ────────────────────────────────────────────────────────────
+  const viewsSeq = useRef(0);
   const refreshViews = useCallback(() => {
-    client.listViews(sessionId).then((r) => setViews(r.views ?? [])).catch(() => {});
+    const seq = ++viewsSeq.current;
+    client.listViews(sessionId).then((r) => {
+      if (seq !== viewsSeq.current) return; // 旧会话/旧刷新响应（已发起新请求）
+      setViews(r.views ?? []);
+    }).catch(() => {});
   }, [client, sessionId]);
   useEffect(() => { refreshViews(); }, [refreshViews]);
 
@@ -177,11 +185,10 @@ export function ExplorationPanel({ sessionId, ownerToken = null }: PanelProps) {
     if (!sourceRef) return;
     const epoch = getExplorationEpoch();
     const seq = ++previewSeq.current;
-    const abort = new AbortController();
     setPreview({ status: 'loading', generation: gen });
     const charts = listCharts();
     const conditions = listConditions();
-    client.preview(sessionId, sourceRef, charts, conditions, abort.signal).then((data) => {
+    client.preview(sessionId, sourceRef, charts, conditions).then((data) => {
       if (seq !== previewSeq.current) return;         // 旧响应（已发起新请求）
       if (getExplorationEpoch() !== epoch) return;    // 会话已切换
       if (getExplorationGeneration() !== gen) return; // 条件已再变 → 丢弃
@@ -189,7 +196,7 @@ export function ExplorationPanel({ sessionId, ownerToken = null }: PanelProps) {
       setPreviewData(data); // 图表组件实例共享本次组合求值（单一请求点）
       setStaleReason(null);
     }).catch((err) => {
-      if (seq !== previewSeq.current || abort.signal.aborted) return;
+      if (seq !== previewSeq.current) return;
       const e = asLinkedExplorationError(err);
       setPreview({ status: 'error', code: e.code, message: e.message });
     });

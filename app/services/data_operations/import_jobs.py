@@ -318,7 +318,7 @@ async def submit_import_commit(
         "job_id": str(job_id),
         "status": "committing",
         "members": target_keys,
-        "idempotent_reuse": False,
+        "idempotent_reuse": reused,
         "poll": f"/api/v1/data-import/batches/{batch_id}",
     }
 

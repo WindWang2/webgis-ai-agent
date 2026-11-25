@@ -79,6 +79,14 @@ def test_invalid_manifest_rejected(tmp_path):
         load_manifest(dup)
 
 
+def test_non_object_budget_entry_raises_value_error(tmp_path):
+    """budgets 数组含非对象元素 → ValueError（而非 AttributeError）。"""
+    bad = tmp_path / "bad_entry.json"
+    bad.write_text(json.dumps({"budgets": ["not-an-object"]}), encoding="utf-8")
+    with pytest.raises(ValueError):
+        load_manifest(bad)
+
+
 def test_default_registry_loads_repo_manifest():
     registry = reset_budget_registry_for_tests()
     registry.load_manifest(_REPO_ROOT / BUDGET_MANIFEST_PATH)

@@ -463,8 +463,11 @@ export function StoryView(): React.ReactElement {
     // 用户启动播放与显式 seek 同级：spec 迟到落位不得重写到当前位置。
     userNavigatedRef.current = true;
     setActiveId((cur) => {
-      const atEnd = cur !== null && playlist.length > 0 && playlist[playlist.length - 1] === cur;
-      return atEnd ? playlist[0] : (cur ?? playlist[0] ?? null);
+      // 迟到 spec 生效后 cur 可能仍是不在 playlist 里的本地章节 id（playPos=-1，
+      // 播放 effect 会立即自停）—— 显式播放时从 playlist 首章重启。
+      if (cur === null || !playlist.includes(cur)) return playlist[0] ?? null;
+      const atEnd = playlist.length > 0 && playlist[playlist.length - 1] === cur;
+      return atEnd ? playlist[0] : cur;
     });
     setPlaying(true);
     setTakeoverPaused(false);

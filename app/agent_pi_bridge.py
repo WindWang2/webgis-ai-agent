@@ -981,18 +981,15 @@ async def _dispatch_tool_bound(
         # the ORIGINAL turn (idempotent per tool_call_id) — fire-and-forget,
         # never blocks the callback path.
         try:
-            _late_task = asyncio.get_running_loop().create_task(
-                _hk_record_late_callback(
-                    session_id,
-                    tool_name=tool_name,
-                    tool_call_id=str(request.toolCallId or ""),
-                    callback_turn=str(_callback_turn or ""),
-                    active_turn=str(_active_turn_for_evidence or ""),
-                )
-            )
-            _late_task.add_done_callback(
-                lambda _t: _t.cancelled() or _t.exception()
-            )
+            # schedule_abort retains a strong reference (and observes failures)
+            # until the task completes — a bare create_task may be GC'd mid-flight.
+            schedule_abort(_hk_record_late_callback(
+                session_id,
+                tool_name=tool_name,
+                tool_call_id=str(request.toolCallId or ""),
+                callback_turn=str(_callback_turn or ""),
+                active_turn=str(_active_turn_for_evidence or ""),
+            ))
         except (RuntimeError, TypeError):  # no loop / scheduling refused
             pass
 
@@ -4495,9 +4492,6 @@ async def shutdown_pi_bridge() -> None:
             except Exception:  # noqa: BLE001 — best-effort shutdown
                 pass
         _bridge_pool = None
-        _pi_bridge = None
-    if _pi_bridge is not None:
-        await _pi_bridge.stop()
         _pi_bridge = None
 
 

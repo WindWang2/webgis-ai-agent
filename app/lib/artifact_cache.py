@@ -543,6 +543,11 @@ def sweep_orphan_chunk_cache(*, now: Optional[float] = None) -> dict:
         elif ext == "meta" and _KEY_RE.match(stem):
             meta_keys.add(stem)
         else:
+            # Only our mkstemp namespace is eligible (same discipline as the
+            # artifact sweep): unknown operator files are not cache-owned and
+            # must never be deleted by inference.
+            if not re.fullmatch(r"tmp[A-Za-z0-9_-]+\.npy", name):
+                continue
             p = os.path.join(CHUNK_DIR, name)
             try:
                 if os.path.isfile(p) and os.stat(p).st_mtime < grace_cutoff:
@@ -568,7 +573,7 @@ def sweep_orphan_chunk_cache(*, now: Optional[float] = None) -> dict:
             continue
     for stem in npy_keys & meta_keys:
         try:
-            if os.stat(_chunk_meta_path(stem)).st_mtime < cutoff:
+            if _meta_created_at(_chunk_meta_path(stem)) < cutoff:
                 for p in (_chunk_path(stem), _chunk_meta_path(stem)):
                     try:
                         os.unlink(p)
@@ -641,6 +646,27 @@ def _disk_retention_seconds() -> float:
     return max(days, 1.0) * 86400.0
 
 
+def _meta_created_at(meta_path: str) -> float:
+    """Entry creation time from the sidecar — the retention (aging) clock.
+
+    ``get_artifact``/``get_chunk`` bump the sidecar mtime on every hit for
+    LRU recency, so mtime cannot double as the aging clock: a hot entry's
+    mtime stays fresh forever and the retention period would never be
+    enforced. ``created_at`` is written once at publish time; sidecars
+    without it (legacy/corrupt) fall back to mtime, and an unreadable
+    sidecar is treated as never-aged.
+    """
+    try:
+        with open(meta_path, "r", encoding="utf-8") as f:
+            return float(json.load(f)["created_at"])
+    except (OSError, ValueError, TypeError, KeyError):
+        pass
+    try:
+        return os.stat(meta_path).st_mtime
+    except OSError:
+        return float("inf")
+
+
 def sweep_orphan_disk_artifacts(*, now: Optional[float] = None) -> dict:
     """清扫 data/artifacts 的三类孤儿 + 超龄条目（dry-run 诊断见返回值）。
 
@@ -648,8 +674,10 @@ def sweep_orphan_disk_artifacts(*, now: Optional[float] = None) -> dict:
       （publish 崩溃遗留的 mkstemp 临时件）；
     - ``orphan_tif`` / ``orphan_meta``：配对缺失的半边（对 LRU 记账不可
       见 / 指向已消失的产物）；
-    - ``aged``：mtime 超过 ARTIFACT_DISK_RETENTION_DAYS 的完整条目
-      （写路径 LRU 只保字节上限，没有时间下限）。
+    - ``aged``：创建时间（``.meta`` 的 ``created_at``）超过
+      ARTIFACT_DISK_RETENTION_DAYS 的完整条目（写路径 LRU 只保字节上限，
+      没有时间下限；命中会 bump ``.meta`` mtime 做 LRU recency，故保留期
+      不能用 mtime 判定 —— 热条目将永不过期）。
 
     宽限期：temp/孤儿半边分支跳过 mtime 在 ``ARTIFACT_SWEEP_GRACE_S``
     （默认 1h）内的新文件 —— publish 在 ``os.replace`` 与 .meta 落盘
@@ -703,7 +731,7 @@ def sweep_orphan_disk_artifacts(*, now: Optional[float] = None) -> dict:
             continue
     for stem in tif_keys & meta_keys:
         try:
-            if os.stat(_meta_path(stem)).st_mtime < cutoff:
+            if _meta_created_at(_meta_path(stem)) < cutoff:
                 for p in (_artifact_path(stem), _meta_path(stem)):
                     try:
                         os.unlink(p)

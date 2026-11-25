@@ -320,3 +320,84 @@ async def test_display_layer_resolves_alias_to_canonical_id(registry, session_wi
     assert out.get("success") is True, f"expected success, got {out}"
     assert out["command"] == "LAYER_VISIBILITY_UPDATE"
     assert out["params"]["layer_id"] == ref
+
+
+# ─── P3：finalize_display 未提交批的消息不得误报 not_found ─────────────────
+
+
+@pytest.mark.asyncio
+async def test_finalize_display_noop_batch_does_not_claim_not_found(
+    registry, session_with_layer, monkeypatch,
+):
+    """无 refused / not_found 的未提交批（空批 / superseded）必须给出通用
+    原因，而不是谎称"展示集 0 个层在 MapSpec 中不存在"。"""
+    from app.services.mapspec.mutation_contracts import MapSpecBatchResult
+    import app.services.gis_world_state as gws
+
+    async def _noop_batch(*_args, **_kwargs):
+        return MapSpecBatchResult(applied_count=0)
+
+    monkeypatch.setattr(gws, "apply_gis_mutation_batch", _noop_batch)
+    sid, ref = session_with_layer
+    out = await registry.dispatch(
+        "finalize_display", {"show_refs": [ref]}, session_id=sid
+    )
+    assert out["success"] is True, out
+    assert out["final_display"]["unresolved_layer_ids"] == []
+    assert out["final_display"]["batch_committed"] is False
+    assert "not_found" not in out["message"]
+    assert "不存在" not in out["message"]
+
+
+# ─── P3：inventory_layers 声明 bounded，输出必须有上限 ─────────────────────
+
+
+@pytest.mark.asyncio
+async def test_inventory_layers_is_bounded(registry):
+    from app.tools.layer_manager import _INVENTORY_MAX_ITEMS
+
+    sid = "test-inventory-bounded-session"
+    await session_data_manager.clear_session(sid)
+    try:
+        refs = []
+        for i in range(_INVENTORY_MAX_ITEMS + 6):
+            refs.append(
+                await session_data_manager.store(
+                    sid, {"type": "FeatureCollection", "features": [], "i": i},
+                    prefix=f"inv{i}",
+                )
+            )
+        out = await registry.dispatch("inventory_layers", {}, session_id=sid)
+        assert out["success"] is True, out
+        assert out["total"] == len(refs)
+        assert out["truncated"] is True
+        assert out["count"] == _INVENTORY_MAX_ITEMS
+        assert len(out["layers"]) == _INVENTORY_MAX_ITEMS
+        # 保留最近（dict 尾部）的 ref，与上下文 inventory 的 #992 口径一致。
+        assert [item["ref_id"] for item in out["layers"]] == refs[-_INVENTORY_MAX_ITEMS:]
+    finally:
+        await session_data_manager.clear_session(sid)
+
+
+# ─── P3：switch_base_layer 空名/未知名不得静默切换或谎报成功 ────────────────
+
+
+@pytest.mark.asyncio
+async def test_switch_base_layer_rejects_empty_name(registry, session_with_layer):
+    sid, _ref = session_with_layer
+    await session_data_manager.set_map_state(sid, "base_layer", "OSM 地图")
+    out = await registry.dispatch("switch_base_layer", {"name": ""}, session_id=sid)
+    assert "error" in out, f"expected reject, got {out}"
+    state = await session_data_manager.get_map_state(sid) or {}
+    assert state.get("base_layer") == "OSM 地图", "empty name must not switch basemap"
+
+
+@pytest.mark.asyncio
+async def test_switch_base_layer_rejects_unknown_name(registry, session_with_layer):
+    sid, _ref = session_with_layer
+    out = await registry.dispatch(
+        "switch_base_layer", {"name": "火星底图XYZ"}, session_id=sid
+    )
+    assert "error" in out, f"expected reject, got {out}"
+    state = await session_data_manager.get_map_state(sid) or {}
+    assert "base_layer" not in state, "unrecognized name must not be persisted"

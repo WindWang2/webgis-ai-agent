@@ -272,3 +272,52 @@ def test_hydrology_tool_hypsometry_branch(tmp_path, monkeypatch):
     body = out if isinstance(out, dict) else out.get("data", out)
     assert "高程积分" in str(body.get("summary", ""))
     assert "curve_preview" in body
+
+
+def test_hydrology_tool_nodata_validated_by_contract(tmp_path, monkeypatch):
+    """nodata 覆盖值必须经 apply_contract 校验（此前 setdefault 死写入绕过）。
+
+    非数值 nodata 在旧实现中被 ``float(...)`` 直接转换（绕过契约）；
+    修复后应在数据读取前以 parameter_contract_violation 拒绝。
+    """
+    import rasterio
+    from rasterio.transform import from_origin
+
+    from app.tools.terrain_analysis import ToolRegistry, register_terrain_tools
+
+    monkeypatch.setattr("app.utils.path.validate_data_path.__defaults__",
+                        (str(tmp_path),))
+    z = _basin()
+    path = tmp_path / "dem.tif"
+    with rasterio.open(
+        path, "w", driver="GTiff", width=z.shape[1], height=z.shape[0],
+        count=1, dtype="float32", crs="EPSG:4326",
+        transform=from_origin(103.0, 30.0, 0.001, 0.001),
+    ) as dst:
+        dst.write(z.astype("float32"), 1)
+
+    registry = ToolRegistry()
+    register_terrain_tools(registry)
+    with pytest.raises(ValueError, match="parameter_contract_violation"):
+        registry._tools["hydrology_v4_analysis"](
+            raster_path=str(path), analysis="hypsometry", nodata="not-a-number",
+        )
+
+
+def test_hydrology_tool_discloses_artifact_write_and_param_descriptions():
+    """persist_output=True 会写 *_filled.tif：须披露 artifact_creation/
+    artifact_write；transmissivity/persist_output 须对 LLM 可见（有描述）。"""
+    from app.tools.terrain_analysis import ToolRegistry, register_terrain_tools
+
+    registry = ToolRegistry()
+    register_terrain_tools(registry)
+    meta = registry.metadata("hydrology_v4_analysis")
+    assert meta["side_effect"] == "artifact_creation"
+    assert "artifact_write" in meta["data_mutations"]
+    schema = next(
+        s for s in registry.get_schemas()
+        if s["function"]["name"] == "hydrology_v4_analysis"
+    )
+    props = schema["function"]["parameters"]["properties"]
+    assert props["transmissivity"]["description"]
+    assert props["persist_output"]["description"]

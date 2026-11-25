@@ -6,12 +6,18 @@
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from app.lib.cartography.thematic_spec import spec_to_paint
 from app.services.bivariate_reliability_authoring import (
     parse_plan,
     preview_expression,
+)
+from app.services.bivariate_reliability_authoring.classify import (
+    axis_breaks,
+    equal_interval,
 )
 from tests.unit.bivariate_reliability.helpers import (
     bivariate_plan,
@@ -72,3 +78,15 @@ async def test_bivariate_tiny_breaks_legend_and_paint_agree(session_id):
         assert len(set(internal)) == len(internal)
         assert all(b > 0 for b in internal)
         _assert_intervals_match_internal_breaks(axis["intervals"], internal)
+
+
+def test_equal_interval_collapsed_breaks_are_dropped_and_disclosed():
+    """1e16 附近 ulp=2：等距断点舍入回端点时必须丢弃，不得谎报满级。"""
+    values = [1e16, 1e16 + 2.0]
+    # 未修复时 n=2 返回 [1e16]（断点塌缩成 min），全部要素被归入最高类。
+    assert equal_interval(values, 2) == []
+    assert equal_interval(values, 3) == []
+    axis = SimpleNamespace(method="equal_interval", field="a", breaks=None)
+    breaks, _, disclosures = axis_breaks(values, axis, 2)
+    assert breaks == []
+    assert disclosures and "实际只有 1 级" in disclosures[0]

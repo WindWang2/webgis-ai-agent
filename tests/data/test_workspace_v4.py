@@ -11,6 +11,7 @@
 - layout chartRef/tableRef 捕获、describe 盘点形状、有界 list、
   定点 delete、路由侧 401/404 鉴权。
 """
+import json
 import os
 import time
 import uuid
@@ -410,6 +411,13 @@ class TestLayoutCapture:
         assert kinds["chart"].source_ref == "ref:chart-abc"
         assert kinds["table"].source_ref == "ref:chart-table-data"
 
+    def test_extract_truncates_long_source_ref(self):
+        refs = _extract_layer_refs(
+            {"sources": [{"id": "l1", "ref": "ref:" + "x" * 300}]}
+        )
+        assert len(refs) == 1
+        assert len(refs[0].source_ref) <= 160
+
     async def test_save_captures_layout_from_live_spec(self, data_dir, monkeypatch):
         from app.services import mapspec_store as adapter
 
@@ -464,6 +472,42 @@ class TestInventoryAndRetention:
         remain = {x["snapshot_id"] for x in listed}
         assert remain == set(ids[2:])  # 最旧的两个被逐出
         assert all(x["home"] == "project" for x in listed)
+
+    async def test_list_tolerates_non_numeric_created_at(self, session_base):
+        sid = "wsv4-bad-created"
+        sdir = session_base / sid / "workspace-snapshots"
+        sdir.mkdir(parents=True, exist_ok=True)
+        (sdir / "ws-good.json").write_text(
+            json.dumps({"snapshot_id": "ws-good", "created_at": 100.0}),
+            encoding="utf-8",
+        )
+        (sdir / "ws-bad.json").write_text(
+            json.dumps({"snapshot_id": "ws-bad", "created_at": "not-a-number"}),
+            encoding="utf-8",
+        )
+        listed = await get_workspace_snapshot_service().list_snapshots(sid)
+        assert [x["snapshot_id"] for x in listed] == ["ws-good", "ws-bad"]
+
+    async def test_clone_enforces_project_retention_cap(self, data_dir, monkeypatch):
+        from app.services.workspace import snapshot as snapshot_module
+
+        monkeypatch.setattr(snapshot_module, "_MAX_SNAPSHOTS_PER_PROJECT", 2)
+        sid = "wsv4-clone-cap"
+        svc = get_workspace_snapshot_service()
+        first = await svc.save_snapshot(
+            sid, project_id="proj-clone-cap", label="one", owner_id="owner"
+        )
+        await svc.save_snapshot(sid, project_id="proj-clone-cap", label="two")
+        clone = await svc.clone_snapshot(
+            sid,
+            first.snapshot_id,
+            "wsv4-clone-cap-dst",
+            project_id="proj-clone-cap",
+            owner_id="owner",
+        )
+        assert clone is not None
+        listed = await svc.list_snapshots(sid, project_id="proj-clone-cap")
+        assert len(listed) == 2
 
     async def test_delete_removes_only_target_file(self, data_dir, session_base):
         sid = "wsv4-delete"

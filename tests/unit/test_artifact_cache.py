@@ -148,3 +148,57 @@ def test_publish_chunk_without_source_roundtrips(tmp_path, monkeypatch):
     stored = ac.publish_chunk(key, b"CHUNK_PAYLOAD", source_path="")
     assert stored == ac._chunk_path(key)
     assert ac.get_chunk(key) == stored
+
+
+def test_hot_entry_still_ages_out_by_created_at(tmp_path, monkeypatch):
+    """P3 regression: hits bump ``.meta`` mtime for LRU recency, so the aged
+    sweep must judge retention by ``created_at`` — a hot entry's fresh mtime
+    used to keep it alive forever. Fails on the pre-fix code (aged == 0).
+    """
+    import time
+
+    from app.lib import artifact_cache as ac
+
+    monkeypatch.setattr(ac, "ARTIFACT_DIR", str(tmp_path))
+    monkeypatch.setattr(ac, "CHUNK_DIR", str(tmp_path / "chunks"))
+    ac._invalidate_advisory_total(ac.ARTIFACT_DIR)
+    src = tmp_path / "src.tif"
+    src.write_bytes(b"SOURCE")
+    key = "a1b2c3d4e5f60718"
+
+    def _compute():
+        out = tmp_path / "out.tif"
+        out.write_bytes(b"OUTPUT")
+        return str(out)
+
+    created = time.time() - 40 * 86400  # 40 天前创建（超 30 天保留期）
+    with monkeypatch.context() as m:
+        m.setattr(ac.time, "time", lambda: created)
+        ac.publish_artifact(key, str(src), _compute)
+
+    # 热命中：.meta mtime 被 bump 到“现在”（修复前 aged 分支看的正是它）
+    assert ac.get_artifact(key) == ac._artifact_path(key)
+
+    result = ac.sweep_orphan_disk_artifacts(now=time.time())
+    assert result["aged"] == 1
+    assert not os.path.exists(ac._artifact_path(key))
+
+
+def test_chunk_sweep_preserves_unrecognized_operator_file(tmp_path, monkeypatch):
+    """P3 regression: chunk sweeps may only touch their own mkstemp ``.npy``
+    namespace (same discipline as the artifact sweep) — unknown operator
+    files must never be deleted by name inference.
+    """
+    from app.lib import artifact_cache as ac
+
+    monkeypatch.setattr(ac, "CHUNK_DIR", str(tmp_path))
+    operator = tmp_path / "operator-backup.txt"
+    operator.write_text("private operator file")
+    temporary = tmp_path / "tmpowned.npy"
+    temporary.write_bytes(b"partial chunk write")
+    for path in (operator, temporary):
+        os.utime(path, (1, 1))
+    result = ac.sweep_orphan_chunk_cache(now=100000)
+    assert operator.exists()
+    assert not temporary.exists()
+    assert result["chunk_temp_leftovers"] == 1

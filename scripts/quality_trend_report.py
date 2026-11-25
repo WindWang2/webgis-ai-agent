@@ -50,6 +50,8 @@ def collect_rows() -> List[Dict[str, Any]]:
         for metric in run.get("metrics") or []:
             if metric.get("value") is None:
                 continue
+            if metric.get("check_id") is None:
+                continue
             rows.append({
                 "ts": run.get("ts"),
                 "lane": run.get("lane"),
@@ -168,7 +170,7 @@ def top_level_metrics() -> Dict[str, str]:
     # 出版就绪：08 线（publish/export）指标入账后才有数 —— 诚实缺省。
     publish = [r for r in runs if r.get("source") == "publish"]
     publish_rate = (
-        f"{sum(1 for r in publish if r.get('passed')) / len(publish) * 100:.1f}% "
+        f"{sum(1 for r in publish if r.get('passed') is True) / len(publish) * 100:.1f}% "
         f"(n={len(publish)})" if publish else "未测量"
     )
 

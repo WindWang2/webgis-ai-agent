@@ -254,3 +254,18 @@ def test_negative_measure_is_invalid_not_low_reliability():
     with pytest.raises(AuthoringError) as exc:
         compute_reliability(make_fc(rows)["features"], plan.reliability)
     assert exc.value.code == "INVALID_MEASURE_VALUES"
+
+
+def test_out_of_domain_output_cannot_collide_with_bucket_output():
+    """越界输出撞上有效桶输出时，越界要素会被画成某个有效等级，必须拒绝。"""
+    from app.services.bivariate_reliability_authoring import AuthoringError
+    from tests.unit.bivariate_reliability.helpers import reliability_plan
+    body = reliability_plan()["reliability"]
+    body["visual"]["out_of_domain_output"] = 0.25  # 与 b3 有效桶输出相同
+    plan = parse_plan({"layer_id": "L1", "mode": "reliability_dual_channel",
+                       "reliability": body})
+    rows = [{"est": 10.0, "se": 0.0}, {"est": 11.0, "se": 3.0}]
+    with pytest.raises(AuthoringError) as exc:
+        compute_reliability(make_fc(rows)["features"], plan.reliability)
+    assert exc.value.code == "OUT_OF_DOMAIN_OUTPUT_NOT_DISTINCT"
+    assert exc.value.field == "visual.out_of_domain_output"

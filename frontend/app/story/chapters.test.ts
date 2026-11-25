@@ -178,11 +178,13 @@ describe('smoke', () => {
     expect(chapterIdFor(12)).toBe('ch-12');
   });
 
-  it('localStorage 不可用时 saveOrchestration 不抛', () => {
-    const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+  it('localStorage 配额失败时 saveOrchestration 不抛且不落盘', () => {
+    // 必须让实例 mock（setup.ts 的自有属性 vi.fn）抛出：对 Storage.prototype
+    // 打 spy 不在调用链上，旧写法断言可空过。
+    vi.mocked(localStorage.setItem).mockImplementationOnce(() => {
       throw new Error('quota');
     });
     expect(() => saveOrchestration('sx', { version: 1, overrides: {} })).not.toThrow();
-    spy.mockRestore();
+    expect(storage.has('geoagent-story-orchestration-v1:sx')).toBe(false);
   });
 });

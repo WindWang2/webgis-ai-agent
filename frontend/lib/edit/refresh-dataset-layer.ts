@@ -43,10 +43,11 @@ export function refreshDatasetLayer(
       for (const row of rows) {
         const descriptor = (row._descriptor as Record<string, unknown> | undefined) ?? {};
         const featureCount = descriptor.feature_count as number | undefined;
+        const hasTileUrl = typeof (row as { _tileUrl?: unknown })._tileUrl === 'string';
         const isMvt =
           featureCount !== undefined && featureCount > 5000
           && descriptor.mvt_capable === true
-          && typeof (row as { _tileUrl?: unknown })._tileUrl === 'string';
+          && hasTileUrl;
         if (isMvt) {
           // MVT 层不内联 GeoJSON —— descriptor revision 与 _tileUrl（v= 缓存键）
           // 必须一起重建，否则组合 spec 零变化、reconciler 不重加 source。
@@ -57,6 +58,9 @@ export function refreshDatasetLayer(
         } else {
           cur.updateLayer(row.id, {
             source: res.fc as unknown as never,
+            // descriptor 缺 feature_count 时 isMvt 判定不到，但既有 _tileUrl
+            // 仍带 v= 缓存键 —— 与 revision 一起重建，避免编辑后留旧版键。
+            ...(hasTileUrl ? { _tileUrl: buildMvtTileUrl(refId, sid, revision) } : {}),
             _descriptor: { ...descriptor, content_revision: revision } as unknown as never,
           }, { source: 'server' });
         }

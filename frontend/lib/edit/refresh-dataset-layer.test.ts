@@ -96,6 +96,37 @@ describe('refreshDatasetLayer', () => {
     }
   });
 
+  it('descriptor 缺 feature_count 但有 _tileUrl：inline 写回时仍重建 v= 缓存键', async () => {
+    requestRefFCMock.mockResolvedValue({ fc: FC });
+    // feature_count 缺失 → isMvt 门判不到，走 inline；但既有 _tileUrl 的 v= 键
+    // 不能停在旧 revision，否则后续按瓦片渲染时命中旧缓存。
+    const descriptor = { content_revision: 1, mvt_capable: true };
+    useHudStore.setState({
+      layers: [layer('L1', { _descriptor: descriptor, _tileUrl: 'tiles?ref=dup&v=1' })] as never,
+    });
+
+    refreshDatasetLayer('sess-1', 'ref:dup', 11);
+    await flush();
+
+    const layers = useHudStore.getState().layers;
+    expect(layers).toHaveLength(1);
+    expect(layers[0].source).toEqual(FC);
+    expect((layers[0]._descriptor as { content_revision?: number }).content_revision).toBe(11);
+    expect(layers[0]._tileUrl).toContain('v=11');
+  });
+
+  it('无 _tileUrl 的 inline 图层：不凭空写入 tile URL', async () => {
+    requestRefFCMock.mockResolvedValue({ fc: FC });
+    useHudStore.setState({ layers: [layer('L1', {})] as never });
+
+    refreshDatasetLayer('sess-1', 'ref:dup', 12);
+    await flush();
+
+    const [l] = useHudStore.getState().layers;
+    expect(l.source).toEqual(FC);
+    expect(l._tileUrl).toBeUndefined();
+  });
+
   it('取数拒绝不产生 unhandled rejection', async () => {
     requestRefFCMock.mockRejectedValue(new Error('network down'));
     useHudStore.setState({ layers: [layer('L1', {})] as never });

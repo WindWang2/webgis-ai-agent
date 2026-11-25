@@ -684,4 +684,143 @@ describe('GeoreferencingWorkbenchPanel (G48)', () => {
     );
     expect(screen.getByText('BIND_FAILED: artifact missing')).toBeInTheDocument();
   });
+
+  it('writes n/a in the downloaded report when optional fit-metric fields are missing', async () => {
+    const artifact = {
+      artifact_id: 'gart_report',
+      plan_id: 'gplan_1',
+      execution_id: 'gexec_report',
+      job_id: null,
+      session_id: 'sess-g48-ui',
+      format: 'GeoTIFF',
+      cog_requested: true,
+      cog_verified: true,
+      cog_checks: {},
+      target_crs: 'EPSG:3857',
+      width: 340,
+      height: 240,
+      bands: 1,
+      dtype: 'uint8',
+      has_alpha: false,
+      nodata_mode: 'none',
+      sha256: 'e'.repeat(64),
+      byte_size: 1024,
+      blob_key: 'georefbin-e',
+      file_path: '/tmp/out-report.tif',
+      raster_ref: 'ref:raster_report',
+      bounds_target_crs: [0, 0, 100, 100],
+      bounds_wgs84: [120.1, 30.1, 120.2, 30.2],
+      created_at: '2026-11-15T00:03:00Z',
+    };
+    const plan = makePlan({
+      revision: 1,
+      latest_artifact: artifact,
+      fit_metrics: {
+        status: 'valid',
+        fit_count: 3,
+        check_count: 0,
+        disabled_count: 0,
+        fit_rmse: 0.2,
+        fit_max_error: 0.2,
+        check_rmse: null,
+        check_max_error: null,
+        zero_residual_unverified: false,
+        condition_number: 1.5,
+        rank: 6,
+        residuals: [],
+        outlier_gcp_ids: [],
+        warnings: [],
+        blockers: [],
+        // hull_coverage_ratio 与 coefficients.determinant 缺失（畸形/旧版回包）
+        coefficients: {
+          a0: 100, a1: 1, a2: 0, b0: 200, b1: 0, b2: -1,
+          px_scale_x: 1, px_scale_y: 1, rotation_deg: 0, shear_deg: 0,
+          is_reflection: false,
+        },
+      },
+    });
+    mockListGeorefSources.mockResolvedValue({ session_id: 'sess-g48-ui', sources: [makeSource()] });
+    mockListGeorefPlans.mockResolvedValue({ session_id: 'sess-g48-ui', plans: [plan] });
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:report');
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
+    try {
+      render(<GeoreferencingWorkbenchPanel sessionId="sess-g48-ui" ownerToken="tok-1" />);
+      await waitFor(() =>
+        expect(screen.getByTestId('georef-download-report-btn')).toBeInTheDocument(),
+      );
+
+      fireEvent.click(screen.getByTestId('georef-download-report-btn'));
+
+      expect(createObjectURL).toHaveBeenCalledTimes(1);
+      const blob = createObjectURL.mock.calls[0][0] as Blob;
+      const md = new TextDecoder().decode(await blob.arrayBuffer());
+      expect(md).toContain('**det(J)**: n/a');
+      expect(md).toContain('**Convex Hull Coverage**: n/a');
+    } finally {
+      anchorClick.mockRestore();
+      createObjectURL.mockRestore();
+    }
+  });
+
+  it('detects WGS84 JSON imports when the first GCP row has no coordinates', async () => {
+    const plan = makePlan({ revision: 1, gcps: [] });
+    mockListGeorefSources.mockResolvedValue({ session_id: 'sess-g48-ui', sources: [makeSource()] });
+    mockListGeorefPlans.mockResolvedValue({ session_id: 'sess-g48-ui', plans: [plan] });
+    mockImportGeorefGcps.mockResolvedValue({ plan });
+
+    const { container } = render(
+      <GeoreferencingWorkbenchPanel sessionId="sess-g48-ui" ownerToken="tok-1" />,
+    );
+    await waitFor(() => expect(screen.getByTestId('georef-execute-btn')).toBeInTheDocument());
+
+    const jsonInput = container.querySelector('input[accept=".json"]') as HTMLInputElement;
+    const content = JSON.stringify({
+      gcps: [
+        { px: 0, py: 0, map_x: null, map_y: null, wgs84_lon: null, wgs84_lat: null },
+        { px: 10, py: 10, wgs84_lon: 120.1, wgs84_lat: 30.2 },
+      ],
+    });
+    const jsonFile = new File([content], 'gcps.json', { type: 'application/json' });
+    Object.defineProperty(jsonFile, 'text', { value: async () => content });
+    fireEvent.change(jsonInput, { target: { files: [jsonFile] } });
+
+    await waitFor(() => expect(mockImportGeorefGcps).toHaveBeenCalledTimes(1));
+    expect(mockImportGeorefGcps.mock.calls[0][2]).toMatchObject({ coords_are_wgs84: true });
+  });
+
+  it('deletes a just-uploaded source when the session changes before the upload resolves', async () => {
+    let resolveUpload: ((value: { source: ReturnType<typeof makeSource>; image_url: string }) => void) | undefined;
+    mockUploadGeorefSource.mockReturnValue(
+      new Promise((resolve) => {
+        resolveUpload = resolve;
+      }),
+    );
+
+    const { rerender } = render(
+      <GeoreferencingWorkbenchPanel sessionId="sess-g48-ui" ownerToken="tok-1" />,
+    );
+    await waitFor(() => expect(mockListGeorefSources).toHaveBeenCalled());
+
+    const input = screen.getByTestId('georef-upload-input') as HTMLInputElement;
+    const file = new File([new Uint8Array([1, 2, 3])], 'scan.png', { type: 'image/png' });
+    fireEvent.change(input, { target: { files: [file] } });
+    await waitFor(() => expect(mockUploadGeorefSource).toHaveBeenCalledTimes(1));
+
+    rerender(<GeoreferencingWorkbenchPanel sessionId="sess-other" ownerToken="tok-1" />);
+    await waitFor(() => expect(mockListGeorefSources).toHaveBeenCalledTimes(2));
+
+    await act(async () => {
+      resolveUpload?.({ source: makeSource(), image_url: '/api/v1/georeferencing/sources/gsrc_1/image' });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    await waitFor(() =>
+      expect(mockDeleteGeorefSource).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionId: 'sess-g48-ui' }),
+        'gsrc_1',
+      ),
+    );
+    expect(mockCreateGeorefPlan).not.toHaveBeenCalled();
+  });
 });

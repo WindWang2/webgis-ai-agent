@@ -44,7 +44,7 @@ def main() -> int:
         print(f"snapshot not found: {snap_path}", file=sys.stderr)
         return 2
     try:
-        snapshot = json.loads(snap_path.read_text())
+        snapshot = json.loads(snap_path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         print(f"invalid snapshot: {exc}", file=sys.stderr)
         return 2
@@ -53,7 +53,8 @@ def main() -> int:
     out_path = (Path(args.report) if args.report else
                 REPO_ROOT / "docs/dev/unified-cost-calibration-suggest.json")
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(report, indent=2, ensure_ascii=False))
+    out_path.write_text(json.dumps(report, indent=2, ensure_ascii=False),
+                        encoding="utf-8")
     suggestions = report.get("suggestions") or []
     print(f"wrote {out_path} ({len(suggestions)} suggestions, "
           f"drift_band={report.get('drift_band')}, "

@@ -186,6 +186,12 @@ def emit_event(
     from app.lib.runtime.context import current_runtime_context
 
     ctx = current_runtime_context()
+    # 信封键 duration_s 与字段侧归一保持一致：非有限 float 会让 LoggingSink
+    # 吐出非 strict-JSON 字面量，归一为字符串。
+    if isinstance(duration_s, float) and not math.isfinite(duration_s):
+        duration_value: Any = str(duration_s)
+    else:
+        duration_value = round(duration_s, 6) if duration_s is not None else None
     record: Dict[str, Any] = {
         "ts": time.time(),
         "category": category,
@@ -198,7 +204,7 @@ def emit_event(
         # Quality V3 W10（additive envelope 键，词表外）：W3C trace 关联
         "trace": getattr(ctx, "trace_id", None),
         "status": status,
-        "duration_s": round(duration_s, 6) if duration_s is not None else None,
+        "duration_s": duration_value,
         "error_code": error_code,
     }
     sensitive = _sensitive_re()

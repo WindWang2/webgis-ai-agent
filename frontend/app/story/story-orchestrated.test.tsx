@@ -209,6 +209,38 @@ describe('StoryView 编排模式（ADR-0196）', () => {
     });
   });
 
+  it('本地 seek 后迟到 spec：点播放从 spec 首章开播（不静默自停）', async () => {
+    let resolveCompile: ((value: unknown) => void) | undefined;
+    const compilePending = new Promise((resolve) => {
+      resolveCompile = resolve;
+    });
+    fetchMock
+      .mockResolvedValueOnce(jsonOk({ messages: MESSAGES }))
+      .mockResolvedValueOnce(jsonOk({ map_state: null }))
+      .mockImplementationOnce(() => compilePending);
+
+    const user = userEvent.setup();
+    render(<StoryView />);
+    expect(await screen.findByTestId('story-md')).toBeInTheDocument();
+
+    // 本地模式 seek 到 ch-1，随后 spec 迟到（章节 id 全不在 playlist）
+    await user.click(screen.getByRole('button', { name: '下一章节' }));
+    resolveCompile?.(jsonOk(SPEC));
+    expect(await screen.findByTestId('story-orchestrated')).toBeInTheDocument();
+
+    dispatchActionMock.mockClear();
+    await user.click(screen.getByRole('button', { name: '播放' }));
+
+    // 修复前 playPos=-1 → 播放 effect 立即 setPlaying(false)：无相机、按钮回「播放」
+    await waitFor(() => {
+      expect(dispatchActionMock).toHaveBeenCalledWith({
+        command: 'fly_to',
+        params: { center: [116.4, 39.9], zoom: 5, pitch: 18, bearing: 0 },
+      });
+    });
+    expect(screen.getByRole('button', { name: '暂停' })).toBeInTheDocument();
+  });
+
   it('#1370：用户先播放后 spec 到达，播放位置不被迟到 spec 覆盖', async () => {
     let resolveCompile: ((value: unknown) => void) | undefined;
     const compilePending = new Promise((resolve) => {

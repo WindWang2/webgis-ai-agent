@@ -115,7 +115,7 @@ export function EvidenceView({ enabled, sessionId, ownerToken }: SessionViewProp
             <span className="text-ink-muted">
               {claim.claim_type}
               {claim.value !== null ? ` · ${claim.value} ${claim.unit}` : ''}
-              {claim.confidence !== null ? ` · ${t('evidence.confidence')} ${claim.confidence.toFixed(2)}` : ''}
+              {claim.confidence != null ? ` · ${t('evidence.confidence')} ${claim.confidence.toFixed(2)}` : ''}
               {' · '}{t('evidence.supports')} ×{claim.supporting_evidence_refs.length}
             </span>
           </div>
