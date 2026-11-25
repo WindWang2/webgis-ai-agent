@@ -91,7 +91,7 @@ jobs:
           target: runner
           push: false
           build-args: |
-            PI_VENDOR_PIN: ${{ env.PI_VENDOR_PIN }}
+            PI_VENDOR_PIN=${{ env.PI_VENDOR_PIN }}
           cache-from: type=gha,scope=docker-smoke
           cache-to: type=gha,mode=max,scope=docker-smoke
 
@@ -1274,7 +1274,7 @@ jobs:
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            PI_VENDOR_PIN: ${{ env.PI_VENDOR_PIN }}
+            PI_VENDOR_PIN=${{ env.PI_VENDOR_PIN }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
