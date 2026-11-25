@@ -136,6 +136,7 @@
 | C20 | typed 能力快照：feature→min-version 唯一映射（14 项封闭词表）；未知版本一律 unsupported 不谎报；消费方查 `caps.has()` 禁止散落版本比较 | `pi_compat.PiCapabilitySnapshot`/`capabilities_for_version`；v1.6.0 组=extension_error/abort_batch_terminal/session_lifecycle_fix/unreported_diagnostics，v1.6.1 组=provider_failure_events/decision_model_classify/rpc_line_scan_fix | 同上（边界用例 v1.5.1/v1.6.0/v1.6.1/unknown/prerelease） |
 | C21 | v1.6.0 RPC 会话生命周期修复：`new_session`/`switch_session`/`fork` 的扩展 `session_start` 单跑 + `entry_appended` 事件转发 RPC 客户端；Esc 中止批量工具未启动项获 "Operation aborted" 终态结果 | 事件映射按封闭词表处理（桥无需行为变化）；能力位 `RPC_SESSION_LIFECYCLE_FIX`/`ABORT_BATCH_TERMINAL` 记录 | vendor contract 车道（真 rpc-entry）+ 能力快照测试 |
 | C22 | v1.6.1 provider 可观测性：`after_provider_response` 覆盖 HTTP 4xx/5xx 与每次重试尝试（WP5 挂点）；codemode `models.classify()` + `responseId`（默认不启用，能力门控） | 能力位 `PROVIDER_FAILURE_EVENTS`/`DECISION_MODEL_CLASSIFY`；WP5 把失败/重试事件接入 typed usage/diagnostic ledger（不记录请求全文/密钥） | 能力快照测试 + WP5 治理测试 |
+| C23 | 手动 `compact` wire 契约（v1.6.1 实测）：`compaction_start(reason="manual")` → `compaction_end`（result 含 summary/tokensBefore/estimatedTokensAfter；失败/中止时 result 缺席 + errorMessage/aborted）→ response(success, data=result)；**keepRecentTokens(20k) 从尾部保留——单条超限消息整条进保留区会诚实拒绝 "session too small"** | `tests/integration/test_pi_vendor_contract.py::test_manual_compaction_contract_and_post_compaction_usability`（真实 rpc-entry：N 个中等 turn 累积历史 → compact → 压缩后回话仍 settle → get_state 一致） | 同左（C23 专测） |
 
 ## 5. 版本历史
 
