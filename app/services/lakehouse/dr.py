@@ -128,11 +128,15 @@ def backup_cube_chunks(
     if total > max_total_bytes:
         return {"backed_up": False, "reason": "oversized", "byte_size": total}
     store = get_object_store()
+    streamed = getattr(store, "put_blob_from_path", None)
     written = 0
     for rel, digest, _size in entries:
         # #2143 N31：整读 read_bytes 曾把单 chunk 全量驻留内存（≤512MiB
         # 总预算下单文件即可占满）；put_blob_from_path 真流式（零驻留）。
-        result = store.put_blob_from_path(digest, base / rel, "binary")
+        if streamed is not None:
+            result = streamed(digest, base / rel, "binary")
+        else:
+            result = store.put_blob(digest, (base / rel).read_bytes(), "binary")
         if result.put_new:
             written += 1
     return {

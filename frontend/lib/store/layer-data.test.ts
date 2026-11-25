@@ -9,7 +9,7 @@ vi.mock('@/lib/api/config', () => ({ API_BASE: 'http://localhost:8000' }));
 
 // Import after mocks
 import { useHudStore } from './useHudStore';
-import { ensureLayerData, setLayerDataSession } from './layer-data';
+import { ensureLayerData, hydrateMvtLayers, setLayerDataSession } from './layer-data';
 import { _resetDataPlaneForTests } from '@/lib/data-plane/ref-service';
 
 function makeMVTLayer(id = 'ref:big-1', featureCount = 100_000) {
@@ -253,5 +253,86 @@ describe('ensureLayerData seam (#667)', () => {
     const result = await promise;
     expect(result.status).toBe('cancelled');
     setLayerDataSession(undefined, undefined);
+  });
+
+  // ─── error handling：403 / 中止 / 批量水合失败披露 ──────────────────────
+
+  it('selection-detail 403 resolves with honest fallback instead of rejecting', async () => {
+    const layer = makeMVTLayer();
+    useHudStore.getState().addLayer(layer as any);
+    useHudStore.setState({
+      selectedFeature: {
+        layerId: layer.id, point: [0, 0], properties: {},
+        selectedAt: Date.now(), featureId: 'feat-403',
+      } as any,
+    });
+    apiFetchMock.mockRejectedValueOnce(Object.assign(new Error('forbidden'), { status: 403 }));
+
+    const result = await ensureLayerData(layer.id, 'selection-detail');
+
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe('fallback');
+  });
+
+  it('selection-detail aborted mid-flight resolves cancelled instead of rejecting', async () => {
+    const layer = makeMVTLayer();
+    useHudStore.getState().addLayer(layer as any);
+    useHudStore.setState({
+      selectedFeature: {
+        layerId: layer.id, point: [0, 0], properties: {},
+        selectedAt: Date.now(), featureId: 'feat-abort',
+      } as any,
+    });
+    const controller = new AbortController();
+    let rejectFetch!: (e: unknown) => void;
+    apiFetchMock.mockReturnValueOnce(new Promise((_res, rej) => { rejectFetch = rej; }));
+
+    const promise = ensureLayerData(layer.id, 'selection-detail', { signal: controller.signal });
+    controller.abort();
+    rejectFetch(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+
+    await expect(promise).resolves.toEqual({ status: 'cancelled' });
+  });
+
+  it('selection-detail aborted during positional retry resolves cancelled (not fallback)', async () => {
+    const layer = makeMVTLayer();
+    useHudStore.getState().addLayer(layer as any);
+    useHudStore.setState({
+      selectedFeature: {
+        layerId: layer.id, point: [0, 0], properties: {},
+        selectedAt: Date.now(), featureId: 1234,
+      } as any,
+    });
+    apiFetchMock.mockRejectedValueOnce(Object.assign(new Error('nf'), { status: 404 }));
+    apiFetchMock.mockImplementationOnce((_url: string, opts: { signal?: AbortSignal }) =>
+      new Promise((_res, rej) => {
+        opts.signal?.addEventListener('abort', () => {
+          rej(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+        });
+      }),
+    );
+    const controller = new AbortController();
+    const promise = ensureLayerData(layer.id, 'selection-detail', { signal: controller.signal });
+    await vi.waitFor(() => expect(apiFetchMock).toHaveBeenCalledTimes(2));
+    controller.abort();
+
+    await expect(promise).resolves.toEqual({ status: 'cancelled' });
+  });
+
+  it('hydrateMvtLayers reports per-layer failures instead of swallowing them', async () => {
+    const okLayer = makeMVTLayer('ref:hyd-ok', 10_000);
+    const badLayer = makeMVTLayer('ref:hyd-bad', 10_000);
+    useHudStore.getState().addLayer(badLayer as any);
+    useHudStore.getState().addLayer(okLayer as any);
+    const fc = { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [0, 0] }, properties: {} }] };
+    apiFetchMock.mockImplementation((url: string) =>
+      String(url).includes('hyd-bad')
+        ? Promise.reject(new Error('boom'))
+        : Promise.resolve(fc),
+    );
+
+    const failed = await hydrateMvtLayers([badLayer, okLayer] as any, 'export-vector');
+
+    expect(failed).toEqual(['ref:hyd-bad']);
   });
 });

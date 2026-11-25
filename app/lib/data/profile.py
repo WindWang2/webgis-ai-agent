@@ -38,7 +38,6 @@ _MAX_PROFILE_FIELDS = 64
 _MAX_SAMPLES = 5
 _MAX_GEOMETRY_TYPES = 8
 _UNIQUE_SET_CAP = 10_000
-_MAX_UNIT_HINTS = 16
 _MAX_TEMPORAL_FIELDS = 8
 
 _ISO_DATE_RE = re.compile(
@@ -377,10 +376,21 @@ class DatasetProfileV3(BaseModel):
                 view["time_candidates"] = t.time_candidates
         import json as _json
 
-        text = _json.dumps(view, ensure_ascii=False, default=str)
-        if len(text) > max_chars:
+        def _size() -> int:
+            return len(_json.dumps(view, ensure_ascii=False, default=str))
+
+        if _size() > max_chars:
             view.pop("fields", None)
             view.pop("raster", None)
+        # 弹出 fields/raster 后必须复测：table 分支的列名/候选键列表同样
+        # 可超预算，继续按有界性降级（保持返回形状，只丢可选证据）。
+        for key in (
+            "columns", "candidate_keys", "coordinate_candidates", "time_candidates",
+            "temporal_fields", "geometry_types",
+        ):
+            if _size() <= max_chars:
+                break
+            view.pop(key, None)
         return view
 
 
@@ -536,8 +546,11 @@ def profile_features(
     统计在扫描集上计算——采样时只声明样本覆盖（不外推）。
     """
     total = len(features) if isinstance(features, (list, tuple)) else 0
+    if max_scan_rows <= 0:
+        # 非正值不是「无限制」：回退默认闸，避免 0/负值静默绕过行数上限。
+        max_scan_rows = DEFAULT_MAX_SCAN_ROWS
     stride = 1
-    if total > max_scan_rows > 0:
+    if total > max_scan_rows:
         stride = math.ceil(total / max_scan_rows)
     quality = ProfileQuality.COMPLETE if stride == 1 else ProfileQuality.SAMPLED
 
@@ -669,8 +682,11 @@ def profile_rows(
 ) -> Tuple[TableProfileData, ProfileQuality]:
     """表格剖析（§六 table）：行/列统计 + 候选键/坐标列/时间列。"""
     total = len(rows) if isinstance(rows, (list, tuple)) else 0
+    if max_scan_rows <= 0:
+        # 同 profile_features：非正值回退默认闸，不静默全量扫描。
+        max_scan_rows = DEFAULT_MAX_SCAN_ROWS
     stride = 1
-    if total > max_scan_rows > 0:
+    if total > max_scan_rows:
         stride = math.ceil(total / max_scan_rows)
     quality = ProfileQuality.COMPLETE if stride == 1 else ProfileQuality.SAMPLED
 

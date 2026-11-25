@@ -43,6 +43,7 @@ from app.services.feature_proposals.contracts import (
     FeatureProposalError,
     FeatureProposalNotFound,
     MAX_DRAFT_PROPOSALS_PER_REF,
+    MAX_PROPOSALS_PER_SESSION,
     can_transition,
     validate_proposal_ops,
 )
@@ -51,7 +52,7 @@ from app.services.feature_proposals.snapshot import (  # noqa: F401
     capture_base_snapshot,
     load_base_snapshot,
 )
-from app.services.feature_proposals.store import proposal_store
+from app.services.feature_proposals.store import ProposalStoreFull, proposal_store
 
 logger = logging.getLogger(__name__)
 
@@ -235,6 +236,22 @@ async def create_proposal(
                 "invalid_ops", "proposal ops do not evaluate on the current data",
                 {"findings": eval_findings[:6]},
             )
+    # 容量闸（draft ≤8 / session ≤50）先于 blob 落盘执行 —— 确定性拒绝不得
+    # 留下无回收路径的 base 快照（store 仍在锁内复核）。
+    existing = await proposal_store.list_proposals(session_id)
+    drafts_same_ref = [
+        p for p in existing if p.ref_id == ref_id and p.status == DRAFT
+    ]
+    if not submit and len(drafts_same_ref) >= MAX_DRAFT_PROPOSALS_PER_REF:
+        raise FeatureProposalBlocked(
+            "draft_limit_reached",
+            f"already {MAX_DRAFT_PROPOSALS_PER_REF} open drafts on this ref — submit or withdraw one first",
+        )
+    if len(existing) >= MAX_PROPOSALS_PER_SESSION:
+        raise ProposalStoreFull(
+            "session_proposal_limit",
+            f"session {session_id} already holds {MAX_PROPOSALS_PER_SESSION} proposals",
+        )
     materialized = fc is not None and has_wfids(fc)
     base = capture_base_snapshot(
         session_id, ref_id, payload,
@@ -268,16 +285,7 @@ async def create_proposal(
             action="submit", actor_kind=author_kind, actor_id=author_id, at=now,
         )],
     )
-    # draft 容量闸（同一 ref 并发 draft ≤8）。
-    existing = await proposal_store.list_proposals(session_id)
-    drafts_same_ref = [
-        p for p in existing if p.ref_id == ref_id and p.status == DRAFT
-    ]
-    if record.status == DRAFT and len(drafts_same_ref) >= MAX_DRAFT_PROPOSALS_PER_REF:
-        raise FeatureProposalBlocked(
-            "draft_limit_reached",
-            f"already {MAX_DRAFT_PROPOSALS_PER_REF} open drafts on this ref — submit or withdraw one first",
-        )
+    # draft 容量闸已前移至 blob 落盘之前（见上）。
     return await proposal_store.save_new_proposal(session_id, record)
 
 
@@ -298,6 +306,7 @@ async def list_proposals(
         items = [p for p in items if p.status == status]
     items = sorted(items, key=lambda p: p.updated_at, reverse=True)
     total = len(items)
+    offset = max(0, int(offset))  # 负偏移会切出错页/空页（total 仍 >0）
     page = items[offset: offset + max(1, min(limit, 100))]
     return {
         "total": total,
@@ -850,7 +859,7 @@ async def decide(
         rec.status = target_status
         rec.updated_at = _now()
         decision = approval_payload or ProposalDecision(
-            action=action.replace("request_changes", "request_changes"),
+            action=action,
             actor_kind=actor_kind, actor_id=actor_id, at=_now(), note=note,
         )
         _append_decision(rec, decision)

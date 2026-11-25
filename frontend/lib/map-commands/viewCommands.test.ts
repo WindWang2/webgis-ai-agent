@@ -208,6 +208,25 @@ describe('viewCommands camera commands (V3 Promise<MapCommandResult> contract)',
     await expect(promise).resolves.toMatchObject({ status: 'failed' });
   });
 
+  it('map teardown during setup (stop/once throw) resolves failed, never rejects', async () => {
+    // P3: map.stop() / onUserGestureStart() / map.once() used to sit outside
+    // the try — a destroyed map rejected the returned promise and stalled the
+    // queue instead of a structured failed ack.
+    const stopBroken = makeMockMaplibreMap();
+    stopBroken.stop.mockImplementation(() => {
+      throw new Error('map destroyed');
+    });
+    await expect(viewCommands.fly_to.run(makeCtx(stopBroken, { center: [116, 39], zoom: 12 })))
+      .resolves.toEqual({ status: 'failed', error: 'map destroyed' });
+
+    const onceBroken = makeMockMaplibreMap();
+    onceBroken.once.mockImplementation(() => {
+      throw new Error('map destroyed');
+    });
+    await expect(viewCommands.fly_to.run(makeCtx(onceBroken, { center: [116, 39], zoom: 12 })))
+      .resolves.toEqual({ status: 'failed', error: 'map destroyed' });
+  });
+
   it('runs multiple camera commands independently (each settles on its own moveend)', async () => {
     const map = makeMockMaplibreMap();
     const a = viewCommands.fly_to.run(makeCtx(map, { center: [116, 39], zoom: 12 }));

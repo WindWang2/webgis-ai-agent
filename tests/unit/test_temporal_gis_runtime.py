@@ -918,3 +918,165 @@ async def test_execute_aggregate_interval_only_spec_uses_spec_metrics(sample_tem
 
     assert res.status == "success"
     assert res.change_summary["aggregated_buckets"] == 10
+
+
+# ---------------------------------------------------------------------------
+# P3 review regressions: temporal aggregation/change/filter/raster edges
+# ---------------------------------------------------------------------------
+
+
+def test_temporal_aggregation_explicit_unit_wins_over_spec():
+    """Caller-supplied group_by_unit must win over agg_spec.group_by_unit,
+    like metrics/target_fields do (previously the spec overrode it)."""
+    rows = [
+        {"t": "2026-01-02T00:00:00Z", "v": 1},
+        {"t": "2026-01-03T00:00:00Z", "v": 2},
+        {"t": "2026-02-02T00:00:00Z", "v": 3},
+    ]
+    agg = TemporalAggregationEngine()
+    spec = TemporalAggregation(interval_unit="day", metric_fields=["v"])
+
+    explicit = agg.aggregate(
+        rows, time_field="t", group_by_unit=TemporalUnit.MONTH,
+        target_fields=["v"], agg_spec=spec,
+    )
+    assert [b["period"] for b in explicit] == ["2026-01", "2026-02"]
+
+    # Spec-driven calls (caller left the unit at its DAY default) still honor
+    # the spec's own unit.
+    spec_month = TemporalAggregation(interval_unit="month", metric_fields=["v"])
+    spec_only = agg.aggregate(rows, time_field="t", target_fields=["v"], agg_spec=spec_month)
+    assert [b["period"] for b in spec_only] == ["2026-01", "2026-02"]
+
+
+def test_change_engine_skips_non_dict_feature_entries():
+    """Non-object entries mixed into a features array must not crash the
+    id-matching loops with AttributeError."""
+    valid_1 = {"type": "Feature", "id": "a",
+               "geometry": {"type": "Point", "coordinates": [116.40, 39.90]},
+               "properties": {}}
+    valid_2 = {"type": "Feature", "id": "a",
+               "geometry": {"type": "Point", "coordinates": [116.401, 39.901]},
+               "properties": {}}
+    s1 = {"type": "FeatureCollection", "features": ["junk", valid_1]}
+    s2 = {"type": "FeatureCollection", "features": [["nested"], valid_2]}
+
+    res = TemporalChangeEngine().compare_snapshots([s1, s2], numeric_fields=[])
+
+    assert res.geometry_deltas is not None
+    assert res.geometry_deltas["matched_features_count"] == 1
+    assert [fc["id"] for fc in res.feature_changes] == ["a"]
+
+
+def test_change_engine_builds_crs_transformers_once(monkeypatch):
+    """CRS resolution / Transformer construction must happen once per
+    snapshot, not once per matched feature."""
+    import app.lib.geo_processor.core as geo_core
+
+    calls = []
+    original = geo_core.extract_declared_crs
+
+    def spy(geojson):
+        calls.append(geojson)
+        return original(geojson)
+
+    monkeypatch.setattr(geo_core, "extract_declared_crs", spy)
+
+    def collection(dx):
+        return {
+            "type": "FeatureCollection",
+            "features": [
+                {"type": "Feature", "id": str(i),
+                 "geometry": {"type": "Point", "coordinates": [116.40 + dx, 39.90 + dx]},
+                 "properties": {}}
+                for i in range(3)
+            ],
+        }
+
+    res = TemporalChangeEngine().compare_snapshots(
+        [collection(0.0), collection(0.001)], numeric_fields=[]
+    )
+
+    assert res.geometry_deltas["matched_features_count"] == 3
+    assert len(calls) == 2  # one per snapshot, not 2 per matched feature
+
+
+def test_compute_centroid_missing_coordinates_returns_none():
+    """geometry={"type": "Point"} without coordinates raised KeyError and
+    aborted the whole snapshot comparison; it is unknown, not fatal."""
+    from app.services.temporal.change import compute_centroid
+
+    assert compute_centroid({"type": "Point"}) is None
+
+
+def test_filter_unparseable_bounds_raise_instead_of_empty_success():
+    """Both explicit bounds unparseable used to yield BETWEEN with no
+    interval: an always-empty success. It must be an error."""
+    rows = [{"t": "2026-01-02T00:00:00Z"}]
+    filter_engine = TemporalFilterEngine()
+
+    with pytest.raises(ValueError, match="bounds could not be parsed"):
+        filter_engine.filter_dataset(
+            rows, time_field="t", start="not-a-date", end="also-not-a-date"
+        )
+
+
+def test_filter_spec_instant_only_matches_that_instant():
+    """TemporalFilter's default operator is BETWEEN; a spec with only an
+    instant has no interval, so it matched nothing. Instant-only must act as
+    a discrete EQUALS test."""
+    from app.services.temporal.models import TimeInstant
+
+    rows = [{"t": "2026-01-02T00:00:00Z"}, {"t": "2026-01-03T00:00:00Z"}]
+    inst = TimeInstant.from_datetime(datetime(2026, 1, 2, tzinfo=timezone.utc))
+    spec = TemporalFilter(field_name="t", instant=inst)
+
+    res = TemporalFilterEngine().filter_dataset(rows, time_field="t", filter_spec=spec)
+
+    assert len(res) == 1
+    assert res[0]["t"].startswith("2026-01-02")
+
+
+def test_filter_spec_values_filter_discrete_instants():
+    """TemporalFilter.values was accepted by the schema but never consumed:
+    a spec carrying only values matched nothing."""
+    from app.services.temporal.models import TimeInstant
+
+    rows = [{"t": "2026-01-02T00:00:00Z"}, {"t": "2026-01-03T00:00:00Z"}]
+    inst = TimeInstant.from_datetime(datetime(2026, 1, 2, tzinfo=timezone.utc))
+    spec = TemporalFilter(field_name="t", values=[inst])
+
+    res = TemporalFilterEngine().filter_dataset(rows, time_field="t", filter_spec=spec)
+
+    assert len(res) == 1
+    assert res[0]["t"].startswith("2026-01-02")
+
+
+def test_relative_window_overflow_raises_value_error():
+    """Unbounded N in last_<N>_<unit> raised OverflowError (timedelta or the
+    ref_time subtraction); it must be rejected as an invalid window."""
+    filter_engine = TemporalFilterEngine()
+
+    with pytest.raises(ValueError, match="supported timestamp range"):
+        filter_engine.parse_relative_window("last_1000000000_days")
+    with pytest.raises(ValueError, match="supported timestamp range"):
+        filter_engine.parse_relative_window("last_999999999_days")
+
+
+def test_raster_statistics_date_key_preserved_for_trend():
+    """The statistics step ignored a "date" key (select_time_slice honors
+    it), so the trend silently fell back to per-step indices."""
+    engine = TemporalRasterEngine()
+    series = [
+        {"date": "2026-01-01", "data": [[1.0]]},
+        {"date": "2026-02-01", "data": [[2.0]]},
+    ]
+
+    stats = engine.temporal_raster_statistics(series)
+    assert [e["timestamp"] for e in stats["series_statistics"]] == [
+        "2026-01-01", "2026-02-01",
+    ]
+
+    trend = engine.raster_trend_over_aoi(series, stats_info=stats)
+    assert trend["timestamps"] == ["2026-01-01", "2026-02-01"]
+    assert trend["slope_unit"] == "per_year"

@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { getMapSpecSessionCursor, getPendingPresentation, setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 import {
+  commitLayerStyleAndCommit,
   removeLayerAndCommit,
   reorderLayersAndCommit,
   setLayerOpacityAndCommit,
@@ -75,9 +76,12 @@ describe('reorderLayersAndCommit · Interaction IR 事件', () => {
     expect(refs?.clientMutationId).toMatch(/^[A-Za-z0-9-]{8,}$/);
     expect(refs?.outcome).toBe('committed');
     expect(refs?.mutationRevision).toBe(7);
+    // expectedRevision = 本笔发出的 CAS revision（3），不是落定后的 7。
+    expect(refs?.expectedRevision).toBe(3);
     // 服务端收到的 mutation 与事件共享同一 id（causality 链）。
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
     expect(body.client_mutation_id).toBe(refs?.clientMutationId);
+    expect(body.expected_revision).toBe(3);
   });
 
   it('会话切换（mutation 从未发生）→ 不 emit（P1-3：不得申报 committed）', async () => {
@@ -122,6 +126,23 @@ describe('setLayerOpacityAndCommit · Interaction IR 事件', () => {
     expect(payload).toEqual({ layer_id: 'L1', opacity: 0.4 });
     expect(refs?.outcome).toBe('committed');
     expect(refs?.mutationRevision).toBe(9);
+    // 本笔发出的 CAS revision 是 3（落定前），不是 setMapSpecRevision 后的 9。
+    expect(refs?.expectedRevision).toBe(3);
+  });
+});
+
+describe('commitLayerStyleAndCommit · Interaction IR 事件', () => {
+  it('committed → expectedRevision 保持发出的 CAS revision', async () => {
+    fetchMock.mockResolvedValueOnce(okMutationResponse(9));
+    await commitLayerStyleAndCommit('L1', { 'circle-color': '#f00' });
+    expect(emitMutationLinked).toHaveBeenCalledTimes(1);
+    const [kind, , refs] = vi.mocked(emitMutationLinked).mock.calls[0];
+    expect(kind).toBe('layer_style_changed');
+    expect(refs?.outcome).toBe('committed');
+    expect(refs?.expectedRevision).toBe(3);
+    expect(refs?.mutationRevision).toBe(9);
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body.expected_revision).toBe(3);
   });
 });
 

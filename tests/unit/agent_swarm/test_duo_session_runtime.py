@@ -391,6 +391,21 @@ class TestAggregatorIntegration:
 
 
 class TestDuoSessionInternals:
+    async def test_stages_run_off_event_loop(self, monkeypatch):
+        """持 governor 槽位的 CPU 密集阶段必须在线程中执行，不阻塞事件循环。"""
+        calls: List[Any] = []
+
+        async def _fake_to_thread(func, *args, **kwargs):
+            calls.append(func)
+            return func(*args, **kwargs)
+
+        monkeypatch.setattr(asyncio, "to_thread", _fake_to_thread)
+        session = _session(_PassingAuditor())
+        result = await session.run(_REQUEST, run_id="run-offload")
+        assert result.status == "converged"
+        assert len(calls) == 2  # R0 compose + audit 均经 to_thread
+        assert calls[1] == session._auditor.audit
+
     async def test_auditor_stage_exception_propagates(self):
         """会话不吞审计异常（与 SwarmAggregator 的 fail-open 边界不同）。"""
         session = _session(_ExplodingAuditor())

@@ -313,6 +313,35 @@ async def test_chapter_pending_stamp_enables_refusal(kernel_sid):
 
 
 @pytest.mark.asyncio
+async def test_chapter_questions_are_bounded(kernel_sid):
+    """超长/超量的 questions 不得撑破 KB 级有界信封不变式。"""
+    rt = get_runtime(kernel_sid)
+    await rt.begin_turn("t1", host="pi", message="问")
+    plan = await rt.hydrate()
+    plan.gis_chapter = {"query": "问", "intent": {"task": "simple_view"}}
+    from app.services.session_plan import save_session_plan
+    await save_session_plan(plan)
+
+    changed = await rt.update_chapter_clarification(
+        status="pending", turn_id="t1", question="范围？",
+        questions=[
+            {"code": "c1", "context_key": "k1", "question_zh": "长" * 5000},
+            {"code": "c2", "context_key": "k2", "question_zh": "第二"},
+            {"code": "c3", "context_key": "k3", "question_zh": "第三"},
+        ],
+        request_id="r-bounded",
+    )
+    assert changed is True
+    clar = (await _plan_of(kernel_sid)).gis_chapter["intent"]["clarification"]
+    assert len(clar["questions"]) <= 2
+    assert all(
+        len(str(v)) <= 200
+        for q in clar["questions"]
+        for v in q.values()
+    )
+
+
+@pytest.mark.asyncio
 async def test_chapter_pending_restamp_overwrites_raised_turn(kernel_sid):
     """review P2-2b：后续 turn 重新提出问题 → raised_turn_id 覆盖为新 turn
     （否则 refusal 谓词的 raised==turn 匹配永远失配，该 turn 误标 completed）。"""

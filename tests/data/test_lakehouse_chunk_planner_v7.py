@@ -158,6 +158,8 @@ def test_resolve_selection_labels_and_bbox():
         )
     with pytest.raises(CubeSchemaError, match="empty selection"):
         resolve_selection(coordinates=coords, selection={})
+    with pytest.raises(CubeSchemaError, match="empty time label"):
+        resolve_selection(coordinates=coords, selection={"time": []})
 
 
 def test_plan_selection_budget_and_consistency(tmp_path):

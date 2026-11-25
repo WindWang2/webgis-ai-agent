@@ -119,6 +119,35 @@ async def test_per_runner_observers_are_isolated_and_missing_metadata_is_disclos
     assert (await explicit.dispatch("unmapped", {}))["code"] == "DELEGATION_CAPABILITY_DENIED"
 
 
+@pytest.mark.asyncio
+async def test_raising_tool_dispatch_is_not_capability_evidence():
+    from app.services.agent_swarm.capability_observation import SubagentSurface
+
+    class _RaisingRegistry:
+        def descriptor(self, name):
+            return SimpleNamespace(capabilities=["cap.boom"])
+
+        def resolve_name(self, name):
+            return name
+
+        async def dispatch(self, name, *args, **kwargs):
+            raise RuntimeError("tool crashed")
+
+    surface = SubagentSurface(
+        role=None,
+        domains=None,
+        max_rounds=10,
+        schemas=[{"function": {"name": "boom"}}],
+    )
+    observer = CapabilityRecordingRegistry(_RaisingRegistry(), surface)
+    with pytest.raises(RuntimeError, match="tool crashed"):
+        await observer.dispatch("boom", {})
+    assert observer.capabilities_used() == []
+    evidence = observer.evidence()
+    assert evidence["tools_used"] == []
+    assert evidence["status"] == "complete"
+
+
 def test_mapper_ignores_self_reported_capabilities_without_parent_observation():
     from app.services.agent_swarm.delegation import DelegationLease
     from app.services.agent_swarm.delegation_adapters import outcome_from_subagent_result

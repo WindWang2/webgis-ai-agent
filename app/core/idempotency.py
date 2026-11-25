@@ -251,7 +251,10 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
                 # 释放。锁空闲不代表 handler 未执行 —— 重新抢锁执行会把
                 # 已生效的 mutating handler 再跑一遍（单飞静默退化）。
                 return JSONResponse(
-                    status_code=409, content={"detail": "Idempotent request is still in progress"},
+                    status_code=409,
+                    content=unified_error_envelope(
+                        409, "Idempotent request is still in progress"
+                    ),
                     headers={"Retry-After": "1"},
                 )
         response = await call_next(request)
@@ -400,7 +403,8 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
     def _replay(self, record_json: str, *, authority: Optional[str] = None) -> Response:
         try:
             record = json.loads(record_json)
-        except (TypeError, ValueError):
+            status_code = int(record.get("status", 200))
+        except (TypeError, ValueError, AttributeError):
             logger.warning("[Idempotency] corrupt replay record; reprocess hint")
             return Response(
                 status_code=503,
@@ -410,12 +414,17 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
                 media_type="application/json",
             )
         if authority is not None and not hmac.compare_digest(str(record.get("authority") or ""), authority):
-            return JSONResponse(status_code=403, content={"detail": "Idempotent result is no longer authorized"})
+            return JSONResponse(
+                status_code=403,
+                content=unified_error_envelope(
+                    403, "Idempotent result is no longer authorized"
+                ),
+            )
         headers = dict(record.get("headers") or {})
         headers["Idempotent-Replay"] = "true"
         return Response(
             content=record.get("body", ""),
-            status_code=int(record.get("status", 200)),
+            status_code=status_code,
             media_type=record.get("content_type", "application/json"),
             headers=headers,
         )

@@ -407,6 +407,40 @@ async def test_s6b_legacy_projection_events_match_truncated_envelope(registry, s
     await legacy_adapter.end_turn(sid, "turn-leg-trunc", status="completed")
 
 
+@pytest.mark.asyncio
+async def test_s6c_legacy_projection_skips_non_numeric_step_n(sid):
+    """畸形 legacy 行的 ``n`` 非数值不得抛错（入口 exception-safe 承诺）。"""
+    from types import SimpleNamespace
+
+    from app.services.harness_kernel import legacy_adapter
+
+    orch_plan = SimpleNamespace(
+        intent="malformed",
+        steps=[
+            SimpleNamespace(n="bad", goal="坏行", tool=""),
+            SimpleNamespace(n=1, goal="好行", tool=""),
+        ],
+    )
+    events = await legacy_adapter.project_orchestrator_plan(
+        sid, orch_plan, turn_id="turn-leg-bad"
+    )
+    plan = await load_session_plan(sid)
+    assert {s.id for s in plan.steps} == {"l1"}
+    assert any(e.data["step_id"] == "l1" for e in events)
+
+    canonical = SimpleNamespace(
+        steps=[
+            SimpleNamespace(n="bad", goal="坏行", tool="", status="completed"),
+            SimpleNamespace(n=1, goal="好行一", tool="", status="completed"),
+            SimpleNamespace(n=2, goal="好行二", tool="", status="completed"),
+        ],
+    )
+    await legacy_adapter.project_canonical_flush(sid, canonical)
+    plan = await load_session_plan(sid)
+    assert {s.id for s in plan.steps} == {"l1", "l2"}
+    assert all(s.status == "succeeded" for s in plan.steps)
+
+
 # ── Scenario 7 ──────────────────────────────────────────────────────────────
 
 

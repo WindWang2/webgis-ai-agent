@@ -121,6 +121,32 @@ def test_backup_dedup_hits(tmp_path, monkeypatch):
     assert second["new_blobs"] == 0
 
 
+def test_backup_falls_back_without_streaming_put(tmp_path, monkeypatch):
+    """无 put_blob_from_path 的 BlobStore 走 put_blob 回退（不抛裸 AttributeError）。"""
+    class _Result:
+        put_new = True
+
+    class _LegacyStore:
+        def __init__(self):
+            self.calls = []
+
+        def put_blob(self, digest, data, kind):
+            self.calls.append((digest, data, kind))
+            return _Result()
+
+    store_dir = tmp_path / "cube"
+    store_dir.mkdir()
+    (store_dir / "chunk.bin").write_bytes(b"chunk-bytes")
+    fake = _LegacyStore()
+    monkeypatch.setattr(
+        "app.services.s3_blob_store.get_object_store", lambda: fake
+    )
+    out = backup_cube_chunks(store_dir)
+    assert out["backed_up"] is True
+    assert out["new_blobs"] == 1
+    assert fake.calls[0][1] == b"chunk-bytes"
+
+
 @pytest.mark.asyncio
 async def test_scan_missing_and_orphans(tmp_path, monkeypatch):
     from app.core.config import settings

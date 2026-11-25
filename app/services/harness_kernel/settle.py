@@ -644,7 +644,11 @@ async def settle_turn(inp: HarnessSettleInput) -> HarnessSettleOutcome:
         return HarnessSettleOutcome(
             kernel_status="", settle_class="", disposition="unknown_turn",
         )
-    key = inp.idempotency_key or f"{inp.session_id}:{inp.turn_id}"
+    key = f"{inp.session_id}:{inp.turn_id}"
+    if inp.idempotency_key:
+        # host 提供的键只是本 turn 内的幂等标识，必须与 (session, turn) 绑定：
+        # 跨 turn 复用同一键不得重放上一 turn 的收据（否则后续 turn 永不结算）。
+        key = f"{key}:{inp.idempotency_key}"
     async with _lock_for(key):
         cached = _RECEIPTS.get(key)
         if cached is not None:
@@ -704,10 +708,13 @@ async def settle_turn(inp: HarnessSettleInput) -> HarnessSettleOutcome:
                     claim = None
                 if claim is None or claim.state != "claimed":
                     state = claim.state if claim else "unavailable"
-                    return HarnessSettleOutcome(
+                    outcome = HarnessSettleOutcome(
                         kernel_status=computed, settle_class=settle_class_for_status(computed),
                         disposition=state if state in ("duplicate", "stale", "in_progress") else "unknown_turn",
                         receipts=(SettleEffectReceipt("settle_claim", "already" if state == "duplicate" else "failed", state),))
+                    # 与其它路径一致的观测面：结构化日志 + turn_settled 指标。
+                    _observe(inp, outcome, started)
+                    return outcome
                 outcome = await _settle_owned(inp, computed, recorded, claim.token)
                 if outcome.disposition == "settled":
                     _cache_receipt(key, outcome)
@@ -743,6 +750,18 @@ async def _settle_owned(inp: HarnessSettleInput, computed: str, recorded: str, t
         # the bounded authority cleanup so cancellation never strands running.
         async def interrupted() -> bool:
             await _end_turn_leg(inp, "interrupted", was_running=(recorded == "running"), claim_token=token)
+            # 5s 预算曾把 end_turn 留在后台（_pending_end_turns）：必须等它
+            # 落终态再 complete，否则 complete_settlement 读到 running 直接
+            # 放弃，且该条目永驻字典。
+            pending = _pending_end_turns.pop((inp.session_id, inp.turn_id), None)
+            if pending is not None and not pending.done():
+                try:
+                    await pending
+                except Exception:
+                    logger.warning(
+                        "[HarnessSettle] background end_turn failed session=%s turn=%s",
+                        inp.session_id, inp.turn_id, exc_info=True,
+                    )
             return await complete_settlement(inp.session_id, inp.turn_id, token)
         cleanup = _retain_cleanup(interrupted())
         try:

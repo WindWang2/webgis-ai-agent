@@ -443,7 +443,9 @@ def bounded_receipt(layout: Dict[str, Any], *, max_circles: int = 8) -> Dict[str
         "metrics": layout.get("metrics"),
         "legend": layout.get("legend"),
         "adjacency": {
-            "original_edges": (layout.get("adjacency") or {}).get("original_edges"),
+            # 与 retained 同分母：retained 来自 metrics（只统计两端都有圆的边），
+            # 这里必须读同一个数，否则保留率会被含零/缺失单元的边压低。
+            "original_edges": ((layout.get("metrics") or {}).get("adjacency") or {}).get("original_edges"),
             "retained": ((layout.get("metrics") or {}).get("adjacency") or {}).get("retained"),
         },
         "circle_count": len(circles),

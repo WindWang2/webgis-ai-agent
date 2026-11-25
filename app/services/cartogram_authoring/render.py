@@ -94,7 +94,7 @@ def render_svg(layout: Dict[str, Any], *, size_px: Optional[int] = None) -> str:
             f'<circle data-feature-id="{fid}" data-value="{_esc(val)}" '
             f'data-radius="{float(c.get("radius") or 0.0):.4f}" '
             f'cx="{float(c.get("x") or 0.0):.2f}" cy="{float(c.get("y") or 0.0):.2f}" '
-            f'r="{float(c.get("radius") or 0.0):.2f}" fill="{FILL}" '
+            f'r="{float(c.get("radius") or 0.0):.6f}" fill="{FILL}" '
             f'fill-opacity="{FILL_OPACITY}" stroke="{STROKE}" stroke-width="1.1">'
             f'<title>{label}: {_fmt(val)} {_esc(unit)}</title></circle>')
     parts.append("</g>")
@@ -187,10 +187,17 @@ def render_png(layout: Dict[str, Any], *, dpi: int = 96) -> bytes:
         dst = os.path.join(tmp, "layout.png")
         with open(src, "w", encoding="utf-8") as fh:
             fh.write(svg)
-        proc = subprocess.run(
-            [binary, "--dpi-x", str(dpi), "--dpi-y", str(dpi),
-             "-w", str(w), "-h", str(h), "-o", dst, src],
-            capture_output=True, text=True, timeout=120, check=False)
+        try:
+            proc = subprocess.run(
+                [binary, "--dpi-x", str(dpi), "--dpi-y", str(dpi),
+                 "-w", str(w), "-h", str(h), "-o", dst, src],
+                capture_output=True, text=True, timeout=120, check=False)
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            # 超时/进程不可执行也必须走 typed 错误，而不是逃逸成无类型的 500。
+            raise AuthoringError(
+                "EXPORT_FAILED",
+                f"PNG 栅格化失败：{type(exc).__name__}",
+                status_code=500) from exc
         if proc.returncode != 0 or not os.path.exists(dst):
             raise AuthoringError(
                 "EXPORT_FAILED",

@@ -216,7 +216,7 @@ class CartoAuditDuoSession:
                 timeout=_GOVERNOR_ACQUIRE_TIMEOUT_S,
             )
         try:
-            value = fn()
+            value = await asyncio.to_thread(fn)
         finally:
             if self._governor is not None:
                 self._governor.release(assignment_id)
@@ -254,7 +254,8 @@ class CartoAuditDuoSession:
                 timeout=_GOVERNOR_ACQUIRE_TIMEOUT_S,
             )
         try:
-            report = self._auditor.audit(
+            report = await asyncio.to_thread(
+                self._auditor.audit,
                 delivery,
                 chapter=chapter,
                 ledger=self._ledger,

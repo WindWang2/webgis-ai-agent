@@ -285,6 +285,13 @@ def test_labeled_cube_publish_carries_projection(tmp_path):
     assert manifest is not None
     assert manifest["payload"]["labeled"]["dims"] == proj["dims"]
     assert manifest["payload"]["labeled"]["variables"] == proj["variables"]
+    # 顶层形状契约跟随 labeled 投影 —— 绝不以 v1 的 [time,y,x]/schema v1
+    # 错标 4-D labeled store（回归：rs_cube 经此路径发布）。
+    assert manifest["payload"]["dims"] == proj["dims"]
+    assert (
+        manifest["payload"]["cube_schema_version"]
+        == proj["cube_schema_version"]
+    )
 
 def test_xarray_open_zarr_acceptance(tmp_path):
     """R0-1/R1-6 验收：v2 store 直接经 xr.open_zarr 读取 —— 维度由 v3

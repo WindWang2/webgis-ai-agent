@@ -437,3 +437,86 @@ class TestOversizePassthrough:
         assert not self._has_resp_record(redis), "超限响应不得写入重放缓存"
         # 单飞锁必须已释放（透传路径 finally 释放，无泄漏）
         assert not any(k.startswith("idem:inflight:") for k in redis.store)
+
+
+class _LockedRedis:
+    """另一个执行者持有单飞锁、且看不到可重放记录的最小 Redis 桩。"""
+
+    async def set(self, key, value, nx=False, ex=0):
+        return False
+
+    async def get(self, key):
+        if key.startswith("idem:resp:"):
+            return None
+        return "held-by-other"
+
+    async def eval(self, *_args, **_kwargs):
+        return 0
+
+
+class TestErrorEnvelopes:
+    """P3 契约：中间件失败面同样使用统一信封（不再裸 {"detail"}）。"""
+
+    @pytest.mark.asyncio
+    async def test_singleflight_conflict_uses_unified_envelope(self, monkeypatch):
+        import json
+
+        from starlette.requests import Request
+
+        import app.core.idempotency as idem_mod
+
+        monkeypatch.setattr(idem_mod, "WAIT_TIMEOUT_S", 0.02)
+        monkeypatch.setattr(idem_mod, "WAIT_INTERVAL_S", 0.001)
+        middleware = IdempotencyMiddleware(
+            FastAPI(), redis=_InlineRedis(_LockedRedis())
+        )
+        request = Request({
+            "type": "http", "method": "POST", "path": "/x",
+            "headers": [], "query_string": b"",
+            "server": ("testserver", 80), "scheme": "http",
+        })
+        request.state.idempotency_authority = "authority"
+
+        async def call_next(_request):
+            raise AssertionError("冲突路径不得执行 handler")
+
+        response = await middleware._singleflight(
+            _LockedRedis(), "conflict-key", request, call_next
+        )
+        assert response.status_code == 409
+        body = json.loads(response.body)
+        assert body["success"] is False
+        assert body["code"] == "CONFLICT"
+        assert body["message"] == "Idempotent request is still in progress"
+        assert response.headers.get("Retry-After") == "1"
+
+    def test_replay_authority_mismatch_uses_unified_envelope(self):
+        import json
+
+        middleware = IdempotencyMiddleware(
+            FastAPI(), redis=_InlineRedis(FakeRedis())
+        )
+        response = middleware._replay(
+            '{"authority": "alice", "status": 200, "headers": {}, "body": "x"}',
+            authority="mallory",
+        )
+        assert response.status_code == 403
+        body = json.loads(response.body)
+        assert body["success"] is False
+        assert body["code"] == "FORBIDDEN"
+
+    @pytest.mark.parametrize("status", [None, "not-a-number"])
+    def test_replay_corrupt_status_maps_to_503(self, status):
+        import json
+
+        middleware = IdempotencyMiddleware(
+            FastAPI(), redis=_InlineRedis(FakeRedis())
+        )
+        record = json.dumps({
+            "authority": "a", "status": status, "headers": {}, "body": "x",
+        })
+        response = middleware._replay(record, authority="a")
+        assert response.status_code == 503
+        body = json.loads(response.body)
+        assert body["success"] is False
+        assert body["code"] == "SERVICE_UNAVAILABLE"

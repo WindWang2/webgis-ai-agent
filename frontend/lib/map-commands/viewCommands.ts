@@ -87,7 +87,7 @@ function runCameraCommand(
   execute: (ctx: MapCommandContext) => MapCommandResult | void,
   target?: CameraTarget,
 ): Promise<MapCommandResult> {
-  return (async () => {
+  return (async (): Promise<MapCommandResult> => {
     // V3: a user gesture owns the camera — wait it out (bounded) instead of
     // fighting it. waitForGestureEnd resolves immediately when idle.
     if (isUserGesturing()) {
@@ -182,7 +182,13 @@ function runCameraCommand(
         settle({ status: 'failed', error: e instanceof Error ? e.message : String(e) });
       }
     });
-  })();
+  })().catch((e) => ({
+    // P3: map.stop()/onUserGestureStart()/map.once() sit outside the inner
+    // try — a destroyed map must still settle failed, never reject, per the
+    // "always resolve" contract above.
+    status: 'failed' as const,
+    error: e instanceof Error ? e.message : String(e),
+  }));
 }
 
 /** Reads the *settled* camera state off the map (post-moveend). */

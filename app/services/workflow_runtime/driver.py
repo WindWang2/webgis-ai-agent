@@ -629,9 +629,9 @@ class Driver:
         # 绑定态节点：data_input/output 的「执行」= 绑定传递（产物已存在）。
         kind = str(node.get("kind") or "")
         if kind in ("data_input", "output"):
-            ref = (await asyncio.to_thread(
-                store.get_node, instance_id, node_id)).get("bound_ref") \
-                or (input_refs[0] if input_refs else "")
+            ref = ((await asyncio.to_thread(
+                store.get_node, instance_id, node_id)) or {}).get(
+                    "bound_ref") or (input_refs[0] if input_refs else "")
             out_fp = await self._ref_fingerprint(session_id, ref)
             tr = await asyncio.to_thread(
                 store.transition_node,
@@ -1299,7 +1299,7 @@ class Driver:
         else:
             level = min(
                 levels,
-                key=lambda lv: (lv != "content", lv != "profile_digest"),
+                key=lambda lv: (lv != "profile_digest", lv != "content"),
             )
         await asyncio.to_thread(
             self.reuse_index.record,

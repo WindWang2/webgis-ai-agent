@@ -215,9 +215,8 @@ def apply_resolutions_to_ops(
                         # 足迹产生）时整 op 移除。
                         # merge 父集 = plan 级目标，无法部分剥离；该 wfid 的
                         # retire 在 delete 剥离后只能来自 merge —— 整 op 移除。
-                        if any(o.get("op") == "merge_features" for o in new_ops):
-                            structural_removed = True
-                            continue
+                        structural_removed = True
+                        continue
                     pruned.append(op)
                 new_ops = pruned
                 effect = f"kept current modification; dropped delete of {wfid}"

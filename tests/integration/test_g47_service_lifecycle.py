@@ -238,6 +238,8 @@ async def test_second_apply_records_previous_for_undo(tmp_path, monkeypatch):
     block = layer["cartogram_authoring"]
     assert block["layout_ref"] == second_ref
     assert block["previous"]["layout_ref"] == first_ref
+    # 有界快照：不能把更早的 previous 链整块嵌套进 mapspec（否则线性膨胀）
+    assert "previous" not in block["previous"]
 
 
 # ── CAS：修订不符时什么都不写 ───────────────────────────────────────────
@@ -373,3 +375,58 @@ async def test_same_plan_and_revision_reuses_the_job(tmp_path, monkeypatch):
     assert first["job_id"] == second["job_id"]
     assert second["idempotent_reuse"] is True
     assert first["candidate_digest"] == second["candidate_digest"]
+
+
+# ── 入队前预检：与 worker 同一套范围/预算裁决 ──────────────────────────
+
+async def _parsed_plan(session_id: str, **overrides):
+    ins = await inspect_layer(session_id, LAYER_ID, trusted_dispatch=True)
+    anchor = {k: ins["source_anchor"][k] for k in
+              ("ref_id", "content_revision", "content_fingerprint")}
+    return parse_plan({**PLAN, "layer_id": LAYER_ID, "source_anchor": anchor,
+                       **overrides})
+
+
+async def test_precheck_rejects_unknown_include_ids_before_enqueueing(tmp_path, monkeypatch):
+    session_id, _ = await _seed(tmp_path, monkeypatch)
+    plan = await _parsed_plan(
+        session_id, scope={"include_ids": ["u0", "u1", "does-not-exist"]})
+    with pytest.raises(AuthoringError) as ei:
+        await plan_layout(session_id, LAYER_ID, plan, trusted_dispatch=True)
+    assert ei.value.code == "SCOPE_IDS_NOT_FOUND"
+
+
+async def test_precheck_rejects_exclusion_without_reason_before_enqueueing(tmp_path, monkeypatch):
+    session_id, _ = await _seed(tmp_path, monkeypatch)
+    plan = await _parsed_plan(session_id, scope={"exclude_ids": ["u0"]})
+    with pytest.raises(AuthoringError) as ei:
+        await start_layout(session_id, LAYER_ID, plan, trusted_dispatch=True)
+    assert ei.value.code == "INVALID_PLAN"
+
+
+async def test_plan_precheck_rejects_budget_before_projection(tmp_path, monkeypatch):
+    import app.services.cartogram_authoring.service as service_module
+
+    session_id, _ = await _seed(tmp_path, monkeypatch)
+    plan = await _parsed_plan(session_id, budgets={"max_features": 2})
+
+    def _must_not_prepare(*_args, **_kwargs):
+        raise AssertionError("prepare_geography 在预算预检之前被执行")
+
+    monkeypatch.setattr(service_module, "prepare_geography", _must_not_prepare)
+    with pytest.raises(AuthoringError) as ei:
+        await plan_layout(session_id, LAYER_ID, plan, trusted_dispatch=True)
+    assert ei.value.code == "BUDGET_EXCEEDED"
+
+
+async def test_run_rejects_plan_for_a_different_layer(tmp_path, monkeypatch):
+    session_id, _ = await _seed(tmp_path, monkeypatch)
+    ins = await inspect_layer(session_id, LAYER_ID, trusted_dispatch=True)
+    anchor = {k: ins["source_anchor"][k] for k in
+              ("ref_id", "content_revision", "content_fingerprint")}
+    plan = parse_plan({**PLAN, "layer_id": "another-layer",
+                       "source_anchor": anchor})
+    with pytest.raises(AuthoringError) as ei:
+        await start_layout(session_id, LAYER_ID, plan, trusted_dispatch=True)
+    assert ei.value.code == "INVALID_PLAN"
+    assert ei.value.field == "layer_id"

@@ -192,6 +192,11 @@ def _get_shared_file_handler(level: int = logging.INFO) -> RotatingFileHandler |
     """
     global _shared_file_handler, _file_handler_disabled
     if _shared_file_handler is not None:
+        # 共享 handler 的级别必须是所有调用方中最宽松的：记录级过滤由各
+        # logger 自身级别承担，否则先建的 WARNING logger 会把后建 INFO
+        # logger 的记录一并挡在文件外。
+        if level < _shared_file_handler.level:
+            _shared_file_handler.setLevel(level)
         return _shared_file_handler
     if _file_handler_disabled:
         return None

@@ -253,26 +253,28 @@ def search_catalog(
         ]
     if time_from is not None:
         parsed_from = _parse_dt(time_from)
-        if parsed_from is not None:
-            has_end = LakehouseCatalogItem.time_end.is_not(None)
-            conds.append(or_(
-                and_(has_end, LakehouseCatalogItem.time_end >= parsed_from),
-                and_(
-                    not_(has_end),
-                    LakehouseCatalogItem.time_start >= parsed_from,
-                ),
-            ))
+        if parsed_from is None:
+            raise CatalogError("time_from must be an ISO-8601 datetime")
+        has_end = LakehouseCatalogItem.time_end.is_not(None)
+        conds.append(or_(
+            and_(has_end, LakehouseCatalogItem.time_end >= parsed_from),
+            and_(
+                not_(has_end),
+                LakehouseCatalogItem.time_start >= parsed_from,
+            ),
+        ))
     if time_to is not None:
         parsed_to = _parse_dt(time_to)
-        if parsed_to is not None:
-            has_start = LakehouseCatalogItem.time_start.is_not(None)
-            conds.append(or_(
-                and_(has_start, LakehouseCatalogItem.time_start <= parsed_to),
-                and_(
-                    not_(has_start),
-                    LakehouseCatalogItem.time_end <= parsed_to,
-                ),
-            ))
+        if parsed_to is None:
+            raise CatalogError("time_to must be an ISO-8601 datetime")
+        has_start = LakehouseCatalogItem.time_start.is_not(None)
+        conds.append(or_(
+            and_(has_start, LakehouseCatalogItem.time_start <= parsed_to),
+            and_(
+                not_(has_start),
+                LakehouseCatalogItem.time_end <= parsed_to,
+            ),
+        ))
     wanted = [str(tag) for tag in (tags or [])]
     if wanted:
         from sqlalchemy import exists

@@ -125,6 +125,7 @@ async def execute_science_node(
             "columns": list(out_rows[0].keys()),
             "rows": out_rows[:10000],
             "row_count": len(out_rows),
+            "truncated": len(out_rows) > 10000,
         }
         ref = await session_data_manager.store(
             session_id, table_payload,

@@ -75,6 +75,16 @@ class TestVectorChecks:
         assert QualityIssueCode.IMPOSSIBLE_COORDINATES in {i.code for i in report.issues}
         assert report.status in (QualityStatus.BLOCKED, QualityStatus.REPAIRABLE)
 
+    def test_zero_coordinates_disclosed_in_checks_run(self):
+        feats = [
+            {"geometry": {"type": "Point", "coordinates": [0.0, 0.0]}, "properties": {}}
+            for _ in range(10)
+        ]
+        report = run_quality_checks(_profile_for(feats, crs="EPSG:4326"))
+        assert QualityIssueCode.ZERO_COORDINATES in {i.code for i in report.issues}
+        # 实际跑过的检查必须如实披露（否则 checks_run 低估检查面）。
+        assert "zero_coordinates" in report.checks_run
+
     def test_null_heavy_field(self):
         feats = [
             {"geometry": {"type": "Point", "coordinates": [1.0, 1.0]},

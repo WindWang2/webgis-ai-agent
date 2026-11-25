@@ -156,10 +156,6 @@ def derive_op_footprints(
                 for fp in footprints:
                     if fp.kind in ("create_features", "split_feature", "merge_features"):
                         fp.birth.add(wfid)
-            elif presence == "removed":
-                for fp in footprints:
-                    if wfid in fp.retire:
-                        break
     return footprints
 
 
@@ -367,9 +363,9 @@ def classify_conflicts(
         # current 已按某指纹物化 —— 若其物化身份与我们预演的不一致即阻断。
         preview_idx = fc_index_by_wfid(base_mat)
         mismatch = [w for w in list(preview_idx)[:200] if w not in cur_idx]
-        gone = [w for w in mismatch if w not in cur_idx][:8]
+        gone = mismatch[:8]
         # 预演身份在 current 全部在场 → 同一映射可证；否则阻断。
-        if gone and set(preview_idx) - set(cur_idx):
+        if gone:
             conflicts.append({
                 "conflict_id": "identity:unprovable",
                 "kind": "identity_unprovable",

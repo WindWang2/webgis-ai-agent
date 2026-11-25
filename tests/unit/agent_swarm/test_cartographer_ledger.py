@@ -249,6 +249,19 @@ class TestComposeHonestDegradation:
         assert 104.0 <= center[0] <= 104.6
         assert 30.5 <= center[1] <= 31.2
 
+    def test_missing_bbox_fallback_is_disclosed(self):
+        """要素全无几何 → bbox 回退默认范围必须进 warnings（与其余降级同纪律）。"""
+        ledger = ArtifactLedger()
+        agent = CartographerAgent(ledger=ledger)
+        request = _request([10, 20])
+        for feature in request["geojson"]["features"]:
+            feature["geometry"] = None
+        ref = agent.compose(request)
+        assert any("bbox_unavailable" in w for w in ref.warnings)
+        payload = ledger.get(ref.ref_id)
+        assert payload["view"]["center"] == [102.5, 32.5]
+        assert payload["view"]["zoom"] == 10
+
     def test_recipe_hint_miss_disclosed(self):
         class _EmptyRegistry:
             def get(self, hint: str):

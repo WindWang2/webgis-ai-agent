@@ -372,7 +372,7 @@ def run_quality_checks(
         issues.extend(_vector_checks(profile.vector, crs=profile.crs))
         checks_run += [
             "empty_payload", "empty_geometry", "crs_missing", "impossible_coordinates",
-            "null_heavy_field", "invalid_dates", "schema_truncated",
+            "zero_coordinates", "null_heavy_field", "invalid_dates", "schema_truncated",
         ]
         if not deep_evidence:
             checks_not_run += ["self_intersection", "duplicate_geometries", "duplicate_rows"]

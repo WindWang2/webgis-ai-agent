@@ -47,3 +47,35 @@ def test_group_field_priority_and_clamp() -> None:
     assert AS._group_field({"admin_field": "a"}, "d") == "a"
     assert AS._group_field({}, "d") == "d"
     assert len(AS._group_field({"field": "x" * 100}, "d")) == 64
+
+
+def test_table_payload_flags_truncated_rows(monkeypatch) -> None:
+    """>10000 行的聚合表必须带截断标记（下游可判定结果不完整）。"""
+    import asyncio
+
+    import app.services.data_fabric.query.execution as QE
+    import app.services.session_data as SD
+
+    captured = {}
+
+    async def fake_get(session_id, ref):
+        return {"rows": [{"g": "x"}]}
+
+    async def fake_store(session_id, payload, prefix="data"):
+        captured["payload"] = payload
+        return "ref:out"
+
+    monkeypatch.setattr(SD.session_data_manager, "get", fake_get)
+    monkeypatch.setattr(SD.session_data_manager, "store", fake_store)
+    monkeypatch.setattr(
+        QE, "compute_aggregates",
+        lambda rows, aggs, group_by: [{"g": i} for i in range(10001)])
+
+    outcome = asyncio.run(AS.execute_science_node(
+        {"capability": "category_breakdown"}, input_refs=["ref:in"],
+        params={}, session_id="s"))
+    assert outcome.ok is True
+    payload = captured["payload"]
+    assert len(payload["rows"]) == 10000
+    assert payload["row_count"] == 10001
+    assert payload["truncated"] is True

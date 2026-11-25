@@ -272,6 +272,18 @@ def test_bounded_receipt_limits_circles_and_keeps_metrics(built):
     assert "reference" not in receipt
 
 
+def test_bounded_receipt_adjacency_denominator_matches_retained():
+    """零值单元不画圆：retained 只用两端都有圆的边，分母必须同一口径。"""
+    values = list(V9)
+    values[0] = 0
+    layout = _build(grid_features(values=values)).layout
+    metrics = layout["metrics"]["adjacency"]
+    assert layout["adjacency"]["original_edges"] > metrics["original_edges"]
+    receipt = bounded_receipt(layout)
+    assert receipt["adjacency"]["original_edges"] == metrics["original_edges"]
+    assert receipt["adjacency"]["retained"] == metrics["retained"]
+
+
 def test_diagram_spec_is_a_bounded_render_payload(built):
     spec = diagram_spec_from_layout(built.layout)
     assert spec["fit"] == "contain"

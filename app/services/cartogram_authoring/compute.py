@@ -3,8 +3,9 @@
 顺序即裁决顺序，任何一步失败都不留下"半个成果"：
 
     scan_quantities（字段/单位/零/缺失/非法）
+      → clamp_plan_budget（要素上界；先于最重的投影+邻接）
       → prepare_geography（身份/几何/CRS/anchor/邻接）
-      → clamp_plan_budget（资源上界）
+      → clamp_plan_budget（邻接边上界）
       → build_area_scale（共同面积系数）
       → solve_dorling（有界位移）
       → plan_circles（等比归一）
@@ -118,20 +119,9 @@ def scoped_features(
     return keep
 
 
-def compute_layout(
-    plan: AuthoringPlan,
-    frozen: FrozenSource,
-    *,
-    should_cancel: Optional[Callable[[], bool]] = None,
-    cancellation_exception: Optional[Callable[[], BaseException]] = None,
-) -> LayoutBuild:
-    """确定性计算（同一冻结内容 + 同一计划 → 同一 artifact 指纹）。"""
-    scan = scan_quantities(
-        scoped_features(frozen.features, plan),
-        field_name=plan.quantity.field, unit=plan.quantity.unit,
-        zero_policy=plan.zero_policy, missing_policy=plan.missing_policy)
-
-    available = {str(f.get("id")) for f in frozen.features
+def validate_scope(plan: AuthoringPlan, features: List[Dict[str, Any]]) -> None:
+    """预检 scope 的 id 与排除理由（与 worker 同一套裁决，预检期就拒绝）。"""
+    available = {str(f.get("id")) for f in features
                  if isinstance(f, dict) and f.get("id") is not None}
     if plan.scope.include_ids is not None:
         unknown = [fid for fid in plan.scope.include_ids if fid not in available]
@@ -160,8 +150,26 @@ def compute_layout(
             field="scope.exclude_reasons",
             correction_hint="逐项给理由；发布说明要能解释覆盖范围。")
 
+
+def compute_layout(
+    plan: AuthoringPlan,
+    frozen: FrozenSource,
+    *,
+    should_cancel: Optional[Callable[[], bool]] = None,
+    cancellation_exception: Optional[Callable[[], BaseException]] = None,
+) -> LayoutBuild:
+    """确定性计算（同一冻结内容 + 同一计划 → 同一 artifact 指纹）。"""
+    scoped = scoped_features(frozen.features, plan)
+    scan = scan_quantities(
+        scoped,
+        field_name=plan.quantity.field, unit=plan.quantity.unit,
+        zero_policy=plan.zero_policy, missing_policy=plan.missing_policy)
+    # 要素上界必须在投影/邻接之前：超限源不该先付出最重的一步再被拒。
+    clamp_plan_budget(plan, features=len(scoped), adjacency_edges=0)
+    validate_scope(plan, frozen.features)
+
     prepared = prepare_geography(
-        scoped_features(frozen.features, plan),
+        scoped,
         source_crs=plan.source_crs,
         target_crs=plan.projection.crs,
         snap_tolerance_m=plan.adjacency.snap_tolerance_m,

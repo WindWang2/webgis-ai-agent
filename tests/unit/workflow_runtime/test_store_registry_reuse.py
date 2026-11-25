@@ -417,8 +417,12 @@ def test_eligibility_rules(index):
 
 
 def test_anonymous_session_scope():
+    # anonymous 域 = 会话哈希（同会话内才可复用）
     assert RU.anonymous_session_scope("anonymous", "s1") != ""
-    assert RU.anonymous_session_scope("u:abc", "s1") != ""
+    assert RU.anonymous_session_scope("s:abc", "s1") != ""
+    # 真实用户域 = 空 scope（跨会话共享）
+    assert RU.anonymous_session_scope("u:abc", "s1") == ""
+    assert RU.anonymous_session_scope("u:abc", "") == ""
 
 
 # ── 迁移单 head + up/down/up ─────────────────────────────────────────────

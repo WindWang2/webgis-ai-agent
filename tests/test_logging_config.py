@@ -41,6 +41,26 @@ class TestSharedFileHandler:
         h = _get_shared_file_handler()
         assert "app.log" in h.baseFilename
 
+    def test_later_logger_lowers_shared_handler_level(self, monkeypatch, tmp_path):
+        """共享 handler 须接受最宽松的调用方级别（WARNING 后建 INFO 仍入库）。"""
+        import app.core.logging_config as lc
+
+        monkeypatch.setattr(lc, "LOG_DIR", tmp_path)
+        monkeypatch.setattr(lc, "_shared_file_handler", None)
+        monkeypatch.setattr(lc, "_file_handler_disabled", False)
+
+        handler = lc._get_shared_file_handler(logging.WARNING)
+        assert handler is not None
+        try:
+            assert handler.level == logging.WARNING
+            assert lc._get_shared_file_handler(logging.INFO) is handler
+            assert handler.level == logging.INFO
+            # 更严格的调用方不得反过来抬高共享 handler 的级别
+            assert lc._get_shared_file_handler(logging.ERROR) is handler
+            assert handler.level == logging.INFO
+        finally:
+            handler.close()
+
 
 class TestSetupLoggingFromEnv:
     def test_returns_dict_with_env_info(self):

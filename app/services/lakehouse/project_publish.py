@@ -167,9 +167,6 @@ def _publish_sync(
             artifact_id = _find_or_create_artifact(
                 db, project_id=project_id, oid=oid, manifest=manifest,
             )
-            if not manifest_blob_id:
-                unknown.append(oid)
-                continue
             revision, created = record_revision(
                 db,
                 artifact_id=artifact_id,

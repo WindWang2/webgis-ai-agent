@@ -272,7 +272,7 @@ class ArtifactContract(BaseModel):
 
         结构稳定、字段硬上限；`data_schema` 只出字段名列表（≤12），统计
         只出已内联键名。整体 JSON 序列化超过 max_chars 时逐级降级
-        （去 schema → 去诊断 → 去指纹），仍超则收缩文本字段并丢弃可选键
+        （去字段 → 去栅格 → 去指纹），仍超则收缩文本字段并丢弃可选键
         —— 最终视图绝不超 max_chars。
         """
         view: Dict[str, Any] = {
@@ -320,7 +320,7 @@ class ArtifactContract(BaseModel):
             except (TypeError, ValueError):
                 return max_chars + 1
 
-        for drop in (None, "fields", "raster", "diagnostics", "fingerprint"):
+        for drop in (None, "fields", "raster", "fingerprint"):
             if drop is not None:
                 view.pop(drop, None)
             if _size(view) <= max_chars:

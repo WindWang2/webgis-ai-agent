@@ -310,9 +310,9 @@ def test_m1_ready_node_binding_failure_goes_blocked():
 
 # ── M2: 跨会话探测自毁修复 + anonymous 同域 ──────────────────────────────
 
-def test_cross_session_run_recomputes_instead_of_reusing_foreign_ref():
-    """产物属会话 A；当前 run 会话 B —— 探测必须用 artifact_session_id
-    （旧实现用当前会话探测 → 必失败 → 误删活缓存并重算）。"""
+def test_cross_session_run_reuses_artifact_via_artifact_session():
+    """产物属会话 A；当前 run 会话 B —— 真实用户域跨会话复用，探测必须用
+    artifact_session_id（旧实现用当前会话探测 → 必失败 → 误删活缓存并重算）。"""
     dag = _chain_dag()
     env = Env(dag)
     inst = env.svc.instantiate("recipe-r1", owner_scope=_OWNER,
@@ -337,8 +337,8 @@ def test_cross_session_run_recomputes_instead_of_reusing_foreign_ref():
         package_fingerprint="pf" * 16, package_id="recipe-r1"))
     assert r2["status"] == "succeeded"
     node = env.svc.store.get_node(iid, "transform:buffer:t1")
-    assert not (node["reuse"] or {}).get("reused")
-    assert len(env.exec_calls) > len(calls_first)  # 未误删未重算
+    assert (node["reuse"] or {}).get("reused")
+    assert len(env.exec_calls) == len(calls_first)  # 跨会话复用命中，不重算
 
 
 def test_m2_anonymous_domain_find_scoped_by_session(env=None):
@@ -412,6 +412,36 @@ def test_m4_eligibility_rejects_absent_input_identity():
                         "b": {"fp": "", "content_revision": ""}},
         descriptor_probe=None)
     assert not ok and why == "input_identity_absent:b"
+
+
+def test_m4_reuse_level_aggregation_takes_weakest_level():
+    """content + profile_digest 混合 → 记 profile_digest（最低水位），
+    不得把弱端口掩盖成最强级 content。"""
+    from types import SimpleNamespace
+
+    from app.services.workflow_runtime.driver import Driver
+
+    recorded = []
+
+    class _Index:
+        def record(self, rec):
+            recorded.append(rec)
+
+    drv = Driver(SimpleNamespace(), reuse_index=_Index(),
+                 owner_scope="u:r1")
+    drv._package_fp = "pf" * 16
+    dag = {"compiler_version": "4.0.0", "methodology_fingerprint": "",
+           "nodes": [], "edges": []}
+    node = {"node_id": "transform:buffer:x", "capability": "buffer"}
+    ports = {
+        "a": {"level": "content", "fp": "a" * 32, "content_revision": "1"},
+        "b": {"level": "profile_digest", "fp": "b" * 32,
+              "content_revision": "2"},
+    }
+    asyncio.run(drv._record_reuse(
+        "wi-1", dag, node, "transform:buffer:x", ports, "s-r1", "ref:out",
+        "fp" * 16))
+    assert recorded and recorded[-1].fingerprint_level == "profile_digest"
 
 
 def _get_rows(env):

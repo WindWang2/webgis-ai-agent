@@ -118,8 +118,14 @@ export async function ensureLayerData(
       if (resolveSessionId(layer) !== sid) return { status: 'cancelled' };
       return { status: 'single-feature', feature };
     } catch (e: any) {
+      // 调用方中止（会话切换/卸载）在 fetch 层表现为无 status 的 AbortError：
+      // 返回文档化的 cancelled，而不是把中止抛给调用方。
+      if (opts?.signal?.aborted) return { status: 'cancelled' };
       if (e && (e.status === 404 || e?.status === 403)) {
-        // 404 → feature not found → honest fallback; 403 should propagate? but treat as fallback for selection UX
+        // 403（匿名会话缺 ownerToken / owner 不匹配）→ honest fallback：
+        // 选择详情是 best-effort UX，拒绝只会变成调用方的未处理拒绝。
+        if (e.status === 403) return { status: 'fallback' };
+        // 404 → feature not found → honest fallback
         if (e.status === 404) {
           // Track B（M3/M6）：无链内 id 的 MVT 层，点击命中的是瓦片 field 1
           // 位置 id（自然索引+1，revision 内稳定）——链内寻址 404 后按
@@ -143,6 +149,8 @@ export async function ensureLayerData(
               if (resolveSessionId(layer) !== sid) return { status: 'cancelled' };
               return { status: 'single-feature', feature };
             } catch {
+              // 与链内路径一致：中止 → cancelled，而不是把中止伪装成 fallback。
+              if (opts?.signal?.aborted) return { status: 'cancelled' };
               return { status: 'fallback' };
             }
           }
@@ -230,12 +238,22 @@ function raceCallerSignal(
 
 // #667 exporter helper: hydrate MVT layers on demand (shared for both vector-export sites).
 // #1388 P05：超过 TIER_EXPORT_FEATURES 的层跳过，避免无界全量 FC 下载。
-export async function hydrateMvtLayers(layers: Layer[], reason: EnsureLayerReason = 'export-vector'): Promise<void> {
+// 逐层失败不再被静默吞掉：返回失败的层 id —— 调用方（导出/属性表）能诚实
+// 披露哪些层仍是空数据，而不是把空产出当成成功。
+export async function hydrateMvtLayers(
+  layers: Layer[],
+  reason: EnsureLayerReason = 'export-vector',
+): Promise<string[]> {
   const targets = layers.filter(
     (l) => isMvtLayer(l) && (l._descriptor?.feature_count ?? 0) <= TIER_EXPORT_FEATURES,
   );
-  if (targets.length === 0) return;
-  await Promise.all(targets.map((l) => ensureLayerData(l.id, reason).catch(() => {})));
+  if (targets.length === 0) return [];
+  const settled = await Promise.allSettled(targets.map((l) => ensureLayerData(l.id, reason)));
+  const failed: string[] = [];
+  settled.forEach((result, index) => {
+    if (result.status === 'rejected') failed.push(targets[index].id);
+  });
+  return failed;
 }
 
 // For tests: clear pending cache

@@ -376,7 +376,7 @@ class GeoComputeAgent(BaseSpecialistAgent):
             )
 
         ref = _make(truncated=False)
-        if len(ref.to_json_bytes()) < SERIALIZATION_BUDGET_BYTES:
+        if len(ref.to_json_bytes()) <= SERIALIZATION_BUDGET_BYTES:
             return ref
         drop_order = sorted(
             meta,
@@ -385,7 +385,7 @@ class GeoComputeAgent(BaseSpecialistAgent):
         for key in drop_order:
             meta.pop(key)
             candidate = _make(truncated=True)
-            if len(candidate.to_json_bytes()) < SERIALIZATION_BUDGET_BYTES:
+            if len(candidate.to_json_bytes()) <= SERIALIZATION_BUDGET_BYTES:
                 return candidate
         raise SpatialProfileTooLargeError(
             f"SpatialProfileRef exceeds {SERIALIZATION_BUDGET_BYTES}B budget "

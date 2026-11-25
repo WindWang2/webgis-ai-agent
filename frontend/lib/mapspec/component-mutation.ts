@@ -89,7 +89,7 @@ export async function commitComponentPatch(
     return;
   }
   const enqueuedSessionId = getMapSpecSessionCursor().sessionId;
-  await enqueueUserMutation(async () => {
+  return enqueueUserMutation(async (): Promise<ComponentPatchOutcome | void> => {
     const { sessionId, revision, ownerToken } = getMapSpecSessionCursor();
     if (!sessionId || sessionId !== enqueuedSessionId) return;
     try {

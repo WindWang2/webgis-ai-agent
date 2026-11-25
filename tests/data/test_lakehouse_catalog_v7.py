@@ -148,6 +148,17 @@ def test_search_filters_and_pagination(db_tables):
             db, owner_type="session", owner_id="sess-cat", tags=["sar"],
         )
         assert g["count"] == 2
+        # 不可解析的时间过滤 = typed 拒绝（绝不静默丢弃过滤器）。
+        with pytest.raises(CatalogError, match="time_from"):
+            search_catalog(
+                db, owner_type="session", owner_id="sess-cat",
+                time_from="not-a-datetime",
+            )
+        with pytest.raises(CatalogError, match="time_to"):
+            search_catalog(
+                db, owner_type="session", owner_id="sess-cat",
+                time_to="not-a-datetime",
+            )
         # 无 owner typed 拒绝。
         with pytest.raises(CatalogError, match="owner"):
             search_catalog(db, owner_type="session", owner_id="")

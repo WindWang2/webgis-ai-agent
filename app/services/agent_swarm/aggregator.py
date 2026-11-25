@@ -75,9 +75,8 @@ class SessionPlanSwarmSink:
                     continue
                 self._upsert_progress(plan, entry, CapabilityProgress)
             await save_session_plan(plan, store=self._store)
-        # manifest 全量在 session store（payload 不入计划信封）——凭证总线
-        manifest_ref = await self._store_manifest(manifest)
-        return manifest_ref
+            # manifest 全量在 session store（payload 不入计划信封）——凭证总线
+            return await self._store_manifest(manifest)
 
     @staticmethod
     def _upsert_progress(plan: Any, entry: SwarmAssetEntry, progress_cls: Any) -> None:

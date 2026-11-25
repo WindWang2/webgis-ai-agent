@@ -194,7 +194,7 @@ def read_arrow_batches(
             # —— 结构性资源边界绝不因参数组合而旁路）。
             row_start = int(row_offset or 0) if row_offset or row_limit is not None else sum(batch_rows[:start])
             row_stop = min(total_rows, row_start + max_rows)
-            if row_offset < 0 or (row_limit is not None and row_limit < 0):
+            if int(row_offset or 0) < 0 or (row_limit is not None and row_limit < 0):
                 raise ArrowAdapterError("row window must be non-negative")
             want = total_rows - row_start
             if row_limit is not None:

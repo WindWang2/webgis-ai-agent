@@ -20,7 +20,13 @@ export const heatmapCommands: Record<string, CommandEntry> = {
       const image = params?.image ?? params?.url;
       // V3: missing payload data → explicit failed result (was a silent return).
       if (!image) return { status: 'failed', error: 'invalid_params' };
-      if (!bbox) return { status: 'failed', error: 'invalid_params' };
+      // P3: bbox must be a 4-element finite-number array — a short/non-numeric
+      // bbox would put `undefined` into the image-source coordinates (truthy
+      // `!bbox` alone let it through).
+      const validBbox = Array.isArray(bbox)
+        && bbox.length === 4
+        && bbox.every((n) => typeof n === 'number' && Number.isFinite(n));
+      if (!bbox || !validBbox) return { status: 'failed', error: 'invalid_params' };
 
       // v2(#1078 FE3)：不再 mint Date.now() 匿名 id —— 不可寻址（后续
       // remove/style/ref 命令无法定位）。缺省回落到稳定语义 id。

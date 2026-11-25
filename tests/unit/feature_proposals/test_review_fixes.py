@@ -448,3 +448,54 @@ async def test_r2_2_merge_mixing_rejected_and_parents_explicit(client, _isolated
     })
     assert resp.status_code == 400
     # 合法形态(唯一 op + 显式父集)仍通 —— 由 test_rp1_5 覆盖。
+
+
+# ── P3:容量闸拒绝不得留下孤立 base blob(先落盘后拒绝 → 无回收路径)────────
+
+
+async def test_p3_capacity_rejection_leaves_no_orphan_base_blob(
+    client, _isolated, tmp_path,
+):
+    from app.services.feature_proposals.contracts import MAX_DRAFT_PROPOSALS_PER_REF
+    from tests.unit.feature_proposals.test_service_journey import _immediate_edit
+
+    s = sid()
+    ref = await _seed(s)
+    for i in range(MAX_DRAFT_PROPOSALS_PER_REF):
+        resp = await client.post(f"/api/v1/chat/sessions/{s}/feature-proposals", json={
+            "ref_id": ref, "submit": False,
+            "ops": [{"op": "set_fields", "wfids": ["s1"], "fields": {"capacity": i}}],
+        })
+        assert resp.status_code == 201, resp.text
+    # 改变当前数据 → 下一次 capture 必是新 CAS key(同 key 会被去重掩盖)。
+    await _immediate_edit(
+        s, ref, [{"op": "set_fields", "fields": {"capacity": 999}}], feature_ids=["s1"],
+    )
+    blob_dir = tmp_path / "blobs"
+    before = {p for p in blob_dir.rglob("*") if p.is_file()}
+    resp = await client.post(f"/api/v1/chat/sessions/{s}/feature-proposals", json={
+        "ref_id": ref, "submit": False,
+        "ops": [{"op": "set_fields", "wfids": ["s1"], "fields": {"capacity": 1234}}],
+    })
+    assert resp.status_code == 429
+    assert resp.json()["code"] == "draft_limit_reached"
+    after = {p for p in blob_dir.rglob("*") if p.is_file()}
+    assert after == before  # 未新增无引用的 base 快照 blob
+
+
+# ── P3:list_proposals 负 offset 须钳到 0(此前切片返回错页/空页)────────────
+
+
+async def test_p3_list_proposals_negative_offset_clamped(client, _isolated):
+    from app.services.feature_proposals import service as fpsvc
+
+    s = sid()
+    ref = await _seed(s)
+    for i in range(2):
+        await _create(client, s, ref, [
+            {"op": "set_fields", "wfids": ["s1"], "fields": {"capacity": 10 + i}},
+        ])
+    listing = await fpsvc.list_proposals(s, offset=-1)
+    assert listing["total"] == 2
+    assert listing["offset"] == 0
+    assert len(listing["items"]) == 2  # 未修复时 items[-1:49] 只剩 1 条
