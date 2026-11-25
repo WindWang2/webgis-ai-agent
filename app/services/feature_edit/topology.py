@@ -28,7 +28,7 @@ from app.services.feature_edit.contracts import (
     finding,
 )
 
-__all__ = ["extract_topology_declaration", "check_topology"]
+__all__ = ["extract_topology_declaration", "check_topology", "split_topology_findings", "topology_finding_identity"]
 
 # 邻域检查候选对上限（超限 → 仅检查受影响要素与最近邻，披露 truncated）。
 MAX_TOPOLOGY_PAIRS = 200
@@ -229,6 +229,43 @@ def check_topology(
                     )
                 )
     return findings[:24]
+
+
+def topology_finding_identity(f: "EditFinding") -> Optional[Tuple[str, ...]]:
+    """违规对的稳定身份键（基线/新增分离用）；无法定位的 finding 返回 None
+    （视为新增 —— 保守：预算截断等否定性信号绝不因基线存在而被豁免）。"""
+    detail = f.get("detail") if isinstance(f.get("detail"), dict) else {}
+    rule = detail.get("rule")
+    wfid = detail.get("wfid")
+    if not rule or not isinstance(wfid, str):
+        return None
+    other = detail.get("other_wfid") or detail.get("duplicate_of")
+    parts = [str(rule), wfid]
+    if isinstance(other, str):
+        parts.append(other)
+    return tuple(parts)
+
+
+def split_topology_findings(
+    before: List[EditFinding], after: List[EditFinding]
+) -> Tuple[List[EditFinding], List[EditFinding]]:
+    """基线/新增违规分离（共享拓扑编辑的披露纪律）。
+
+    返回 (new_findings, existing_findings)：after 中身份键不在 before 里的
+    是本次编辑**新增**（阻断）；已有的延续基线（披露、不阻断，与验收
+    「允许已知基线违规须披露」一致）。无身份键的 finding 一律按新增处理。
+    """
+    baseline_ids = {topology_finding_identity(f) for f in before}
+    baseline_ids.discard(None)
+    new: List[EditFinding] = []
+    existing: List[EditFinding] = []
+    for f in after:
+        ident = topology_finding_identity(f)
+        if ident is not None and ident in baseline_ids:
+            existing.append(f)
+        else:
+            new.append(f)
+    return new, existing
 
 
 def _near_affected(geom: Any, affected: set, by_wfid: Dict[str, Any]) -> bool:

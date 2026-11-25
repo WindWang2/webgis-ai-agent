@@ -190,3 +190,6 @@ class PlanSummary(TypedDict, total=False):
     schema_ops: list[dict[str, str | None]]
     preview: list[DeltaPreview]
     expires_in_s: int
+    # 共享拓扑编辑（goal-gis-topology-authoring）：有界 impact/违规上下文投影
+    impact_summary: dict[str, JsonValue | None]
+    topology_context: dict[str, JsonValue | None]

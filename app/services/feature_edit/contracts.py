@@ -37,6 +37,12 @@ MAX_CREATED_PER_PLAN = 50           # create_features 单 plan 新增要素上�
 MAX_DELETED_PER_PLAN = 50           # delete_features 单 plan 删除要素上限
 MAX_MERGE_PARENTS = 10              # merge_features 单次合并父要素上限
 MAX_JOURNAL_ENTRY_BYTES = 256 * 1024  # 单 journal entry 序列化字节上限（entry_too_large）
+# ── 共享拓扑编辑边界（与 journal undo 保真预算联合保证有界） ──────────────
+MAX_SHARED_INDEX_NODES = 500_000        # 共享结构索引顶点数上限（超限 index_too_large）
+MAX_SHARED_VERTEX_TOLERANCE_M = 100.0   # 节点容差匹配上限（匹配合并是大范围动作，比 snap 更严）
+MAX_SHARED_TOUCHED_FEATURES = 10        # 单共享 op 触及要素上限（对齐 MAX_GEOMETRY_TARGETS）
+MAX_IMPACT_NEIGHBORS = 64               # impact 投影邻接对象上限（超出披露 truncated）
+MAX_CONNECT_TOLERANCE_M = 50.0          # connect_endpoint 端点连接容差上限
 
 # ─── 稳定要素身份 ──────────────────────────────────────────────────────────
 WFID_PROP = "_wfid"                 # 物化稳定 id 的 properties 键（系统保留）
@@ -58,7 +64,13 @@ GEOMETRY_OPS = frozenset({"repair_geometry", "move_by", "snap_to_ref"})
 STRUCTURAL_OPS = frozenset(
     {"create_features", "delete_features", "replace_geometry", "split_feature", "merge_features"}
 )
-EDIT_OPS = ATTRIBUTE_OPS | GEOMETRY_OPS | STRUCTURAL_OPS
+# 共享拓扑编辑（goal-gis-topology-authoring）：跨要素约束编辑 —— 顶点/节点
+# 变更按共享结构同步传播到邻接要素。坐标类词表，恒不 safe（与 move_by 同一
+# 信任边界：一切传播由用户在预览 impact 中审阅后确认）。
+SHARED_GEOMETRY_OPS = frozenset(
+    {"move_shared_vertex", "insert_shared_vertex", "delete_shared_vertex", "reshape_shared_edge", "connect_endpoint"}
+)
+EDIT_OPS = ATTRIBUTE_OPS | GEOMETRY_OPS | STRUCTURAL_OPS | SHARED_GEOMETRY_OPS
 
 REPAIR_FIXES = frozenset({"make_valid", "close_ring", "dedupe_vertices"})
 
@@ -116,6 +128,11 @@ FINDING_CODES = frozenset({
     "contract_violation",        # 候选/恢复态违反 active 业务字段合同（detail 带违规投影）
     "contract_state_unavailable",  # 合同 DB 不可读（存在性无法证明）—— fail-closed
     "contract_rename_blocked",   # rename 命中合同声明字段 —— 需 owner 显式重绑（新合同修订）
+    # ── 共享拓扑编辑 finding codes（goal-gis-topology-authoring） ──
+    "shared_node_not_found",     # 定位坐标/引用处无共享结构节点（exact/容差均未命中）
+    "shared_node_ambiguous",     # 容差内命中多个不同节点 —— 拒绝并披露候选，用户须显式指定
+    "connect_level_conflict",    # level_field 守卫：连接两端层级值不同（桥/隧道语义），拒绝
+    "index_too_large",           # 共享结构索引顶点数超预算 —— 诚实拒绝，不做有损采样
 })
 
 # ─── 数据集级拓扑声明（envelope "topology" 键；G14 provisioning 写入） ─────
