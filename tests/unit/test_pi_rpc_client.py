@@ -4,15 +4,17 @@ Tests subprocess initialization, request-response matching, and event queueing.
 """
 import asyncio
 import contextlib
+import gc
 import json
 import subprocess
+import weakref
 from pathlib import Path
 
 import pytest
 from unittest.mock import MagicMock, patch, AsyncMock
 import unittest.mock
 
-from app.services.chat.pi_rpc_client import PiRpcClient
+from app.services.chat.pi_rpc_client import PiRpcClient, PiRpcError
 
 
 class DummyPipe:
@@ -805,3 +807,47 @@ async def test_read_responses_survives_non_utf8_line():
     assert seen == ["agent_end", "agent_end"], (
         f"reader crashed on the non-UTF-8 line instead of resyncing: {seen}"
     )
+
+
+def test_env_int_invalid_and_non_positive_fall_back(monkeypatch):
+    """PI_MAX_* 非整数/<=0 不得 import 崩溃或产生无界/零长度语义。"""
+    from app.services.chat.pi_rpc_client import _env_int
+
+    monkeypatch.setenv("PI_TEST_MAX_LINE", "garbage")
+    assert _env_int("PI_TEST_MAX_LINE", 16) == 16
+    monkeypatch.setenv("PI_TEST_MAX_LINE", "")
+    assert _env_int("PI_TEST_MAX_LINE", 16) == 16
+    monkeypatch.setenv("PI_TEST_MAX_LINE", "0")
+    assert _env_int("PI_TEST_MAX_LINE", 16) == 16
+
+
+def test_atexit_hook_does_not_keep_client_alive():
+    """atexit 不得强引用 client（否则构造过的实例永不 GC）。"""
+    client = PiRpcClient()
+    ref = weakref.ref(client)
+    del client
+    gc.collect()
+    assert ref() is None
+
+
+@pytest.mark.asyncio
+async def test_issue_maps_closed_stdin_value_error_to_pi_rpc_error():
+    client = PiRpcClient()
+    proc = MagicMock()
+    proc.stdin.write.side_effect = ValueError("I/O operation on closed file")
+    client._process = proc
+    with pytest.raises(PiRpcError):
+        await client.issue("abort")
+    assert client._pending_requests == {}
+    client._process = None
+
+
+@pytest.mark.asyncio
+async def test_send_ui_response_maps_closed_stdin_value_error():
+    client = PiRpcClient()
+    proc = MagicMock()
+    proc.stdin.write.side_effect = ValueError("I/O operation on closed file")
+    client._process = proc
+    with pytest.raises(PiRpcError):
+        await client.send_ui_response({"type": "extension_ui_response", "id": "u"})
+    client._process = None

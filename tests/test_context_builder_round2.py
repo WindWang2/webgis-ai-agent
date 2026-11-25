@@ -90,6 +90,13 @@ def test_format_layer_schema_no_relation_when_no_viewport():
     assert "在视口" not in out
 
 
+def test_format_layer_schema_skips_non_numeric_bbox_elements():
+    """descriptor bbox 可能是 [None,...]/字符串 —— 不得抛 TypeError。"""
+    for bbox in ([None, None, None, None], ["a", "b", "c", "d"], [1, 2, None, 4]):
+        out = format_layer_schema({"geom": "Point", "bbox": bbox})
+        assert "bbox=" not in out
+
+
 def test_split_events_categorizes_correctly():
     log = [
         {"event": "tool_executed", "data": {"tool": "a"}},
@@ -114,6 +121,13 @@ def test_format_tool_event_renders_key_attrs():
     assert "osm_search" in out
     assert "ref=ref:abc" in out
     assert "feature_count=12" in out
+
+
+def test_format_tool_event_tolerates_null_tool_field():
+    """data.tool 存在但为 None / 非字符串时不得让 " ".join 抛 TypeError。"""
+    assert "?" in _format_tool_event({"data": {"tool": None}})
+    out = _format_tool_event({"data": {"tool": 42, "ref": "ref:x"}})
+    assert "42" in out and "ref=ref:x" in out
 
 
 def test_format_pending_event_warns_against_retrigger():

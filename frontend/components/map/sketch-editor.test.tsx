@@ -9,12 +9,19 @@
  *   touchZoomRotate / touchPitch），拖拽中途切工具或卸载后触屏双指旋转与
  *   俯仰不得残留失效。
  */
-import { describe, expect, it, beforeEach } from 'vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { getSketchState, replaceSketchFeatures, resetSketchStore } from '@/lib/edit/sketch-store';
 import { SketchEditor } from './sketch-editor';
 import type { MapRef } from 'react-map-gl/maplibre';
+
+vi.mock('@/lib/store/session-identity', () => ({
+  getSessionIdentity: () => ({ sessionId: undefined, ownerToken: null }),
+}));
+vi.mock('@/lib/api/feature-edit', () => ({
+  promoteSketchDataset: vi.fn(),
+}));
 
 const mapRef = { current: null } as unknown as React.RefObject<MapRef | null>;
 
@@ -76,6 +83,21 @@ describe('SketchEditor save bar', () => {
     fireEvent.click(screen.getByRole('button', { name: '丢弃' }));
     expect(useHudStore.getState().sketchDirty).toBe(false);
     expect(getSketchState().features).toHaveLength(0);
+  });
+
+  it('缺少会话/要素时点保存给出可见失败反馈（不再静默无反应）', async () => {
+    act(() => {
+      useHudStore.getState().setSketchDirty(true);
+      replaceSketchFeatures([{
+        id: 's2',
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [0, 0] },
+        properties: { kind: 'sketch_point' },
+      }]);
+    });
+    render(<SketchEditor mapRef={mapRef} />);
+    fireEvent.click(screen.getByTestId('sketch-save-dataset'));
+    await waitFor(() => expect(screen.getByTestId('sketch-save-error')).toBeInTheDocument());
   });
 });
 

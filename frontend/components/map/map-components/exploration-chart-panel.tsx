@@ -106,24 +106,42 @@ function ChartBody({
   activeCondition: { values?: unknown[]; includeNull?: boolean; gte?: number; gt?: number; lte?: number; lt?: number } | null;
   t: (k: string, vars?: Record<string, string>) => string;
 }) {
+  const hidden = kind === 'category'
+    ? Math.max(0, (stats.rows?.length ?? 0) - BAR_MAX)
+    : Math.max(0, (stats.bins?.length ?? 0) - BIN_MAX);
   if (kind === 'category') {
     return (
-      <CategoryBars
-        chartId={chartId}
-        field={field}
-        rows={(stats.rows ?? []).slice(0, BAR_MAX)}
-        active={activeCondition}
-        t={t}
-      />
+      <>
+        <CategoryBars
+          chartId={chartId}
+          field={field}
+          rows={(stats.rows ?? []).slice(0, BAR_MAX)}
+          active={activeCondition}
+          t={t}
+        />
+        {hidden > 0 && (
+          // 客户端截断如实披露剩余条数（服务端 truncated 提示不覆盖该层）。
+          <p className="mt-1 text-xs opacity-70" data-testid={`g46-chart-${chartId}-client-truncated`}>
+            …+{hidden}
+          </p>
+        )}
+      </>
     );
   }
   return (
-    <RangeHistogram
-      chartId={chartId}
-      field={field}
-      bins={(stats.bins ?? []).slice(0, BIN_MAX)}
-      active={activeCondition}
-    />
+    <>
+      <RangeHistogram
+        chartId={chartId}
+        field={field}
+        bins={(stats.bins ?? []).slice(0, BIN_MAX)}
+        active={activeCondition}
+      />
+      {hidden > 0 && (
+        <p className="mt-1 text-xs opacity-70" data-testid={`g46-chart-${chartId}-client-truncated`}>
+          …+{hidden}
+        </p>
+      )}
+    </>
   );
 }
 

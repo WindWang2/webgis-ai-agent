@@ -140,6 +140,40 @@ def test_v5_kill_switch_preserves_lexical_baseline(registry, monkeypatch):
     assert report_v6.precision_at_1 >= report.precision_at_1
 
 
+def test_calibration_ece_uses_actual_bucket_mean_confidence(monkeypatch):
+    """ECE 桶内使用真实平均置信度，而非桶中值（(b+0.5)/10）。"""
+    from types import SimpleNamespace
+
+    from app.evaluation.retrieval_eval_corpus import RetrievalEvalCase
+    from app.services.chat import tool_surface_v3
+
+    class FakeSurface:
+        def __init__(self, registry):
+            self._semantic = None
+
+        def select(self, ctx):
+            hit = ctx.user_message == "hit"
+            return SimpleNamespace(
+                names=["tool_a"] if hit else ["tool_b"],
+                confidence=0.01 if hit else 0.03,
+                abstained=False,
+            )
+
+    class Registry:
+        def descriptor(self, name):
+            return SimpleNamespace(tier=1, effective_security_tier=1)
+
+    monkeypatch.setattr(tool_surface_v3, "DynamicToolSurface", FakeSurface)
+    cases = [
+        RetrievalEvalCase("E1", "hit", "direct", ("tool_a",)),
+        RetrievalEvalCase("E2", "miss", "direct", ("tool_a",)),
+    ]
+    report = retrieval_eval_report(Registry(), cases)
+    # 桶 0：hit 率 0.5，平均置信度 (0.01+0.03)/2=0.02 → ECE 0.48
+    # （桶中值口径会给 0.45）。
+    assert report.calibration_ece == pytest.approx(0.48, abs=1e-6)
+
+
 def test_report_to_dict_shape(registry):
     report = retrieval_eval_report(
         registry, get_retrieval_eval_corpus()[:6])

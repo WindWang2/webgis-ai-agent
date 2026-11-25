@@ -100,7 +100,7 @@ def _receipt(fmt: str, revision: Any = 7) -> Dict[str, Any]:
     return {"format": fmt, "revision": revision}
 
 
-# ── F-A：需求种类 × 行证据状态矩阵（6 × 4 = 24）──────────────────────────
+# ── F-A：需求种类 × 行证据状态矩阵（5 × 4 = 20）──────────────────────────
 
 _KIND_ROWS = {
     "analysis": [_step("geometry_buffer", "complete")],
@@ -108,7 +108,6 @@ _KIND_ROWS = {
     "statistics": [_step("admin_aggregation", "complete")],
     "chart": [_step("admin_aggregation", "complete")],
     "export": [_step("admin_aggregation", "complete")],
-    "map": [_step("geometry_buffer", "complete")],
 }
 _KIND_INTENT = {
     "analysis": {},
@@ -116,7 +115,6 @@ _KIND_INTENT = {
     "statistics": {"outputs": ["map", "statistics"]},
     "chart": {"outputs": ["map", "chart"]},
     "export": {"exports": ["png"]},
-    "map": {},
 }
 _ROW_STATE_GLOBAL = {
     "complete": (GoalVerdict.SATISFIED.value, False),
@@ -1454,7 +1452,7 @@ def _family_combinations() -> List[GoalSatisfactionCase]:
 
 def build_goal_satisfaction_cases() -> List[GoalSatisfactionCase]:
     """≥100 个结构化 goal 案例（覆盖矩阵见模块 docstring）。"""
-    return (
+    cases = (
         _family_row_matrix()
         + _family_product_verdicts()
         + _family_data_sufficiency()
@@ -1471,6 +1469,15 @@ def build_goal_satisfaction_cases() -> List[GoalSatisfactionCase]:
         + _family_combinations()
         + _family_receipts()
     )
+    # 构建期守卫：id 唯一 / 前缀受控（manifest 期的唯一性与前缀检查因
+    # is_benchmark_case=False 跳过，故在构建期补齐，避免复制案例时静默双计。）
+    ids = [c.case_id for c in cases]
+    if not (len(ids) == len(set(ids))):
+        raise ValueError(f"duplicate goal satisfaction case ids: {ids}")
+    off_prefix = [cid for cid in ids if not cid.startswith("GC-")]
+    if off_prefix:
+        raise ValueError(f"goal satisfaction ids outside GC- prefix: {off_prefix}")
+    return cases
 
 
 # ── Runner + 指标 ────────────────────────────────────────────────────────
@@ -1491,12 +1498,15 @@ def run_goal_satisfaction_case(case: GoalSatisfactionCase) -> GoalCaseResult:
     if case.expected_global is not None and got_global != case.expected_global:
         failures.append(f"global: expected {case.expected_global}, "
                         f"got {got_global}")
-    states = {v.requirement_id: v.verdict.value
-              for v in report.requirements}
+    states: Dict[str, List[str]] = {}
+    for v in report.requirements:
+        states.setdefault(v.requirement_id, []).append(v.verdict.value)
     for req_id, expected in case.expected_states.items():
-        got = states.get(req_id)
-        if got != expected:
-            failures.append(f"{req_id}: expected {expected}, got {got}")
+        got_all = states.get(req_id)
+        if not got_all or any(got != expected for got in got_all):
+            got = got_all[-1] if got_all else None
+            failures.append(f"{req_id}: expected {expected}, got "
+                            f"{got if len(got_all or []) <= 1 else got_all}")
     if case.expected_signal is not None and \
             report.signal.value != case.expected_signal:
         failures.append(f"signal: expected {case.expected_signal}, "

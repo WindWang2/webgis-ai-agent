@@ -11,9 +11,12 @@ from __future__ import annotations
 import pytest
 
 from app.evaluation.replay import (
+    ReplayEntry,
     ScriptedCall,
     canonical_call_signature,
+    check_trace_invariants,
     compare_chains,
+    replay_tools,
     route_decision_diff,
     simulate_agent_loop,
 )
@@ -84,6 +87,68 @@ async def test_simulate_agent_loop_replays_script_with_invariants():
     assert report.invariants_held is True
     assert report.violations == []
     assert len(report.steps) == 1
+
+
+@pytest.mark.asyncio
+async def test_replay_tools_keeps_replaying_after_dispatch_exception():
+    from types import SimpleNamespace
+
+    class Registry:
+        async def dispatch(self, name, args, session_id):
+            if name == "boom":
+                raise RuntimeError("kaboom")
+            return {"success": True, "value": 1}
+
+        def descriptor(self, name):
+            return SimpleNamespace(
+                replay_safe=True, side_effect=SimpleNamespace(value="pure"))
+
+    outcomes = await replay_tools(
+        Registry(), "sess", [ReplayEntry("boom", {}), ReplayEntry("echo", {})])
+    assert [o.action for o in outcomes] == ["error", "replayed"]
+    assert "kaboom" in outcomes[0].detail
+
+
+@pytest.mark.asyncio
+async def test_simulate_agent_loop_keeps_steps_after_dispatch_exception():
+    from types import SimpleNamespace
+
+    class Registry:
+        async def dispatch(self, name, args, session_id):
+            if name == "boom":
+                raise RuntimeError("kaboom")
+            return {"success": True, "value": 1}
+
+        def descriptor(self, name):
+            return SimpleNamespace(
+                destructive_level=0, effective_security_tier=1,
+                side_effect="pure")
+
+    report = await simulate_agent_loop(
+        Registry(), "sess",
+        [ScriptedCall("boom", {}, expect_outcome="error"),
+         ScriptedCall("echo", {"v": 1})],
+    )
+    assert len(report.steps) == 2
+    assert report.steps[0]["ok"] is False
+    assert report.steps[0]["error_code"] == "REPLAY_DISPATCH_EXCEPTION"
+    assert report.steps[1]["ok"] is True
+    assert report.invariants_held is True, report.violations
+
+
+def test_trace_invariants_reject_completed_with_empty_tool_call_id():
+    from app.lib.runtime.trace import (
+        EVENT_DISPATCH_COMPLETED,
+        TraceEvent,
+        TurnTrace,
+    )
+
+    trace = TurnTrace(turn_id="t-empty-id")
+    trace.append(TraceEvent(
+        kind=EVENT_DISPATCH_COMPLETED, ts=0.0, turn_id="t-empty-id",
+        tool_call_id=""))
+    violations = check_trace_invariants(trace)
+    assert any("without dispatch_started" in v for v in violations), violations
 
 
 def test_reliability_corpus_scripts_are_replay_shaped():

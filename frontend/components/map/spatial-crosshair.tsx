@@ -25,16 +25,22 @@ export function SpatialCrosshair() {
     const vp = useHudStore.getState().viewport;
     const [cLng, cLat] = vp?.center ?? [0, 0];
     if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(`${cLng.toFixed(6)}, ${cLat.toFixed(6)}`);
+      navigator.clipboard
+        .writeText(`${cLng.toFixed(6)}, ${cLat.toFixed(6)}`)
+        // 只有写入成功才给「已复制」；拒绝/非安全上下文不得谎报，也不留下
+        // 未处理的 Promise 拒绝。
+        .then(() => {
+          setCopied(true);
+          if (copyTimerRef.current) {
+            clearTimeout(copyTimerRef.current);
+          }
+          copyTimerRef.current = setTimeout(() => {
+            setCopied(false);
+            copyTimerRef.current = null;
+          }, 1500);
+        })
+        .catch(() => {});
     }
-    setCopied(true);
-    if (copyTimerRef.current) {
-      clearTimeout(copyTimerRef.current);
-    }
-    copyTimerRef.current = setTimeout(() => {
-      setCopied(false);
-      copyTimerRef.current = null;
-    }, 1500);
   };
 
   return (

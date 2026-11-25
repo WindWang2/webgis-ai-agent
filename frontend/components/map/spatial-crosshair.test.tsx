@@ -91,4 +91,17 @@ describe('SpatialCrosshair', () => {
     // 复制反馈出现（aria-label 翻转）。
     expect(svg!.getAttribute('aria-label')).toBe('坐标已复制');
   });
+
+  it('剪贴板写入拒绝时不谎报「已复制」，也不产生未处理拒绝', async () => {
+    vi.useRealTimers();
+    Object.assign(navigator, {
+      clipboard: { writeText: vi.fn().mockRejectedValue(new Error('denied')) },
+    });
+    const { container } = render(<SpatialCrosshair />);
+    const dot = container.querySelector('svg circle');
+    expect(dot).toBeTruthy();
+    await userEvent.click(dot as Element);
+    const svg = container.querySelector('svg');
+    expect(svg!.getAttribute('aria-label')).toBe('复制当前地图中心坐标');
+  });
 });

@@ -81,7 +81,8 @@ def _descriptor_from_dict(d: Dict[str, Any], source: str) -> ModelDescriptor:
     unknown = set(d) - known
     if unknown:
         raise ValueError(f"未知 ModelDescriptor 字段: {sorted(unknown)}")
-    return ModelDescriptor(source=source, **d)
+    # caller 的 source 优先于条目内同名字段（已知字段校验允许它存在）。
+    return ModelDescriptor(**{**d, "source": source})
 
 
 class ModelDescriptorRegistry:
@@ -162,11 +163,15 @@ class ModelDescriptorRegistry:
 
     def all(self) -> Dict[str, ModelDescriptor]:
         self._ensure_built()
-        return dict(self._descriptors)
+        with self._lock:
+            return dict(self._descriptors)
 
     def by_group(self, group: str) -> Tuple[ModelDescriptor, ...]:
         self._ensure_built()
-        return tuple(d for d in self._descriptors.values() if d.fallback_group == group)
+        with self._lock:
+            return tuple(
+                d for d in self._descriptors.values() if d.fallback_group == group
+            )
 
     def upsert_override(self, descriptor: ModelDescriptor) -> None:
         """运行时运维覆盖（管理面写入；进程内有效）。"""

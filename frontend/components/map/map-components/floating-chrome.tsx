@@ -405,10 +405,10 @@ export function FloatingChrome({
 
   /** 折叠：placement.collapsed 持久化（floating 原地折叠；锚定转 anchor placement）。 */
   function toggleCollapse() {
-    const collapsed = !(placement?.collapsed ?? false);
+    const nextCollapsed = !collapsed;
     const nextPlacement: ComponentPlacement = placement?.mode === 'floating'
-      ? { ...placement, collapsed }
-      : { mode: 'anchor', anchor: resolvePosition(merged), collapsed };
+      ? { ...placement, collapsed: nextCollapsed }
+      : { mode: 'anchor', anchor: resolvePosition(merged), collapsed: nextCollapsed };
     commitPlacement(nextPlacement, nextPlacement);
   }
 
@@ -427,8 +427,8 @@ export function FloatingChrome({
   }
 
   const collapsed =
-    (placement?.collapsed ?? false)
-    || (smallViewport && !docked && !floating && COLLAPSIBLE_PANEL_TYPES.has(merged.type));
+    placement?.collapsed
+    ?? (smallViewport && !docked && !floating && COLLAPSIBLE_PANEL_TYPES.has(merged.type));
   const gestureActive = transient !== null && !docked;
   // 手势期间 inline left/top 优先于槽位类；floating 正常态走 placementStyle
   const resolvedStyle: React.CSSProperties | undefined = gestureActive

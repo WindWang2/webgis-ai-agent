@@ -6,7 +6,7 @@
  * - 降级：未绑定 / 数据不可用不崩 chrome。
  */
 import { describe, expect, it, beforeEach, vi } from 'vitest';
-import { render, screen, waitFor, act } from '@testing-library/react';
+import { render, screen, waitFor, act, fireEvent } from '@testing-library/react';
 import type { MapSpecComponent } from '@/lib/mapspec-compiler/types';
 import {
   getSelection,
@@ -151,5 +151,21 @@ describe('table_panel renderer', () => {
     await waitFor(() => {
       expect(container.querySelector('[data-state="unavailable"]')).toBeTruthy();
     });
+  });
+
+  it('排序：number vs boolean 走字符串比较（不把 true 当 1 做数值比较）', () => {
+    seedLayer([
+      { type: 'Feature', id: 't', properties: { id: 't', flag: true, name: 't' }, geometry: { type: 'Point', coordinates: [1, 1] } },
+      { type: 'Feature', id: 'n', properties: { id: 'n', flag: 1, name: 'n' }, geometry: { type: 'Point', coordinates: [1, 1] } },
+    ] as never);
+    const { container } = render(
+      renderComponent(tableComponent({ layerId: 'poi-layer' }), RendererContext) as never,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'flag' }));
+    const ids = Array.from(container.querySelectorAll('[data-testid="table-panel-row"]'))
+      .map((el) => el.getAttribute('data-row-id'));
+    // localeCompare('1','true') < 0 → 数值行在布尔行之前；修复前 Number(true)=1
+    // 与 1 相等 → 保持原序 [t, n]。
+    expect(ids).toEqual(['n', 't']);
   });
 });

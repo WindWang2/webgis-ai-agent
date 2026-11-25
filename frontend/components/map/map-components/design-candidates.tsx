@@ -150,6 +150,16 @@ function DesignCandidatesView({
               );
             })}
           </ul>
+          {design.blocked && design.blocked.length > 0 ? (
+            <div className="mt-1.5 text-[10px] leading-snug text-red-700" data-testid="design-blocked">
+              ✕ {design.blocked.join(', ')}
+            </div>
+          ) : null}
+          {design.honored && design.honored.length > 0 ? (
+            <div className="mt-1 text-[10px] leading-snug text-emerald-700" data-testid="design-honored">
+              ✓ {design.honored.join(', ')}
+            </div>
+          ) : null}
           <div className="mt-2 text-[10px] leading-snug text-neutral-400">
             {t('map.designCandidates.acceptHint')}
           </div>

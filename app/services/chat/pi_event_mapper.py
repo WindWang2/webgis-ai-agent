@@ -30,8 +30,9 @@ def _sanitize_for_client(text: str) -> str:
     """Sanitize an error string for safe emission to clients/SSE."""
     try:
         text = sanitize_error_msg(text)
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception:  # noqa: BLE001 — 消毒失败必须 fail-closed，不得回传原文
+        logger.warning("[pi_event_mapper] sanitize_error_msg failed", exc_info=True)
+        text = "[error detail unavailable]"
     text = redact_paths(text)
     if len(text) > 500:
         text = text[:500] + "...(truncated)"

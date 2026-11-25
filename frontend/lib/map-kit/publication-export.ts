@@ -1,5 +1,6 @@
 import { exportNotificationTitle } from './export-notification';
 import { getCommittedMapSpec } from '@/lib/mapspec/session-cursor';
+import { devOnly } from '@/lib/utils/logger';
 /**
  * C14：publication vector PDF 导出运行面（前端入口 —— 路由文档化的
  * 「backend-only 待接线」交付）。
@@ -194,7 +195,9 @@ export async function runVectorPdfExport(
       null,
     ) as unknown as Record<string, unknown>;
     sessionId = cursor.getMapSpecSessionCursor().sessionId;
-  } catch {
+  } catch (err) {
+    // 不静默吞异常：spec 组装/动态 import 失败需可诊断（对外仍 spec_unavailable）。
+    devOnly.warn('[publication-export] spec 组装失败', err);
     return { ok: false, error: 'spec_unavailable' };
   }
 

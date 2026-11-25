@@ -80,8 +80,8 @@ describe('productFramesToExportFrames — where 谓词', () => {
     }
   });
 
-  it('残缺 where（缺 op / 缺 field）同样披露', () => {
-    for (const where of [{ field: 'year', value: 1 }, { op: 'eq', value: 1 }, { op: 'eq', field: 'year' }]) {
+  it('残缺 where（缺 op / 缺 field / value 为 undefined）同样披露', () => {
+    for (const where of [{ field: 'year', value: 1 }, { op: 'eq', value: 1 }, { op: 'eq', field: 'year' }, { op: 'eq', field: 'year', value: undefined }]) {
       const r = run(where);
       expect(r.frames).toHaveLength(1);
       expect(r.frames[0].where).toBeUndefined();

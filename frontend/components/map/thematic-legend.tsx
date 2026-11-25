@@ -49,6 +49,9 @@ export const ThematicLegend = React.memo(function ThematicLegend({ spec, onFilte
               <span key={i} className="h-4 w-4" style={{ background: c }} />
             ))}
           </div>
+          {(spec.estimate?.palette_colors?.length ?? 0) > 7 && (
+            <div className="text-xs text-muted">…+{(spec.estimate?.palette_colors?.length ?? 0) - 7}</div>
+          )}
           <div className="text-xs text-muted break-words">
             {spec.estimate?.label} · {spec.measure?.kind} · {spec.measure?.unit_note}
           </div>

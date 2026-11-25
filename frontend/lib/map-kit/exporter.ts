@@ -1342,7 +1342,9 @@ export function discoverLegendData(layers: Layer[]): LegendData {
   return {
     legendSpec: nonHeatLegendLayer?.legend_spec,
     thematicLayer: thematicLayerInfo === nonHeatLegendLayer ? undefined : (thematicLayerInfo?.style?.type
-      ? thematicLayerInfo.style
+      // style 对象本身不带 source；携带图层 source 才能读到后端盖章的
+      // metadata.breaks/palette 图例证据（此前静默无图例）。
+      ? { ...thematicLayerInfo.style, source: thematicLayerInfo.source }
       : thematicLayerInfo) as LegacyThematicLegendInput | undefined,
     heatmapLegend: heatmapLayer
       ? {
@@ -2468,14 +2470,14 @@ async function runExportInternal(
           spec: hydratedSpec,
           layout: publicationLayout,
           dpi,
-          fallbackRaster: () => buildSvgText(exportCanvas, title, getDataUrl()),
+          fallbackRaster: () => buildSvgText(exportCanvas, effTitle, getDataUrl()),
         });
         svgText = vector.svg;
         svgDegradations = vector.degradations;
       } catch (e) {
         // fallbackRaster 未注入/自身抛错的双保险位图回退（不静默）。
         devOnly.warn('[MapExporter] vector svg build failed — raster fallback', e);
-        const wrapper = buildSvgWrapper(exportCanvas, title, getDataUrl());
+        const wrapper = buildSvgWrapper(exportCanvas, effTitle, getDataUrl());
         svgText = await wrapper.text();
         svgDegradations = [
           { code: 'vector_svg_fallback_raster', detail: e instanceof Error ? e.message : String(e) },

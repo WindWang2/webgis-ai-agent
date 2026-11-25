@@ -530,7 +530,7 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
         else setActiveMapTool(null);
       }
     };
-    const unregisterEscape = registerEscapeHandler(40, (event) => { if (!(true)) return false; onKeyDown(event); return event.defaultPrevented; });
+    const unregisterEscape = registerEscapeHandler(40, (event) => { onKeyDown(event); return event.defaultPrevented; });
     const nonEscape = (event: KeyboardEvent) => { if (event.key !== 'Escape') onKeyDown(event); };
     window.addEventListener('keydown', nonEscape);
     return () => { unregisterEscape(); window.removeEventListener('keydown', nonEscape); };
@@ -566,7 +566,11 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
       properties: f.properties ?? {},
     }));
     const { sessionId } = getSessionIdentity();
-    if (!sessionId || !features.length) return;
+    if (!sessionId || !features.length) {
+      // 保存按钮可达但前提缺失时不得静默无反应：进入失败态给出可见反馈。
+      setSketchSaving('failed');
+      return;
+    }
     setSketchSaving('busy');
     try {
       const result = await promoteSketchDataset(

@@ -77,6 +77,18 @@ describe('raster-canvas — 色带与像素', () => {
     expect(pixels[(1 * 2 + 1) * 4 + 3]).toBe(255);
   });
 
+  it('gridToRgba：ragged 网格以最长行为宽，短行缺位掩膜', () => {
+    const { pixels, width, height } = gridToRgba([[1], [2, 3, 4]], {
+      domain: { min: 0, max: 10 },
+    });
+    expect(width).toBe(3);
+    expect(height).toBe(2);
+    expect(pixels).toHaveLength(3 * 2 * 4);
+    // 短行缺位按 nodata 掩膜（alpha 0），长行有效像元保留（alpha 255）。
+    expect(pixels[(0 * 3 + 1) * 4 + 3]).toBe(0);
+    expect(pixels[(1 * 3 + 2) * 4 + 3]).toBe(255);
+  });
+
   it('gridToRgba：拉伸域生效（min→首色，max→末色）', () => {
     const { pixels } = gridToRgba([[0, 10]], { domain: { min: 0, max: 10 } });
     expect(pixels[0]).toBe(COLOR_RAMP[0][0]);

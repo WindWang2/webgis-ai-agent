@@ -4,6 +4,11 @@ import '@testing-library/jest-dom'
 import { MapToolbarHUD } from './map-toolbar-hud'
 import { useHudStore } from '@/lib/store/useHudStore'
 
+const emitMeasurementCreatedMock = vi.hoisted(() => vi.fn())
+vi.mock('@/lib/interaction/bus', () => ({
+  emitMeasurementCreated: emitMeasurementCreatedMock,
+}))
+
 const mockZoomIn = vi.fn()
 const mockZoomOut = vi.fn()
 const mockResetNorthPitch = vi.fn()
@@ -114,6 +119,20 @@ describe('MapToolbarHUD — Floating GIS Navigation & Measurement Toolbar', () =
       />,
     )
     expect(screen.getByText(/已采集点数: 3 个/)).toBeInTheDocument()
+  })
+
+  it('非受控保存路径也上报 measurement_created IR 事件（与受控路径对等）', () => {
+    render(
+      <MapToolbarHUD
+        mapRef={mapRef}
+        activeMeasureTool="distance"
+        measurePoints={[[116.4, 39.9], [116.45, 39.95]]}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: '完成标注' }))
+    expect(emitMeasurementCreatedMock).toHaveBeenCalledWith(
+      expect.objectContaining({ measureKind: 'distance', unit: 'km', segmentCount: 1 }),
+    )
   })
 
   it('activates area measurement mode and computes live polygon area', () => {

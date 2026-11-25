@@ -5,22 +5,27 @@
  * removeDraft / 切换会话 / 发送消费后草稿消失都不回收，会话内不断累积泄漏。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, act } from '@testing-library/react';
+import { render, screen, act, fireEvent, waitFor } from '@testing-library/react';
 
 import { VisualAttachBar } from './visual-attach';
 import { useVisualAttachStore } from '@/lib/visual-context/attach-store';
+
+const uploadApi = vi.hoisted(() => ({ uploadVisualEvidence: vi.fn() }));
+vi.mock('@/lib/api/visual-context', () => ({ uploadVisualEvidence: uploadApi.uploadVisualEvidence }));
 
 const revokeSpy = vi.fn();
 
 beforeEach(() => {
   useVisualAttachStore.setState({ sessionId: null, drafts: [] });
   revokeSpy.mockClear();
+  uploadApi.uploadVisualEvidence.mockReset();
   // jsdom 不实现 URL.createObjectURL/revokeObjectURL —— 打桩以便观测回收。
   (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL = revokeSpy;
 });
 
 afterEach(() => {
   delete (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL;
+  delete (URL as unknown as { createObjectURL?: (f: Blob) => string }).createObjectURL;
 });
 
 function addDraft(evidenceId: string, thumbUrl: string) {
@@ -61,5 +66,25 @@ describe('VisualAttachBar（blob URL 回收）', () => {
     addDraft('e-1', 'blob:thumb-1');
     view.unmount();
     expect(revokeSpy).toHaveBeenCalledWith('blob:thumb-1');
+  });
+
+  it('多选超出剩余名额时提示上限，不静默丢弃', async () => {
+    uploadApi.uploadVisualEvidence.mockResolvedValue({
+      evidence_id: 'e-picked', label: 'a.png', mapspec_revision: null, viewport_hash: 'h',
+    });
+    const createObjectURL = vi.fn((_file: Blob) => 'blob:picked');
+    (URL as unknown as { createObjectURL?: (f: Blob) => string }).createObjectURL = createObjectURL;
+    render(<VisualAttachBar sessionId="s1" ownerToken={null} />);
+    // 已有 2 张 → 只剩 2 个名额，却选了 5 个文件
+    addDraft('e-1', 'blob:thumb-1');
+    addDraft('e-2', 'blob:thumb-2');
+    const files = Array.from({ length: 5 }, (_, i) =>
+      new File([`img-${i}`], `img-${i}.png`, { type: 'image/png' }));
+    fireEvent.change(screen.getByLabelText('上传参考图'), { target: { files } });
+
+    await waitFor(() => expect(uploadApi.uploadVisualEvidence).toHaveBeenCalledTimes(2));
+    // 上限提示必须是可见 notice（status-critical），而非仅「最多 4 张」的禁用提示
+    const notices = screen.getAllByText('最多 4 张附图');
+    expect(notices.some((el) => el.className.includes('text-status-critical'))).toBe(true);
   });
 });

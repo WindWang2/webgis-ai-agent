@@ -194,7 +194,11 @@ def format_layer_schema(schema: dict, viewport_bounds: list[float] | None = None
         parts.append(f"fields=[{field_str}]")
 
     bbox = schema.get("bbox")
-    if isinstance(bbox, list) and len(bbox) == 4:
+    if (
+        isinstance(bbox, list)
+        and len(bbox) == 4
+        and all(isinstance(v, (int, float)) for v in bbox)
+    ):
         parts.append(f"bbox=[{bbox[0]:.3f},{bbox[1]:.3f},{bbox[2]:.3f},{bbox[3]:.3f}]")
         relation = viewport_layer_relation(viewport_bounds, bbox)
         if relation:

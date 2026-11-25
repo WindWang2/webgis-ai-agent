@@ -53,6 +53,23 @@ async def test_tool_pipeline_successful_execution():
 
 
 @pytest.mark.asyncio
+async def test_malformed_tool_call_with_null_function_returns_error_result():
+    """provider 下发 "function": null 不得抛 AttributeError 中断工具波。"""
+    registry = _build_test_registry()
+
+    async def _dispatch_fn(tc, session_id, sentinels):
+        raise RuntimeError("dispatch should not matter")
+
+    pipeline = ToolExecutionPipeline(registry, dispatch_fn=_dispatch_fn)
+    res = await pipeline.execute_tool_call(
+        {"id": "call_null", "function": None}, session_id="session_1"
+    )
+    assert isinstance(res, ToolExecutionResult)
+    assert res.tool_name == "unknown_tool"
+    assert res.is_error is True
+
+
+@pytest.mark.asyncio
 async def test_tool_pipeline_duplicate_sentinel_blocking():
     registry = _build_test_registry()
     pipeline = ToolExecutionPipeline(registry)

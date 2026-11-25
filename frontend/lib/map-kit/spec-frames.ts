@@ -150,7 +150,7 @@ export function productFramesToExportFrames(
     const where = slot.data?.where;
     const hasWhere =
       !!where && where.op === 'eq' && typeof where.field === 'string'
-      && 'value' in (where ?? {});
+      && where.value !== undefined;
     if (!extent && !hasWhere) {
       out.skippedCount += 1;
       continue;

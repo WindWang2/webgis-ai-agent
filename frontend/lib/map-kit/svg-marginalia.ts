@@ -31,12 +31,12 @@ export interface FrameBorderOptions {
 
 /** 图框（纯 <rect> 片段 —— 调用方组合进外层画布坐标系，与 academic 外框同形态）。 */
 export function renderSvgFrameBorder(options: FrameBorderOptions): string {
-  const margin = options.margin ?? 24;
+  const margin = Number(options.margin ?? 24);
   const color = options.color ?? "#1e3a8a";
   const x = margin;
   const y = margin;
-  const w = Math.max(options.width - margin * 2, 0);
-  const h = Math.max(options.height - margin * 2, 0);
+  const w = Math.max(Number(options.width) - margin * 2, 0);
+  const h = Math.max(Number(options.height) - margin * 2, 0);
   return `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="none" stroke="${escapeSvgText(color)}" stroke-width="2" rx="4" />`;
 }
 
@@ -53,8 +53,9 @@ export interface CropMarksOptions {
 }
 
 export function renderSvgCropMarks(options: CropMarksOptions): string {
-  const { width, height } = options;
-  const arm = Math.max(Math.min(options.bleedPx, 12), 4);
+  const width = Number(options.width);
+  const height = Number(options.height);
+  const arm = Math.max(Math.min(Number(options.bleedPx), 12), 4);
   const color = options.color ?? "#000000";
   const corners: Array<[number, number, number, number]> = [
     // [x, y, dirX, dirY] —— 臂向页面外侧延伸
@@ -81,8 +82,8 @@ export interface NorthArrowOptions {
 }
 
 export function renderSvgNorthArrow(options: NorthArrowOptions = {}): string {
-  const width = options.width ?? 40;
-  const height = options.height ?? 40;
+  const width = Number(options.width ?? 40);
+  const height = Number(options.height ?? 40);
   const color = options.color ?? "#2563eb";
   const bg = options.backgroundColor ?? "#ffffff";
 
@@ -109,7 +110,7 @@ export interface ScalebarOptions {
 }
 
 export function renderSvgScalebar(options: ScalebarOptions = {}): string {
-  const len = options.lengthPx ?? 100;
+  const len = Number(options.lengthPx ?? 100);
   const label = options.labelText ?? "1 km";
   const color = options.color ?? "#1e293b";
   const fontFamily = options.fontFamily ?? "sans-serif";
@@ -202,8 +203,8 @@ export function renderSvgPrintLayout(options: PrintLayoutOptions = {}): string {
   const isDarkReport = layoutId === "tmpl_ly_dark_report" || options.theme === "dark";
 
   // A4 Ratio default: 1200x848 (A4 landscape ratio)
-  const width = options.width ?? (isDarkReport ? 1280 : 1200);
-  const height = options.height ?? (isDarkReport ? 720 : 848);
+  const width = Number(options.width ?? (isDarkReport ? 1280 : 1200));
+  const height = Number(options.height ?? (isDarkReport ? 720 : 848));
   const title = options.title ?? "高清地图 Print Layout";
   const subtitle = options.subtitle ?? "WebGIS AI Agent High-Definition Export";
   const scaleLabel = options.scaleLabel ?? "5 km";

@@ -57,6 +57,13 @@ const EFFECT_LABEL_KEYS: Record<string, string> = {
   remove_layer: 'effectRemove',
 };
 
+/** 只认自有键：未知/原型链 kind 一律回退 effectOther（不把函数对象传给 t）。 */
+function effectLabelKey(kind: string): string {
+  return Object.prototype.hasOwnProperty.call(EFFECT_LABEL_KEYS, kind)
+    ? EFFECT_LABEL_KEYS[kind]
+    : 'effectOther';
+}
+
 function _fmtValue(value: unknown): string {
   if (value === null || value === undefined) return '—';
   if (typeof value === 'boolean') return value ? 'on' : 'off';
@@ -79,6 +86,9 @@ function ReceiptCard(props: {
   const [error, setError] = useState<string | null>(null);
 
   const status = String(receipt.status || '');
+  const statusTone = Object.prototype.hasOwnProperty.call(STATUS_TONE, status)
+    ? STATUS_TONE[status]
+    : 'text-ink';
   const effects = Array.isArray(receipt.effects) ? receipt.effects : [];
 
   const approve = useCallback(async () => {
@@ -106,7 +116,7 @@ function ReceiptCard(props: {
         <div className="min-w-0">
           <span
             data-testid={`map-op-status-${receipt.operation_id}`}
-            className={`text-xs font-semibold ${STATUS_TONE[status] || 'text-ink'}`}
+            className={`text-xs font-semibold ${statusTone}`}
           >
             {t(`map.opCard.status_${status || 'unknown'}`)}
           </span>
@@ -157,7 +167,7 @@ function ReceiptCard(props: {
           {effects.slice(0, 8).map((eff) => (
             <li key={eff.index} className="flex items-baseline justify-between gap-2 text-micro">
               <span className="truncate text-ink">
-                {t(`map.opCard.${EFFECT_LABEL_KEYS[eff.kind] || 'effectOther'}`)}
+                {t(`map.opCard.${effectLabelKey(eff.kind)}`)}
                 {(eff.targets?.length ?? 0) > 0 ? ` · ${eff.targets!.join(', ')}` : ''}
               </span>
               <span
@@ -174,6 +184,11 @@ function ReceiptCard(props: {
               </span>
             </li>
           ))}
+          {effects.length > 8 && (
+            <li className="text-micro text-ink-muted" data-testid={`map-op-effects-more-${receipt.operation_id}`}>
+              …+{effects.length - 8}
+            </li>
+          )}
         </ul>
       ) : null}
 
@@ -325,8 +340,6 @@ export function MapHarnessCards(props: {
   const { sessionId, ownerToken } = props;
   const receipts = useSyncExternalStore(subscribeReceipts, getOperationReceipts);
   const [confirmStatus, setConfirmStatus] = useState<DisplayConfirmationStatus | null>(null);
-  const confirmStatusRef = useRef<DisplayConfirmationStatus | null>(null);
-  confirmStatusRef.current = confirmStatus;
   const mountedSessionRef = useRef<string | null>(null);
 
   // 会话绑定/切换：bus 清空 + 确认状态重置。

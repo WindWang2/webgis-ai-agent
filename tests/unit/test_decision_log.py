@@ -48,3 +48,11 @@ def test_log_failure_does_not_raise(monkeypatch):
         raise OSError("disk full")
     monkeypatch.setattr("app.services.chat.decision_log._append_line", boom)
     log_tool_decision(_record())  # 不抛异常即通过
+
+
+def test_default_log_path_is_cwd_independent():
+    """默认日志路径必须锚定项目根，不随进程 CWD 漂移。"""
+    from app.services.chat import decision_log
+
+    assert decision_log._LOG_PATH.is_absolute()
+    assert decision_log._LOG_PATH.parts[-2:] == ("logs", "tool_decisions.jsonl")

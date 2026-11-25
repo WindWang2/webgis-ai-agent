@@ -114,6 +114,15 @@ def test_retrieval_gate_v4_rerank_ablation(registry, corpus):
     assert d["recall_at_k"]["30"] >= PINNED_ABLATION_RECALL_AT_30, d
 
 
+def test_report_cases_counts_processed_when_all_top_ks_out_of_range(registry, corpus):
+    sample = corpus[:50]
+    rep = surface_retrieval_report(
+        registry, sample, k_max=30, top_ks=(50,), byte_sample=0)
+    assert rep.recall_at_k == {}
+    assert rep.cases == len(sample) - rep.skipped
+    assert rep.cases > 0
+
+
 def test_gate_report_deterministic(registry, corpus):
     sub = get_retrieval_corpus()[:40]
     kw = dict(k_max=30, top_ks=(5, 10, 30), byte_sample=0)

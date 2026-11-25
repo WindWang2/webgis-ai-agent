@@ -95,6 +95,7 @@ function layoutFor(opts: {
   requestTitle?: string;
   requestSubtitle?: string;
   metersPerPixel?: number;
+  colorMode?: 'srgb' | 'cmyk';
 } = {}) {
   return buildPublicationLayout({
     paperSize: 'screen',
@@ -105,6 +106,7 @@ function layoutFor(opts: {
     requestTitle: opts.requestTitle,
     requestSubtitle: opts.requestSubtitle,
     metersPerPixel: opts.metersPerPixel,
+    colorMode: opts.colorMode,
   });
 }
 
@@ -172,6 +174,17 @@ describe('buildVectorSvgExport', () => {
     expect(svg).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
     expect(svg).not.toContain('<b>');
     expect(svg).not.toContain('<script>');
+  });
+
+  it('places crop marks at the bleed edge with a single translate (no double offset)', () => {
+    const { svg } = buildVectorSvgExport({
+      spec: SPEC,
+      layout: layoutFor({ colorMode: 'cmyk' }),
+    });
+    // 3mm @72dpi → 9px；内容组已 translate(9, 9)，标记组不得再套同值平移。
+    expect(svg).toContain('<g transform="translate(9, 9)">');
+    expect(svg).not.toContain('<g transform="translate(9, 9)"><g><line');
+    expect(svg).toContain('<g><line x1="0" y1="0"');
   });
 
   it('falls back to the raster wrapper with vector_svg_fallback_raster when the compiler throws', () => {

@@ -65,6 +65,17 @@ def test_ratio_via_unit_interval_samples():
     assert SemanticFieldRole.RATIO_MEASURE.value in row.roles
 
 
+def test_single_unit_interval_sample_not_enough_for_ratio():
+    """单样本 [0] 不能证明比率值域（可能只是计数/标志位）。"""
+    sem = derive_semantic_profile(
+        _profile({"flag_value": "number"}),
+        value_samples={"flag_value": [0]},
+    )
+    row = next(fr for fr in sem.field_roles if fr.field == "flag_value")
+    assert SemanticFieldRole.RATIO_MEASURE.value not in row.roles
+    assert not sem.has_role(SemanticFieldRole.RATIO_MEASURE)
+
+
 def test_population_implies_normalization_denominator():
     sem = derive_semantic_profile(
         _profile({"resident_population": "integer"}),

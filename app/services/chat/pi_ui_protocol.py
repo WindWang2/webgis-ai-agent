@@ -34,12 +34,36 @@ FIRE_FORGET_METHODS = frozenset({
 
 ALL_METHODS = DIALOG_METHODS | FIRE_FORGET_METHODS
 
+
+def _env_int(name: str, default: int, *, minimum: int = 1) -> int:
+    """Positive-int env with a safe fallback (import-time; never raise)."""
+    import os
+
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "CONFIG-04: ignoring invalid %s=%r, using default %s", name, raw, default,
+        )
+        return default
+    if value < minimum:
+        logger.warning(
+            "CONFIG-04: ignoring out-of-range %s=%r, using minimum %s",
+            name, raw, minimum,
+        )
+        return minimum
+    return value
+
+
 # 界（CONFIG-04 同款可调，但上限收紧 —— UI 卡片是给人看的，不是数据通道）。
-MAX_TITLE_CHARS = int(__import__("os").environ.get("PI_UI_MAX_TITLE_CHARS", 160))
-MAX_MESSAGE_CHARS = int(__import__("os").environ.get("PI_UI_MAX_MESSAGE_CHARS", 4000))
-MAX_OPTIONS = int(__import__("os").environ.get("PI_UI_MAX_OPTIONS", 12))
-MAX_OPTION_CHARS = int(__import__("os").environ.get("PI_UI_MAX_OPTION_CHARS", 160))
-MAX_TEXT_CHARS = int(__import__("os").environ.get("PI_UI_MAX_TEXT_CHARS", 8000))
+MAX_TITLE_CHARS = _env_int("PI_UI_MAX_TITLE_CHARS", 160)
+MAX_MESSAGE_CHARS = _env_int("PI_UI_MAX_MESSAGE_CHARS", 4000)
+MAX_OPTIONS = _env_int("PI_UI_MAX_OPTIONS", 12)
+MAX_OPTION_CHARS = _env_int("PI_UI_MAX_OPTION_CHARS", 160)
+MAX_TEXT_CHARS = _env_int("PI_UI_MAX_TEXT_CHARS", 8000)
 MAX_WIDGET_LINES = 24
 MAX_NATIVE_ID_CHARS = 80
 #: 原生 timeout 字段合法窗（ms）。低于下限视为无效（vendor 一样会接受，但宿主

@@ -188,6 +188,29 @@ def test_per_tool_budget_excludes_whole_tool_not_schema(registry, abi_on, monkey
     assert compile_tool_spec(registry, "query_local_poi", registry_generation=gen) is None
 
 
+def test_schema_budget_counts_utf8_bytes(registry, abi_on, monkeypatch):
+    """预算口径是 UTF-8 字节，不是字符数（中文 description 不得少算）。"""
+    schema_entry = {
+        "type": "function",
+        "function": {
+            "name": "query_local_poi",
+            "parameters": {
+                "type": "object",
+                "properties": {"q": {"type": "string", "description": "中" * 100}},
+            },
+        },
+    }
+    monkeypatch.setattr(registry, "get_schemas_subset", lambda names: [schema_entry])
+    projected, _ = project_schema_for_pi(schema_entry)
+    encoded = json.dumps(projected, ensure_ascii=False)
+    char_count = len(encoded)
+    byte_count = len(encoded.encode("utf-8"))
+    assert byte_count > char_count
+    monkeypatch.setenv("PI_SPEC_MAX_SCHEMA_BYTES", str(char_count + 1))
+    assert compile_tool_spec(registry, "query_local_poi") is None
+
+
+
 # ---------------------------------------------------------------------------
 # 安全元数据投影
 # ---------------------------------------------------------------------------

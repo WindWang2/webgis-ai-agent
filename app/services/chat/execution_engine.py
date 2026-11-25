@@ -1624,7 +1624,7 @@ class ChatExecutionEngine:
         # H-2（#857）：非流式回合总墙钟预算（与流式路径同义）。
         _turn_deadline = time.monotonic() + self._turn_total_timeout_s
         try:
-            for _ in range(self.max_rounds):
+            for _round_index in range(self.max_rounds):
                 # H-2：总预算耗尽的诚实失败（fail_task + TurnTimeoutError，
                 # 外层 chat() 按 failure_class="turn_timeout" settle FAILED）。
                 if time.monotonic() > _turn_deadline:
@@ -1876,8 +1876,8 @@ class ChatExecutionEngine:
                         )
                         if _dec_outcome is not None:
                             self._log_tool_decision(
-                                session_id, 0, message, _dec_tool, _dec_args,
-                                _dec_outcome, len(tc_list),
+                                session_id, _round_index, message, _dec_tool, _dec_args,
+                                _dec_outcome, len(tools or []),
                                 step_n=_dec_step_n,
                                 failure_class=_dec_fc,
                                 recovery_action=_dec_ra,
@@ -2455,7 +2455,6 @@ class ChatExecutionEngine:
             ctx.turn_finished = True
             return
 
-        streamed_content_parts: list[str] = []
         assistant_msg: dict = {}
         # Phase 8: token 事件批处理。LLM 流式输出每个 token 产生一条 SSE
         # （= 一次 HTTP write）；SSEBatcher 按 32 条 / 80ms 窗口合并为更少
@@ -2485,7 +2484,6 @@ class ChatExecutionEngine:
                         _ttft_ms = (time.perf_counter() - _t_llm) * 1000.0
                         if _ev is not None:
                             _ev.mark_first_event()
-                    streamed_content_parts.append(event_data["content"])
                     token_batcher.push(ctx.emitter.token(
                         event_data["content"],
                         event_data.get("is_reasoning", False),

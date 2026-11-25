@@ -40,6 +40,7 @@ from app.services.chat.model_runtime.usage_ledger import (
     extract_usage_fact,
     persist_turn_records,
     reset_price_table_cache,
+    spawn_persist_task,
 )
 from tests.fixtures.pi_mocks import make_agent_settled, make_token_event
 
@@ -430,6 +431,51 @@ async def test_persist_incomplete_on_write_failure(db_factory, monkeypatch):
     c.observe(_message_end_event(usage={"input": 10, "output": 5}))
     ok = await persist_turn_records(c, status="applied", finalize=True)
     assert ok is False and c.write_failures == 1
+
+
+async def test_persist_failure_count_resets_after_later_success(db_factory, monkeypatch):
+    """失败计数无清零路径：同一 collector 二次成功仍记 incomplete（P3）。"""
+    from app.core import database as db_mod
+
+    class _BrokenCtx:
+        async def __aenter__(self):
+            raise RuntimeError("db down")
+
+        async def __aexit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(db_mod, "async_db_session", lambda: _BrokenCtx())
+    c = TurnUsageCollector("sess-1", "turn-2b")
+    c.observe(_message_end_event(usage={"input": 10, "output": 5}))
+    assert await persist_turn_records(c, status="applied", finalize=True) is False
+    assert c.write_failures == 1
+
+    class _OkCtx:
+        async def __aenter__(self):
+            self._db = db_factory()
+            return self._db
+
+        async def __aexit__(self, *exc):
+            await self._db.close()
+
+    monkeypatch.setattr(db_mod, "async_db_session", _OkCtx)
+    assert await persist_turn_records(c, status="applied", finalize=True) is True
+    assert c.write_failures == 0
+    async with db_factory() as db:
+        row = (await db.execute(select(ChatTurnRuntime))).scalars().one()
+    assert row.complete is True and row.records_written == 1
+
+
+async def test_spawn_persist_task_keeps_strong_reference():
+    """fire-and-forget 任务必须被模块持有到完成（否则可被 GC）。"""
+    from app.services.chat.model_runtime import usage_ledger
+
+    c = TurnUsageCollector("sess-1", "turn-spawn")
+    task = spawn_persist_task(c)
+    assert task in usage_ledger._persist_tasks
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    assert task not in usage_ledger._persist_tasks
 
 
 # ── WP06/WP10：能力门与预算 ───────────────────────────────────────

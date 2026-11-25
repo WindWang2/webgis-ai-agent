@@ -256,11 +256,26 @@ def diff_against_baseline(
 def write_baseline(results: Iterable[CaseResult], path: Any) -> None:
     """当前结果落盘为基线（JSON；同 commit 复跑 diff 应为空归因）。"""
     import json
+    import os
+    import tempfile
 
-    with open(path, "w", encoding="utf-8") as fh:
-        json.dump(render_json(list(results)), fh,
-                  ensure_ascii=False, indent=1, sort_keys=True)
-        fh.write("\n")
+    # 先完整序列化，再原子替换：序列化中途抛错不得把已有基线截断。
+    payload = json.dumps(
+        render_json(list(results)), ensure_ascii=False, indent=1, sort_keys=True,
+    ) + "\n"
+    target = os.fspath(path)
+    directory = os.path.dirname(os.path.abspath(target)) or "."
+    fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".baseline-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(payload)
+        os.replace(tmp_path, target)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def load_baseline(path: Any) -> Dict[str, Any]:

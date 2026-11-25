@@ -178,7 +178,13 @@ export function VisualAttachBar({ sessionId, ownerToken }: {
   const onFilePicked = useCallback(async (files: FileList | null) => {
     setMenuOpen(false);
     if (!files || files.length === 0) return;
-    for (const file of Array.from(files).slice(0, 4 - drafts.length)) {
+    const picked = Array.from(files);
+    // 名额不足时如实提示，不静默丢弃多余文件（只上传前 remaining 个）。
+    const remaining = Math.max(0, 4 - drafts.length);
+    if (picked.length > remaining) {
+      setNotice(t('sidebar.chat.visualAttach.draftFull'));
+    }
+    for (const file of picked.slice(0, remaining)) {
       await upload({
         file,
         sourceType: 'reference_upload',
@@ -187,7 +193,7 @@ export function VisualAttachBar({ sessionId, ownerToken }: {
       });
     }
     if (fileInputRef.current) fileInputRef.current.value = '';
-  }, [upload, drafts.length]);
+  }, [upload, drafts.length, t]);
 
   const chipLabel = (d: VisualAttachmentDraft) => {
     const key = d.sourceType === 'map_viewport' ? 'chipViewport'

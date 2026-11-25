@@ -475,6 +475,13 @@ describe('renderer', () => {
       expect(mapMock.removeLayer).not.toHaveBeenCalledWith('custom-foo-other');
     });
 
+    it('returns false instead of throwing when getStyle throws (disposed map)', () => {
+      mapMock.getStyle.mockImplementation(() => {
+        throw new Error('Map is not initialized');
+      });
+      expect(removeLayerStack(mapMock, 'test-id')).toBe(false);
+    });
+
     it('should detach dependent layers before removing sources and clean up image textures', () => {
       mapMock.hasImage = vi.fn().mockReturnValue(true);
       mapMock.removeImage = vi.fn();
@@ -588,5 +595,9 @@ describe('resolveHeatmapRadiusPx — heatmap radius contract mirror', () => {
 
   it('nothing given → contract default 30px', () => {
     expect(resolveHeatmapRadiusPx({ id: 'x', source: 's' } as any)).toBe(30);
+  });
+
+  it('JSON null is not an explicit radius (falls back to default 30px)', () => {
+    expect(resolveHeatmapRadiusPx({ id: 'x', source: 's', radiusPx: null } as any)).toBe(30);
   });
 });

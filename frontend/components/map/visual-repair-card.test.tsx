@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react'
 import { VisualRepairCard } from './visual-repair-card'
 import { ApiError } from '@/lib/api/transport'
 
@@ -101,6 +101,24 @@ describe('VisualRepairCard', () => {
       expect(fetchMock.mock.calls.some((c: unknown[]) => String(c[0]).endsWith('/reject'))).toBe(true))
     // 卡片收起，回到入口按钮（拒绝记忆已入账）。
     await waitFor(() => expect(screen.getByTestId('visual-repair-open')).toBeInTheDocument())
+  })
+
+  it('reject 回执失败不打断用户：保留 plan UI 与重试入口', async () => {
+    fetchMock.mockImplementation(async (url: string) =>
+      String(url).endsWith('/plan')
+        ? fetchJson(PLAN_OK)
+        : fetchJson({ detail: 'reject unavailable' }, 500))
+    render(<VisualRepairCard sessionId="s1" />)
+    fireEvent.click(screen.getByTestId('visual-repair-open'))
+    await waitFor(() => expect(screen.getByTestId('visual-repair-reject')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('visual-repair-reject'))
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some((c: unknown[]) => String(c[0]).endsWith('/reject'))).toBe(true))
+    await act(async () => { await Promise.resolve() })
+    // 修复前：catch 里 setPhase('error') → 整块 plan UI 消失。
+    expect(screen.queryByTestId('visual-repair-error')).toBeNull()
+    expect(screen.getByTestId('visual-repair-ops')).toBeInTheDocument()
+    expect(screen.getByTestId('visual-repair-reject')).toBeInTheDocument()
   })
 
   it('renders honest non-proposable reasons', async () => {

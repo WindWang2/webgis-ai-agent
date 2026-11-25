@@ -245,9 +245,10 @@ describe('Selection truthfulness on MVT layers (#668)', () => {
     expect(hud.state.selectedFeature.isApproximate).toBe(true);
     expect(apiFetchMock).not.toHaveBeenCalled();
 
-    // LLM context must match same approximate truth
+    // LLM context must match same approximate truth（快照自身必须携带标志；
+    // 不得回退到已知为真的 store 值，否则快照丢标志也会通过）。
     const snap = buildSelectedFeatureSnapshot(hud.state.selectedFeature, ['ref:big-1']);
-    expect((snap as any).isApproximate ?? (snap as any).is_approximate ?? hud.state.selectedFeature.isApproximate).toBeTruthy();
+    expect((snap as any).is_approximate).toBe(true);
   });
 
   it('404 on single-feature falls back to approximate instead of throwing', async () => {

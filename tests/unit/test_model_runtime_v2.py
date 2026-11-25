@@ -40,6 +40,43 @@ def test_descriptor_registry_unknown_field_rejected():
                                "magic_context": 999}, source="override")
 
 
+def test_descriptor_entry_with_source_field_does_not_crash():
+    """source 是合法字段：条目含它时不得触发 duplicate-kwarg TypeError。"""
+    from app.services.chat.model_runtime.descriptors import _descriptor_from_dict
+
+    desc = _descriptor_from_dict(
+        {"provider_id": "webgis", "model_id": "x", "source": "file"},
+        source="override",
+    )
+    assert desc.source == "override" and desc.model_id == "x"
+
+
+def test_descriptor_all_and_by_group_read_under_lock():
+    """all()/by_group() 的 dict 迭代必须在锁内（并发 upsert 不得 RuntimeError）。"""
+    reg = ModelDescriptorRegistry()
+    reg._built = True
+    reg._descriptors = {
+        "webgis/x": ModelDescriptor(provider_id="webgis", model_id="x")
+    }
+
+    class _RecordingLock:
+        def __init__(self):
+            self.entries = 0
+
+        def __enter__(self):
+            self.entries += 1
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    lock = _RecordingLock()
+    reg._lock = lock
+    assert reg.all()["webgis/x"].model_id == "x"
+    assert [d.model_id for d in reg.by_group("default")] == ["x"]
+    assert lock.entries == 2
+
+
 def test_descriptor_resolve_unknown_model_conservative():
     reg = ModelDescriptorRegistry()
     desc = reg.resolve("never-configured-model")
@@ -290,6 +327,58 @@ def test_resolve_config_profile_application(routing_stack, monkeypatch):
 
     assert cfg.timeout_s == _s.LLM_TIMEOUT_S
     assert cfg.temperature == _s.LLM_TEMPERATURE
+
+
+def test_route_all_output_budgets_falsy_does_not_crash(monkeypatch):
+    """三个 max-output 来源全 falsy 时 min() 空序列不得抛 ValueError。"""
+    from app.services.chat.llm_client import LLMConfig
+    from app.services.chat.model_runtime import routing
+    from app.services.chat.model_runtime.roles import ModelRoleProfile
+
+    profile = ModelRoleProfile(role="execution", max_output_tokens=None)
+    monkeypatch.setattr(routing, "get_role_profile", lambda role: profile)
+    monkeypatch.setattr(
+        routing, "resolve_llm_config",
+        lambda role: LLMConfig(base_url="http://x", model="m", api_key="k", max_tokens=0),
+    )
+
+    class _Reg:
+        def by_group(self, group):
+            return ()
+
+        def resolve(self, model, provider_id="webgis"):
+            return ModelDescriptor(provider_id=provider_id, model_id=model)
+
+    router = ModelRouter(registry=_Reg(), health=LLMProviderHealth())
+    decision = router.route(RouteRequest(role="execution"))
+    assert decision.estimated_output_tokens is None
+
+
+def test_resolve_config_never_exceeds_global_max_tokens(monkeypatch):
+    """角色 profile 预算大于全局上限时必须被 cfg.max_tokens 钳制。"""
+    from app.services.chat.llm_client import LLMConfig
+    from app.services.chat.model_runtime import routing
+    from app.services.chat.model_runtime.roles import ModelRoleProfile
+
+    profile = ModelRoleProfile(role="execution", max_output_tokens=200_000)
+    monkeypatch.setattr(routing, "get_role_profile", lambda role: profile)
+    monkeypatch.setattr(
+        routing, "resolve_llm_config",
+        lambda role: LLMConfig(
+            base_url="http://x", model="m", api_key="k", max_tokens=4096,
+        ),
+    )
+
+    class _Reg:
+        def by_group(self, group):
+            return ()
+
+        def resolve(self, model, provider_id="webgis"):
+            return ModelDescriptor(provider_id=provider_id, model_id=model)
+
+    router = ModelRouter(registry=_Reg(), health=LLMProviderHealth())
+    cfg, _decision = router.resolve_config(RouteRequest(role="execution"))
+    assert cfg.max_tokens == 4096
 
 
 def test_observe_wires_health(routing_stack):

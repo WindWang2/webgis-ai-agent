@@ -72,6 +72,45 @@ describe('MapHarnessCards', () => {
     expect(screen.queryByTestId('display-confirmation-card')).toBeNull();
   });
 
+  it('prototype-chain status/effect kind 不注入函数源码，未知 effect 回退 effectOther', async () => {
+    fetchMock.mockResolvedValue(fetchJson({
+      session_id: 's1', mode: 'auto', confirmed: true, pending: false,
+      required_render_seq: 0, latest_observation_seq: 0, verdict_present: true,
+    }));
+    render(<MapHarnessCards sessionId="s1" />);
+    pushOperationReceipt({
+      operation_id: 'mop-proto-1',
+      status: 'constructor',
+      message: 'prototype key',
+      effects: [{ index: 0, kind: 'constructor', targets: [], state: 'applied' }],
+    } as never, 's1');
+    const card = await screen.findByTestId('map-operation-card-mop-proto-1');
+    // 未知状态回退 text-ink，而不是 STATUS_TONE['constructor'] 的函数源码。
+    const statusEl = screen.getByTestId('map-op-status-mop-proto-1');
+    expect(statusEl.className).toContain('text-ink');
+    expect(statusEl.className).not.toContain('function');
+    // 原型链 kind 不得把函数对象传给 t；回退「其他」。
+    expect(card.textContent).toContain('其他');
+    expect(card.textContent).not.toContain('function');
+  });
+
+  it('effects 超过 8 条时披露剩余条数（不再静默丢弃第 9+ 条）', async () => {
+    fetchMock.mockResolvedValue(fetchJson({
+      session_id: 's1', mode: 'auto', confirmed: true, pending: false,
+      required_render_seq: 0, latest_observation_seq: 0, verdict_present: true,
+    }));
+    render(<MapHarnessCards sessionId="s1" />);
+    pushOperationReceipt({
+      operation_id: 'mop-many-effects',
+      status: 'committed',
+      effects: Array.from({ length: 11 }, (_, index) => ({
+        index, kind: 'set_layer_opacity', targets: [`layer-${index}`], state: 'applied',
+      })),
+    } as never, 's1');
+    const more = await screen.findByTestId('map-op-effects-more-mop-many-effects');
+    expect(more.textContent).toContain('…+3');
+  });
+
   it('offers approval for confirmation_required and backfills the final receipt', async () => {
     fetchMock.mockResolvedValue(fetchJson({
       session_id: 's1', mode: 'auto', confirmed: true, pending: false,

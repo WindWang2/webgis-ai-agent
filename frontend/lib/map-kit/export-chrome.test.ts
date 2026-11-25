@@ -340,6 +340,27 @@ describe('drawChromeLegend — 分级图例', () => {
     // W5 收敛：区间标签统一 formatLegendValue（zh-CN 感知）—— 整数不再带 .0
     expect(texts.some((t) => t.includes('0 – 10'))).toBe(true);
   });
+
+  it('多类目图例受画布下沿钳位（60 类不越界、不画到画布外）', () => {
+    const { ctx, calls } = mockCtx();
+    const categories = Array.from({ length: 60 }, (_, i) => ({ color: '#123456', label: `类${i}` }));
+    drawChromeLegend(
+      { ctx, ...DRAW_BASE },
+      {
+        kind: 'legend', anchor: 'bottom-left',
+        legendSpec: { type: 'categorical', field: '类别', categories } as any,
+      },
+      { marginX: 40, marginY: 56 },
+    );
+    const fills = calls.filter((c) => c.op === 'fillRect').map((c) => c.args as number[]);
+    expect(fills.length).toBeGreaterThan(0);
+    for (const [, y, , h] of fills) {
+      expect(y).toBeGreaterThanOrEqual(0);
+      expect(y + h).toBeLessThanOrEqual(DRAW_BASE.targetH);
+    }
+    // 条目数被钳位（不再 60 条全画）。
+    expect(fills.length).toBeLessThan(60);
+  });
 });
 
 describe('drawChromeStatsPanel / drawChromeChartPanel — 面板导出', () => {
@@ -451,6 +472,28 @@ describe('buildExportChrome — ADR-0084 布局引擎集成', () => {
     expect(model.panels[0].stats?.title).toBe('学校统计');
     // 折叠 → 只导出标题条文本
     expect(model.panels[0].text).toBe('学校统计');
+  });
+
+  it('非法面板载荷不再静默缺席：四族均推 component_skipped_invalid', async () => {
+    const model = await buildExportChrome(
+      {
+        spec: specOf([
+          comp({ id: 'stats', type: 'statistics_panel', options: { stats: {} } }),
+          comp({ id: 'memo', type: 'methodology_note', options: { warnings: {} } }),
+          comp({ id: 'unc', type: 'uncertainty_panel', options: { uncertainty: {} } }),
+          comp({ id: 'dec', type: 'decision_panel', options: { decision: {} } }),
+        ]),
+        viewport: VIEWPORT,
+        legendSpecsByLayer: {},
+      },
+      CANVAS,
+    );
+    expect(model.panels).toEqual([]);
+    for (const id of ['stats', 'memo', 'unc', 'dec']) {
+      expect(model.degradations).toContainEqual(
+        expect.objectContaining({ code: 'component_skipped_invalid', componentId: id }),
+      );
+    }
   });
 
   it('disabled legend 不再 shadow enabled categorical_legend（E-4）', async () => {
@@ -622,6 +665,21 @@ describe('V4 drawChromeChartPanel — chart kind 扩展', () => {
     expect(texts).toContain('小提琴'); // 标题条保留
     // 无图形：无数据 fillRect（面板底色 arcTo 路径除外）、无数据 arc
     expect(calls.filter((c) => c.op === 'arc').length).toBe(0);
+  });
+
+  it('rose 全零/负值：画「暂无数据」而非内部类型字面量 rose', () => {
+    const { ctx, calls } = mockCtx();
+    drawChromeChartPanel(
+      { ctx, ...DRAW_BASE },
+      {
+        kind: 'chart', anchor: 'top-left',
+        chart: { type: 'rose', title: 'R', data: [{ name: 'a', value: 0 }, { name: 'b', value: -1 }] } as any,
+      },
+      { marginX: 40 },
+    );
+    const texts = calls.filter((c) => c.op === 'fillText').map((c) => String(c.args[0]));
+    expect(texts).toContain('暂无数据');
+    expect(texts).not.toContain('rose');
   });
 
   it('donut：扇形 arc + 内圈 arc（0.6 倍半径）', () => {

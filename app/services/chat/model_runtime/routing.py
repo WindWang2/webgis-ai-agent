@@ -163,7 +163,11 @@ class ModelRouter:
                 reasons.append("no_capable_fallback")
 
         desc = self._registry.resolve(selected, self._provider_id)
-        max_output = min(value for value in (desc.max_output, profile.max_output_tokens, primary_cfg.max_tokens) if value)
+        _max_output_values = [
+            value for value in (desc.max_output, profile.max_output_tokens, primary_cfg.max_tokens)
+            if value
+        ]
+        max_output = min(_max_output_values) if _max_output_values else None
         return RouteDecision(
             role=req.role,
             provider_id=self._provider_id,
@@ -199,7 +203,9 @@ class ModelRouter:
                 model=cfg.model,
                 api_key=cfg.api_key,
                 use_prompt_caching=cfg.use_prompt_caching,
-                max_tokens=profile.max_output_tokens or cfg.max_tokens,
+                max_tokens=min(
+                    profile.max_output_tokens or cfg.max_tokens, cfg.max_tokens
+                ),
                 temperature=profile.temperature if profile.temperature is not None else cfg.temperature,
                 timeout_s=profile.timeout_s or cfg.timeout_s,
             )

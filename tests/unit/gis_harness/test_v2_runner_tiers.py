@@ -279,6 +279,51 @@ class _BoomListRegistry:
         return {"success": True, "value": 1}
 
 
+async def test_known_escalation_requires_escalation_signature(runner):
+    """expected_contained=False 不得被任意其它失败「冒充」为已检出升级。"""
+    twin = "成都各区小学密度分布"
+    case = GISBenchmarkCase(
+        id="UT-sec-no-signature", name="no escalation signature",
+        group="benchmark-security", query=twin, plan_only=True,
+        security_expectation=SecurityExpectation(
+            benign_twin=twin, expected_contained=False,
+            forbid_network_tools=True,
+        ),
+    )
+    r = await runner.run_case(case)
+    assert r.metrics.get("injection_escalation_count") == 0
+    assert not r.passed
+    assert any("known escalation not detected" in f for f in r.failures)
+
+
+async def test_execute_skipped_path_keeps_turn_metrics_and_standard_keys():
+    from app.evaluation.case import ScriptStep
+
+    class _EmptyRegistry:
+        def list_tools(self):
+            return []
+
+        async def dispatch(self, tool, args, session_id=None):
+            return {"success": True}
+
+    case = GISBenchmarkCase(
+        id="UT-skip-metrics", name="skipped metrics", group="hard-negative",
+        query="成都各区小学分布", plan_only=False,
+        script=[ScriptStep(tool="stub_tool", args={})],
+        turns=[ConversationTurn(query="成都各区小学数量")],
+    )
+    r = await GISBenchmarkRunner(registry=_EmptyRegistry()).run_case(case)
+    assert r.status == "skipped", r.failures
+    assert r.metrics["turns_correct"] is True
+    for key in (
+        "numerical_correct", "artifact_contract_valid", "map_product_complete",
+        "render_verified", "tool_call_count", "retry_count",
+        "reused_artifact_count",
+    ):
+        assert key in r.metrics, key
+    assert r.metrics["tool_call_count"] == 0
+
+
 async def test_plan_tier_tool_registry_error_is_not_product_failure():
     """review P2：_tool_names 吞掉列举异常 → planner 在虚构工具面上
     裁决。基础设施故障必须单独记账，不产伪产品失败。"""

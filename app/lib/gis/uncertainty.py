@@ -60,6 +60,11 @@ class UncertaintyMeasure(BaseModel):
             raise ValueError("level must be in (0, 1)")
         return float(v)
 
+    @field_validator("value", "low", "high")
+    @classmethod
+    def _r6_bounded(cls, v: Optional[float]) -> Optional[float]:
+        return _r6(v)
+
 
 class ScalarUncertainty(BaseModel):
     """单值不确定性（如全局 Moran's I 的置换 p 值、Sen 斜率的置信区间）。"""
@@ -119,7 +124,7 @@ class StatisticalSignificance(BaseModel):
             return v
         if not 0.0 <= float(v) <= 1.0:
             raise ValueError("p_value must be in [0, 1]")
-        return float(v)
+        return _r6(float(v))
 
     def to_evidence(self) -> Dict[str, Any]:
         return {
@@ -127,7 +132,7 @@ class StatisticalSignificance(BaseModel):
             "uncertainty_type": self.uncertainty_type,
             "statistic_name": self.statistic_name,
             "statistic_value": _r6(self.statistic_value),
-            "p_value": self.p_value,
+            "p_value": _r6(self.p_value),
             "method": self.method,
             "permutations": self.permutations,
             "multiple_testing": self.multiple_testing,

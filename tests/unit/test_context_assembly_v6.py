@@ -100,6 +100,18 @@ def test_select_active_node_tie_break_is_input_order_independent():
     assert v6.select_active_node([second, first], [])["capability"] == "a"
 
 
+def test_select_active_node_same_capability_is_input_order_independent():
+    # 同 capability 多 plan 节点：按 (优先级, node_id) 规范择一，不因输入
+    # 顺序 last-write-wins。
+    running = {"node_id": "step:2", "capability": "buffer", "status": "running"}
+    completed = {"node_id": "step:1", "capability": "buffer", "status": "completed"}
+    forward = v6.select_active_node([running, completed], [])
+    reversed_ = v6.select_active_node([completed, running], [])
+    assert forward == reversed_
+    assert forward["plan_state"] == "running"
+    assert forward["node_id"] == "step:2"
+
+
 # ── Node-local 块 ────────────────────────────────────────────────────────
 
 def test_node_local_block_absent_without_active_node():

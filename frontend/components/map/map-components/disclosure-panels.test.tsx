@@ -91,6 +91,23 @@ describe('disclosure renderers', () => {
     expect(container.textContent).toContain('候选B 位于禁建区');
   });
 
+  it('vetoes 为空数组且无 rows 时渲染空态卡（不渲染空白面板体）', () => {
+    const el = renderComponent(
+      {
+        id: 'decision-panel-empty-vetoes',
+        type: 'decision_panel',
+        enabled: true,
+        position: 'top-right',
+        priority: 48,
+        options: { decision: { vetoes: [] } },
+      } as never,
+      {} as never,
+    );
+    const { container } = render(<>{el}</>);
+    expect(container.querySelector('[data-state="empty"]')).toBeTruthy();
+    expect(container.textContent).toContain('暂无决策结果');
+  });
+
   it('degrades to empty state on malformed payload', () => {
     const renderer = getComponentRenderer('methodology_note');
     expect(renderer).toBeDefined();

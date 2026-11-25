@@ -181,3 +181,39 @@ async def test_nonstream_unwind_path_clamps_tool_payload():
     tool_msgs = [m for m in session_msgs if m.get("role") == "tool"]
     assert len(tool_msgs) == 1
     assert tool_msgs[0]["content"] == _HUGE_PAYLOAD[:_TOOL_PAYLOAD_MAX_CHARS]
+
+
+# ─── 非流式工具决策日志语义（P3：round/subset_size 与流式对齐） ─────────────
+
+
+@pytest.mark.asyncio
+async def test_nonstream_tool_decision_log_uses_real_round_and_subset():
+    """非流式决策日志：round 为真实轮次、subset_size 为当轮供给的工具数。"""
+    import app.services.chat.decision_log as decision_log_mod
+    from app.services.tool_dispatch_service import ToolDispatchResult
+
+    engine = ChatEngine(ToolRegistry())
+    captured: list = []
+    _outcome = ToolDispatchResult(
+        status="ok", llm_payload="ok", slim_event={"ok": True},
+        geojson_ref=None, raw_result={"ok": True}, error_msg=None,
+    )
+
+    with patch.object(engine, "_load_session_from_db", side_effect=_fake_load), \
+         patch.object(engine, "_call_llm", new_callable=AsyncMock,
+                      side_effect=[_tool_call_resp(), _tool_call_resp(), _final_resp()]), \
+         patch.object(engine, "_save_msg_async", new_callable=AsyncMock), \
+         patch.object(engine, "_select_tools", return_value=[{"fn": 1}, {"fn": 2}]), \
+         patch.object(engine.tool_pipeline, "execute_tool_call",
+                      new_callable=AsyncMock,
+                      return_value=ToolExecutionResult(
+                          tool_name="big_tool", tool_call_id="call_1",
+                          raw_result={"ok": True}, llm_payload="ok",
+                          outcome=_outcome)), \
+         patch.object(decision_log_mod, "log_tool_decision",
+                      side_effect=lambda rec, **kw: captured.append(rec)):
+        result = await engine.chat("跑两轮", session_id="sess-1717-declog")
+
+    assert result["content"] == "done"
+    assert [rec.round for rec in captured] == [0, 1]
+    assert all(rec.subset_size == 2 for rec in captured)

@@ -15,6 +15,11 @@ vi.mock('@/lib/mapspec/component-mutation', async (importOriginal) => {
   return { ...actual, commitComponentPatch: vi.fn(() => Promise.resolve()) };
 });
 
+const viewportState = vi.hoisted(() => ({ small: false }));
+vi.mock('@/lib/hooks/use-small-viewport', () => ({
+  useSmallViewport: () => viewportState.small,
+}));
+
 import { FloatingChrome } from './floating-chrome';
 import { commitComponentPatch, setComponentPlacementOverride } from '@/lib/mapspec/component-mutation';
 import type { MapSpecComponent } from '@/lib/mapspec-compiler/types';
@@ -59,6 +64,7 @@ function renderChrome(component: MapSpecComponent = FLOATING_COMP) {
 
 beforeEach(() => {
   commitMock.mockClear();
+  viewportState.small = false;
   setComponentPlacementOverride('comp-1', null);
 });
 
@@ -190,6 +196,28 @@ describe('FloatingChrome — 标题栏操作', () => {
         placement: expect.objectContaining({ collapsed: false }),
       }),
     );
+  });
+
+  it('小视口派生折叠时点「展开」生效：显式 collapsed=false 覆盖视口建议', async () => {
+    viewportState.small = true;
+    renderChrome({
+      id: 'comp-1',
+      type: 'chart_panel',
+      enabled: true,
+      placement: { mode: 'anchor', anchor: 'top-left', collapsed: true },
+    });
+    expect(screen.queryByText('面板内容')).toBeNull();
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: '展开面板' }));
+    });
+    expect(commitMock).toHaveBeenCalledWith(
+      'comp-1',
+      expect.objectContaining({
+        placement: expect.objectContaining({ collapsed: false }),
+      }),
+    );
+    // 修复前：smallViewport 仍用 || 强制折叠，展开点击无效。
+    await waitFor(() => expect(screen.getByText('面板内容')).toBeInTheDocument());
   });
 
   it('隐藏：提交 enabled=false', () => {

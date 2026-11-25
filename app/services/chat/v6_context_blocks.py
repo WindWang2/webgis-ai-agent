@@ -148,9 +148,23 @@ def select_active_node(
         if not cap:
             continue
         entry = by_cap.setdefault(cap, {"node_id": "", "capability": cap})
-        entry["node_id"] = entry["node_id"] or str(_field(n, "node_id") or cap)
-        entry["plan_state"] = _state_str(_field(n, "status"))
-        entry["plan_node"] = n
+        node_id = str(_field(n, "node_id") or cap)
+        state = _state_str(_field(n, "status"))
+        if "plan_state" not in entry:
+            entry["node_id"] = entry["node_id"] or node_id
+            entry["plan_state"] = state
+            entry["plan_node"] = n
+            continue
+        # 同 capability 多 plan 节点：按 (优先级降序, node_id 升序) 规范择一，
+        # 避免 last-write-wins 使结果依赖输入顺序。
+        prev_prio = _node_priority(str(entry.get("plan_state") or ""), "")
+        cur_prio = _node_priority(state, "")
+        if cur_prio > prev_prio or (
+            cur_prio == prev_prio and node_id < entry["node_id"]
+        ):
+            entry["node_id"] = node_id
+            entry["plan_state"] = state
+            entry["plan_node"] = n
     for n in list(runtime_nodes or []):
         if not isinstance(n, dict):
             continue

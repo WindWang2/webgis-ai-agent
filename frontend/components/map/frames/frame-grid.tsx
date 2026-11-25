@@ -366,7 +366,7 @@ export function FrameProductGrid({
   }, [gridState.syncPan, gridState.syncZoom, gridState.linkMain]);
 
   useEffect(() => {
-    hubRef.current?.setActiveFrame(liveFrameId === gridState.activeFrameId ? liveFrameId : gridState.activeFrameId);
+    hubRef.current?.setActiveFrame(gridState.activeFrameId);
   }, [liveFrameId, gridState.activeFrameId]);
 
   // 主图 attach（mapLoaded 门 —— ComparisonView 同款）。

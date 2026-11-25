@@ -205,12 +205,12 @@ function PagedTableBody({
     const selRev = selection?.revision ?? -1;
     if (lastScrollSelRef.current === selRev) return;
     lastScrollSelRef.current = selRev;
-    const rowIndex = table.rows.findIndex((r) => r.rowId === first);
+    const rowIndex = view.rows.findIndex((r) => r.rowId === first);
     const el = scrollRef.current;
     if (rowIndex >= 0 && el) {
       el.scrollTop = Math.max(0, rowIndex * ROW_HEIGHT - (el.clientHeight || 240) / 2);
     }
-  }, [selectedRowIds, table.rows, selection?.revision]);
+  }, [selectedRowIds, view.rows, selection?.revision]);
 
   const handleRowClick = (rowId: string) => {
     const sel = getSelection();
@@ -563,7 +563,7 @@ function TablePanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
         const vb = state.model.rows[b].props[col];
         const na = typeof va === 'number' ? va : Number(va);
         const nb = typeof vb === 'number' ? vb : Number(vb);
-        const cmp = Number.isFinite(na) && Number.isFinite(nb) && va != null && vb != null && typeof va !== 'boolean'
+        const cmp = Number.isFinite(na) && Number.isFinite(nb) && va != null && vb != null && typeof va !== 'boolean' && typeof vb !== 'boolean'
           ? na - nb
           : cellText(va).localeCompare(cellText(vb), 'zh');
         return cmp * sortKey.dir;

@@ -980,6 +980,12 @@ export async function buildExportChrome(
           // 永远丢失 —— live 折叠、导出展开）。
           text: c.collapsed ? stats.title || tNow('map.export.statistics') : undefined,
         });
+      } else {
+        model.degradations.push({
+          code: 'component_skipped_invalid',
+          componentId: c.id,
+          detail: 'statistics_panel 载荷非法',
+        });
       }
     } else if (c.type === 'chart_panel') {
       const inline = _parseChart(c.options['chart']);
@@ -992,7 +998,7 @@ export async function buildExportChrome(
           /* 拉取失败 → 面板缺席（如实：无数据不伪造） */
         }
       }
-      if (!chart && c.enabled) {
+      if (!chart) {
         // Wave 9：拉取失败/载荷缺失 → 此前面板静默缺席；现在记录显式降级
         //（exporter 汇入导出后系统消息，用户知道图表面板没进导出件）。
         model.degradations.push({
@@ -1036,6 +1042,12 @@ export async function buildExportChrome(
           disclosure,
           text: c.collapsed ? disclosure.title : undefined,
         });
+      } else {
+        model.degradations.push({
+          code: 'component_skipped_invalid',
+          componentId: c.id,
+          detail: 'methodology_note 载荷非法',
+        });
       }
     } else if (c.type === 'uncertainty_panel') {
       const disclosure = _parseUncertainty(c.options['uncertainty']);
@@ -1049,6 +1061,12 @@ export async function buildExportChrome(
           disclosure,
           text: c.collapsed ? disclosure.title : undefined,
         });
+      } else {
+        model.degradations.push({
+          code: 'component_skipped_invalid',
+          componentId: c.id,
+          detail: 'uncertainty_panel 载荷非法',
+        });
       }
     } else if (c.type === 'decision_panel') {
       const disclosure = _parseDecision(c.options['decision']);
@@ -1061,6 +1079,12 @@ export async function buildExportChrome(
           slotSize: _stackOf(c)?.slotSize ?? 0,
           disclosure,
           text: c.collapsed ? disclosure.title : undefined,
+        });
+      } else {
+        model.degradations.push({
+          code: 'component_skipped_invalid',
+          componentId: c.id,
+          detail: 'decision_panel 载荷非法',
         });
       }
     } else if (c.type === 'table_panel') {
@@ -1097,7 +1121,7 @@ export async function buildExportChrome(
       } catch {
         table = null; // 拉取失败 → 面板缺席（无数据不伪造）
       }
-      if (!table && c.enabled) {
+      if (!table) {
         // Wave 9：同 chart —— 表格面板缺席记录显式降级，不再静默。
         model.degradations.push({
           code: 'table_ref_unavailable',
@@ -1543,11 +1567,19 @@ export function drawChromeLegend(
   let maxTextW = 0;
   for (const e of entries) maxTextW = Math.max(maxTextW, ctx.measureText(e.label).width);
   const legendW = padding * 2 + itemW + gapX + maxTextW + d.scalePx(10);
-  const legendH = padding * 2 + d.scalePx(24) + entries.length * itemH;
+  const chromeH = padding * 2 + d.scalePx(24);
 
   const origin = el.rect
     ? { x: el.rect.x, y: el.rect.y, align: 'left' as const, vAlign: 'top' as const }
     : anchorOrigin(el.anchor, { targetW: d.targetW, targetH: d.targetH, marginX: opts.marginX, marginY: opts.marginY ?? 56 });
+  // #1745 5：盒高与行数同面板族一致受画布下沿钳位（多类目图例不越界）。
+  const { boxH: legendH, visibleRows } = _clampPanelBox(
+    d,
+    origin,
+    chromeH + entries.length * itemH,
+    chromeH,
+    itemH,
+  );
   const lx = origin.align === 'right' ? origin.x - legendW : origin.align === 'center' ? origin.x - legendW / 2 : origin.x;
   const ly = origin.vAlign === 'bottom' ? d.targetH - origin.y - legendH : origin.y;
 
@@ -1556,7 +1588,7 @@ export function drawChromeLegend(
   ctx.font = `bold ${d.scalePx(12)}px sans-serif`;
   // W5 parity：标题回退统一模型口径（原 tNow('map.export.unknownField') 分支删除）。
   _text(d, model.title, lx + padding, ly + padding + d.scalePx(12), 'left');
-  for (let i = 0; i < entries.length; i++) {
+  for (let i = 0; i < Math.min(entries.length, visibleRows); i++) {
     const e = entries[i];
     const iy = ly + padding + d.scalePx(24) + i * itemH;
     ctx.fillStyle = e.color;
@@ -2397,7 +2429,7 @@ export function drawChromeChartPanel(
     const values = chart.data.map((p) => p.value ?? 0);
     const maxV = values.reduce((a, b) => Math.max(a, b), 0);
     if (maxV <= 0) {
-      drawEmptyDisclosure('rose');
+      drawEmptyDisclosure(tNow('map.export.noData'));
     } else {
       const cx = plotX + plotW / 2;
       const cy = plotY + plotH / 2;

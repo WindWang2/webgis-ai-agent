@@ -346,6 +346,34 @@ def test_consume_answer_timeout_vs_user_no(fresh_service):
     assert out2["code"] == "ANSWERED" and out2["domain"]["confirmed"] is False
 
 
+@pytest.mark.parametrize("display", ["False", "FALSE", "0", " no ", False])
+def test_consume_answer_confirm_false_serializations(display):
+    """非精确小写 'false' 的否形态同样判为用户确认「否」。"""
+    from app.services.chat.pi_interaction_envelope import consume_answer
+
+    out = consume_answer(
+        session_id="s", turn_id="t", tool_call_id="tc",
+        envelope_id="env-x", native_id="",
+        answer_kind="confirmed", display=display,
+        interaction_state="answer_written",
+        envelope={"tool_call_id": "tc", "exp": time.time() + 60},
+    )
+    assert out["code"] == "ANSWERED" and out["domain"]["confirmed"] is False
+
+
+def test_pi_ui_env_int_falls_back_on_invalid(monkeypatch):
+    """PI_UI_MAX_* 非整数/空串不得让 import 期 ValueError。"""
+    from app.services.chat.pi_ui_protocol import _env_int
+
+    monkeypatch.setenv("PI_UI_TEST_LIMIT", "garbage")
+    assert _env_int("PI_UI_TEST_LIMIT", 160) == 160
+    monkeypatch.setenv("PI_UI_TEST_LIMIT", "")
+    assert _env_int("PI_UI_TEST_LIMIT", 160) == 160
+    monkeypatch.setenv("PI_UI_TEST_LIMIT", "0")
+    assert _env_int("PI_UI_TEST_LIMIT", 160) == 1
+
+
+
 # ── 生命周期 ────────────────────────────────────────────────────────────
 
 

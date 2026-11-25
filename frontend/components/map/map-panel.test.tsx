@@ -70,6 +70,7 @@ const hud = vi.hoisted(() => {
 });
 
 const overlays = vi.hoisted(() => ({ legendRenders: 0, decorRenders: 0 }));
+const mapActionState = vi.hoisted(() => ({ selectedBaseLayer: 1 }));
 
 vi.mock('react-map-gl/maplibre', () => {
   const React = require('react');
@@ -119,7 +120,7 @@ vi.mock('@/lib/contexts/map-action-context', () => ({
     actions: [],
     dispatchAction: vi.fn(),
     popAction: vi.fn(),
-    selectedBaseLayer: 1,
+    selectedBaseLayer: mapActionState.selectedBaseLayer,
     setSelectedBaseLayer: vi.fn(),
     registerSnapshotFn: vi.fn(),
     getMapSnapshot: vi.fn(() => null),
@@ -239,6 +240,7 @@ describe('MapPanel — FE-3 interaction UX', () => {
     rmg.loaded = false;
     overlays.legendRenders = 0;
     overlays.decorRenders = 0;
+    mapActionState.selectedBaseLayer = 1;
   });
 
   it('derives interactiveLayerIds from the runtime applied spec', async () => {
@@ -671,12 +673,32 @@ describe('MapPanel — FE-3 interaction UX', () => {
     // Settle (100ms viewport-write debounce): the store gets ONE final
     // viewport write — the zoom scale bar legitimately updates once, never per
     // frame. The legend is untouched (its props don't depend on viewport).
-    act(() => {
-      vi.useFakeTimers();
-      vi.advanceTimersByTime(100);
-      vi.useRealTimers();
+    // 必须用真实计时器等待：fake timers 在 debounce 已排程后才安装，
+    // advanceTimersByTime 对既有真实定时器无效（settle 空转、写入落测试外）。
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 150));
     });
+    expect((hud.state.viewport as { center: [number, number] }).center[0]).toBeCloseTo(116.43, 6);
     expect(overlays.legendRenders).toBe(0);
     expect(overlays.decorRenders).toBeLessThanOrEqual(1);
   });
+
+  it('离线/纯 GeoJSON 底图：选中要素不触发底图自愈 setStyle 重建', async () => {
+    // index 99 → MAP_STYLES[99] 缺失 → getMapStyle 返回无 vector/raster
+    // source 的离线兜底样式；实时样式里的业务 geojson 层不得被误判为
+    // 「瓦片源丢失」而反复 setStyle。
+    mapActionState.selectedBaseLayer = 99;
+    await renderPanel([pointLayer('poi', 'POI')]);
+    await settleInteractive(['poi__point']);
+    rmg.queryResults = [featureOn('poi__point', { name: 'X' })];
+    act(() => rmg.lastOnClick?.(clickPoint));
+    await waitFor(() => expect(hud.state.selectedFeature).toBeTruthy());
+
+    const setStyleCallsBefore = rmg.map._calls.setStyle.length;
+    // 看门狗延迟 2500ms；用真实计时器等待其触发窗口。
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 2700));
+    });
+    expect(rmg.map._calls.setStyle.length).toBe(setStyleCallsBefore);
+  }, 10000);
 });

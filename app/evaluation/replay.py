@@ -103,7 +103,14 @@ async def replay_tools(
                 detail=f"side_effect={desc.side_effect.value} (replay_safe={desc.replay_safe})",
             ))
             continue
-        result = await registry.dispatch(entry.tool, dict(entry.arguments), session_id)
+        try:
+            result = await registry.dispatch(entry.tool, dict(entry.arguments), session_id)
+        except Exception as exc:  # noqa: BLE001 — 单条目故障不得中断后续重放
+            outcomes.append(ToolReplayOutcome(
+                tool=entry.tool, action="error",
+                detail=f"dispatch raised {type(exc).__name__}: {exc}"[:160],
+            ))
+            continue
         view = inspect_tool_result(result)
         outcome = ToolReplayOutcome(tool=entry.tool, action="replayed")
         if not view.ok:
@@ -180,7 +187,14 @@ async def simulate_agent_loop(
             result = {"success": False, "code": "TIER3_CONFIRMATION_REQUIRED",
                       "message": "Destructive execution is blocked by the simulation sandbox"}
         else:
-            result = await registry.dispatch(step.tool, step.arguments, session_id)
+            try:
+                result = await registry.dispatch(
+                    step.tool, step.arguments, session_id)
+            except Exception as exc:  # noqa: BLE001 — 单步异常保留部分结果
+                result = {
+                    "success": False, "code": "REPLAY_DISPATCH_EXCEPTION",
+                    "message": f"{type(exc).__name__}: {exc}",
+                }
         view = inspect_tool_result(result)
         entry: Dict[str, Any] = {
             "step": idx,
@@ -272,7 +286,7 @@ def check_trace_invariants(trace: TurnTrace) -> List[str]:
         elif event.kind == EVENT_DISPATCH_STARTED:
             open_dispatches.add(event.tool_call_id)
         elif event.kind == EVENT_DISPATCH_COMPLETED:
-            if event.tool_call_id and event.tool_call_id not in open_dispatches:
+            if event.tool_call_id not in open_dispatches:
                 violations.append(
                     f"dispatch_completed without dispatch_started: {event.tool_call_id}"
                 )

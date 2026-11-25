@@ -57,7 +57,7 @@ function parseDecision(raw: unknown): DecisionPayload | null {
   if (Array.isArray(vetoesRaw)) {
     payload.vetoes = vetoesRaw.filter((v): v is string => typeof v === 'string' && !!v.trim());
   }
-  return payload.rows || payload.vetoes ? payload : null;
+  return payload.rows || (payload.vetoes && payload.vetoes.length > 0) ? payload : null;
 }
 
 function DecisionPanelView({ component, ctx }: { component: MapSpecComponent; ctx?: RendererContext }) {

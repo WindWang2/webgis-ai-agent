@@ -98,6 +98,16 @@ describe('TasksTab — 渲染', () => {
     expect(screen.getByTestId('job-indeterminate-job-1')).toBeInTheDocument();
   });
 
+  it('finished_at 不可解析时已用时长显示 —（不显示 NaN）', () => {
+    mockCenter([
+      job({ status: 'completed', active: false, cancellable: false, finished_at: 'not-a-date' }),
+    ]);
+    render(<TasksTab sessionId="sess-a" />);
+
+    expect(screen.getByText('已用 —')).toBeInTheDocument();
+    expect(screen.queryByText(/NaN/)).not.toBeInTheDocument();
+  });
+
   it('显示 attempt 与来源步骤（Turn → Step → Job 链）', () => {
     mockCenter([job({ attempt: 2, agent_step_id: 'step-3' })]);
     render(<TasksTab sessionId="sess-a" />);

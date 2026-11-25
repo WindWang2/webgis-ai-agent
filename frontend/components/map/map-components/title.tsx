@@ -22,7 +22,11 @@ function TitleRenderer(component: MapSpecComponent, _ctx: RendererContext) {
     ? (component as unknown as { options: Record<string, string> }).options['text'] : '';
   if (!text) return null;
   const variant = resolveVariant(component, 'academic');
-  const variantClass = TITLE_VARIANT_CLASS[variant] ?? TITLE_VARIANT_CLASS.academic;
+  // 只认自有键：'constructor'/'toString' 等原型链键不得绕过 academic 回退
+  // 并把函数源码拼进 className（unknown 普通变体仍保留 data-variant 原值）。
+  const variantClass = Object.prototype.hasOwnProperty.call(TITLE_VARIANT_CLASS, variant)
+    ? TITLE_VARIANT_CLASS[variant]
+    : TITLE_VARIANT_CLASS.academic;
   return (
     <div data-testid="spec-chrome-title" data-variant={variant} className={`map-chrome absolute z-30 max-w-[min(46ch,50%)] truncate px-3 py-1 ${variantClass} ${positionClass(component)}`}>
       {text}

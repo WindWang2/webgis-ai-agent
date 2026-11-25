@@ -18,7 +18,8 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-_LOG_PATH = Path("logs/tool_decisions.jsonl")
+# 项目根锚定：默认路径不随进程 CWD 漂移（换目录启动不会把日志写到别处）。
+_LOG_PATH = Path(__file__).resolve().parents[3] / "logs" / "tool_decisions.jsonl"
 
 
 @dataclasses.dataclass

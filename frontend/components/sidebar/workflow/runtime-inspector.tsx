@@ -115,21 +115,21 @@ const t = useT();
               <span className="rounded bg-[var(--theme-bg-hover)] px-1 text-[9px]">{t('sidebar.wf.reused')}</span>
             )}
             {n.binding_violations.length > 0 && (
-              <span className="text-[9px] text-amber-600">{n.binding_violations[0]}</span>
+              <span className="text-[9px] text-amber-600">{n.binding_violations.join(', ')}</span>
             )}
           </li>
         ))}
       </ul>
       {inst.explain && inst.explain.why_recomputed.length > 0 && (
         <div className="text-[10px] text-[var(--theme-text-muted)]">
-          {inst.explain.why_recomputed.slice(0, 2).map((w, i) => (
+          {inst.explain.why_recomputed.map((w, i) => (
             <p key={`rc-${i}`}>{t('sidebar.wf.recomputed')}{w}</p>
           ))}
         </div>
       )}
       {inst.explain && inst.explain.why_reused.length > 0 && (
         <div className="text-[10px] text-[var(--theme-text-muted)]">
-          {inst.explain.why_reused.slice(0, 2).map((w, i) => (
+          {inst.explain.why_reused.map((w, i) => (
             <p key={`ru-${i}`}>{t('sidebar.wf.reusedPrefix')}{w}</p>
           ))}
         </div>

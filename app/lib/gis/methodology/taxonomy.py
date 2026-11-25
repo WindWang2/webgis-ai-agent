@@ -544,8 +544,7 @@ class TaskTaxonomy:
         data_role_vocabulary: Tuple[str, ...] = (),
     ) -> List[str]:
         violations: List[str] = []
-        for cid in self.all_ids:
-            cat = self._by_id[cid]
+        for cid, cat in self._by_id.items():
             tag = f"taxonomy[{cid}]"
             if cat.category_id not in GIS_TASK_CATEGORIES:
                 violations.append(f"{tag}: unknown category_id")

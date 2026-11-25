@@ -1138,7 +1138,15 @@ export function MapPanel({
         const sources = Object.values(style?.sources ?? {}) as Array<{ type?: string }>
         const layers = style?.layers ?? []
         const hasTileSource = sources.some((s) => s?.type === "vector" || s?.type === "raster")
-        if (layers.length > 0 && !hasTileSource) {
+        // 只有「配置的底图本身声明了瓦片源」才把瓦片源缺失视为丢失。
+        // 离线兜底 / 纯 GeoJSON 底图（object style 且无 vector/raster source）
+        // 本就没有瓦片源，不得每次选中要素都全量 setStyle 重建（撕裂业务层）。
+        const configuredSources = typeof currentMapStyle === 'string'
+          ? null
+          : Object.values((currentMapStyle as unknown as { sources?: Record<string, { type?: string }> }).sources ?? {})
+        const configuredHasTileSource = configuredSources === null
+          || configuredSources.some((s) => s?.type === "vector" || s?.type === "raster")
+        if (layers.length > 0 && !hasTileSource && configuredHasTileSource) {
           devOnly.warn("[map] 底图瓦片源丢失，自动重建样式")
           map.setStyle(currentMapStyle)
           runtimeRef.current?.invalidateStyle()

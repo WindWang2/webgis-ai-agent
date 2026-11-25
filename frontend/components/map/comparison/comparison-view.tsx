@@ -328,10 +328,8 @@ export function ComparisonView({
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { e.preventDefault(); exitComparison?.(); }
     };
-    const unregisterEscape = registerEscapeHandler(10, (event) => { if (!(true)) return false; onKeyDown(event); return event.defaultPrevented; });
-    const nonEscape = (event: KeyboardEvent) => { if (event.key !== 'Escape') onKeyDown(event); };
-    window.addEventListener('keydown', nonEscape);
-    return () => { unregisterEscape(); window.removeEventListener('keydown', nonEscape); };
+    const unregisterEscape = registerEscapeHandler(10, (event) => { onKeyDown(event); return event.defaultPrevented; });
+    return () => { unregisterEscape(); };
   }, [active, exitComparison]);
 
   // 副图就绪即对齐主图当前相机（进入对比 / 切层重挂不跳回默认视野）。

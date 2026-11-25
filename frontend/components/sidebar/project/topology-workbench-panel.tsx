@@ -108,11 +108,12 @@ export function TopologyWorkbenchPanel({ projectId, sessionId, authed }: Topolog
     try {
       const { items } = await fetchRulesets({ project_id: projectId, limit: 50 });
       setRulesets(items);
+      setError(null);
       if (items.length > 0 && !items.some((r) => r.id === selectedRulesetId)) {
         setSelectedRulesetId(items[0].id);
       }
     } catch (err) {
-      setError(parseApiErrorDetail(err, String(t("errors.load", { message: "rulesets" }))));
+      setError(parseApiErrorDetail(err, String(t('errors.load', { message: t('rulesets.section') }))));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
@@ -122,11 +123,12 @@ export function TopologyWorkbenchPanel({ projectId, sessionId, authed }: Topolog
     try {
       const { items } = await fetchRuns({ ruleset_id: selectedRulesetId, limit: 20 });
       setRuns(items);
+      setError(null);
       if (items.length > 0 && !items.some((r) => r.id === selectedRunId)) {
         setSelectedRunId(items[0].id);
       }
     } catch (err) {
-      setError(parseApiErrorDetail(err, 'runs'));
+      setError(parseApiErrorDetail(err, String(t('errors.load', { message: t('runs.section') }))));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRulesetId]);
@@ -135,9 +137,11 @@ export function TopologyWorkbenchPanel({ projectId, sessionId, authed }: Topolog
     if (!selectedRunId) { setRunDetail(null); return; }
     try {
       setRunDetail(await fetchRun(selectedRunId));
+      setError(null);
     } catch (err) {
-      setError(parseApiErrorDetail(err, 'run detail'));
+      setError(parseApiErrorDetail(err, String(t('errors.load', { message: t('runs.section') }))));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRunId]);
 
   const loadFindings = useCallback(async () => {
@@ -151,10 +155,12 @@ export function TopologyWorkbenchPanel({ projectId, sessionId, authed }: Topolog
       setFindings(page.items);
       setFindingsTotal(page.total);
       setStatusCounts(page.status_counts ?? {});
+      setError(null);
     } catch (err) {
-      setError(parseApiErrorDetail(err, 'findings'));
+      setError(parseApiErrorDetail(err, String(t('errors.load', { message: t('findings.section') }))));
     }
 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRunId, severityFilter, statusFilter, offset]);
 
   useEffect(() => { void loadRulesets(); }, [loadRulesets]);
@@ -180,12 +186,12 @@ export function TopologyWorkbenchPanel({ projectId, sessionId, authed }: Topolog
         rules: draftRules, project_id: projectId,
         session_id: sessionId ?? undefined,
       });
-      addToast(`ruleset v${created.current_version} created`, 'success');
+      addToast(`${t('rulesets.create')} ${t('rulesets.version', { version: created.current_version })}`, 'success');
       setShowCreate(false);
       setSelectedRulesetId(created.id);
       await loadRulesets();
     } catch (err) {
-      setError(parseApiErrorDetail(err, 'create ruleset'));
+      setError(parseApiErrorDetail(err, String(t('errors.generic', { message: t('rulesets.create') }))));
     } finally { setBusy(false); }
   };
 
@@ -219,7 +225,7 @@ export function TopologyWorkbenchPanel({ projectId, sessionId, authed }: Topolog
         }
       }
       const res = await submitTopologyRun({ ruleset_id: selectedRulesetId, bindings, session_id: sessionId ?? undefined, project_id: projectId });
-      addToast(`run ${res.run_id.slice(0, 8)} submitted (job)`, 'success');
+      addToast(`${t('runs.status.pending')} · ${res.run_id.slice(0, 8)}`, 'success');
       await loadRuns();
       setSelectedRunId(res.run_id);
     } catch (err) {
@@ -257,7 +263,7 @@ export function TopologyWorkbenchPanel({ projectId, sessionId, authed }: Topolog
       setCandidates(c?.candidates ?? []);
     } catch (err) {
       if (gen !== findingReqRef.current) return;
-      setError(parseApiErrorDetail(err, 'finding'));
+      setError(parseApiErrorDetail(err, String(t('errors.load', { message: t('findings.detail') }))));
     }
   };
 

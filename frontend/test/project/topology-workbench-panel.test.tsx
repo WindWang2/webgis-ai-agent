@@ -5,7 +5,7 @@
  * 用户决定面）→ 修复候选（归属选择披露）→ 复验闭环。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 
 const toastStore = { toasts: [] as unknown[], addToast: vi.fn(), removeToast: vi.fn() };
 vi.mock('@/components/ui/toast', () => ({
@@ -151,6 +151,42 @@ describe('TopologyWorkbenchPanel', () => {
     expect((await screen.findAllByText(/覆盖缺口/)).length).toBeGreaterThanOrEqual(1);
   });
 
+  it('加载运行失败的回退文案走 i18n（不显示原始英文串）', async () => {
+    twbApi.fetchRuns.mockRejectedValue({ name: 'AbortError' });
+    render(<TopologyWorkbenchPanel projectId="p1" sessionId="s1" authed />);
+    expect(await screen.findByText('加载失败：运行')).toBeInTheDocument();
+    expect(screen.queryByText('runs')).toBeNull();
+  });
+
+  it('加载问题队列失败的回退文案走 i18n（不显示原始英文串）', async () => {
+    twbApi.fetchFindings.mockRejectedValue({ name: 'AbortError' });
+    render(<TopologyWorkbenchPanel projectId="p1" sessionId="s1" authed />);
+    expect(await screen.findByText('加载失败：问题队列')).toBeInTheDocument();
+    expect(screen.queryByText('findings')).toBeNull();
+  });
+
+  it('创建规则集成功的 toast 走 i18n（不硬编码英文）', async () => {
+    twbApi.createRuleset.mockResolvedValue({ id: 'rs-2', current_version: 3 });
+    render(<TopologyWorkbenchPanel projectId="p1" sessionId="s1" authed />);
+    fireEvent.click(await screen.findByRole('button', { name: '创建规则集' }));
+    const form = await screen.findByTestId('twb-create-form');
+    fireEvent.click(within(form).getByRole('button', { name: '创建规则集' }));
+    await waitFor(() => expect(toastStore.addToast).toHaveBeenCalled());
+    const message = String(toastStore.addToast.mock.calls[0][0]);
+    expect(message).toContain('创建规则集');
+    expect(message).toContain('v3');
+  });
+
+  it('创建规则集失败的提示走 i18n（不显示原始英文串）', async () => {
+    twbApi.createRuleset.mockRejectedValue({ name: 'AbortError' });
+    render(<TopologyWorkbenchPanel projectId="p1" sessionId="s1" authed />);
+    fireEvent.click(await screen.findByRole('button', { name: '创建规则集' }));
+    const form = await screen.findByTestId('twb-create-form');
+    fireEvent.click(within(form).getByRole('button', { name: '创建规则集' }));
+    expect(await screen.findByText('操作失败：创建规则集')).toBeInTheDocument();
+    expect(screen.queryByText('create ruleset')).toBeNull();
+  });
+
   it('定位：点击 Locate 调用相机 setViewport（bbox → 视口）', async () => {
     render(<TopologyWorkbenchPanel projectId="p1" sessionId="s1" authed />);
     const btn = await screen.findAllByLabelText(/定位/);
@@ -210,6 +246,9 @@ describe('TopologyWorkbenchPanel', () => {
         }),
       }),
     ));
+    // 提交成功的 toast 走 i18n（不硬编码英文）
+    await waitFor(() => expect(toastStore.addToast).toHaveBeenCalled());
+    expect(String(toastStore.addToast.mock.calls[0][0])).toContain('排队中');
   });
 
   it('scope 拒绝的 typed 错误翻译为用户可读提示', async () => {

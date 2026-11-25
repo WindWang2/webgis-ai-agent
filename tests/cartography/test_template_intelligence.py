@@ -71,6 +71,15 @@ def test_bridge_plan_binds_slots_and_discloses() -> None:
     assert plan2["disclosures"]
 
 
+def test_bridge_plan_fallback_entry_matches_audited_shape() -> None:
+    """无审定条目的回退路径：entry 形状与主路径一致且绑定槽位。"""
+    plan = bridge_plan(["rs_cube_descriptor"])
+    assert plan["entries"], plan
+    entry = plan["entries"][0]
+    assert set(entry) == {"artifact_type", "family", "legend", "note"}
+    assert "continuous_colorbar" in plan["slot_bindings"]
+
+
 def test_bridge_fingerprint_stable() -> None:
     assert len(content_fingerprint()) == 64
     assert content_fingerprint() == content_fingerprint()

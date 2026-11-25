@@ -223,6 +223,13 @@ export async function parseGltf(
   let binChunk: Uint8Array | null = null;
   if (isGlb) {
     const container = parseGlbContainer(input);
+    // GLB 分支同样受 JSON 预算约束（二进制总预算内 JSON chunk 也不得无界）。
+    if (container.json.byteLength > MAX_JSON_BYTES) {
+      throw new GltfParseError(
+        'budget_exceeded',
+        `glTF JSON ${container.json.byteLength} > ${MAX_JSON_BYTES}`,
+      );
+    }
     jsonText = new TextDecoder().decode(container.json);
     binChunk = container.bin;
   } else {
@@ -624,7 +631,14 @@ export async function parseGltf(
     const primitives: ParsedPrimitive[] = [];
     if (typeof n.mesh === 'number') {
       meshCount += 1;
-      const mesh = doc.meshes?.[n.mesh];
+      const meshes = doc.meshes ?? [];
+      if (!Number.isInteger(n.mesh) || n.mesh < 0 || n.mesh >= meshes.length) {
+        throw new GltfParseError(
+          'corrupt',
+          `node ${index} mesh ${n.mesh} out of range (${meshes.length} meshes)`,
+        );
+      }
+      const mesh = meshes[n.mesh];
       for (const prim of mesh?.primitives ?? []) {
         if (prim.targets?.length) warnings.push('morph_targets_ignored');
         const posIdx = prim.attributes?.POSITION;

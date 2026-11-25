@@ -107,16 +107,23 @@ class SwarmBridge:
                 "[SwarmBridge] swarm run failed session=%s", self._session_id
             )
             return {"delegated": False, "reason": "swarm_error"}
-        manifest = status.manifest
-        refs = [entry.ref_id for entry in manifest.entries] if manifest else []
-        out = {
-            "delegated": True,
-            "run_id": status.run_id,
-            "state": status.state,
-            "counts": dict(status.counts),
-            "refs": refs[:24],
-            "manifest_ref": status.manifest_ref,
-        }
+        try:
+            manifest = status.manifest
+            refs = [entry.ref_id for entry in manifest.entries] if manifest else []
+            out = {
+                "delegated": True,
+                "run_id": status.run_id,
+                "state": status.state,
+                "counts": dict(status.counts),
+                "refs": refs[:24],
+                "manifest_ref": status.manifest_ref,
+            }
+        except Exception:  # noqa: BLE001 — status 形状异常 → 诚实失败而非裸异常
+            logger.exception(
+                "[SwarmBridge] unexpected swarm status shape session=%s",
+                self._session_id,
+            )
+            return {"delegated": False, "reason": "swarm_status_invalid"}
         # D04: optional Mission create/reuse when GIS_MISSION_HOTPATH=1 (default off).
         try:
             from app.services.gis_harness.hotpath_convergence import (
@@ -163,6 +170,8 @@ class SwarmBridge:
                         goal_slice=goal[:2000],
                         task_descriptors=descriptors,
                     )
+                    # 先披露 run id：settle 失败/中断时调用方仍能对账/重试。
+                    out["mission_swarm_run_id"] = run.swarm_run_id
                     # Aggregate fallback only when fine-grained map unavailable.
                     # partial/degraded must settle as failed — never SKIPPED→COMPLETED (#1323).
                     agg_status = "succeeded"
@@ -214,7 +223,6 @@ class SwarmBridge:
                             summary=summary,
                             attempt=attempt,
                         )
-                    out["mission_swarm_run_id"] = run.swarm_run_id
             except Exception:  # noqa: BLE001 — durability mirror must not break swarm path
                 out["mission_mirror_status"] = "unavailable"
                 logger.warning(

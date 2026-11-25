@@ -42,7 +42,9 @@ from app.lib.gis.scientific_evidence import (
     build_evidence,
 )
 from app.lib.gis.uncertainty import (
+    ScalarUncertainty,
     StatisticalSignificance,
+    UncertaintyMeasure,
     ValidationMetrics,
     uncertainty_blocks_to_evidence,
 )
@@ -84,6 +86,18 @@ class TestParameterContracts:
     def test_apply_contract_normalizes(self):
         out = apply_contract("buffer_analysis", {"distance": 500, "unit": "km"})
         assert out == {"distance": 500.0, "unit": "km"}
+
+    def test_sar_contracts_reject_degenerate_enl_and_incidence(self):
+        with pytest.raises(ValueError, match="parameter_contract_violation"):
+            apply_contract("sar_speckle_filter_analysis", {"enl": 0})
+        with pytest.raises(ValueError, match="parameter_contract_violation"):
+            apply_contract("sar_multitemporal_speckle_analysis", {"enl": -1})
+        with pytest.raises(ValueError, match="parameter_contract_violation"):
+            apply_contract("sar_calibration_analysis",
+                           {"calibration_constant": 1.0, "incidence_deg": 91})
+        with pytest.raises(ValueError, match="parameter_contract_violation"):
+            apply_contract("sar_calibration_analysis",
+                           {"calibration_constant": -1.0})
 
     def test_spec_validators(self):
         with pytest.raises(Exception):
@@ -189,6 +203,14 @@ class TestPreconditions:
             "min_temporal_observations:8", {"temporalObservationCount": 12})
         assert enough.verdict == "PASS"
 
+    def test_insufficient_message_states_actual_rejection_floor(self):
+        """拒绝文案必须给出真实边界 max(2, n_min*0.5)，不得宣称 n_min 是下限。"""
+        few = evaluate_precondition(
+            "min_numeric_samples:8", {"numericSampleCount": 3})
+        assert few.verdict == "INSUFFICIENT_DATA"
+        assert "4" in few.message
+        assert "8" in few.message
+
     def test_point_support(self):
         ok = evaluate_precondition(
             "point_support_required", {"geometryTypes": ["Point"]})
@@ -227,6 +249,20 @@ class TestUncertaintyAndEvidence:
         ev = sig.to_evidence()
         assert ev["statistic_value"] == 0.423457   # 6 位收敛
         assert ev["p_value"] == 0.01
+
+    def test_measure_values_round_to_six_decimals(self):
+        block = ScalarUncertainty(
+            target="morans_i",
+            measures=[UncertaintyMeasure(
+                measure="value", value=0.123456789,
+                low=0.000000123, high=1.234567890123)],
+        )
+        m = block.to_evidence()["measures"][0]
+        assert m["value"] == 0.123457
+        assert m["low"] == 0.0
+        assert m["high"] == 1.234568
+        sig = StatisticalSignificance(target="x", p_value=0.123456789)
+        assert sig.to_evidence()["p_value"] == 0.123457
 
     def test_blocks_bounded_dedup(self):
         v1 = ValidationMetrics(target="surface", rmse=1.23456789)
@@ -368,6 +404,14 @@ class TestDescriptorVNextValidation:
             conformance_tests=["tests/unit/gis/no_such_file_xyz.py::test_a"]))
         assert any("conformance test file missing" in i for i in reg.validate())
 
+    def test_conformance_check_anchored_to_repo_not_cwd(self, tmp_path, monkeypatch):
+        """CWD 非仓库根时存在性校验不得静默跳过（fail-open 回归）。"""
+        monkeypatch.chdir(tmp_path)
+        reg = self._registry(AlgorithmDescriptor(
+            id="x.conf2", name="x", capabilities=["poi_query"],
+            conformance_tests=["tests/unit/gis/no_such_file_xyz.py::test_a"]))
+        assert any("conformance test file missing" in i for i in reg.validate())
+
 
 # ── resolver 科学门 ──────────────────────────────────────────────────
 class TestResolverScientificGates:
@@ -460,6 +504,27 @@ class TestResolverScientificGates:
         assert res.status == "resolved"
         assert res.algorithm == "x.secondary"
         assert res.fallback_trail[0].semantics == "approximation"
+
+    def test_fallback_success_keeps_transform_hints(self):
+        """算法级 fallback 成功分支也必须携带全拒时收集的变换建议。"""
+        resolver = self._resolver(
+            AlgorithmDescriptor(
+                id="x.primary", name="x", capabilities=["poi_query"],
+                tool_candidates=["primary_tool"], crs_class="PROJECTED_REQUIRED",
+                fallback_algorithms=["x.secondary"],
+                fallback_semantics={"x.secondary": "approximation"}),
+            AlgorithmDescriptor(
+                id="x.secondary", name="y", capabilities=["point_profile"],
+                tool_candidates=["secondary_tool"]),
+        )
+        res = resolver.resolve(
+            "poi_query",
+            profile={"geometryTypes": ["Point"], "crs": "EPSG:4326",
+                     "bbox": [116.3, 39.9, 116.4, 39.95], "featureCount": 5},
+            available_tools={"primary_tool", "secondary_tool"})
+        assert res.status == "resolved"
+        assert res.algorithm == "x.secondary"
+        assert res.required_transformations == ["reproject to EPSG:32650"]
 
     def test_undeclared_fields_keep_behavior(self):
         """不声明新字段的算法：行为逐位不变（回归保护）。"""
