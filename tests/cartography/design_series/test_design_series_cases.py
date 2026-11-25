@@ -84,7 +84,7 @@ class TestCase1FacilityDensity:
 
 
 class TestCase2DistrictComparison:
-    def test_same_unit_bindings_pass(self, monkeypatch):
+    async def test_same_unit_bindings_pass(self, monkeypatch):
         from app.services.design_specs.binding import validate_role_bindings
 
         case = get_case("district_comparison")
@@ -116,9 +116,7 @@ class TestCase2DistrictComparison:
         monkeypatch.setattr(
             "app.services.mapspec_store.mapspec_store.get_mapspec", fake_get_mapspec)
 
-        import asyncio
-
-        result = asyncio.get_event_loop().run_until_complete(validate_role_bindings(
+        result = await validate_role_bindings(
             [
                 {"role": "indicator", "session_id": "city_a",
                  "layer_id": "thematic", "field": "primaries"},
@@ -126,12 +124,12 @@ class TestCase2DistrictComparison:
                  "layer_id": "thematic", "field": "schools_total"},
             ],
             spec,
-        ))
+        )
         assert result["ok"], result["results"]
         assert all(r["status"] == "bound" for r in result["results"])
-        _ = captured
+        _ = captured  # 捕获面保留给未来断言扩展
 
-    def test_unit_conflict_negative_detected(self, monkeypatch):
+    async def test_unit_conflict_negative_detected(self, monkeypatch):
         from app.services.design_specs.binding import UNIT_MISMATCH, validate_role_bindings
 
         case = get_case("district_comparison")
@@ -159,9 +157,7 @@ class TestCase2DistrictComparison:
 
         monkeypatch.setattr(
             "app.services.mapspec_store.mapspec_store.get_mapspec", fake_get_mapspec)
-        import asyncio
-
-        result = asyncio.get_event_loop().run_until_complete(validate_role_bindings(
+        result = await validate_role_bindings(
             [
                 {"role": "indicator", "session_id": "city_a",
                  "layer_id": "thematic", "field": "primaries"},
@@ -169,7 +165,7 @@ class TestCase2DistrictComparison:
                  "layer_id": "thematic", "field": "schools_total"},
             ],
             spec,
-        ))
+        )
         codes = [r["code"] for r in result["results"]]
         assert UNIT_MISMATCH in codes
         assert result["comparability_findings"]
