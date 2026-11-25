@@ -137,6 +137,8 @@ export interface MapSeriesPayload {
   comparability?: Record<string, unknown>;
   dimension?: Record<string, unknown>;
   output?: Record<string, unknown>;
+  /** 合成/测试数据披露（R1-P2；随冻结计划与系列 manifest 恒如实传播）。 */
+  simulated_data?: boolean;
 }
 
 export interface MapSeriesSummary {
