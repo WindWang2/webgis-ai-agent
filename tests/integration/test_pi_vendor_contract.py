@@ -143,8 +143,15 @@ const srv = http.createServer((req, res) => {
     // model actually saw. Appended as JSON lines to STUB_LOG when set.
     if (process.env.STUB_LOG) {
       const toolNames = (parsed.tools || []).map((t) => t.function?.name || t.name);
+      const msgs = parsed.messages || [];
+      const lastUser = [...msgs].reverse().find((m) => m.role === 'user');
+      const rawContent = lastUser?.content;
+      const lastUserText = (typeof rawContent === 'string' ? rawContent
+        : Array.isArray(rawContent) ? rawContent.map((c) => c?.text || c?.type || '').join(' ')
+        : JSON.stringify(rawContent ?? '')).slice(-120);
       fs.appendFileSync(process.env.STUB_LOG,
-        JSON.stringify({ req: requests.length, tools: toolNames }) + '\n');
+        JSON.stringify({ req: requests.length, tools: toolNames,
+          lastUser: lastUserText }) + '\n');
     }
     const reqIdx = requests.length;
     // ADR-0301 WP5 / C24：429×2 → 第三次成功（vendor auto-retry 观测面）。
@@ -185,6 +192,8 @@ const srv = http.createServer((req, res) => {
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     const sse = (o) => res.write(`data: ${JSON.stringify(o)}\n\n`);
     const id = 'c' + reqIdx;
+    const firstDelayS = Number(process.env.STUB_DELAY_FIRST_S || 0);
+    if (firstDelayS > 0 && reqIdx === 1) { await new Promise((r) => setTimeout(r, firstDelayS * 1000)); }
     if (toolCall) {
       sse({ id, object: 'chat.completion.chunk', created: 1, model: 'stub',
         choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_' + reqIdx,
@@ -224,6 +233,8 @@ const [entry, ext, dump, stubPort, promptFile] = process.argv.slice(2);
 const abortAfterTool = process.argv.includes('--abort-after-tool-start');
 const slowTool = process.argv.includes('--slow-tool');
 const compactAfterSettled = process.argv.includes('--compact-after-settled');
+const steerMidTurn = process.argv.includes('--steer-mid-turn');
+const continuityCheck = process.argv.includes('--continuity-check');
 
 const agentDir = mkdtempSync(join(tmpdir(), 'pi-contract-'));
 writeFileSync(join(agentDir, 'models.json'), JSON.stringify({
@@ -262,6 +273,16 @@ await sleep(250);
 const prompt = readFileSync(promptFile, 'utf8');
 send({ id: '2', type: 'prompt', sessionId: 'contract-session', message: prompt });
 
+// ADR-0301 WP6 gate：运行中 steer —— 首 LLM 响应被 STUB_DELAY_FIRST_S 拖慢，
+// steer 在 agent 运行中到达（vendor 语义：当前 assistant turn 的工具跑完后、
+// 下一次 LLM 调用前注入）。
+let steerSent = false;
+if (steerMidTurn) {
+  await sleep(700);
+  send({ id: 'st', type: 'steer', message: 'STEER-MARKER change course' });
+  steerSent = true;
+}
+
 let aborted = false;
 if (abortAfterTool) {
   const dl = Date.now() + 20000;
@@ -275,10 +296,25 @@ if (abortAfterTool) {
 }
 
 const countHits = (hay, needle) => hay.split(needle).length - 1;
-const deadline = Date.now() + 30000;
+const settleTarget = 1; // steer 注入当前 run（vendor 语义），不新起 run
+const deadline = Date.now() + 45000;
 while (Date.now() < deadline) {
   await sleep(120);
-  if (out.includes('agent_settled')) break;
+  if (countHits(out, 'agent_settled') >= settleTarget) break;
+}
+if (continuityCheck) {
+  // ADR-0301 WP6 gate S6：同 worker 进程内 turn journal 连续性 ——
+  // 第二 turn 的 messageCount 必须单调增长（历史保持）。
+  send({ id: 'c1', type: 'get_state' });
+  await sleep(300);
+  send({ id: 'c2', type: 'prompt', sessionId: 'contract-session', message: 'continuity turn 2' });
+  const dl = Date.now() + 30000;
+  while (Date.now() < dl) {
+    await sleep(120);
+    if (countHits(out, 'agent_settled') >= 2) break;
+  }
+  send({ id: 'c3', type: 'get_state' });
+  await sleep(400);
 }
 if (compactAfterSettled) {
   // ADR-0301 WP4 / C23：手动 compact 契约。vendor keepRecentTokens(20k)
@@ -322,7 +358,7 @@ for (const line of lines) { try { parsed.push(JSON.parse(line)); } catch { parse
 const providerEvents = err.split('\n').filter((l) => l.includes('provider_response')).slice(-8);
 process.stderr.write('RESULT=' + JSON.stringify({
   lines: parsed, stderrHead: err.split('\n').slice(0, 5).join(' | ').slice(0, 400), aborted,
-  providerEvents,
+  providerEvents, steerSent,
 }) + '\n');
 """
 
@@ -408,7 +444,8 @@ class _VendorHarness:
                 proc.kill()
 
     def run_turn(self, prompt: str, *, abort_after_tool: bool = False,
-                 compact_after: bool = False,
+                 compact_after: bool = False, steer: bool = False,
+                 continuity: bool = False,
                  api_base: str = "http://127.0.0.1:9") -> dict:
         prompt_file = self.tmp / f"prompt_{time.monotonic_ns()}.txt"
         prompt_file.write_text(prompt, encoding="utf-8")
@@ -420,6 +457,10 @@ class _VendorHarness:
             args.append("--abort-after-tool-start")
         if compact_after:
             args.append("--compact-after-settled")
+        if steer:
+            args.append("--steer-mid-turn")
+        if continuity:
+            args.append("--continuity-check")
         env = {**self.stub_env, "WEBGIS_API_BASE": api_base}
         res = subprocess.run(
             args, capture_output=True, text=True, timeout=90, env=env,
