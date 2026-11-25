@@ -17,6 +17,7 @@ import { ConfirmAction } from '@/components/shared/confirm-action';
 import { EmptyState } from '@/components/shared/empty-state';
 import { devOnly } from '@/lib/utils/logger';
 import { useT } from '@/lib/i18n/useT';
+import { DesignSeriesLauncher } from '@/components/workbench/design-series-panel';
 import { FrameProductPanel } from '@/components/workbench/frame-product-panel';
 import { PrintLayoutPanel } from '@/components/workbench/print-layout-panel';
 import { getCommittedMapSpec } from '@/lib/mapspec/session-cursor';
@@ -330,6 +331,7 @@ export function MapStudioTab() {
           </div>
         </div>
       )}
+      <DesignSeriesLauncher />
       {/* Segmented subtab switcher（制图排版 / 导出历史）—— PanelHeader 已提供面板标题 */}
       <div className="shrink-0 border-b border-edge-subtle bg-surface-overlay p-3 pb-2.5">
         <div

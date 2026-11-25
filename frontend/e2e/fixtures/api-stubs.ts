@@ -120,6 +120,39 @@ export interface CatalogItemRecord {
   updated_at: string;
 }
 
+/** WP4 制图设计规范（/api/v1/design-specs 契约形状；payload 随行）。 */
+export interface DesignSpecStub {
+  id: string;
+  name: string;
+  description: string | null;
+  is_builtin: boolean;
+  status: 'draft' | 'published' | 'retired';
+  current_version: number;
+  structural_digest: string;
+  retired: boolean;
+  retirement_note: string | null;
+  creator_id: string;
+  updated_at: string;
+  payload: Record<string, unknown>;
+  versions: Array<{
+    id: string; spec_id: string; version: number;
+    description: string | null; deprecated: boolean; parent_version_id: string | null;
+  }>;
+}
+
+/** WP4/WP3 系列地图（/api/v1/map-series 契约形状；members 随行于 payload）。 */
+export interface MapSeriesStub {
+  id: string;
+  name: string;
+  description: string | null;
+  status: 'draft' | 'published' | 'retired';
+  current_version: number;
+  structural_digest: string;
+  design_spec_id: string | null;
+  updated_at: string;
+  payload: Record<string, unknown>;
+}
+
 /**
  * Mutable world behind the stubs. Journeys construct it with their scenario
  * seed, then user actions mutate it through the route handlers — the UI state
@@ -190,6 +223,9 @@ export class JourneyWorld {
     preview: Record<string, unknown> | null;
     attempts: Array<Record<string, unknown> & { _reads?: number }>;
   } = { preview: null, attempts: [] };
+  /** WP4：设计规范 / 系列地图 mock 状态（j26；其他 journey 无请求即无影响）。 */
+  designSpecs: DesignSpecStub[] = [];
+  mapSeries: MapSeriesStub[] = [];
 
   job(id: string): JobRecord | undefined {
     return this.jobs.find((j) => j.id === id);
@@ -245,6 +281,38 @@ export function defaultWorld(): JourneyWorld {
       meta_profile: { feature_count: 4213 }, updated_at: NOW,
     },
   ];
+  world.designSpecs = [{
+    id: 'dspec-j26', name: '城市专题规范（e2e）', description: 'mock 档种子规范',
+    is_builtin: false, status: 'published', current_version: 2,
+    structural_digest: 'dspec-sha256:j26seed01', retired: false, retirement_note: null,
+    creator_id: 'u-e2e', updated_at: NOW,
+    payload: {
+      spec_version: 'design_spec.v1', name: '城市专题规范（e2e）',
+      description: 'mock 档种子规范',
+      color: { theme_id: 'cartographic.light_interactive', palette_sequential: 'Blues' },
+      classification: { default_method: 'quantiles', shared_required: true },
+      output: { targets: ['interactive', 'png', 'pdf', 'svg'] },
+    },
+    versions: [
+      { id: 'dspec-j26-v1', spec_id: 'dspec-j26', version: 1, description: null, deprecated: false, parent_version_id: null },
+      { id: 'dspec-j26-v2', spec_id: 'dspec-j26', version: 2, description: '调色', deprecated: false, parent_version_id: 'dspec-j26-v1' },
+    ],
+  }];
+  world.mapSeries = [{
+    id: 'mser-j26', name: '三年对照系列（e2e）', description: null,
+    status: 'draft', current_version: 1, structural_digest: 'mser-sha256:j26seed01',
+    design_spec_id: 'dspec-j26', updated_at: NOW,
+    payload: {
+      spec_version: 'map_series.v1', name: '三年对照系列（e2e）',
+      design_spec_id: 'dspec-j26',
+      members: [
+        { member_id: 'm_2020', title: '2020 主图', session_id: 's-j26-2020', role: 'primary',
+          dimension_tags: ['2020'], locked_fields: [], enabled: true },
+        { member_id: 'm_2024', title: '2024 对照', session_id: 's-j26-2024', role: 'comparison',
+          dimension_tags: ['2024'], locked_fields: ['palette'], enabled: true },
+      ],
+    },
+  }];
   return world;
 }
 
@@ -709,6 +777,267 @@ export async function installJourneyStubs(page: Page | BrowserContext, world: Jo
     const record = { url: `/api/v1/export/download/${encodeURIComponent(filename)}`, filename };
     world.exports.push(record);
     return record;
+  });
+
+  // ── design specs / map series（WP4 制图规范与系列；契约形状见
+  //    lib/api/design-specs.ts、lib/api/map-series.ts；map-series 为 WP3
+  //    并行契约的 mock 面，联调在其合并后核对）────────────────────────────
+  const specSummaryView = (spec: DesignSpecStub) => {
+    const { payload, versions, ...summary } = spec;
+    void payload; void versions;
+    return summary;
+  };
+  const specById = (id: string | null): DesignSpecStub | undefined =>
+    world.designSpecs.find((s) => s.id === id);
+
+  await api(/\/api\/v1\/design-specs\/[^/]+\/versions\/[^/]+\/deprecate(\?|$)/, async (url, method) => {
+    if (method !== 'POST') return { detail: 'method not allowed' };
+    const spec = specById(url.pathname.split('/')[4]);
+    const v = Number(url.pathname.split('/')[6]);
+    const version = spec?.versions.find((x) => x.version === v);
+    if (version) version.deprecated = true;
+    return { success: true, deprecated: true };
+  });
+  await api(/\/api\/v1\/design-specs\/[^/]+\/versions\/[^/]+(\?|$)/, async (url) => {
+    const spec = specById(url.pathname.split('/')[4]);
+    if (!spec) return { detail: { code: 'DESIGN_SPEC_NOT_FOUND' } };
+    const tail = url.pathname.split('/').pop() as string;
+    const version = tail === 'latest'
+      ? (spec.versions.at(-1) ?? null)
+      : (spec.versions.find((x) => x.version === Number(tail)) ?? null);
+    return {
+      success: true, version, effective_payload: spec.payload,
+      inheritance_chain: [spec.id, spec.id],
+      reference_validation: { ok: true, violations: [], warnings: [] },
+    };
+  });
+  await api(/\/api\/v1\/design-specs\/[^/]+\/versions(\?|$)/, async (url, method, body) => {
+    if (method !== 'POST') return { detail: 'method not allowed' };
+    const spec = specById(url.pathname.split('/')[4]);
+    if (!spec) return { detail: { code: 'DESIGN_SPEC_NOT_FOUND' } };
+    let parsed: { payload?: Record<string, unknown> } = {};
+    try { parsed = JSON.parse(body); } catch { /* non-JSON not exercised */ }
+    spec.current_version += 1;
+    const version = {
+      id: `${spec.id}-v${spec.current_version}`, spec_id: spec.id,
+      version: spec.current_version, description: null, deprecated: false,
+      parent_version_id: spec.versions.at(-1)?.id ?? null,
+    };
+    spec.versions.push(version);
+    if (parsed.payload) spec.payload = parsed.payload;
+    spec.updated_at = NOW;
+    return { success: true, version };
+  });
+  await api(/\/api\/v1\/design-specs\/[^/]+\/publish(\?|$)/, async (url, method) => {
+    if (method !== 'POST') return { detail: 'method not allowed' };
+    const spec = specById(url.pathname.split('/')[4]);
+    if (spec) spec.status = 'published';
+    return { success: true, spec: spec ? specSummaryView(spec) : null };
+  });
+  await api(/\/api\/v1\/design-specs\/[^/]+\/retire(\?|$)/, async (url, method, body) => {
+    if (method !== 'POST') return { detail: 'method not allowed' };
+    const spec = specById(url.pathname.split('/')[4]);
+    let parsed: { note?: string } = {};
+    try { parsed = JSON.parse(body); } catch { /* non-JSON not exercised */ }
+    if (spec) {
+      spec.status = 'retired';
+      spec.retired = true;
+      spec.retirement_note = parsed.note ?? null;
+    }
+    return { success: true, spec: spec ? specSummaryView(spec) : null };
+  });
+  await api(/\/api\/v1\/design-specs\/[^/]+\/preview(\?|$)/, async (url) => {
+    const spec = specById(url.pathname.split('/')[4]);
+    if (!spec) return { detail: { code: 'DESIGN_SPEC_NOT_FOUND' } };
+    return {
+      success: true, spec: specSummaryView(spec),
+      version: spec.versions.at(-1) ?? null,
+      effective_payload: spec.payload,
+      inheritance_chain: [spec.id, spec.id],
+      reference_validation: { ok: true, violations: [], warnings: [] },
+      render_targets: {
+        supported: ['interactive', 'png', 'pdf', 'svg'],
+        unsupported: [],
+        font_findings: [],
+      },
+      conflicts: [],
+      resolved_digest: spec.structural_digest,
+    };
+  });
+  await api(/\/api\/v1\/design-specs\/[^/]+(\?|$)/, async (url) => {
+    const spec = specById(url.pathname.split('/').pop() as string);
+    if (!spec) return { detail: { code: 'DESIGN_SPEC_NOT_FOUND' } };
+    return {
+      success: true, spec: specSummaryView(spec), payload: spec.payload,
+      reference_validation: { ok: true, violations: [], warnings: [] },
+    };
+  });
+  await api(/\/api\/v1\/design-specs(\?|$)/, async (_url: URL, method: string, body: string) => {
+    if (method !== 'POST') {
+      return { success: true, items: world.designSpecs.map(specSummaryView) };
+    }
+    let parsed: { payload?: { name?: string } } = {};
+    try { parsed = JSON.parse(body); } catch { /* non-JSON not exercised */ }
+    const name = parsed.payload?.name ?? 'e2e 规范';
+    if (world.designSpecs.some((s) => s.name === name)) {
+      return {
+        __raw: {
+          status: 409, contentType: 'application/json',
+          body: JSON.stringify({ data: { success: false, code: 'DESIGN_SPEC_NAME_CONFLICT',
+            message: 'name conflict' } }),
+          headers: corsFor(),
+        },
+      };
+    }
+    const id = `dspec-${world.designSpecs.length + 1}`;
+    const spec: DesignSpecStub = {
+      id, name, description: null, is_builtin: false, status: 'draft',
+      current_version: 1, structural_digest: `dspec-sha256:${id}`, retired: false,
+      retirement_note: null, creator_id: 'u-e2e', updated_at: NOW,
+      payload: (parsed.payload ?? {}) as Record<string, unknown>,
+      versions: [{ id: `${id}-v1`, spec_id: id, version: 1, description: null,
+        deprecated: false, parent_version_id: null }],
+    };
+    world.designSpecs.push(spec);
+    return { success: true, spec: specSummaryView(spec) };
+  });
+
+  const seriesSummaryView = (series: MapSeriesStub) => {
+    const { payload, ...summary } = series;
+    const members = (payload as { members?: unknown[] }).members ?? [];
+    return { ...summary, member_count: Array.isArray(members) ? members.length : 0 };
+  };
+  const seriesById = (id: string | null): MapSeriesStub | undefined =>
+    world.mapSeries.find((s) => s.id === id);
+
+  await api(/\/api\/v1\/map-series\/[^/]+\/propagation\/preview(\?|$)/, async (url, method, body) => {
+    if (method !== 'POST') return { detail: 'method not allowed' };
+    const series = seriesById(url.pathname.split('/')[4]);
+    void body;
+    const members = ((series?.payload as { members?: Array<Record<string, unknown>> }).members ?? []);
+    // 种子投影：规范 pin 把 palette intent 投到每个成员；user-wins 锁成员
+    // 命中 locked_fields_hit（app/services/map_series/propagation.py 形状）。
+    return {
+      success: true,
+      series_id: series?.id ?? null,
+      member_count: members.length,
+      unresolvable_member_ids: [],
+      members: members.map((m) => {
+        const locked = Array.isArray(m.locked_fields) && m.locked_fields.length > 0;
+        return locked
+          ? { member_id: m.member_id, session_id: m.session_id, unresolvable: false,
+            locked_fields_hit: ['palette'], changes: [], skipped:
+              [{ intent: 'palette', reason: 'user_locked', field: 'palette' }],
+            eligible: false }
+          : { member_id: m.member_id, session_id: m.session_id, unresolvable: false,
+            locked_fields_hit: [],
+            changes: [{ intent: 'palette', action: 'patch_paint_and_ramp',
+              component: 'thematic', detail: { ramp_len: 5 } }],
+            skipped: [], eligible: true };
+      }),
+    };
+  });
+  await api(/\/api\/v1\/map-series\/[^/]+\/propagation\/apply(\?|$)/, async (url, method) => {
+    if (method !== 'POST') return { detail: 'method not allowed' };
+    const series = seriesById(url.pathname.split('/')[4]);
+    const members = ((series?.payload as { members?: Array<Record<string, unknown>> }).members ?? []);
+    let revision = 1;
+    return {
+      success: true,
+      receipts: members.map((m) => {
+        const locked = Array.isArray(m.locked_fields) && m.locked_fields.length > 0;
+        revision += 1;
+        return locked
+          ? { member_id: m.member_id, status: 'skipped_locked', revision: null,
+            error: 'locked fields intersect' }
+          : { member_id: m.member_id, status: 'committed', revision, error: null };
+      }),
+    };
+  });
+  await api(/\/api\/v1\/map-series\/[^/]+\/freeze-plan(\?|$)/, async (url, method) => {
+    if (method !== 'POST') return { detail: 'method not allowed' };
+    const series = seriesById(url.pathname.split('/')[4]);
+    const members = ((series?.payload as { members?: Array<Record<string, unknown>> }).members ?? []);
+    return {
+      success: true,
+      freeze_plan: {
+        series_id: series?.id ?? null,
+        members: members.map((m) => ({
+          session_id: m.session_id, mapspec_fingerprint: `fp-${String(m.member_id)}`,
+          title: m.title, design_spec_id: series?.design_spec_id ?? null,
+          output_profile: 'default',
+        })),
+      },
+    };
+  });
+  await api(/\/api\/v1\/map-series\/[^/]+\/consistency(\?|$)/, async (url) => {
+    const series = seriesById(url.pathname.split('/')[4]);
+    void series;
+    return {
+      ok: true,
+      findings: [
+        { code: 'LEGEND_MISSING', severity: 'warning', member_id: 'm_2024',
+          component: 'legend', message: '专题层无 legend 组件',
+          fix_hint: '在成员会话添加 legend 组件' },
+        { code: 'EXTENT_DIVERGENCE', severity: 'info', member_id: null,
+          component: 'extent', message: '成员间 bbox 显著不一致（仅披露）', fix_hint: null },
+      ],
+    };
+  });
+  await api(/\/api\/v1\/map-series\/[^/]+\/members(\?|$)/, async (url, method, body) => {
+    if (method !== 'POST') return { detail: 'method not allowed' };
+    const series = seriesById(url.pathname.split('/')[4]);
+    if (!series) return { detail: { code: 'MAP_SERIES_NOT_FOUND' } };
+    let parsed: { op?: string; member?: Record<string, unknown>; member_id?: string } = {};
+    try { parsed = JSON.parse(body); } catch { /* non-JSON not exercised */ }
+    const payload = series.payload as { members: Array<Record<string, unknown>> };
+    if (parsed.op === 'remove' && parsed.member_id) {
+      payload.members = payload.members.filter((m) => m.member_id !== parsed.member_id);
+      series.updated_at = NOW;
+      return { success: true, op: 'remove', member_id: parsed.member_id };
+    }
+    if (parsed.op === 'upsert' && parsed.member?.member_id) {
+      const rest = payload.members.filter((m) => m.member_id !== parsed.member?.member_id);
+      payload.members = [...rest, parsed.member];
+      series.updated_at = NOW;
+      return { success: true, op: 'upsert', member_count: payload.members.length };
+    }
+    return { detail: { code: 'MAP_SERIES_INVALID' } };
+  });
+  await api(/\/api\/v1\/map-series\/[^/]+\/versions(\?|$)/, async (url, method, body) => {
+    if (method !== 'POST') return { detail: 'method not allowed' };
+    const series = seriesById(url.pathname.split('/')[4]);
+    if (!series) return { detail: { code: 'MAP_SERIES_NOT_FOUND' } };
+    let parsed: { payload?: Record<string, unknown> } = {};
+    try { parsed = JSON.parse(body); } catch { /* non-JSON not exercised */ }
+    if (parsed.payload) series.payload = parsed.payload;
+    series.current_version += 1;
+    return {
+      success: true,
+      version: { id: `${series.id}-v${series.current_version}`, series_id: series.id,
+        version: series.current_version, deprecated: false },
+    };
+  });
+  await api(/\/api\/v1\/map-series\/[^/]+(\?|$)/, async (url) => {
+    const series = seriesById(url.pathname.split('/').pop() as string);
+    if (!series) return { detail: { code: 'MAP_SERIES_NOT_FOUND' } };
+    return { success: true, series: seriesSummaryView(series), payload: series.payload };
+  });
+  await api(/\/api\/v1\/map-series(\?|$)/, async (_url: URL, method: string, body: string) => {
+    if (method !== 'POST') {
+      return { success: true, items: world.mapSeries.map(seriesSummaryView) };
+    }
+    let parsed: { payload?: { name?: string; design_spec_id?: string; members?: unknown[] } } = {};
+    try { parsed = JSON.parse(body); } catch { /* non-JSON not exercised */ }
+    const id = `mser-${world.mapSeries.length + 1}`;
+    const series: MapSeriesStub = {
+      id, name: parsed.payload?.name ?? 'e2e 系列', description: null,
+      status: 'draft', current_version: 1, structural_digest: `mser-sha256:${id}`,
+      design_spec_id: parsed.payload?.design_spec_id ?? null, updated_at: NOW,
+      payload: (parsed.payload ?? {}) as Record<string, unknown>,
+    };
+    world.mapSeries.push(series);
+    return { success: true, series: seriesSummaryView(series) };
   });
 }
 
