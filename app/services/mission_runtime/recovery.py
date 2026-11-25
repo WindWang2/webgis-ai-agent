@@ -153,7 +153,8 @@ class MissionRecoveryCoordinator:
 
         try:
             rec = self.store.get_mission(mission_id, org_id=org_id)
-            assert rec is not None
+            if rec is None:
+                return {"ok": False, "reason": "NOT_FOUND", "lease_epoch": epoch}
             if rec.state != C.MissionState.RECOVERING:
                 # only leave terminal alone
                 if C.is_terminal(rec.state):

@@ -602,7 +602,10 @@ class NetworkLocationAllocationService:
 
         for _ in range(p_count):
             best_j = -1
-            best_gain = -1.0
+            # Zero-gain candidates must not be appended: once every demand is
+            # covered (or nothing is coverable) arbitrary facilities would fill
+            # p and inflate selected_facilities_count.
+            best_gain = 0.0
             for j in range(m_fac):
                 if j in selected:
                     continue
@@ -863,6 +866,18 @@ class NetworkLocationAllocationService:
                     cost_matrix, demand_weights, p_count
                 )
 
+        # Per-demand nearest facility / best cost, computed once. The loops
+        # below used to recompute min(cost_matrix[i][j] for j in best_subset)
+        # once per selected facility — O(n·p²) just to build the report.
+        best_costs: List[float] = (
+            [min(cost_matrix[i][j] for j in best_subset) for i in range(n_dem)]
+            if best_subset else [float("inf")] * n_dem
+        )
+        best_fac_idxs: List[int] = (
+            [min(best_subset, key=cost_matrix[i].__getitem__) for i in range(n_dem)]
+            if best_subset else [-1] * n_dem
+        )
+
         # Generate allocation results; unreachable demand points are
         # collected as unassigned rather than silently assigned to the first
         # facility (inf cost would otherwise make min() pick index 0).
@@ -874,13 +889,12 @@ class NetworkLocationAllocationService:
             total_assigned_weight = 0.0
 
             for i in range(n_dem):
-                best_cost = min(cost_matrix[i][j] for j in best_subset)
+                best_cost = best_costs[i]
                 if best_cost == float("inf") or (problem_norm == "max_coverage" and best_cost > cutoff):
                     # 不可达需求点统一在后置遍历收进 unassigned_ids（此处
                     # 跳过；曾有一段只对首个设施生效的死分支，已删——#693）
                     continue
-                best_fac_idx = min(best_subset, key=lambda j: cost_matrix[i][j])
-                if best_fac_idx == fac_idx:
+                if best_fac_idxs[i] == fac_idx:
                     assigned_demands.append(demand_points[i].demand_id)
                     total_assigned_weight += demand_points[i].weight
 
@@ -894,7 +908,7 @@ class NetworkLocationAllocationService:
             })
 
         for i in range(n_dem):
-            best_cost = min(cost_matrix[i][j] for j in best_subset) if best_subset else float("inf")
+            best_cost = best_costs[i]
             if best_cost == float("inf") or (problem_norm == "max_coverage" and best_cost > cutoff):
                 unassigned_ids.append(demand_points[i].demand_id)
 
@@ -917,7 +931,7 @@ class NetworkLocationAllocationService:
         if problem_norm == "max_coverage":
             summary["covered_weight"] = sum(
                 demand_weights[i] for i in range(n_dem)
-                if best_subset and min(cost_matrix[i][j] for j in best_subset) <= cutoff
+                if best_costs[i] <= cutoff
             )
             summary["uncovered_count"] = len(unassigned_ids)
 

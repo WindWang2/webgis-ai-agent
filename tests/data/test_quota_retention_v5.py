@@ -1255,3 +1255,113 @@ def test_orphan_revision_cleanup_protects_domain_blobs(db, tmp_path, monkeypatch
     assert store.exists(key_sym) is True
     assert store.exists(key_geo) is True
     assert store.exists(key_free) is False
+
+
+def test_env_int_non_finite_falls_back_to_default(monkeypatch):
+    """env 设 inf/Infinity 时 int(float(raw)) 抛 OverflowError —— 必须回退
+    默认值（0=无限），而不是让配额读取把请求打成 500。"""
+    from app.services.data_lifecycle.quota import ProjectQuotaPolicy
+
+    monkeypatch.setenv("WEBGIS_PROJECT_ARTIFACT_MAX_BYTES", "inf")
+    monkeypatch.setenv("WEBGIS_PROJECT_ARTIFACT_MAX_COUNT", "Infinity")
+    monkeypatch.setenv("WEBGIS_PROJECT_ARTIFACT_MAX_REVISION_BYTES", "-inf")
+    policy = ProjectQuotaPolicy.from_env()
+    assert policy.max_bytes == 0
+    assert policy.max_artifact_count == 0
+    assert policy.max_revision_bytes_per_artifact == 0
+    assert policy.unlimited is True
+
+
+def test_retention_multiple_candidates_sharing_location_are_reclaimed(
+    db, monkeypatch, tmp_path
+):
+    """2+ 候选修订共享同一 content_location/sha：存活引用必须减去全部候选
+    修订自身（不是每个 location 只减 1），否则该 blob 永不进入候选。"""
+    from app.services import project_artifact_promotion as pap
+    from app.services.data_lifecycle.quota import plan_retention_cleanup
+    from app.services.durable_blob_store import get_filesystem_blob_store
+
+    _retention_env(monkeypatch)
+    monkeypatch.setattr(pap, "content_store_root", lambda: tmp_path)
+    store = get_filesystem_blob_store()
+    pid = f"proj_{uuid.uuid4().hex[:8]}"
+    _mk_project(pid)
+    art_a = f"art_{uuid.uuid4().hex[:8]}"
+    art_b = f"art_{uuid.uuid4().hex[:8]}"
+    _mk_artifact(pid, art_a)
+    _mk_artifact(pid, art_b)
+    key, loc, _ = _mk_blob(store, "shared-content", age_hours=48)
+    _mk_revision(art_a, key, loc, age_days=10, revision_no=1)
+    _mk_revision(art_a, "1" * 64, "1111/" + "1" * 64 + ".json", revision_no=2)
+    _mk_revision(art_b, key, loc, age_days=10, revision_no=1)
+    _mk_revision(art_b, "2" * 64, "2222/" + "2" * 64 + ".json", revision_no=2)
+
+    with SessionLocal() as s:
+        plan = plan_retention_cleanup(s, pid)
+    assert plan["candidate_revision_count"] == 2
+    assert [b["key"] for b in plan["candidate_blobs"]] == [key], (
+        "两个候选修订是同一 blob 的全部引用：减去全部候选后应零存活引用"
+    )
+
+
+def test_retention_plan_protects_domain_blob_keys(db, tmp_path, monkeypatch):
+    """plan 必须与 execute 同源带上域侧保护面（G40 资产版本行 + G48 georef
+    refcount）：仍被域侧引用的 blob 不得进入候选，否则审批指纹覆盖范围
+    大于 execute 实际删除集。"""
+    import json
+    from pathlib import Path
+
+    from app.core.config import settings
+    from app.models.cartographic_symbol_asset import (
+        CartographicSymbolAsset,
+        CartographicSymbolAssetVersion,
+    )
+    from app.services import project_artifact_promotion as pap
+    from app.services.data_lifecycle.quota import plan_retention_cleanup
+    from app.services.durable_blob_store import get_filesystem_blob_store
+
+    _retention_env(monkeypatch)
+    monkeypatch.setattr(pap, "content_store_root", lambda: tmp_path / "blobs")
+    monkeypatch.setattr(settings, "DATA_DIR", str(tmp_path / "data"))
+    store = get_filesystem_blob_store()
+    pid = f"proj_{uuid.uuid4().hex[:8]}"
+    _mk_project(pid)
+
+    key_sym, loc_sym, _ = _mk_blob(store, "sym-plan", age_hours=48)
+    geo_sha = hashlib.sha256(b"georef-plan-blob").hexdigest()
+    key_geo = f"georefbin-{geo_sha}"
+    store.put_blob(key_geo, b"georef-plan-blob", "json")
+    loc_geo = f"{key_geo[:4]}/{key_geo}.json"
+    old = time.time() - 48 * 3600.0
+    os.utime(store.root / loc_geo, (old, old))
+
+    for art_name, key, loc in (("sym", key_sym, loc_sym), ("geo", key_geo, loc_geo)):
+        art = f"art_{art_name}_{uuid.uuid4().hex[:8]}"
+        _mk_artifact(pid, art)
+        _mk_revision(art, key, loc, age_days=10, revision_no=1)
+        _mk_revision(art, hashlib.sha256(art_name.encode()).hexdigest(),
+                     f"{art_name}/head.json", revision_no=2)
+
+    asset_id = f"cartoasset.{uuid.uuid4().hex}"
+    with SessionLocal() as s:
+        s.add(CartographicSymbolAsset(
+            id=asset_id, name="sym", kind="point_symbol", status="published"))
+        s.add(CartographicSymbolAssetVersion(
+            id=str(uuid.uuid4()), asset_id=asset_id, revision=1,
+            document={"v": 1}, status="published",
+            content_digest="d" * 64, blob_key=key_sym,
+        ))
+        s.commit()
+
+    sidecar = (Path(settings.DATA_DIR) / "georeferencing" / "_refs"
+               / geo_sha[:4] / f"{geo_sha}.json")
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
+    sidecar.write_text(json.dumps({"v": 1, "refs": {"sess-a": 1}}))
+
+    with SessionLocal() as s:
+        plan = plan_retention_cleanup(s, pid)
+    assert plan["candidate_revision_count"] == 2
+    assert plan["candidate_blobs"] == [], "域侧仍引用的 blob 不得进入 plan 候选"
+    reasons = plan["blob_protected_counts"]
+    assert reasons.get("cartographic symbol asset version row") == 1
+    assert reasons.get("georeferencing session refcount") == 1

@@ -370,3 +370,23 @@ def test_begin_run_swarm_ref_full_keeps_new_run(runtime):
     got = runtime.store.get_mission(m.mission_id)
     assert run.swarm_run_id in got.refs.swarm_run_refs
     assert len(got.refs.swarm_run_refs) == C.MAX_REFS
+
+
+def test_recover_missing_mission_returns_typed_failure(runtime, monkeypatch):
+    """Mission deleted between lease acquire and reload must not raise AssertionError."""
+    m = runtime.create(org_id="1", user_id="u", root_goal="g")
+    runtime.start(m.mission_id, worker_id="w1")
+    _expire(runtime.store, m.mission_id)
+    real_get = runtime.store.get_mission
+    calls = {"n": 0}
+
+    def flaky_get(mission_id, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:  # inspect() sees the mission
+            return real_get(mission_id, **kwargs)
+        return None
+
+    monkeypatch.setattr(runtime.store, "get_mission", flaky_get)
+    result = runtime.resume(m.mission_id, worker_id="w2")
+    assert result["ok"] is False
+    assert result["reason"] == "NOT_FOUND"

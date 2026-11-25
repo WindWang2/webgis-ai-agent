@@ -1375,10 +1375,7 @@ async def cancel_run(session_id: str, run_id: str) -> Dict[str, Any]:
                     "already_terminal": True}
         DurableJobStore.request_cancel_sync(db, job_id)
         db.commit()
-    task = _RUNNERS.get(run_id)
-    if task is not None:
-        # 进程内执行体经看门狗 ≤2.5s+抖动感知；不强制 cancel 任务
-        pass
+    # 进程内执行体经看门狗 ≤2.5s+抖动感知；不强制 cancel 任务
     return {"run_id": run_id, "status": "cancelling"}
 
 

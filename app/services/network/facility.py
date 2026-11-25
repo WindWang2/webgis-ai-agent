@@ -69,6 +69,12 @@ class NetworkClosestFacilityService:
         Returns:
             NetworkAnalysisResult containing routes and summary statistics.
         """
+        if travel_direction not in ("incident_to_facility", "facility_to_incident"):
+            raise ValueError(
+                f"unknown travel_direction {travel_direction!r}: expected "
+                "'incident_to_facility' or 'facility_to_incident'"
+            )
+
         normalized_demands = self._normalize_demands(demand_points)
         normalized_facilities = self._normalize_facilities(facilities)
 
@@ -225,6 +231,13 @@ class NetworkClosestFacilityService:
                 d_id = item.get("demand_id", item.get("id", f"d_{i}"))
                 weight = item.get("weight", 1.0)
                 geom = item.get("geometry")
+                coords = item.get("coordinates")
+                if (
+                    (not isinstance(geom, dict) or not geom.get("coordinates"))
+                    and isinstance(coords, (list, tuple)) and len(coords) >= 2
+                ):
+                    # contracts.DemandInput allows {coordinates: [lng, lat]}.
+                    geom = {"type": "Point", "coordinates": [float(coords[0]), float(coords[1])]}
                 if not isinstance(geom, dict) or not geom.get("coordinates"):
                     raise ValueError(f"demand {d_id} requires a declared geometry")
                 result.append(DemandPoint(demand_id=str(d_id), weight=float(weight), geometry=dict(geom)))
@@ -250,6 +263,13 @@ class NetworkClosestFacilityService:
                 f_id = item.get("facility_id", item.get("id", f"f_{i}"))
                 name = item.get("name", f"Facility {i+1}")
                 geom = item.get("geometry")
+                coords = item.get("coordinates")
+                if (
+                    (not isinstance(geom, dict) or not geom.get("coordinates"))
+                    and isinstance(coords, (list, tuple)) and len(coords) >= 2
+                ):
+                    # contracts.FacilityInput allows {coordinates: [lng, lat]}.
+                    geom = {"type": "Point", "coordinates": [float(coords[0]), float(coords[1])]}
                 if not isinstance(geom, dict) or not geom.get("coordinates"):
                     raise ValueError(f"facility {f_id} requires a declared geometry")
                 cap = item.get("capacity", 1.0)

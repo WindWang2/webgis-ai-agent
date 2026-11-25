@@ -199,7 +199,9 @@ def _env_int(env_name: str, default: int) -> int:
     try:
         val = int(float(raw))
         return val if val > 0 else default
-    except (TypeError, ValueError):
+    # OverflowError: env 为 inf/Infinity 时 float() 成功但 int() 溢出；
+    # 必须与非法文本同样回退默认值，而不是把请求打成 500。
+    except (TypeError, ValueError, OverflowError):
         return default
 
 
@@ -621,14 +623,25 @@ def plan_retention_cleanup(
     all_by_loc = referencing_counts(db, locations)
 
     sha_counts = referencing_sha_counts(db, shas)
-    candidate_loc = {r.content_location for r in candidates}
-    candidate_sha = {r.content_sha256 for r in candidates}
+    # 每个 location/sha 减去**全部**候选修订自身的引用（不是 1）：多个候选
+    # 修订共享同一内容时，只减 1 会让该 blob 永远显示「仍有存活引用」。
+    candidate_loc_counts: Dict[str, int] = {}
+    candidate_sha_counts: Dict[str, int] = {}
+    for r in candidates:
+        if r.content_location:
+            candidate_loc_counts[r.content_location] = (
+                candidate_loc_counts.get(r.content_location, 0) + 1
+            )
+        if r.content_sha256:
+            candidate_sha_counts[r.content_sha256] = (
+                candidate_sha_counts.get(r.content_sha256, 0) + 1
+            )
     surviving_by_loc = {
-        loc: cnt - (1 if loc in candidate_loc else 0)
+        loc: cnt - candidate_loc_counts.get(loc, 0)
         for loc, cnt in all_by_loc.items()
     }
     surviving_by_sha = {
-        sha: cnt - (1 if sha in candidate_sha else 0)
+        sha: cnt - candidate_sha_counts.get(sha, 0)
         for sha, cnt in sha_counts.items()
     }
     snap = {
@@ -642,8 +655,32 @@ def plan_retention_cleanup(
     snap_locations, snap_shas, snap_truncated = workspace_snapshot_protected_pointers()
     snap["snapshot_locations"] = snap_locations
     snap["snapshot_shas"] = snap_shas
-    snap["protection_scan_truncated"] = snap_truncated
-    if snap_truncated:
+    # 域侧持有面（与 execute 同源）：G40 资产版本行 + G48 georef 会话
+    # refcount —— plan 缺了它们，候选 blob 集会大于 execute 实际删除集，
+    # 审批指纹覆盖范围即失真（任一扫描失败/截断 ⇒ 本轮跳过 blob 删除）。
+    from app.services.artifact_lifecycle import (
+        _georef_live_blob_keys,
+        _symbol_version_blob_keys,
+    )
+
+    domain_scan_failed = False
+    try:
+        snap["symbol_version_blob_keys"] = _symbol_version_blob_keys(db)
+        georef_keys, georef_truncated = _georef_live_blob_keys()
+        snap["georef_blob_keys"] = georef_keys
+    except Exception:
+        logger.exception(
+            "[quota] retention plan: domain blob protection scan "
+            "failed — skipping blob-deletion phase this cycle"
+        )
+        snap["symbol_version_blob_keys"] = set()
+        snap["georef_blob_keys"] = set()
+        georef_truncated = True
+        domain_scan_failed = True
+    snap["protection_scan_truncated"] = bool(
+        snap_truncated or georef_truncated or domain_scan_failed
+    )
+    if snap["protection_scan_truncated"]:
         # round-2 review MAJOR（fail-closed）：保护面截断 ⇒ 保护集可能不完整
         # —— 本轮跳过 blob 删除阶段（plan 与 execute 同规则：保护优先，
         # 绝不带残缺保护面删除）。候选修订行照常披露，blob 候选恒空。

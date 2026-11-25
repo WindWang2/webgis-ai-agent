@@ -130,7 +130,7 @@ def operation_class_from_side_effect(side_effect: str) -> OperationClass:
     if se in ("compensatable",):
         return OperationClass.COMPENSATABLE
     if se in ("repeatable", "idempotent"):
-        return OperationClass(se) if se in OperationClass._value2member_map_ else OperationClass.IDEMPOTENT
+        return OperationClass(se)
     if se == "pure":
         return OperationClass.PURE
     # Unknown vocabulary must never fall back to the most permissive class:
@@ -169,9 +169,6 @@ def _clamp_refs(refs: List[str]) -> List[str]:
         s = str(r or "").strip()
         if not s:
             continue
-        if not s.startswith("ref:") and not s.startswith("artifact:") and ":" not in s:
-            # allow bare ids used as opaque tickets (workflow instance ids etc.)
-            pass
         if s not in out:
             out.append(s)
         if len(out) >= MAX_REFS:
@@ -196,6 +193,8 @@ class MissionResourceBudget(BaseModel):
             self.retry_cost[key] = float(self.retry_cost.get(key, 0.0)) + float(amount)
 
     def release_reservation(self, dim: str, amount: float) -> None:
+        if amount <= 0:
+            return
         key = str(dim)[:64]
         cur = float(self.reserved.get(key, 0.0))
         nxt = max(0.0, cur - float(amount))

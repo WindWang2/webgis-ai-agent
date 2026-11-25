@@ -170,13 +170,15 @@ def transform_feature(
             "或输入超域）", row_index=row_index, phase="non_finite_output")
 
     new_geom = dict(geom)
-    if "coordinates" in new_geom:
+    # coordinates 与 geometries 共用同一游标：两键并存时同一批变换值不得
+    # 被重复消费；coordinates 为 null 的 GeometryCollection 跳过该分支。
+    cursor = [0]
+    if new_geom.get("coordinates") is not None:
         new_geom["coordinates"] = _rebuild_tree(
-            new_geom["coordinates"], out, [0])
+            new_geom["coordinates"], out, cursor)
     if "geometries" in new_geom:
         # GeometryCollection：leaves 已深度收集，重建需逐子几何分配 —— 简单
         # 起见按同一游标重建每个子树。
-        cursor = [0]
         new_geom["geometries"] = [
             _rebuild_subtree(g, out, cursor) for g in new_geom["geometries"]]
 

@@ -276,6 +276,100 @@ def test_auto_record_skips_incomplete_runs(lifecycle_project):
         assert MapProductService.maybe_auto_record_version(s, db_run) is None
 
 
+def test_auto_record_retry_reuses_concurrent_winner(lifecycle_project, monkeypatch):
+    """auto-record 落败方重试时必须复用 (run, fingerprint) 既有行。
+
+    用一次伪造的 IntegrityError 模拟“SELECT-max 后对手先 commit”的竞态；
+    未修复时代码会在重试里用新 version_no 再落一条同 run+指纹的重复行。
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    project_id, _ = lifecycle_project
+    with SessionLocal() as winner_session:
+        run = _real_run(winner_session, project_id)
+        winner_session.commit()
+        winner = MapProductService.record_version(
+            winner_session,
+            project_id,
+            workflow_run_id=run.id,
+            mapspec_fingerprint="carto-auto",
+            input_dataset_fingerprints=run.input_dataset_fingerprints,
+            actor="system:auto-record",
+            lineage_kind="auto",
+        )
+        winner_id, run_id = winner.id, run.id
+
+    with SessionLocal() as loser:
+        real_commit = loser.commit
+        calls = {"n": 0}
+
+        def flaky_commit():
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise IntegrityError(
+                    "INSERT INTO map_product_versions", {},
+                    Exception("uq_map_product_version"))
+            return real_commit()
+
+        monkeypatch.setattr(loser, "commit", flaky_commit)
+        again = MapProductService.record_version(
+            loser,
+            project_id,
+            workflow_run_id=run_id,
+            mapspec_fingerprint="carto-auto",
+            input_dataset_fingerprints={"ds1": "fpA"},
+            actor="system:auto-record",
+            lineage_kind="auto",
+        )
+        assert again.id == winner_id
+        rows, _ = MapProductService.list_versions_paginated(loser, project_id)
+        autos = [
+            r for r in rows
+            if r.workflow_run_id == run_id and r.lineage_kind == "auto"
+        ]
+        assert len(autos) == 1
+
+
+def test_output_fingerprints_truncated_diff_stays_consistent(lifecycle_project):
+    """>128 个产物指纹时，排序/截断相同的集合不得报 output_changed。
+
+    落盘列截断到 128，diff 必须拿同一截断投影比对；未修复时当前侧用未
+    截断列表，相同集合也会被误报为输出变更。
+    """
+    project_id, _ = lifecycle_project
+    artifacts = [
+        {"id": f"a{i}", "content_fingerprint": f"fp_{i:03d}"}
+        for i in range(130)
+    ]
+    with SessionLocal() as s:
+        v1 = MapProductService.record_version(
+            s, project_id, run_manifest={"steps": [], "artifacts": artifacts})
+        assert len(v1.output_fingerprints) == 128
+        v2 = MapProductService.record_version(
+            s, project_id,
+            run_manifest={"steps": [], "artifacts": list(reversed(artifacts))})
+        assert v2.output_fingerprints == v1.output_fingerprints
+        assert v2.diff_summary["output_changed"] is False
+
+
+def test_record_version_reraises_last_integrity_error(lifecycle_project, monkeypatch):
+    """重试耗尽后保留并抛出真实的约束错误，而不是通用 RuntimeError。"""
+    from sqlalchemy.exc import IntegrityError
+
+    project_id, _ = lifecycle_project
+    with SessionLocal() as s:
+        def always_conflict():
+            raise IntegrityError(
+                "INSERT INTO map_product_versions", {},
+                Exception("uq_map_product_version"))
+
+        monkeypatch.setattr(s, "commit", always_conflict)
+        with pytest.raises(IntegrityError) as excinfo:
+            MapProductService.record_version(
+                s, project_id, run_manifest={"steps": [], "artifacts": []})
+        assert "uq_map_product_version" in str(excinfo.value)
+
+
 # ── style-only restore（会话引擎走真实 lifecycle engine）────────────────────
 
 

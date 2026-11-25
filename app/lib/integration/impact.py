@@ -321,16 +321,28 @@ def select_tests(
         else:
             result.uncovered.append(rel)
 
-    def _import_covered(rel: str) -> bool:
-        seed_closure = graph.reverse_app_closure(
-            {_app_modules_for_file(rel)})
-        return any(seed_closure & set(imports)
-                   for imports in graph.tests.values())
+    # 覆盖率判定 = 单次前向可达：测试 import 的可传递依赖集合。
+    # seed ∈ 集合 ⇔ 某测试的反向闭包命中 seed（与原逐文件判定等价）；
+    # 原实现对每个 changed app 文件重建反向邻接并全扫 tests，复杂度
+    # 随变更集平方退化（数百文件级集成分支）。
+    forward: Dict[str, List[str]] = {}
+    for src, imports in graph.app.items():
+        src_module = module_name_for(src)
+        if src_module is not None:
+            forward[src_module] = imports
+    test_reachable: Set[str] = set()
+    stack = [m for imports in graph.tests.values() for m in imports]
+    while stack:
+        module = stack.pop()
+        if module in test_reachable:
+            continue
+        test_reachable.add(module)
+        stack.extend(forward.get(module, ()))
 
     for rel in app_changed:
         mapped = map_directory_target(rel, root)
         mapped_ok = mapped is not None and (root / mapped).is_dir()
-        if not _import_covered(rel) and not mapped_ok:
+        if _app_modules_for_file(rel) not in test_reachable and not mapped_ok:
             result.uncovered.append(rel)
 
     result.via_import = sorted(imported_targets)

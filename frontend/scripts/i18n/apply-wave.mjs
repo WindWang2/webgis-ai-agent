@@ -37,9 +37,9 @@ function parseArgs(argv) {
   return out;
 }
 
-function pinYinish(s) {
+export function pinYinish(s) {
   // Semantic-ish key from first few CJK + latin; fallback hash
-  const latin = s.replace(CJK, '').replace(/[^a-zA-Z0-9]+/g, ' ').trim();
+  const latin = s.replace(new RegExp(CJK.source, 'g'), '').replace(/[^a-zA-Z0-9]+/g, ' ').trim();
   if (latin.length >= 3) {
     return latin
       .split(/\s+/)

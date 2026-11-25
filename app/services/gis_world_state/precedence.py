@@ -44,13 +44,6 @@ PRODUCER_PRECEDENCE: Tuple[str, ...] = (
 
 _RANK = {name: rank for rank, name in enumerate(PRODUCER_PRECEDENCE)}
 
-# 低阶写入者的"fill-undeclared 白名单下限"：TEMPLATE 及以下只许填空缺。
-_FILL_ONLY_BELOW = _RANK[PRODUCER_AGENT_EXPLICIT]
-
-# 需要显式声明才可写 incumbent 的下限：REPAIR_AUTOFILL 及以下对非 SYSTEM
-# incumbent 只能保留（不得反转）。
-_OVERRIDE_FLOOR = _RANK[PRODUCER_AGENT_EXPLICIT]
-
 
 def rank(producer_class: Optional[str]) -> int:
     """producer_class → 序（未知/None = SYSTEM_DEFAULT 档：fail-low）。"""
@@ -79,7 +72,9 @@ def can_override(
     if not incumbent_declared:
         return True
     inc_rank = rank(incumbent)
-    if incumbent == PRODUCER_SYSTEM_DEFAULT:
+    # 无主（None）与未知分类同按 SYSTEM_DEFAULT 档裁决（rank 的 fail-low
+    # 语义）：模板不得覆盖已声明但无更高阶 owner 的值。
+    if inc_rank == _RANK[PRODUCER_SYSTEM_DEFAULT]:
         return rank(incoming) > _RANK[PRODUCER_TEMPLATE]
     if rank(incoming) > inc_rank:
         return True

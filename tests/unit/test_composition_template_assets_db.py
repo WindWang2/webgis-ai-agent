@@ -464,6 +464,40 @@ def test_pinned_draft_revision_replay_rejected(db):
     assert replay.record.status == "retired"
 
 
+def test_replay_default_revision_prefers_current_over_latest_draft(db):
+    """重放缺省 revision 取 current（已发布），latest 可能是未发布 draft。"""
+    asset, _ = svc.create_asset(db, payload=_payload(), creator_id="u1",
+                                publish=True)
+    svc.new_version(
+        db, asset.id,
+        _payload(slot_overrides={"chart_panel": {"max_count": 3}}),
+        user_id="u1")
+    row = db.get(type(asset), asset.id)
+    assert row.current_revision == 1 and row.latest_revision == 2
+    replay = svc.resolve_asset_for(db, asset.id, None, mode="for_replay",
+                                   user_id="u1")
+    assert replay.revision == 1
+
+
+def test_resolve_asset_honors_explicit_org_id_without_user_id(db):
+    """显式 org_id 不被工具上下文覆盖（只传 org 时仍按该组织判可见性）。"""
+    from app.services.provenance.context import (
+        ToolExecutionContext,
+        reset_tool_execution_context,
+        set_tool_execution_context,
+    )
+    asset, _ = svc.create_asset(db, payload=_payload(), creator_id="other",
+                                org_id=2, visibility="org", publish=True)
+    token = set_tool_execution_context(
+        ToolExecutionContext(user_id="ctx-user", org_id=1))
+    try:
+        resolved = svc.resolve_asset(db, asset.id, None, role="admin",
+                                     org_id=2)
+    finally:
+        reset_tool_execution_context(token)
+    assert resolved.asset_id == asset.id
+
+
 def test_project_asset_foreign_project_rejected(db):
     """review P2-2：project 资产不可挂到无归属关系的外国项目。"""
     from app.models.project import Project

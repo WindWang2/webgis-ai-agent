@@ -426,6 +426,31 @@ def test_evaluator_registry_matches_rule_types():
     assert set(RULE_EXPECTED_FAMILY) == set(RULE_TYPES)
 
 
+def test_blocked_codes_registered_in_error_codes():
+    """P3 回归：求值器 blocked_code 必须属于 contracts.ERROR_CODES 封闭词表
+    （调用方不得自造平行常量）。"""
+    from app.services.topology_workbench.contracts import ERROR_CODES
+
+    out_aoi = run_rule(
+        COV_RULE,
+        coverage=snap("coverage", parcels_cover()["features"], "polygon"),
+        aoi=snap("aoi", [], "polygon"))
+    assert out_aoi.blocked_code == "aoi_empty"
+    out_target = run_rule(
+        IN_RULE,
+        checked=snap("checked", [feat("bld", BUILDING_CROSS)], "any"),
+        target=snap("target", [], "polygon"))
+    assert out_target.blocked_code == "target_empty"
+    out_connectors = run_rule(
+        EP_RULE,
+        checked=snap("checked", [feat("line", LINE_NEAR_FACILITY)], "line"),
+        connectors=snap("connectors", [], "any"))
+    assert out_connectors.blocked_code == "connectors_empty"
+    assert {out_aoi.blocked_code, out_target.blocked_code,
+            out_connectors.blocked_code,
+            "gap_geometry", "role_unbound"} <= ERROR_CODES
+
+
 def test_iter_pieces_dedupes_and_flattens():
     from shapely.geometry import MultiPolygon, Polygon
 

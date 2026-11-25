@@ -156,7 +156,15 @@ async def run_parse_stage(
             "fields": [f.model_dump() for f in structured.fields],
             "mapping": mapping,
         }
-        parsed_ref = store_ref(payload, "parsed") if store_ref else f"ref_parsed_{result.get('source_id')}"
+        try:
+            parsed_ref = store_ref(payload, "parsed") if store_ref else f"ref_parsed_{result.get('source_id')}"
+        except Exception as e:
+            # Per-source isolation: a session-store failure for one source must
+            # not abort parsing of the remaining sources (same discipline as
+            # the decode/parse guard above).
+            logger.warning(f"[Explorer:{task_id}] Store failed for ref {ref_id}: {e}")
+            errors.append({"source_id": result.get("source_id"), "ref_id": ref_id, "error": str(e)})
+            continue
 
         parsed_all.append({
             "source_id": result.get("source_id"),

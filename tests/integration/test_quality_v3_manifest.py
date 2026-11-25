@@ -125,6 +125,20 @@ def test_manifest_low_risk_branch(synthetic_repo: Path):
     assert "app/tools/plain.py" in m.domains["tools"]
 
 
+def test_read_branch_file_never_falls_back_to_worktree(synthetic_repo: Path):
+    """git show 失败（分支 commit 无此 blob）→ None，不得读工作树。
+
+    工作树在别的分支上，磁盘读会拿到错误分支内容并仍报 ids_extracted=True；
+    与 merge_sim 的严格 reader 同纪律（R2-m3）。
+    """
+    from app.lib.integration.manifest import read_branch_file
+
+    ghost = synthetic_repo / "app/tools/ghost.py"
+    ghost.write_text('name = "ghost_tool"\n', encoding="utf-8")  # 仅工作树
+    assert read_branch_file("feat/probe", "app/tools/ghost.py",
+                            synthetic_repo) is None
+
+
 def test_changed_files_missing_branch_raises(synthetic_repo: Path):
     from contextlib import contextmanager
 

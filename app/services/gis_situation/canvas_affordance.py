@@ -442,7 +442,14 @@ async def ingest_canvas_actions(
     if store is None:
         from app.services.session_data import session_data_manager as store
 
-    normalized = normalize_envelope(raw_envelope)
+    try:
+        normalized = normalize_envelope(raw_envelope)
+    except Exception as e:  # noqa: BLE001 — 摄入绝不抛给调用方（fail-open）
+        logger.warning(
+            "[gis_situation] canvas envelope normalize failed: %s",
+            type(e).__name__,
+        )
+        return CanvasAffordanceAck(False, "empty_or_invalid_envelope", 0)
     if normalized is None:
         return CanvasAffordanceAck(False, "empty_or_invalid_envelope", 0)
 

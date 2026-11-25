@@ -19,7 +19,6 @@ from sqlalchemy.orm import Session
 from app.services.project_knowledge import store as ks
 from app.services.project_knowledge.contract import (
     AS_PROJECT_DATASET,
-    AS_SESSION_REF,
     EK_ARTIFACT,
     EK_DATASET_VERSION,
     EK_MAP_PRODUCT,
@@ -83,11 +82,13 @@ def _evaluate_entry(
     query: ReuseQuery,
     request_stale_inputs: Optional[List[str]] = None,
     live_token: Any = _UNPROBED,
+    persist_demotions: bool = True,
 ) -> ReuseCandidate:
     """单条候选的 lazy 复核 + 判定（纯读权威 + 允许写回投影降级）。
 
     ``live_token`` 为调用方（批量探测，#1721）已解析的权威当前 token；
-    缺省时自行单条探测（旧调用面）。
+    缺省时自行单条探测（旧调用面）。``persist_demotions=False`` 表示调用方
+    已用 ``demote_changed_entries`` 批量写回，本函数不再逐条降级。
     """
     reasons: List[str] = []
     stale_causes: List[str] = []
@@ -112,21 +113,23 @@ def _evaluate_entry(
         if live_token is _UNPROBED else live_token
     )
     if live is None:
-        ks.demote_stale_by_token(
-            db, org_id=entry.org_id, project_id=entry.project_id,
-            authority_store=entry.authority_store,
-            authority_id=entry.authority_id, live_token=None,
-        )
+        if persist_demotions:
+            ks.demote_stale_by_token(
+                db, org_id=entry.org_id, project_id=entry.project_id,
+                authority_store=entry.authority_store,
+                authority_id=entry.authority_id, live_token=None,
+            )
         return ReuseCandidate(
             entry=entry, verdict=VERDICT_NOT_REUSABLE,
             reasons=["权威行已消失/detached"], stale_causes=["authority_gone"],
         )
     if (live or "") != (entry.version_token or ""):
-        ks.demote_stale_by_token(
-            db, org_id=entry.org_id, project_id=entry.project_id,
-            authority_store=entry.authority_store,
-            authority_id=entry.authority_id, live_token=live,
-        )
+        if persist_demotions:
+            ks.demote_stale_by_token(
+                db, org_id=entry.org_id, project_id=entry.project_id,
+                authority_store=entry.authority_store,
+                authority_id=entry.authority_id, live_token=live,
+            )
         return ReuseCandidate(
             entry=entry, verdict=VERDICT_NOT_REUSABLE,
             reasons=["权威版本已前进，投影降级 stale"],
@@ -201,7 +204,7 @@ def _evaluate_entry(
 
     # 6. verified_by claim：只有可解析且 SUPPORTED 才是正向证明。
     claim_ids = [t.id for t in entry.refs if t.relation == REL_VERIFIED_BY]
-    if claim_ids and entry.authority_store != AS_SESSION_REF:
+    if claim_ids:
         statuses = _claim_statuses_for(claim_ids, tenant_id=entry.org_id)
         for cid, status in statuses.items():
             if status == "supported":
@@ -216,10 +219,6 @@ def _evaluate_entry(
     if request_stale_inputs:
         stale_causes.extend(request_stale_inputs)
 
-    # 7. session_ref 权威的条目不可 durable 复核 → 永不给 exact。
-    if entry.authority_store == AS_SESSION_REF:
-        stale_causes.append("authority_session_scoped")
-
     # 请求级 stale_cause 的软硬分类：声称的输入漂移（stale）→ soft（
     # 可重算）；声称的输入已消失（gone）→ hard（无输入可重算，review
     # P3-8）。
@@ -227,7 +226,7 @@ def _evaluate_entry(
         c.startswith("upstream_") or c.startswith("claim_")
         or c.startswith("request_input_stale:")
         or c.endswith("_unverified") or c.endswith("_unprojected")
-        or c.endswith("_unverifiable") or c == "authority_session_scoped"
+        or c.endswith("_unverifiable")
     )]
     if hard:
         verdict = VERDICT_NOT_REUSABLE
@@ -274,6 +273,12 @@ def find_reuse_candidates(
         (AS_PROJECT_DATASET, ds_id) for ds_id in (query.dataset_fingerprints or {})
     )
     tokens = live_version_tokens(db, project_id=project_id, probes=probes)
+    # 漂移/消失的投影行一次批量降级（原先逐候选 SELECT+UPDATE，200 条候选
+    # 漂移时热路径最多 400 次往返；与 card.load_project_knowledge_card 同
+    # 一 demote_changed_entries 入口）。
+    ks.demote_changed_entries(
+        db, org_id=org_id, project_id=project_id, tokens=tokens,
+    )
 
     # 请求级输入 liveness 复核：query.dataset_fingerprints 声称的是
     # 「新 Mission 计划使用的输入指纹」—— 若与权威当前值漂移/消失，
@@ -291,6 +296,7 @@ def find_reuse_candidates(
             db, entry=e, query=query,
             request_stale_inputs=request_stale_inputs,
             live_token=tokens.get((e.authority_store, e.authority_id)),
+            persist_demotions=False,
         )
         for e in entries
     ]

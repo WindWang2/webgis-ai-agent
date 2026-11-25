@@ -182,3 +182,28 @@ def test_create_swarm_run_rejects_task_overflow(runtime):
     }
     with pytest.raises(TransitionRejected):
         runtime.store.create_swarm_run(m.mission_id, org_id="1", tasks=tasks)
+
+
+def test_negative_release_reservation_does_not_inflate_reserved():
+    from app.services.mission_runtime.contracts import MissionResourceBudget
+
+    budget = MissionResourceBudget(
+        quota={"tokens": 10.0}, reserved={"tokens": 5.0})
+    budget.release_reservation("tokens", -3.0)
+    assert budget.reserved["tokens"] == 5.0
+
+
+def test_settle_swarm_task_missing_readback_is_typed_error(runtime, monkeypatch):
+    from app.services.mission_runtime import contracts as C
+
+    m = runtime.create(org_id="1", user_id="u", root_goal="g")
+    run = runtime.store.create_swarm_run(
+        m.mission_id, org_id="1",
+        tasks={"t1": {"task_id": "t1", "state": "PENDING"}})
+    monkeypatch.setattr(runtime.store, "get_swarm_run", lambda *a, **k: None)
+    with pytest.raises(TransitionRejected):
+        runtime.store.settle_swarm_task(
+            run.swarm_run_id,
+            C.SwarmTaskReceipt(
+                task_id="t1", state=C.SwarmTaskDurableState.SUCCEEDED),
+        )

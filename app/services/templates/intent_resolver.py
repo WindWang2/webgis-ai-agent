@@ -83,7 +83,8 @@ def resolve_template_by_intent(
     # 3. keyword token match (any keyword present in the query)
     for entry in pool:
         for kw in (entry.get("keywords") or []):
-            if _normalize(kw) in q:
+            token = _normalize(kw)
+            if token and token in q:
                 return entry
 
     # 4. name / description substring

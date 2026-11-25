@@ -9,8 +9,10 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 type InjectUseT = (src: string, ns: string) => string;
+type PinYinish = (s: string) => string;
 
 let injectUseT: InjectUseT;
+let pinYinish: PinYinish;
 
 beforeAll(async () => {
   // apply-wave.mjs 顶层会按 CLI 参数执行一次；这里传入最小合法参数并加 --dry
@@ -27,8 +29,12 @@ beforeAll(async () => {
     '--dry',
   ];
   try {
-    const mod = (await import('../../scripts/i18n/apply-wave.mjs')) as { injectUseT: InjectUseT };
+    const mod = (await import('../../scripts/i18n/apply-wave.mjs')) as {
+      injectUseT: InjectUseT;
+      pinYinish: PinYinish;
+    };
     injectUseT = mod.injectUseT;
+    pinYinish = mod.pinYinish;
   } finally {
     process.argv = savedArgv;
     logSpy.mockRestore();
@@ -83,5 +89,15 @@ describe('apply-wave injectUseT', () => {
     const out = injectUseT(src, 'demo');
 
     expect(out).not.toContain('useT(');
+  });
+});
+
+describe('apply-wave pinYinish', () => {
+  it('去掉全部 CJK 后按完整拉丁词生成 key（缺 /g 时会被 CJK 截断成 abC）', () => {
+    expect(pinYinish('A中B文C')).toBe('abc');
+  });
+
+  it('纯中文串仍走稳定 hash 兜底', () => {
+    expect(pinYinish('取消')).toMatch(/^k[0-9a-z]+$/);
   });
 });

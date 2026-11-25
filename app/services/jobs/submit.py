@@ -22,6 +22,7 @@ from typing import Any, Optional
 from app.services.jobs.cancellation import registry as cancellation_registry
 from app.services.jobs.context import current_origin
 from app.services.jobs.lifecycle import JobKind, JobStatus
+from app.services.jobs.redaction import safe_dispatch_spec
 from app.services.jobs.store import DurableJobStore
 from app.lib.observability.spans import trace_headers
 from app.tools._utils import db_session
@@ -140,6 +141,18 @@ def submit_durable_job(
             max_retries=max_retries,
         )
         job_id = int(job.id)
+        # dispatch_spec 是 retry 的重跑描述符，必须与 apply_async 实际收到的
+        # kwargs 一致 —— job_id 只在行创建后才存在，故在此回填（caller_identity
+        # 由 retry 重新签发，不落库）。
+        spec = job.dispatch_spec
+        if isinstance(spec, dict) and isinstance(spec.get("kwargs"), dict):
+            patched = safe_dispatch_spec(
+                {**spec, "kwargs": {**spec["kwargs"], "job_id": job_id}}
+            )
+            # 回填把体积顶出上限时保留原 spec（retry 侧仍会注入 job_id），
+            # 不让一个本可重跑的描述符退化成不可重试。
+            if isinstance(patched, dict) and not patched.get("__truncated__"):
+                job.dispatch_spec = patched
         existing_celery_id = job.celery_task_id
         already_terminal = DurableJobStore.is_terminal_job(job)
         db.commit()

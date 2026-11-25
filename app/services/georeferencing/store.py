@@ -4,6 +4,7 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import json
+import logging
 import os
 import shutil
 import uuid
@@ -12,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
+from pydantic import ValidationError
+
 from app.schemas.georeferencing_schema import (
     FrozenExecutionSnapshot,
     GeorefDomainError,
@@ -19,6 +22,9 @@ from app.schemas.georeferencing_schema import (
     GeorefErrorCode,
     GeorefSourceRecord,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 import re
@@ -143,14 +149,34 @@ def get_plan(session_id: str, plan_id: str) -> Optional[GeorefDraftPlan]:
     with _session_file_lock(session_id):
         state = _read_state_unlocked(session_id)
         raw = state["plans"].get(plan_id)
-    return GeorefDraftPlan.model_validate(raw) if raw else None
+    if not raw:
+        return None
+    try:
+        return GeorefDraftPlan.model_validate(raw)
+    except ValidationError as exc:
+        raise GeorefDomainError(
+            GeorefErrorCode.SOURCE_CORRUPT_OR_TAMPERED,
+            f"Georeference plan '{plan_id}' failed schema validation: {exc}",
+            status_code=500,
+            details={"session_id": session_id, "plan_id": plan_id},
+        ) from exc
 
 
 def list_plans(session_id: str) -> List[GeorefDraftPlan]:
     with _session_file_lock(session_id):
         state = _read_state_unlocked(session_id)
         items = list(state["plans"].values())
-    return [GeorefDraftPlan.model_validate(x) for x in items]
+    plans: List[GeorefDraftPlan] = []
+    for raw in items:
+        try:
+            plans.append(GeorefDraftPlan.model_validate(raw))
+        except ValidationError:
+            # Per-record isolation: one unparseable plan (schema drift/manual
+            # edit) must not break listing every other plan in the session.
+            logger.warning(
+                "[georef] skipping unparseable plan record in session %s", session_id, exc_info=True
+            )
+    return plans
 
 
 def mutate_plan_cas(

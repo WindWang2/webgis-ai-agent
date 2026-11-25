@@ -333,7 +333,13 @@ def import_gcps(
                 "JSON payload must be a list of GCP objects or {'gcps': [...]}.",
                 status_code=422,
             )
-        for row in rows[:MAX_GCPS_PER_PLAN]:
+        if len(rows) > MAX_GCPS_PER_PLAN:
+            raise GeorefDomainError(
+                GeorefErrorCode.INVALID_GCP_COORDS,
+                f"Import contains {len(rows)} GCP rows; the per-plan limit is {MAX_GCPS_PER_PLAN}.",
+                status_code=422,
+            )
+        for row in rows:
             if not isinstance(row, dict):
                 raise GeorefDomainError(
                     GeorefErrorCode.INVALID_GCP_COORDS,
@@ -391,10 +397,14 @@ def import_gcps(
                 status_code=422,
             )
         for row in reader:
-            if len(items) >= MAX_GCPS_PER_PLAN:
-                break
             if not any(str(v or "").strip() for v in row.values()):
                 continue
+            if len(items) >= MAX_GCPS_PER_PLAN:
+                raise GeorefDomainError(
+                    GeorefErrorCode.INVALID_GCP_COORDS,
+                    f"Import exceeds the per-plan limit of {MAX_GCPS_PER_PLAN} GCPs.",
+                    status_code=422,
+                )
             try:
                 role = str(row.get("role") or "fit").strip().lower() or "fit"
                 enabled_raw = str(row.get("enabled") if row.get("enabled") is not None else "true").strip().lower()

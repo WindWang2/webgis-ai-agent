@@ -22,8 +22,9 @@ from app.services.spatial_events.contracts import (
     WatchState,
 )
 
-#: window 计数环上限（防状态无界膨胀）
-_MAX_WINDOW_TIMES = 128
+#: window 计数环上限（防状态无界膨胀；须 >= 契约的 window_min_events 上限 1000，
+#: 否则大阈值配置的窗口谓词永远不可满足）
+_MAX_WINDOW_TIMES = 1000
 
 
 class WatchEvalResult:
@@ -236,6 +237,7 @@ def evaluate_watch(
                     fired=False, reason="cooldown", state=new_state
                 )
         new_state.last_fired_at = now
+        new_state.last_fired_event_id = event.event_id
         return WatchEvalResult(
             fired=True, reason="fired", state=new_state,
             detail={"subject_key": event.subject_key},

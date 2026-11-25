@@ -103,7 +103,7 @@ class QualityEngine:
             target_area = (ts[2] - ts[0]) * (ts[3] - ts[1])
             score = inter_area / target_area if target_area > 0 else 0.0
             return round(min(1.0, score), 4)
-        except (ValueError, IndexError):
+        except (ValueError, IndexError, AttributeError):
             return 0.0
 
     def calc_field_score(

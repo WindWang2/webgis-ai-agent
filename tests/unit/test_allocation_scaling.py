@@ -115,7 +115,11 @@ def test_large_max_coverage_uses_heuristic_and_terminates(road_network):
     )
     elapsed = time.perf_counter() - t0
     assert res.summary["solver"] == "heuristic"
-    assert res.summary["selected_facilities_count"] == 5
+    # The first greedy pick already covers every demand inside the 300 s
+    # cutoff — the subset must not be padded with zero-gain facilities to p.
+    assert res.summary["selected_facilities_count"] == 1
+    assert res.summary["covered_weight"] == pytest.approx(30.0)
+    assert len(res.allocated_facilities) == res.summary["selected_facilities_count"]
     assert elapsed < 2.0, f"location_allocation took {elapsed:.2f}s"
 
 

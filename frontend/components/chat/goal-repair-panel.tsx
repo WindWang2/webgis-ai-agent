@@ -105,6 +105,10 @@ export function GoalRepairPanel({ sessionId, active }: GoalRepairPanelProps) {
                   }
                 })();
               }
+            } else {
+              // 载荷解析失败：停止空转并报错，不再永远显示「运行中」。
+              setError(t('chat.goalRepair.error'));
+              stopPolling();
             }
           } catch {
             /* 轮询失败保留下一次重试 */
@@ -112,7 +116,7 @@ export function GoalRepairPanel({ sessionId, active }: GoalRepairPanelProps) {
         })();
       }, POLL_INTERVAL_MS);
     },
-    [sessionId, stopPolling],
+    [sessionId, stopPolling, t],
   );
 
   // 挂载：拉取预览；已有活跃 attempt（刷新/重连恢复）则直接续接轮询。
@@ -237,9 +241,13 @@ export function GoalRepairPanel({ sessionId, active }: GoalRepairPanelProps) {
           ...(ackCodes.length ? { acknowledged_losses: ackCodes } : {}),
         });
         const view = parseGoalRepairAttempt(raw);
-        if (view && mountedRef.current) {
+        if (!mountedRef.current) return;
+        if (view) {
           setAttempt(view);
           if (view.active) startPolling(view.attemptId);
+        } else {
+          // 载荷非法：必须显式报错，否则 busy 复位后无反馈可重复启动。
+          setError(t('chat.goalRepair.error'));
         }
       } catch (err) {
         if (mountedRef.current) {

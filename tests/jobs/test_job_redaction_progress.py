@@ -48,6 +48,17 @@ def test_redaction_is_case_insensitive_and_substring_based():
     assert out["userTokenValue"] == REDACTED
 
 
+def test_author_family_keys_are_not_redacted():
+    """裸 "auth" 子串不得误伤 author/authority/coauthor（摘要静默丢数据）。"""
+    out = safe_parameters(
+        {"author": "Ada", "authority": "NM", "coauthor": "Bob", "auth": "Bearer leak"}
+    )
+    assert out["author"] == "Ada"
+    assert out["authority"] == "NM"
+    assert out["coauthor"] == "Bob"
+    assert out["auth"] == REDACTED
+
+
 def test_nested_sensitive_keys_are_redacted():
     out = safe_parameters({"cfg": {"inner": {"api_key": "leak-me"}}})
     assert "leak-me" not in json.dumps(out)
@@ -205,6 +216,19 @@ def test_throttle_always_emits_hundred_percent():
     assert t.should_emit(100) is True
 
 
+def test_throttle_throttles_repeated_hundred_percent():
+    """收尾循环重复上报 100 不得绕过节流 —— DB 写入速率必须仍有上界。"""
+    now = [0.0]
+    t = ProgressThrottle(min_delta_pct=1.0, min_interval_s=0.5, clock=lambda: now[0])
+    assert t.should_emit(0) is True
+    assert t.should_emit(100) is True  # 首次到达 100：边界必达
+    for _ in range(1000):
+        assert t.should_emit(100) is False
+    assert t.emitted == 2
+    now[0] = 0.6
+    assert t.should_emit(100) is True  # 心跳式放行仍保留
+
+
 def test_throttle_force_bypasses_all_limits():
     now = [0.0]
     t = ProgressThrottle(min_delta_pct=99.0, min_interval_s=999.0, clock=lambda: now[0])
@@ -298,6 +322,16 @@ def test_dispatch_spec_rejects_sensitive_key_inside_args():
     out = safe_dispatch_spec(
         {"task": "t", "args": [{"properties": {"access_token": "leak"}}], "kwargs": {}}
     )
+    assert out["__truncated__"] == "dispatch_spec"
+    assert "leak" not in json.dumps(out)
+
+
+def test_dispatch_spec_rejects_sensitive_key_beyond_depth_cap():
+    """超深嵌套里的凭据同样不得落库 —— 深度上限必须失败关闭。"""
+    node = {"token": "leak"}
+    for _ in range(10):
+        node = {"child": node}
+    out = safe_dispatch_spec({"task": "t", "args": [], "kwargs": node})
     assert out["__truncated__"] == "dispatch_spec"
     assert "leak" not in json.dumps(out)
 

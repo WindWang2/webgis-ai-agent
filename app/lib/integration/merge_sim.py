@@ -196,7 +196,6 @@ def compare_pair(
 
     # 3b. allocator 撞号轴（M-1）：ADR 等 allocator 面的 NNNN 撞号 ——
     # 本 Epic 创始事故（6×ADR-0118）的合并前检出轴
-    sorted(set(a.files_changed) | set(b.files_changed))
     base_alloc = set(paths_with_policy(doc, POLICY_ALLOCATOR,
                                        sorted(set(a.files_changed))))
     other_alloc = set(paths_with_policy(doc, POLICY_ALLOCATOR,

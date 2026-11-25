@@ -472,7 +472,7 @@ def compile_map(
         desired_revision=rev_fact, fingerprint=fingerprint,
         layers=layers_fact, layer_count=layer_count_fact,
         layer_ids=(known([str(row["id"]) for row in raw_layers
-                          if isinstance(row, dict) and row.get("id")],
+                          if isinstance(row, dict) and row.get("id")][:MAX_LAYER_SUMMARIES],
                          source="mapspec.layers", revision=revision)
                    if isinstance(mapspec.get("layers"), list)
                    else unknown(source="mapspec.layers")),
@@ -642,7 +642,7 @@ def compile_interaction(
         for ref_id, journal in journals.items():
             if not isinstance(journal, dict):
                 continue
-            dropped = int(journal.get("dropped") or 0)
+            dropped = _num(journal.get("dropped")) or 0
             for entry in (journal.get("entries") or [])[-3:]:
                 if not isinstance(entry, dict):
                     continue
@@ -657,7 +657,7 @@ def compile_interaction(
                     "content_revision_after": entry.get("content_revision_after"),
                     "journal_dropped": dropped or None,
                 })
-        feature_edit_receipts.sort(key=lambda r: (r.get("seq") or 0), reverse=True)
+        feature_edit_receipts.sort(key=lambda r: (_num(r.get("seq")) or 0), reverse=True)
         feature_edit_receipts = feature_edit_receipts[:5]
     edits_fact = (
         known(feature_edit_receipts, source="map_state._feature_edit_journals")

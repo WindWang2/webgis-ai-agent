@@ -227,6 +227,25 @@ class TestCandidateContract:
         assert env1["network_enabled"] is False  # 运行时禁自动联网
         assert env1["pyproj_version"] and env1["proj_version"]
 
+    def test_environment_fingerprint_splits_proj_data_by_os_pathsep(
+            self, tmp_path, monkeypatch):
+        """P3：PROJ_DATA 多目录按 os.pathsep 切分（Windows 为 ';'）——
+        固定按 ':' 切分会漏掉全部格网，环境证据与真实不符。"""
+        from pyproj import datadir
+
+        g1 = tmp_path / "d1" / "grids"
+        g2 = tmp_path / "d2" / "grids"
+        g1.mkdir(parents=True)
+        g2.mkdir(parents=True)
+        (g1 / "one.tif").write_bytes(b"1")
+        (g2 / "two.tif").write_bytes(b"22")
+        monkeypatch.setattr(candidates.os, "pathsep", ";")
+        monkeypatch.setattr(
+            datadir, "get_data_dir",
+            lambda: f"{tmp_path / 'd1'};{tmp_path / 'd2'}")
+        env = candidates.environment_fingerprint()
+        assert env["trusted_grid_count"] == 2
+
     def test_c10_env_drift_detected(self):
         """环境证据漂移 → FrozenOperation 构造即阻断（OPERATION_ENV_CHANGED）。"""
         _, locked, _op = _frozen_op_for("EPSG:4326", "EPSG:32650")
@@ -350,6 +369,23 @@ class TestGeometryKernel:
         assert abs(gcxy[0] - want[0]) < 0.01
         # 属性与顺序保持
         assert [o["properties"]["i"] for o in outs] == [1, 2, 3, 4, 5, 6]
+
+    def test_coordinates_and_geometries_share_leaf_cursor(self):
+        """P3：coordinates 与 geometries 并存时共用游标，同一批变换值不重复套用。"""
+        op = self._op()
+        feat = {"type": "Feature", "properties": {}, "geometry": {
+            "type": "GeometryCollection",
+            "coordinates": [[116.0, 40.0]],
+            "geometries": [{"type": "Point", "coordinates": [116.5, 40.5]}]}}
+        out = execute.transform_feature(
+            feat, op, execute.BatchStats(), row_index=1)
+        geom = out["geometry"]
+        want_c = _utm50n_analytic(116.0, 40.0)
+        want_g = _utm50n_analytic(116.5, 40.5)
+        assert abs(geom["coordinates"][0][0] - want_c[0]) < 0.01
+        pt = geom["geometries"][0]["coordinates"]
+        assert abs(pt[0] - want_g[0]) < 0.01
+        assert abs(pt[1] - want_g[1]) < 0.01
 
     def test_c18_null_and_empty_geometry_counted_separately(self):
         op = self._op()

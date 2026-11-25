@@ -199,6 +199,17 @@ def test_revalidation_refreshes_in_place(db):
     assert len(s.get_active_memories(db, "org-a", SCOPE_SESSION, "sess-1")) == 1
 
 
+def test_sensitive_upgrade_sticks_on_non_correction_revalidation(db):
+    """同 fingerprint 再验证：非纠正来源带 sensitive=True 也必须收紧标记。"""
+    s.record_memory(db, _place_req())
+    db.commit()
+    upgraded = s.record_memory(db, _place_req(sensitive=True, confidence=0.9))
+    db.commit()
+    assert upgraded is not None and upgraded.sensitive is True
+    # 默认检索/投影面不再返回该行
+    assert s.get_active_memories(db, "org-a", SCOPE_SESSION, "sess-1") == []
+
+
 def test_contradiction_supersedes_with_chain(db):
     old = s.record_memory(db, _place_req(
         value={"name": "成都市", "level": "city"},
@@ -308,6 +319,34 @@ def test_scope_budget_eviction(db):
         db, "org-a", SCOPE_SESSION, "sess-1", limit=200
     )
     assert len(rows) <= s.SCOPE_BUDGET[SCOPE_SESSION]
+
+
+def test_scope_budget_keeps_supersede_chain_audit(db):
+    """预算淘汰不得物理删除仍被 active 行 supersedes_id 引用的审计链节点。"""
+    old = s.record_memory(db, _place_req(
+        subject="chain-place",
+        value={"name": "chain-place", "level": "city"},
+        confidence=0.8,
+    ))
+    db.commit()
+    new = s.record_memory(db, _place_req(
+        subject="chain-place",
+        value={"name": "chain-place", "level": "district"},
+        confidence=0.99,
+        evidence=MemoryEvidence(source=SOURCE_USER_CORRECTION),
+    ))
+    db.commit()
+    assert new is not None and new.supersedes_id == old.id
+    # 用低置信 active 行填满预算，迫使每次写入都触发淘汰
+    for i in range(s.SCOPE_BUDGET[SCOPE_SESSION] + 5):
+        s.record_memory(db, _place_req(subject=f"filler-{i}", confidence=0.6))
+    db.commit()
+    audit_ids = {
+        row.id for row in s.list_memories(db, org_id="org-a", limit=500)
+    }
+    assert old.id in audit_ids
+    assert new.id in audit_ids
+    assert new.supersedes_id in audit_ids  # 链指针仍可解析（不断链）
 
 
 def test_retire_is_org_gated(db):

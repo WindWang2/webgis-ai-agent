@@ -827,3 +827,105 @@ async def test_p2_import_gcps_merge_overflow_fails_instead_of_dropping(isolated_
     assert unchanged is not None
     assert unchanged.revision == plan.revision
     assert len(unchanged.gcps) == MAX_GCPS_PER_PLAN
+
+
+@pytest.mark.asyncio
+async def test_p3_import_gcps_over_limit_is_rejected_not_truncated(isolated_env):
+    """Imports above MAX_GCPS_PER_PLAN must fail loudly instead of dropping rows."""
+    sid = isolated_env
+    _, plan = await _seed_valid_plan(sid)
+    overflow = MAX_GCPS_PER_PLAN + 1
+
+    json_rows = [
+        {"gcp_id": f"j{i}", "px": 0.0, "py": 0.0, "map_x": 13370000.0, "map_y": 3530000.0}
+        for i in range(overflow)
+    ]
+    with pytest.raises(GeorefDomainError) as json_exc:
+        import_gcps(
+            session_id=sid,
+            plan_id=plan.plan_id,
+            expected_revision=plan.revision,
+            fmt="json",
+            content=json.dumps({"gcps": json_rows}),
+        )
+    assert json_exc.value.code == GeorefErrorCode.INVALID_GCP_COORDS
+    assert json_exc.value.status_code == 422
+
+    csv_lines = ["px,py,map_x,map_y"]
+    csv_lines += [f"0,0,{13370000.0 + i},3530000.0" for i in range(overflow)]
+    with pytest.raises(GeorefDomainError) as csv_exc:
+        import_gcps(
+            session_id=sid,
+            plan_id=plan.plan_id,
+            expected_revision=plan.revision,
+            fmt="csv",
+            content="\n".join(csv_lines),
+        )
+    assert csv_exc.value.code == GeorefErrorCode.INVALID_GCP_COORDS
+
+    unchanged = get_plan(sid, plan.plan_id)
+    assert unchanged is not None
+    assert unchanged.revision == plan.revision
+    assert len(unchanged.gcps) == len(plan.gcps)
+
+
+@pytest.mark.asyncio
+async def test_p3_active_job_check_fails_closed_on_job_store_error(isolated_env, monkeypatch):
+    """If the active-job state cannot be verified, a second warp must be refused."""
+    sid = isolated_env
+    _, plan = await _seed_valid_plan(sid)
+    mutate_plan_cas(
+        sid,
+        plan.plan_id,
+        expected_revision=None,
+        mutator=lambda cur: cur.model_copy(update={"active_job_id": "999999"}),
+    )
+    fresh = get_plan(sid, plan.plan_id)
+    assert fresh is not None and fresh.active_job_id == "999999"
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("job store unavailable")
+
+    monkeypatch.setattr(DurableJobStore, "get_sync", staticmethod(_boom))
+    with pytest.raises(GeorefDomainError) as exc_info:
+        await execute_plan(
+            session_id=sid,
+            plan_id=plan.plan_id,
+            expected_revision=fresh.revision,
+            background=False,
+        )
+    assert exc_info.value.code == GeorefErrorCode.CAS_CONFLICT
+
+    current = get_plan(sid, plan.plan_id)
+    assert current is not None
+    assert current.latest_artifact is None
+
+
+@pytest.mark.asyncio
+async def test_p3_warp_failure_removes_partial_output(isolated_env, monkeypatch):
+    """Non-domain warp failures must not leave an unregistered partial .tif behind."""
+    sid = isolated_env
+    _, plan = await _seed_valid_plan(sid)
+
+    def _write_partial_then_fail(**kwargs):
+        out_path = kwargs["out_path"]
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(b"PARTIAL_TIF")
+        raise OSError("simulated GDAL write failure")
+
+    monkeypatch.setattr(georef_jobs, "run_direct_affine_warp", _write_partial_then_fail)
+    with pytest.raises(GeorefDomainError) as exc_info:
+        await execute_plan(
+            session_id=sid,
+            plan_id=plan.plan_id,
+            expected_revision=plan.revision,
+            background=False,
+        )
+    assert exc_info.value.code == GeorefErrorCode.JOB_FAILED
+
+    art_dir = georef_session_dir(sid) / "artifacts"
+    assert not list(art_dir.glob("*.tif"))
+    fresh = get_plan(sid, plan.plan_id)
+    assert fresh is not None
+    assert fresh.latest_artifact is None
+    assert fresh.active_job_id is None

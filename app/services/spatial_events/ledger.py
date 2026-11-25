@@ -492,23 +492,33 @@ class SpatialEventLedger:
 
     def advance_cursor(self, name: str, last_event_id: int) -> bool:
         """只前进。倒退/回绕拒收（重启恢复的红线）。"""
+        value = int(last_event_id)
         with self._factory() as db:
             row = db.get(SpatialEventCursorRow, name)
             if row is None:
                 db.add(
                     SpatialEventCursorRow(
                         name=name,
-                        last_event_id=int(last_event_id),
+                        last_event_id=value,
                         updated_at=_utcnow_naive(),
                     )
                 )
                 db.commit()
                 return True
-            if int(last_event_id) < int(row.last_event_id):
+            # 比较与写入交给数据库原子完成（条件 UPDATE）：先读后写的无条件
+            # 下写会被并发 drainer 的较小水位覆盖（违反只前进红线）。
+            res = db.execute(
+                update(SpatialEventCursorRow)
+                .where(
+                    SpatialEventCursorRow.name == name,
+                    SpatialEventCursorRow.last_event_id <= value,
+                )
+                .values(last_event_id=value, updated_at=_utcnow_naive())
+                .execution_options(synchronize_session=False)
+            )
+            if not res.rowcount:
                 db.rollback()
                 return False
-            row.last_event_id = int(last_event_id)
-            row.updated_at = _utcnow_naive()
             db.commit()
             return True
 

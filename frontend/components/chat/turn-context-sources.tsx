@@ -44,6 +44,7 @@ export function TurnContextSources({
   const projectId = useHudStore((s) => s.activeProjectId);
   const [open, setOpen] = useState(false);
   const [sources, setSources] = useState<OptionalSourceView[]>([]);
+  const [sourcesError, setSourcesError] = useState(false);
   const [view, setView] = useState<SessionSourcePolicyView | null>(null);
   const [preferred, setPreferred] = useState<Set<string>>(new Set());
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
@@ -69,11 +70,14 @@ export function TurnContextSources({
       try {
         const s = await fetchOptionalSources(sessionId, projectId, ownerToken);
         setSources(s.sources ?? []);
+        setSourcesError(false);
       } catch {
         setSources([]);
+        setSourcesError(true);
       }
     } else {
       setSources([]);
+      setSourcesError(false);
     }
   }, [sessionId, projectId, ownerToken]);
 
@@ -193,7 +197,12 @@ export function TurnContextSources({
         <div className="mt-1.5 space-y-1.5 text-[11.5px]" data-testid="turn-context-sources-body">
           <p className="text-ink-muted">{t('chat.sources.scopeNote')}</p>
           {!projectId && <p className="text-ink-muted">{t('chat.sources.noProject')}</p>}
-          {projectId && sources.length === 0 && (
+          {projectId && sourcesError && (
+            <p className="text-status-warning" data-testid="turn-sources-error">
+              {t('chat.turnFailedDefault')}
+            </p>
+          )}
+          {projectId && !sourcesError && sources.length === 0 && (
             <p className="text-ink-muted">{t('chat.sources.empty')}</p>
           )}
           {sources.length > 0 && (

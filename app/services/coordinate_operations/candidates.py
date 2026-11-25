@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import warnings
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -78,7 +79,7 @@ def environment_fingerprint() -> Dict[str, Any]:
 
     network = bool(pyproj.network.is_network_enabled())
     grid_names: List[str] = []
-    for base in pyproj.datadir.get_data_dir().split(":"):
+    for base in pyproj.datadir.get_data_dir().split(os.pathsep):
         gdir = None
         try:
             gdir = __import__("pathlib").Path(base) / "grids"

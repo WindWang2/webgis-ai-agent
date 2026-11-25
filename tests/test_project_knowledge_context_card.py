@@ -117,6 +117,41 @@ def test_non_active_entries_are_not_rendered():
     assert "活的产物" in card.text
 
 
+def test_non_active_entries_counted_as_omitted_review_p3():
+    """非 active 条目被过滤时不得无痕消失：计入 omitted/omitted_ids。"""
+    entries = [
+        _entry(subject="活的产物", status="active"),
+        _entry(authority_id="art-stale", subject="stale 产物", status="stale"),
+        _entry(authority_id="art-gone", subject="失效产物", status="invalidated"),
+    ]
+    card = render_project_knowledge_card(entries, project_id="proj_1")
+    assert card.items == 1
+    assert card.omitted == 2
+    assert set(card.omitted_ids) == {"pkx_art-stale", "pkx_art-gone"}
+    assert card.truncated is True
+
+
+def test_render_failure_counted_as_omitted_review_p3(monkeypatch):
+    """单行渲染异常只跳过该行，但必须计入省略回执（不得无痕丢弃）。"""
+    import app.services.project_knowledge.card as card_mod
+
+    def _boom_for_bad(entry):
+        if entry.authority_id == "art-bad":
+            raise RuntimeError("boom")
+        return f"- {entry.subject}"
+
+    monkeypatch.setattr(card_mod, "_render_entry_line", _boom_for_bad)
+    entries = [
+        _entry(authority_id="art-ok", subject="正常产物"),
+        _entry(authority_id="art-bad", subject="坏行产物"),
+    ]
+    card = render_project_knowledge_card(entries, project_id="proj_1")
+    assert card.items == 1
+    assert card.omitted == 1
+    assert card.omitted_ids == ("pkx_art-bad",)
+    assert card.truncated is True
+
+
 def test_card_groups_by_kind_and_points_to_authority():
     entries = [
         _entry(kind=EK_DATASET_VERSION, subject="dem_30m",

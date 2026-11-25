@@ -313,6 +313,53 @@ def test_bus_local_fanout_and_unsubscribe():
     assert [e["data"]["revision"] for e in got2] == [1, 3]  # 仍订阅 s1：3 照收
 
 
+def test_bus_publish_ambiguous_failure_does_not_double_send():
+    """P3 回归：PUBLISH 已到服务端但读回执失败 → 同进程 listener 只收一份。
+
+    模拟「服务端已 fan-out（psubscribe 回灌本进程），客户端随即连接重置」：
+    修复前 publish 的异常分支再 _dispatch_local 一次 → 双发（op journal 双计）。
+    """
+    import asyncio
+
+    bus = CollabBus()
+    got: list = []
+
+    class _AmbiguousClient:
+        async def publish(self, channel, payload):
+            bus._apply_raw(payload)  # 服务端 fan-out 已回灌本进程 listener
+            raise ConnectionResetError("reset before reply")
+
+    bus._redis_client = lambda: _AmbiguousClient()
+
+    async def _scenario():
+        await bus.add_local_listener("s-amb", got.append)
+        return await bus.publish("s-amb", "op", {"revision": 9}, seq=9)
+
+    published = asyncio.run(_scenario())
+    assert [e["data"]["revision"] for e in got] == [9]  # 恰一份，无双计
+    assert published is False  # 未确认送达任一路径
+
+
+@pytest.mark.asyncio
+async def test_bus_stop_cancels_pending_async_listener_tasks():
+    """P3 回归：stop() 回收防御性兜底路径（listener 返回协程）留下的在飞 task。"""
+    import asyncio
+
+    bus = CollabBus()
+    started = asyncio.Event()
+
+    async def _slow(_envelope):
+        started.set()
+        await asyncio.sleep(3600)
+
+    await bus.add_local_listener("s-stop", _slow)
+    await bus.publish("s-stop", "op", {"revision": 1}, seq=1)
+    await asyncio.wait_for(started.wait(), timeout=1)
+    task = next(iter(bus._callback_tasks))
+    await bus.stop()
+    assert task.done() and task.cancelled()
+
+
 # ─── 引擎：delta intent / base CAS / lock 守卫 / _rev 盖章 ──────────────────
 
 def _valid_doc():

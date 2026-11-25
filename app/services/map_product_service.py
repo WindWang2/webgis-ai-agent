@@ -190,6 +190,10 @@ class MapProductService:
         input_fps = dict(input_dataset_fingerprints or {})
         if not input_fps and run:
             input_fps = dict(run.input_dataset_fingerprints or {})
+        # Bounded like the stored column — the diff must compare the same
+        # (truncated) projection the row persists, otherwise >128 fingerprints
+        # report output_changed for identical artifact sets.
+        stored_fingerprints = sorted(f for f in fingerprints if f)[:128]
 
         previous = db.execute(
             select(MapProductVersion)
@@ -207,7 +211,7 @@ class MapProductService:
             "input_dataset_fingerprints": input_fps,
             "run_manifest": manifest,
             "mapspec_fingerprint": mapspec_fingerprint,
-            "artifact_fingerprints": fingerprints,
+            "artifact_fingerprints": stored_fingerprints,
         })
 
         # review M-C3：并发写者（lifecycle 路由线程池 + 引擎 auto-record
@@ -222,12 +226,24 @@ class MapProductService:
                     .where(MapProductVersion.project_id == project_id)
                     .order_by(MapProductVersion.version_no.desc())
                 ).scalars().first()
+                if lineage_kind == "auto" and workflow_run_id:
+                    # 并发 auto-record 的落败方重试时不得再落 (run, fingerprint)
+                    # 重复证据行 —— 竞态对手已落行则按幂等契约复用。
+                    won = db.execute(
+                        select(MapProductVersion).where(
+                            MapProductVersion.project_id == project_id,
+                            MapProductVersion.workflow_run_id == workflow_run_id,
+                            MapProductVersion.product_fingerprint == product_fingerprint,
+                        )
+                    ).scalars().first()
+                    if won is not None:
+                        return won
             # A conflicting writer changed the comparison baseline too.
             diff_summary = MapProductService.diff_versions(previous, {
                 "input_dataset_fingerprints": input_fps,
                 "run_manifest": manifest,
                 "mapspec_fingerprint": mapspec_fingerprint,
-                "artifact_fingerprints": fingerprints,
+                "artifact_fingerprints": stored_fingerprints,
             })
             version_no = (previous.version_no if previous else 0) + 1
             row = MapProductVersion(
@@ -236,7 +252,7 @@ class MapProductService:
             product_fingerprint=product_fingerprint,
             input_dataset_fingerprints=input_fps,
             compute_plan=_project_steps(manifest, include_args=True),
-            output_fingerprints=sorted(f for f in fingerprints if f)[:128],
+            output_fingerprints=stored_fingerprints,
             workflow_id=str(run.workflow_id) if run else None,
             workflow_run_id=workflow_run_id,
             mapspec_fingerprint=mapspec_fingerprint,
@@ -260,8 +276,8 @@ class MapProductService:
                     diff_summary=diff_summary,
                 )
                 return row
-            except IntegrityError:
-                last_err = None
+            except IntegrityError as exc:
+                last_err = exc
                 continue
         # 重试耗尽：并发同号插入仍冲突 —— 按幂等语义重查（同 run+指纹的
         # auto-record 竞态对手可能已落行）。
@@ -610,10 +626,10 @@ class MapProductService:
         analysis_changed = bool(diff.get("analysis_recomputation_expected"))
         other_changed = bool(diff.get("output_changed"))
 
+        # diff_versions_pairwise already raised ValueError for a missing
+        # version, so both rows are present here.
         a = MapProductService.get_version(db, project_id, from_version_no)
         b = MapProductService.get_version(db, project_id, to_version_no)
-        if a is None or b is None:
-            raise ValueError("map product version not found")
 
         style_side, analysis_side = None, None
         if style_changed and not analysis_changed:

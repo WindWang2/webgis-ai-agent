@@ -418,6 +418,24 @@ class TestAdapters:
         assert ok is False
         assert ledger.count_events(org_id=None) == 0
 
+    async def test_job_finished_flag_off_skips_org_resolve(self, event_env, monkeypatch):
+        """flag 关闭时 E3 不得先付 org 解析（会话/DB 查询）开销。"""
+        monkeypatch.setenv("GIS_SPATIAL_EVENT_RUNTIME", "0")
+        calls = []
+
+        async def resolver(session_id):
+            calls.append(session_id)
+            return "org-a"
+
+        adapters.set_org_resolver(resolver)
+        try:
+            ok = await adapters.notify_job_finished(
+                "j-off", session_id="s1", status="completed")
+        finally:
+            adapters.set_org_resolver(None)
+        assert ok is False
+        assert calls == []
+
 
 class TestSyncDispatchPaths:
     """P1 修复红测：sync hook（jobs worker / record_version 线程池上下文）
@@ -465,6 +483,44 @@ class TestSyncDispatchPaths:
         assert adapters.notify_job_finished_sync(
             "j", org_id="org-a", status="completed") is False
         assert ledger.count_events(org_id=None) == 0
+
+
+class TestAlreadyEvaluatedReplay:
+    """重投「冷却抑制」事件不得被误判为已触发（绕过 cooldown）。"""
+
+    async def test_cooldown_suppressed_event_replay_not_fired(
+        self, ledger, mission_runtime, event_env, wired
+    ):
+        ledger.upsert_watch(C.SpatialWatch(
+            watch_id="w-replay", org_id="org-a", name="n",
+            kinds=["dataset.version_changed"],
+            condition=C.WatchCondition(
+                metric_name="metric.ndvi", metric_op="lt", metric_value=0.2),
+            actions=["notify_only"],
+            cooldown_s=60,
+        ))
+        service = _service(ledger, mission_runtime)
+        watch = ledger.get_watch("w-replay", org_id="org-a")
+        row = {"org_id": "org-a"}
+        t = datetime(2026, 9, 16, 12, 0, 0, tzinfo=timezone.utc)
+        r1 = await service._evaluate_and_commit_watch_state(
+            watch, "w-replay", row,
+            _evt(event_id="e-fire", occurred_at=t,
+                 payload={"metric": {"ndvi": 0.1}}))
+        assert r1.fired
+        # 同 occurred_at 的第二事件：冷却抑制（仅簿记 last_event_id 推进）
+        r2 = await service._evaluate_and_commit_watch_state(
+            watch, "w-replay", row,
+            _evt(event_id="e-cooled", occurred_at=t,
+                 payload={"metric": {"ndvi": 0.1}}))
+        assert not r2.fired and r2.reason == "cooldown"
+        # 重投被抑制事件：last_event_id 相同，但它从未触发
+        r3 = await service._evaluate_and_commit_watch_state(
+            watch, "w-replay", row,
+            _evt(event_id="e-cooled", occurred_at=t,
+                 payload={"metric": {"ndvi": 0.1}}))
+        assert not r3.fired
+        assert r3.reason == "event_already_evaluated"
 
 
 class TestDeferredRetryWithCooldown:

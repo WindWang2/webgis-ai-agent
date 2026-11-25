@@ -236,11 +236,14 @@ def test_gc_full_loop_approve_execute_rollback_purge(roots, monkeypatch):
         assert r["restored_count"] == 1
         assert (roots["cog"] / "s" / "old.tif").exists()
 
-        # 观察期（staging_hours=0）已过 → purge 允许且 no-op（目录已空）
-        p = rollback_plan  # noqa: F841 — 语义占位
+        # 观察期（staging_hours=0）已过 → 回滚后的计划可 purge（终态清理，
+        # 否则 .recovery.json 永远无法回收）
         from app.services.data_lifecycle.gc_plan import purge_staging
-        with pytest.raises(GcPlanError):
-            purge_staging(plan)
+        recovery = roots["data"] / ".gc-staging" / plan.id / ".recovery.json"
+        assert recovery.is_file()
+        purged = purge_staging(plan, db=db)
+        assert purged["purged"] is True and purged["had_staging"] is True
+        assert not recovery.exists()
 
 
 def test_gc_state_machine_full_matrix(roots, monkeypatch):
@@ -300,3 +303,34 @@ def test_plan_tree_bounded(roots, monkeypatch):
         if plan2.id != plan.id:
             assert plan2.plan_tree["truncated"] is True
             assert len(plan2.plan_tree["objects"]) == 3
+
+
+def _enable_worker_cache_stage_delete(staging_hours=0):
+    with SessionLocal() as db:
+        ensure_defaults(db)
+        p = db.query(LifecyclePolicy).filter_by(kind="worker_cache").one()
+        p.action = "stage_delete"
+        p.enabled = True
+        p.staging_hours = staging_hours
+        p.tier_thresholds = {"warm_after_s": 3600, "cold_after_s": 7200}
+        db.commit()
+
+
+def test_worker_cache_row_gone_before_execute_reports_already_gone(
+        roots, monkeypatch):
+    """计划的 worker_cache 行在执行时已消失（并发 prune/miss/键截断）：不得
+    谎报 registry_row_deleted —— 未删除必须如实记 already_gone。"""
+    monkeypatch.setattr("app.services.data_lifecycle.gc_plan.STAGING_DIR",
+                        roots["data"] / ".gc-staging")
+    _enable_worker_cache_stage_delete()
+    _seed_worker_cache(worker="w-gone", key="k-gone", hit_days_ago=30)
+    with SessionLocal() as db:
+        plan = create_gc_plan(db, kinds=["worker_cache"])
+        assert plan.candidate_count == 1
+        transition(plan, "approve", actor="admin")
+        db.query(GeoComputeWorkerCache).filter_by(
+            worker_id="w-gone", cache_key="k-gone").delete()
+        db.commit()
+        result = execute_plan(db, plan)
+        assert plan.status == "done"
+    assert [item["mode"] for item in result["staged"]] == ["already_gone"]

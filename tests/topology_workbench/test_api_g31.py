@@ -687,6 +687,105 @@ def test_p2_exceptions_actor_none_sees_nothing(client: TestClient):
         ruleset_id=ruleset_id, actor_user_id="twb-owner")) == 1
 
 
+def _exception_fixture(client: TestClient, tag: str) -> tuple:
+    """单规则集 + 带洞覆盖运行 → (ruleset_id, run_id, finding)。"""
+    aoi_ref = _store(f"{tag}aoi", aoi_source())
+    parcels_ref = _store(f"{tag}ph", parcels_with_hole())
+    ruleset_id = _create_ruleset(client, f"{tag}-ruleset", [
+        {"rule_id": "cov", "rule_type": "area_coverage", "severity": "error",
+         "params": {"gap_area_threshold_m2": 5.0}}])
+    bindings = {
+        "coverage": {"kind": "session_ref", "ref": parcels_ref, "session_id": "twb-sess"},
+        "aoi": {"kind": "session_ref", "ref": aoi_ref, "session_id": "twb-sess"},
+    }
+    res = _submit(client, ruleset_id, bindings)
+    run = _wait_completed(client, res["run_id"])
+    finding = client.get(
+        f"{PREFIX}/runs/{run['id']}/findings", headers=_auth()).json()["items"][0]
+    return ruleset_id, run["id"], finding
+
+
+def test_p3_revoke_requires_actor(client: TestClient):
+    """P3 回归：actor 为空不得绕过 revoke 的归属校验（无身份 ≠ 有权撤销）。"""
+    from app.services.topology_workbench.exceptions_svc import revoke_exception
+    from app.services.topology_workbench.service import WorkbenchError
+
+    _, run_id, finding = _exception_fixture(client, "p3revoke")
+    exc = client.post(f"{PREFIX}/findings/{finding['id']}/exception",
+                      headers=_auth(), json={"reason": "p3-revoke"}).json()["exception"]
+    with pytest.raises(WorkbenchError) as ei:
+        revoke_exception(exc["id"], actor_user_id=None)
+    assert ei.value.code == "not_owned"
+    with SessionLocal() as db:
+        assert db.get(TopologyException, exc["id"]).status == "active"
+
+
+def test_p3_revoke_only_reopens_same_ruleset(client: TestClient):
+    """P3 回归：撤销只回开本规则集下的同 key finding —— digest 相同的两个
+    规则集不得互相 reopen 对方已接受的例外。"""
+    rules = [{"rule_id": "cov", "rule_type": "area_coverage", "severity": "error",
+              "params": {"gap_area_threshold_m2": 5.0}}]
+    aoi_ref = _store("p3scopeaoi", aoi_source())
+    parcels_ref = _store("p3scopeph", parcels_with_hole())
+    rs_a = _create_ruleset(client, "p3-scope-a", rules)
+    rs_b = _create_ruleset(client, "p3-scope-b", rules)
+    bindings = {
+        "coverage": {"kind": "session_ref", "ref": parcels_ref, "session_id": "twb-sess"},
+        "aoi": {"kind": "session_ref", "ref": aoi_ref, "session_id": "twb-sess"},
+    }
+    run_a = _wait_completed(client, _submit(client, rs_a, bindings)["run_id"])
+    run_b = _wait_completed(client, _submit(client, rs_b, bindings)["run_id"])
+    assert run_a["ruleset_digest"] == run_b["ruleset_digest"]
+    find_a = client.get(
+        f"{PREFIX}/runs/{run_a['id']}/findings", headers=_auth()).json()["items"][0]
+    find_b = client.get(
+        f"{PREFIX}/runs/{run_b['id']}/findings", headers=_auth()).json()["items"][0]
+    assert find_a["finding_key"] == find_b["finding_key"]
+    exc_a = client.post(f"{PREFIX}/findings/{find_a['id']}/exception",
+                        headers=_auth(), json={"reason": "p3-scope-a"}).json()["exception"]
+    client.post(f"{PREFIX}/findings/{find_b['id']}/exception",
+                headers=_auth(), json={"reason": "p3-scope-b"})
+    r = client.delete(f"{PREFIX}/exceptions/{exc_a['id']}", headers=_auth())
+    assert r.status_code == 200
+    counts_a = client.get(
+        f"{PREFIX}/runs/{run_a['id']}/findings",
+        headers=_auth()).json()["status_counts"]
+    counts_b = client.get(
+        f"{PREFIX}/runs/{run_b['id']}/findings",
+        headers=_auth()).json()["status_counts"]
+    assert counts_a.get("open") == 1
+    assert counts_b.get("accepted_exception") == 1
+    assert counts_b.get("open", 0) == 0
+
+
+def test_p3_accept_after_stale_reuses_exception_row(client: TestClient):
+    """P3 回归：stale 例外再次接受时复用同一行，不累积重复例外记录。"""
+    ruleset_id, run_id, finding = _exception_fixture(client, "p3stale")
+    first = client.post(f"{PREFIX}/findings/{finding['id']}/exception",
+                        headers=_auth(), json={"reason": "p3-stale-first"}).json()["exception"]
+    # 模拟 runner 的 stale 判定结果（规则/源变化 → 例外 stale、finding 回 open）
+    with SessionLocal() as db:
+        exc_row = db.get(TopologyException, first["id"])
+        exc_row.status = "stale"
+        f_row = db.get(TopologyFinding, finding["id"])
+        f_row.status = "open"
+        f_row.exception_id = None
+        db.commit()
+    second = client.post(f"{PREFIX}/findings/{finding['id']}/exception",
+                         headers=_auth(), json={"reason": "p3-stale-second"}).json()["exception"]
+    assert second["id"] == first["id"]
+    with SessionLocal() as db:
+        rows = db.execute(select(TopologyException).where(
+            TopologyException.ruleset_id == ruleset_id,
+            TopologyException.finding_key == finding["finding_key"],
+        )).scalars().all()
+        assert len(rows) == 1
+        assert rows[0].status == "active"
+    counts = client.get(
+        f"{PREFIX}/runs/{run_id}/findings", headers=_auth()).json()["status_counts"]
+    assert counts.get("accepted_exception") == 1
+
+
 def test_p2_list_visibility_actor_none_returns_no_rows(client: TestClient):
     """P2-回归：list_runs/list_rulesets 无身份时不得返回全表行。"""
     from app.services.topology_workbench.service import list_rulesets, list_runs

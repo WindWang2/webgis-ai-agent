@@ -90,6 +90,31 @@ def test_relative_import_in_package_init(py_repo: Path):
     assert "app.pkg" in graph.reverse_app_closure({"app.pkg.leaf"})
 
 
+def test_import_coverage_is_single_pass_over_graph(py_repo: Path, monkeypatch):
+    """性能回归：覆盖率判定不得逐 changed app 文件重建反向邻接/全扫 tests。
+
+    原实现对每个 changed app 文件调用一次 reverse_app_closure 并遍历全部
+    graph.tests，复杂度随变更集平方退化；改为单次前向可达后，仅全局 seeds
+    那一次调用（判定语义不变）。
+    """
+    graph = build_graph(py_repo, use_cache=False)
+    calls: list[set[str]] = []
+    original = ImportGraph.reverse_app_closure
+
+    def counting(self, changed_modules):
+        calls.append(set(changed_modules))
+        return original(self, changed_modules)
+
+    monkeypatch.setattr(ImportGraph, "reverse_app_closure", counting)
+    r = select_tests(
+        ["app/pkg/leaf.py", "app/pkg/mid.py", "app/pkg/__init__.py"],
+        repo_root=py_repo, graph=graph)
+    assert len(calls) == 1, (
+        f"覆盖率判定重建反向邻接 {len(calls)} 次（应为单次全局闭包）")
+    assert "tests/unit/test_mid.py" in r.targets, "判定语义不得改变"
+    assert r.complete
+
+
 def test_uncovered_when_no_tests_dir(py_repo: Path):
     """负例：合成仓库删掉 tests → import 命中仍在但映射兜底不存在；
     leaf 仍被 test 覆盖 → 不算 uncovered；孤立 app 文件算。"""

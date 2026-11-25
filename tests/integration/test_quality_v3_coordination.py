@@ -337,6 +337,23 @@ def test_adr_reference_extraction_excludes_self():
     assert info.number not in info.references
 
 
+def test_load_dangling_baseline_corrupt_or_missing_key_fails_loud(tmp_path):
+    """棘轮账本损坏（非法 JSON / 缺 dangling 键）→ 可读 ValueError。
+
+    不得以裸 KeyError/JSONDecodeError 崩溃，也不得静默降级为空基线
+    （空基线会把存量悬空全部误报为新增）。
+    """
+    baseline = tmp_path / "docs/integration/adr-link-baseline.json"
+    baseline.parent.mkdir(parents=True)
+    baseline.write_text("{not json", encoding="utf-8")
+    with pytest.raises(ValueError, match="不是合法 JSON"):
+        adr_mod.load_dangling_baseline(tmp_path)
+
+    baseline.write_text('{"other": []}', encoding="utf-8")
+    with pytest.raises(ValueError, match="dangling"):
+        adr_mod.load_dangling_baseline(tmp_path)
+
+
 # ── allocate CLI（--dry-run，无副作用） ─────────────────────────────────
 
 def test_allocate_migration_cli_dry_run(capsys):

@@ -265,6 +265,26 @@ class TestMCLPExactMILP:
         assert heur >= (1.0 - 1.0 / math.e) * exact - 1e-9
 
 
+class TestMCLPGreedyNoZeroGainPadding:
+    """Regression: greedy-add used best_gain = -1.0, so a 0-gain facility was
+    still "better" and padded the subset to p — selected_facilities_count was
+    inflated even when every demand was already covered."""
+
+    def test_fully_covered_instance_stops_before_p(self):
+        C = [[1.0, 50.0], [1.0, 50.0]]
+        subset = NetworkLocationAllocationService()._solve_max_coverage_heuristic(
+            C, [1.0, 1.0], 2, cutoff=10.0
+        )
+        assert subset == (0,)
+
+    def test_no_coverable_pair_selects_no_facility(self):
+        C = [[float("inf"), float("inf")], [float("inf"), float("inf")]]
+        subset = NetworkLocationAllocationService()._solve_max_coverage_heuristic(
+            C, [1.0, 1.0], 2, cutoff=10.0
+        )
+        assert subset == ()
+
+
 # ── 2. determinism ───────────────────────────────────────────────────
 
 class TestMCLPDeterminism:

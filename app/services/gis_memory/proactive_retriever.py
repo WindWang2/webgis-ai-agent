@@ -10,8 +10,9 @@
 - 输出面向模型的 :class:`MemoryContextCard`（有界摘要 + resolved_place +
   可读理由），渲染为 ``[GIS_MEMORY_PROACTIVE]`` 先验块（_xml_fence 转义、
   字符预算、sensitive 永不进入）；
-- 热路径零 SQL：检索走 :class:`~app.services.gis_memory.associative_index.
-  AssociativeIndex` 进程内热索引，staleness 窗口到期才回源同步；
+- 热路径近零 SQL：检索走 :class:`~app.services.gis_memory.associative_index.
+  AssociativeIndex` 进程内热索引；命中候选每次至多一次权威校验 SQL
+  （撤销/过期 fail-closed），staleness 窗口到期才全量回源同步；
 - fail-closed 租户纪律：无 org 拒绝检索；索引按 org 物理分区。
 """
 from __future__ import annotations

@@ -499,3 +499,29 @@ class TestBudget:
             _run(service.describe_source(
                 SESSION, {"kind": "session_ref", "ref": src["ref"]}, ACTOR))
         assert ei.value.error_code == "budget_exceeded"
+
+
+class TestOutputDegradation:
+    """P3：成果读/DataObject 发布的诚实降级（不因局部缺失抛穿整个 run）。"""
+
+    def test_result_page_crs_properties_null(self, co_env):
+        """fc.crs.properties 为 null → 分页 crs 返回 None，不 AttributeError。"""
+        run_id = "run-crs-null-props"
+        d = outputs.final_dir(run_id)
+        d.mkdir(parents=True)
+        (d / "output.geojson").write_text(json.dumps({
+            "type": "FeatureCollection",
+            "features": [{"type": "Feature", "properties": {},
+                          "geometry": {"type": "Point",
+                                       "coordinates": [1.0, 2.0]}}],
+            "crs": {"type": "name", "properties": None},
+        }, ensure_ascii=False), encoding="utf-8")
+        page = outputs.result_page(run_id, 0, 10)
+        assert page["crs"] is None
+        assert page["total_rows"] == 1
+
+    def test_publish_data_object_missing_final_dir_degrades(self, co_env):
+        """终态目录缺失时 DataObject 发布诚实降级 failed，不抛出。"""
+        result = outputs.publish_data_object_for_run(
+            "run-no-such-dir", owner_scope={"session_id": SESSION})
+        assert result["state"] == "failed"

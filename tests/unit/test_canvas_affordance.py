@@ -146,6 +146,21 @@ async def test_ingest_accepts_envelope_writes_ring():
 
 
 @pytest.mark.asyncio
+async def test_ingest_non_string_meta_key_never_raises():
+    """摄入是 fail-open 面：meta 非字符串键不得让 TypeError 逃出调用方。"""
+    session_id = _sid()
+    store = FakeSituationStore()
+    action = _box_action("a-bad-meta")
+    action["meta"] = {1: "x", "kind": "y"}
+    ack = await ingest_canvas_actions(
+        session_id, _envelope([action]), store=store
+    )
+    assert isinstance(ack, CanvasAffordanceAck)
+    assert not ack.accepted
+    assert ack.reason == "empty_or_invalid_envelope"
+
+
+@pytest.mark.asyncio
 async def test_ingest_dedupes_cross_channel_double_report():
     """同一 action 双通道双报（即时端点 + turn 捎带）→ 不双计。"""
     session_id = _sid()

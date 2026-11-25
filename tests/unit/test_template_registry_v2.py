@@ -208,6 +208,23 @@ def test_intent_resolver_returns_none_for_empty_or_garbage():
     assert resolve_template_by_intent("__zzz__") is None
 
 
+def test_intent_resolver_ignores_empty_keyword(monkeypatch):
+    """空串/None keyword 不得匹配任意 query（否则该条目通吃所有输入）。"""
+    r = TemplateRegistry()
+    r.load_builtins()
+    r.add_user_template({
+        "id": "tmpl_unit_empty_kw",
+        "name": "Unit Empty Keyword",
+        "kind": "thematic",
+        "keywords": ["", None],
+        "description": "unit probe",
+    })
+    monkeypatch.setattr(
+        "app.services.templates.intent_resolver.get_template_registry",
+        lambda: r)
+    assert resolve_template_by_intent("__zzz__") is None
+
+
 def test_get_template_or_composite_o1():
     t = get_template_or_composite("tmpl_th_pop_choro")
     assert t is not None

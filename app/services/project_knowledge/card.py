@@ -9,6 +9,7 @@ ref 指针 —— 无 payload、无 CoT；不可信字符串一律 ``_xml_fence`
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 from sqlalchemy.orm import Session
@@ -68,7 +69,7 @@ class ProjectKnowledgeCard:
     char_budget: int
     included_ids: Tuple[str, ...] = ()
     policy_excluded_ids: Tuple[str, ...] = ()
-    #: 活跃但因卡片条数/预算上限未入卡的条目（诚实省略面）。
+    #: 未入卡条目：非 active 被过滤，或活跃但超条数/预算上限（诚实省略面）。
     omitted_ids: Tuple[str, ...] = ()
     #: 渲染时刻的权威版本快照（entry_id → version_token；仅真实存在的版本）。
     live_versions: Tuple[Tuple[str, str], ...] = ()
@@ -142,11 +143,13 @@ def render_project_knowledge_card(
     ellipsis = "- …（更多条目已按预算省略）\n"
     footer = "</project_knowledge>\n"
 
+    inactive = [e for e in entries if e.status != ST_ACTIVE]
     warnings = [e for e in entries if e.entity_kind == EK_FAILURE_PATTERN and e.status == ST_ACTIVE]
     normal = [
         e for e in entries
         if e.entity_kind != EK_FAILURE_PATTERN and e.status == ST_ACTIVE
     ]
+    kind_counts = Counter(e.entity_kind for e in normal)
     normal.sort(key=lambda e: (
         _KIND_ORDER.index(e.entity_kind)
         if e.entity_kind in _KIND_ORDER else len(_KIND_ORDER),
@@ -156,10 +159,10 @@ def render_project_knowledge_card(
     body: List[str] = []
     used = len(header) + len(footer) + len(ellipsis)
     items = 0
-    omitted = 0
+    omitted = len(inactive)
     current_kind: Optional[str] = None
     included_ids: List[str] = []
-    omitted_ids: List[str] = []
+    omitted_ids: List[str] = [str(e.id) for e in inactive]
 
     def _try_line(line: str, entry_id: str = "") -> bool:
         nonlocal used, items, omitted
@@ -179,7 +182,7 @@ def render_project_knowledge_card(
         if entry.entity_kind != current_kind:
             current_kind = entry.entity_kind
             label = _KIND_LABELS.get(current_kind, current_kind)
-            count = sum(1 for e in normal if e.entity_kind == current_kind)
+            count = kind_counts[current_kind]
             section = f"[{label} ×{count}]\n"
             if used + len(section) <= char_budget and items < max_items:
                 body.append(section)
@@ -187,6 +190,8 @@ def render_project_knowledge_card(
         try:
             line = _render_entry_line(entry)
         except Exception:  # noqa: BLE001 — 单行失败不炸整块
+            omitted += 1
+            omitted_ids.append(str(entry.id))
             continue
         if not _try_line(line, str(entry.id)):
             # 不 break：变长行下后续条目未必超限，逐条如实计数（review P3-7）。

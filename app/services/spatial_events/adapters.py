@@ -218,6 +218,8 @@ async def notify_job_finished(
     result_ref: Optional[str] = None,
 ) -> bool:
     """``finish_job`` / 标记失败/取消终态后调用。kind 按终态映射。"""
+    if not flags.runtime_enabled():
+        return False
     org_id = org_id or await resolve_org(session_id)
     env = _job_envelope(
         job_id, org_id=org_id, session_id=session_id, project_id=project_id,

@@ -704,7 +704,8 @@ class MissionStore:
                 if str(exc) != "CAS_LOST":
                     raise
                 last_cas = exc
-        assert last_cas is not None
+        if last_cas is None:  # defensive: unreachable while the loop raises CAS_LOST
+            raise FencingError("CAS_LOST")
         raise last_cas
 
     def _settle_swarm_task_once(
@@ -793,7 +794,8 @@ class MissionStore:
                     raise FencingError("CAS_LOST")
                 db.commit()
             got = self.get_swarm_run(swarm_run_id)
-            assert got is not None
+            if got is None:
+                raise TransitionRejected("SWARM_RUN_NOT_FOUND")
             return got
         except (FencingError, TransitionRejected):
             raise

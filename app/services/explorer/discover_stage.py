@@ -48,7 +48,18 @@ async def run_discover_stage(
 
     assessed = await asyncio.gather(*(assess(source) for source in sources[:32]))
     scored: List[Dict[str, Any]] = [item for item in assessed if item is not None]
-    scored.sort(key=lambda x: x["score"]["overall"], reverse=True)
+
+    def _overall(item: Dict[str, Any]) -> float:
+        # Ranking must not escape the per-source isolation above: a score
+        # payload without a usable ``overall`` ranks last instead of raising
+        # KeyError/TypeError and killing the whole discover stage.
+        score = item.get("score")
+        value = score.get("overall") if isinstance(score, dict) else None
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+        return 0.0
+
+    scored.sort(key=_overall, reverse=True)
 
     if on_progress:
         on_progress(100)

@@ -2,6 +2,7 @@
 import json
 import logging
 import asyncio
+import uuid
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import AsyncGenerator, Optional, Any
@@ -288,7 +289,12 @@ class ExplorerOrchestrator:
         adapter: Optional[Any] = None,
     ) -> str:
         """启动探索任务，返回 task_id"""
-        task_id = f"exp_{session_id}_{asyncio.get_running_loop().time():.0f}"
+        # 秒级 loop.time() 在「同进程同秒 / 多 pod 相近 uptime」下会撞 id，
+        # 共写同一 explorer:{task_id} 命名空间导致数据串味 —— 追加随机后缀。
+        task_id = (
+            f"exp_{session_id}_{asyncio.get_running_loop().time():.0f}"
+            f"_{uuid.uuid4().hex[:8]}"
+        )
 
         if mode == "in_process":
             from app.services.explorer.pipeline import ExplorerPipeline

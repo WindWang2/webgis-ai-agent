@@ -590,7 +590,8 @@ const CHART_RENDERERS: Partial<Record<ChartData["type"], React.FC<RenderProps>>>
 
 /** 图表 kind 是否可渲染（chart_kinds 词表的 native 子集）。 */
 export function isChartTypeSupported(type: string): boolean {
-  return type in CHART_RENDERERS;
+  // 原型链键（toString/constructor…）不是图表类型：`in` 会命中原型。
+  return Object.prototype.hasOwnProperty.call(CHART_RENDERERS, type);
 }
 
 interface ChartCoreProps {
