@@ -27,7 +27,6 @@ from app.services.model_authoring.contracts import (
     F_CAPABILITY_NOT_NATIVE,
     F_CAPABILITY_UNKNOWN,
     F_CYCLE,
-    F_DATA_ROLE_BLOCKED,
     F_EMPTY_GRAPH,
     F_EDGE_PORT_UNKNOWN,
     F_INPUT_ARTIFACT_MISMATCH,
@@ -82,7 +81,11 @@ def _chain_doc(
     with_output: bool = True,
     node_params: Optional[ModelNodeParams] = None,
 ) -> ModelDocument:
-    """权威正例链：facility → buffer → admin_aggregation → cartography → output。"""
+    """权威正例链：facility → buffer → 聚合(表→汇点) + 特征流 → 图 → 汇点。
+
+    语义对齐运行时绑定门（P2-1）：表产物（admin_aggregate_table）只进
+    output 汇点；cartography 由特征流（buffer 产物）渲染。
+    """
     nodes = [
         ModelNode(node_id="facilities", kind="data_input", role="facility"),
         ModelNode(node_id="buffered", kind="transform", transform_op="buffer",
@@ -96,11 +99,14 @@ def _chain_doc(
                   to_node="buffered", to_port="in"),
         ModelEdge(from_node="buffered", from_port="out",
                   to_node="aggregate", to_port="in"),
-        ModelEdge(from_node="aggregate", from_port="out",
+        ModelEdge(from_node="buffered", from_port="out",
                   to_node="map", to_port="in"),
     ]
     if with_output:
+        nodes.append(ModelNode(node_id="stats_out", kind="output"))
         nodes.append(ModelNode(node_id="model_output", kind="output"))
+        edges.append(ModelEdge(from_node="aggregate", from_port="out",
+                               to_node="stats_out", to_port="in"))
         edges.append(ModelEdge(from_node="map", from_port="out",
                                to_node="model_output", to_port="in"))
     return _doc(
@@ -310,11 +316,11 @@ def test_table_role_without_analysis_consumer_is_warning() -> None:
         ModelEdge(from_node="aggregate", from_port="out",
                   to_node="model_output", to_port="in"),
     )
+    # （原 table-role-warning 断言已删：table 角色只接 output 汇点是
+    # descriptor 契约下唯一可运行接线 —— P2-1 修复，见
+    # test_table_feed_into_compute_port_rejected。）
     findings = validate_document(_doc(nodes, edges, outputs=("model_output",)))
-    f = _one(findings, F_DATA_ROLE_BLOCKED)
-    assert f.severity == SEVERITY_WARNING
-    assert f.node_id == "stats_in"
-    assert f.detail == "table role has no analysis consumer"
+    assert not any(f.code == "DATA_ROLE_BLOCKED" for f in findings)
 
 
 # ── capability 面 ────────────────────────────────────────────────────────

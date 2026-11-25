@@ -683,7 +683,10 @@ def _apply_patch(doc: Any, op_list: List[Any], ModelNode: Any, ModelEdge: Any,
                 raise _PatchError("TOO_MANY_PARAMS", "params exceed 16")
         elif op == "remove_param":
             name = str(raw.get("name") or "")
+            before = len(doc.params)
             doc.params = [p for p in doc.params if p.name != name]
+            if len(doc.params) == before:
+                raise _PatchError("PARAM_NOT_FOUND", name)
         elif op == "set_node_param":
             nid, key = str(raw.get("node_id") or ""), str(raw.get("key") or "")
             node = next((n for n in doc.nodes if n.node_id == nid), None)

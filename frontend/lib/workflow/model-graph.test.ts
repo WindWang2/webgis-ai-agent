@@ -58,35 +58,31 @@ describe('portsCompatible（contracts.ports_compatible 对齐）', () => {
     expect(portsCompatible('hotspot_result', 'hotspot_result')).toBe(true);
   });
 
-  it('目标宽类型（feature_collection）收一切', () => {
-    expect(portsCompatible('stats_table', 'feature_collection')).toBe(true);
-    expect(portsCompatible('raster_surface', 'feature_collection')).toBe(true);
-    expect(portsCompatible('map_image', 'feature_collection')).toBe(true);
+  // P2-1 对齐：以下规则是运行时绑定门（binding.verify_port）语义的忠实
+  // 镜像 —— 宽端口只收 feature_set 类源；宽喂窄/窄喂窄≠/未知类型必拒。
+  it('目标宽类型（feature_collection）只收 feature_set 类源（_ANY_FEATURE_CATEGORIES 同门）', () => {
+    expect(portsCompatible('feature_collection', 'feature_collection')).toBe(true);
+    expect(portsCompatible('poi_feature_set', 'feature_collection')).toBe(true);
+    expect(portsCompatible('admin_boundary_set', 'feature_collection')).toBe(true);
+    // zone/network/table/aggregate/raster 源在运行时必 ARTIFACT_TYPE_MISMATCH。
+    expect(portsCompatible('stats_table', 'feature_collection')).toBe(false);
+    expect(portsCompatible('raster_surface', 'feature_collection')).toBe(false);
+    expect(portsCompatible('proximity_zone', 'feature_collection')).toBe(false);
+    expect(portsCompatible('network_graph', 'feature_collection')).toBe(false);
+    // map_image 不在注册表 → 拒（运行时同样 ARTIFACT_TYPE_UNKNOWN）。
+    expect(portsCompatible('map_image', 'feature_collection')).toBe(false);
   });
 
-  it('源宽类型喂特征族（几何 point/line/polygon/network 或 category feature_set/zone/network）', () => {
-    expect(portsCompatible('feature_collection', 'point_feature_set')).toBe(true);
-    expect(portsCompatible('feature_collection', 'admin_boundary_set')).toBe(true);
-    expect(portsCompatible('feature_collection', 'proximity_zone')).toBe(true);
-    expect(portsCompatible('feature_collection', 'network_graph')).toBe(true);
-    // 几何 polygon 先于 category 裁决：aggregate 族 polygon 也收（后端同序）。
-    expect(portsCompatible('feature_collection', 'admin_aggregate_table')).toBe(true);
-  });
-
-  it('源宽类型不喂 table/raster；几何族 polygon 的 aggregate 仍收（几何先于 category）', () => {
+  it('宽喂窄（≠）运行时必拒；窄喂窄≠ 同拒；未知类型拒', () => {
+    expect(portsCompatible('feature_collection', 'point_feature_set')).toBe(false);
+    expect(portsCompatible('feature_collection', 'admin_boundary_set')).toBe(false);
     expect(portsCompatible('feature_collection', 'stats_table')).toBe(false);
-    expect(portsCompatible('feature_collection', 'chart_spec')).toBe(false);
-    expect(portsCompatible('feature_collection', 'raster_surface')).toBe(false);
-    // grid_aggregate 几何 polygon —— 后端 _FEATURE_GEOMETRIES 先裁，收。
-    expect(portsCompatible('feature_collection', 'grid_aggregate')).toBe(true);
-  });
-
-  it('非宽类型不同 category 拒绝；未注册类型仅同名放行', () => {
-    expect(portsCompatible('stats_table', 'chart_spec')).toBe(true); // 同 table 族
+    expect(portsCompatible('feature_collection', 'grid_aggregate')).toBe(false);
+    expect(portsCompatible('stats_table', 'chart_spec')).toBe(false);
     expect(portsCompatible('stats_table', 'hotspot_result')).toBe(false);
-    // map_image 不在注册表（cartography 输出）—— 同名直通、异名拒绝。
-    expect(portsCompatible('map_image', 'map_image')).toBe(true);
     expect(portsCompatible('map_image', 'scene_config')).toBe(false);
+    // 同名直通恒可（含未注册类型——运行时对相等类型先行直通）。
+    expect(portsCompatible('map_image', 'map_image')).toBe(true);
   });
 });
 
@@ -111,11 +107,11 @@ describe('端口推导（contracts.node_ports 对齐）', () => {
     expect(nodeInputPorts(sink)[0].name).toBe('in');
   });
 
-  it('analysis 输入 = 钉定类型或目录接受集首项；输出 = 目录产出首项；目录缺席回退宽类型', () => {
+  it('analysis 输入 = 钉定类型或宽特征缺省（P2-1 同构）；输出 = 目录产出首项', () => {
     const pinned = node({ node_id: 'c', kind: 'analysis', capability: 'cap.density', input_artifact_type: 'poi_feature_set' });
     expect(nodeInputPorts(pinned, CATALOG)[0].artifactType).toBe('poi_feature_set');
     const unpinned = node({ node_id: 'c2', kind: 'analysis', capability: 'cap.density' });
-    expect(nodeInputPorts(unpinned, CATALOG)[0].artifactType).toBe('point_feature_set');
+    expect(nodeInputPorts(unpinned, CATALOG)[0].artifactType).toBe('feature_collection');
     expect(nodeOutputPorts(unpinned, CATALOG)[0].artifactType).toBe('density_surface');
     const noCatalog = node({ node_id: 'c3', kind: 'analysis', capability: 'cap.x' });
     expect(nodeInputPorts(noCatalog)[0].artifactType).toBe('feature_collection');
@@ -158,11 +154,11 @@ describe('canConnect 合法/非法矩阵', () => {
     expect(canConnect(base, 'buf', 'out', 'src', '', CATALOG)).toMatchObject({ ok: false, reason: 'targetDataInput' });
   });
 
-  it('table 角色不收宽特征源；宽特征可进 analysis 的 table 钉定? —— 宽→table 拒', () => {
-    // cap.hotspot 接受集首项 feature_collection —— measure 表可进（table→wide ok）。
-    expect(canConnect(base, 'tbl', 'measure', 'cap', '', CATALOG).ok).toBe(true);
-    // 宽特征 → stats_table 端口（transform 的 in 是宽类型，不涉 stats_table）；
-    // 直接验证端口兼容裁决：wide→stats_table 拒。
+  it('P2-1：measure 表源进 analysis 宽端口拒（运行时绑定门同门）；宽→table 拒', () => {
+    // cap.hotspot 未钉定 → analysis 输入端口 = 宽特征；measure 表
+    // （stats_table）进宽端口在运行时必 ARTIFACT_TYPE_MISMATCH —— 前端同拒。
+    expect(canConnect(base, 'tbl', 'measure', 'cap', '', CATALOG).ok).toBe(false);
+    // 宽特征 → stats_table 端口同样拒（无窄收宽规则）。
     expect(portsCompatible('feature_collection', 'stats_table')).toBe(false);
   });
 

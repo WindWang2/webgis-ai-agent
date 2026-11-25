@@ -62,7 +62,7 @@ def _check_slug(value: str) -> str:
 
     if not re.fullmatch(r"[a-z][a-z0-9_]{0,%d}" % (_SLUG_MAX - 1), value or ""):
         raise ValueError(
-            "must match [a-z][a-z0-9_]{0,47} (stable slug)")
+            "must match [a-z][a-z0-9_]{0,%d} (stable slug)" % (_SLUG_MAX - 1))
     return value
 
 

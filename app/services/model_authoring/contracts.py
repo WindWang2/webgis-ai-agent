@@ -44,7 +44,7 @@ F_PARAM_TYPE_MISMATCH = "PARAM_TYPE_MISMATCH"
 # 科学/执行面
 F_TRANSFORM_OP_UNKNOWN = "TRANSFORM_OP_UNKNOWN"
 F_INPUT_NODE_MISSING = "INPUT_NODE_MISSING"
-F_DATA_ROLE_BLOCKED = "DATA_ROLE_BLOCKED"
+F_OUTPUT_KIND_INVALID = "OUTPUT_KIND_INVALID"
 
 #: finding 码 → 双语短述（bounded；前端/工具直接投影）。
 FINDING_MESSAGES: Dict[str, Tuple[str, str]] = {
@@ -53,13 +53,14 @@ FINDING_MESSAGES: Dict[str, Tuple[str, str]] = {
     F_EDGE_PORT_UNKNOWN: ("边引用了不存在的节点或端口", "Edge references unknown node/port"),
     F_OUTPUT_UNREACHABLE: ("输出节点不可达（无上游）", "Output node is unreachable"),
     F_OUTPUT_NOT_SINK: ("输出节点还有下游（输出必须是汇点）", "Output node must be a sink"),
+    F_OUTPUT_KIND_INVALID: ("输出义务指向非 output 节点", "Output obligation points to a non-output node"),
     F_NODE_UNREACHABLE: ("节点不可达（悬空）", "Node is unreachable (dangling)"),
     F_ROLE_UNKNOWN: ("数据角色不在词表中", "Unknown data role"),
     F_MULTIPLE_INPUT_SAME_ROLE: ("同一数据角色被声明了多个输入", "Duplicate input for the same data role"),
     F_CAPABILITY_UNKNOWN: ("能力 id 不在注册表", "Capability id not in registry"),
     F_CAPABILITY_NOT_NATIVE: ("能力不是 native 可用状态", "Capability is not native"),
     F_INPUT_ARTIFACT_MISMATCH: ("钉定的输入类型不在能力接受集", "Pinned input type not accepted by capability"),
-    F_PORT_TYPE_MISMATCH: ("端口类型不兼容", "Port artifact types are incompatible"),
+    F_PORT_TYPE_MISMATCH: ("端口类型不兼容（运行时绑定门必拒）", "Port artifact types are incompatible (runtime gate would reject)"),
     F_GEOMETRY_MISMATCH: ("几何族不兼容", "Geometry kinds are incompatible"),
     F_PARAM_REQUIRED_MISSING_DEFAULT: ("必填参数没有默认值（实例化时必须提供）", "Required parameter has no default"),
     F_PARAM_REF_UNKNOWN: ("节点参数引用了未声明的模型参数", "Node param references undeclared model param"),
@@ -67,7 +68,6 @@ FINDING_MESSAGES: Dict[str, Tuple[str, str]] = {
     F_PARAM_TYPE_MISMATCH: ("参数默认值类型与声明不符", "Parameter default type mismatch"),
     F_TRANSFORM_OP_UNKNOWN: ("transform 算子不在可执行词表", "Transform op not executable"),
     F_INPUT_NODE_MISSING: ("analysis/cartography 节点没有数据输入", "Node has no data input"),
-    F_DATA_ROLE_BLOCKED: ("必选数据角色缺失（block 策略）", "Required data role missing (blocking)"),
 }
 
 
@@ -99,14 +99,15 @@ class ModelFinding:
 # ── 角色端口默认（data_input 输出端口的宽类型推导；validate 细化）────
 
 #: role → (artifact_type, geometry_kind)。宽端口优先（feature_collection
-#: 是运行时绑定门认可的特征宽类型）；table 类角色落 stats_table。
+#: 是运行时绑定门认可的特征宽类型）；table 类角色落 stats_table；栅格类
+#: 角色用注册表真实类型（terrain_surface，gk=raster）。
 _ROLE_PORT_DEFAULTS: Dict[str, Tuple[str, str]] = {
     "subject": ("feature_collection", "unknown"),
     "measure": ("stats_table", "table"),
     "boundary": ("admin_boundary_set", "polygon"),
     "denominator": ("stats_table", "table"),
     "network": ("feature_collection", "network"),
-    "elevation": ("surface", "raster"),
+    "elevation": ("terrain_surface", "raster"),
     "hazard": ("feature_collection", "unknown"),
     "receptor": ("feature_collection", "unknown"),
     "population": ("stats_table", "table"),
@@ -242,46 +243,39 @@ def geometry_kind_of(artifact_type: str) -> str:
 
 #: 宽特征类型（运行时绑定门的 ANY-FEATURE 端口，typed_dag 同词）。
 _WIDE_FEATURE_TYPE = "feature_collection"
-#: 宽特征端口可喂入的目标 category（特征族；table/aggregate/raster 不收）。
-_FEATURE_CATEGORIES = ("feature_set", "zone", "network")
-_FEATURE_GEOMETRIES = ("point", "line", "polygon", "network")
+#: 运行时绑定门 `_ANY_FEATURE_CATEGORIES`（binding.py 单一事实源）的静态
+#: 镜像：宽端口（feature_collection）只收 feature_set 类源。
+_ANY_FEATURE_CATEGORY = "feature_set"
 
 
 def ports_compatible(src_artifact: str, dst_artifact: str) -> bool:
-    """边兼容裁决（作者面静态近似；运行时绑定门以真实 descriptor 复核）。
+    """边兼容裁决（**运行时绑定门语义的忠实镜像**，不再是宽松近似）。
 
+    verify_port（workflow_runtime/binding.py）的裁决面：
     - 同类型直通；
-    - 目标宽类型（feature_collection）收一切；
     - 目标空类型（output 汇点）收一切（运行时对空端口只查非空）；
-    - 源宽类型可喂特征族目标（feature_set/zone/network category 或
-      point/line/polygon/network 几何）—— 不喂 table/aggregate/raster；
-    - 其余要求注册表 category 相同。
+    - 目标宽类型（feature_collection）只收 **feature_set 类**源
+      （`_ANY_FEATURE_CATEGORIES`；zone/network/table/aggregate/raster
+      源在运行时必 ARTIFACT_TYPE_MISMATCH —— 静态诚实拒绝）；
+    - 宽类型喂窄类型（≠）在运行时必 MISMATCH（宽收窄规则只对 want=宽
+      成立）—— 静态同样拒绝；
+    - 其余（未知类型/窄喂窄≠）运行时也拒 —— 静态拒绝。
     """
     if src_artifact == dst_artifact:
         return True
-    if dst_artifact in (_WIDE_FEATURE_TYPE, ""):
+    if dst_artifact == "":
         return True
-    if src_artifact == _WIDE_FEATURE_TYPE:
-        dst_gk = geometry_kind_of(dst_artifact)
-        if dst_gk in _FEATURE_GEOMETRIES:
-            return True
+    if not (artifact_type_known(src_artifact) and artifact_type_known(dst_artifact)):
+        return False
+    if dst_artifact == _WIDE_FEATURE_TYPE:
         try:
             from app.lib.gis.artifacts import get_artifact_type_registry
 
-            d = get_artifact_type_registry().get(dst_artifact)
-            return d is not None and str(d.category) in _FEATURE_CATEGORIES
+            s = get_artifact_type_registry().get(src_artifact)
+            return s is not None and str(s.category) == _ANY_FEATURE_CATEGORY
         except Exception:  # noqa: BLE001
             return False
-    try:
-        from app.lib.gis.artifacts import get_artifact_type_registry
-
-        reg = get_artifact_type_registry()
-        s, d = reg.get(src_artifact), reg.get(dst_artifact)
-        if s is None or d is None:
-            return src_artifact == dst_artifact
-        return str(s.category) == str(d.category) and s.category != ""
-    except Exception:  # noqa: BLE001
-        return False
+    return False
 
 
 __all__ = [
@@ -306,7 +300,7 @@ __all__ = [
     "F_PARAM_TYPE_MISMATCH",
     "F_TRANSFORM_OP_UNKNOWN",
     "F_INPUT_NODE_MISSING",
-    "F_DATA_ROLE_BLOCKED",
+    "F_OUTPUT_KIND_INVALID",
     "FINDING_MESSAGES",
     "ModelFinding",
     "role_port_default",

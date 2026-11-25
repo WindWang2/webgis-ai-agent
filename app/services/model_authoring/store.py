@@ -124,7 +124,15 @@ class ModelDraftStore:
                 updated_at=_utcnow(),
             )
             db.add(row)
-            db.commit()
+            try:
+                db.commit()
+            except sa.exc.IntegrityError:
+                # select-then-insert 竞态：唯一约束兜底归一 typed（P3-5，
+                # 不裸 500）
+                db.rollback()
+                raise ModelStoreError(
+                    "DRAFT_EXISTS",
+                    f"model_slug {model_slug!r} already exists in project")
             return _row_to_dict(row)
 
     def get_draft(self, project_id: str, model_slug: str) -> Optional[Dict[str, Any]]:

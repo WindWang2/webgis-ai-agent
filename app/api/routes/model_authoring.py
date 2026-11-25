@@ -429,6 +429,9 @@ async def run_instance(
     project_id: str = "",
     user: Dict[str, Any] = Depends(get_current_user),
 ):
+    # P1-1：project_id 携带时必须过项目写权限（草稿参数解析只信任实例
+    # 归属项目，但调用方转述的项目仍不得绕过鉴权面）。
+    await _authorize_project_write(project_id, user)
     owner = _owner(user)
     try:
         out = await _svc().run_model_instance(

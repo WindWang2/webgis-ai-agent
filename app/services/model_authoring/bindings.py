@@ -84,6 +84,12 @@ class ModelInstanceBinder:
         if not ref:
             return {"node": node_id, "ok": False, "code": "EMPTY_REF",
                     "bound_ref": ""}
+        if len(ref) > 96:
+            # 节点行 bound_ref 列有界（96）；截断会让 driver 透传查不到
+            # —— typed 拒绝而非静默截断（P3-4）。
+            return {"node": node_id, "ok": False,
+                    "code": "REF_TOO_LONG",
+                    "bound_ref": ""}
         if kinds.get(node_id) != "data_input":
             return {"node": node_id, "ok": False,
                     "code": "NOT_DATA_INPUT",

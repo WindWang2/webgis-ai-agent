@@ -55,7 +55,8 @@ def _chain_doc(
     outputs: Tuple[str, ...] = ("model_output",),
     output_node: bool = True,
 ) -> ModelDocument:
-    """权威正例链：facility → buffer($param:radius) → admin_aggregation → cartography → output。"""
+    """权威正例链（P2-1 语义）：facility → buffer($param:radius) →
+    admin_aggregation（表→统计汇点）+ 特征流 → cartography → 图汇点。"""
     nodes = [
         ModelNode(node_id="facilities", kind="data_input", role="facility"),
         ModelNode(node_id="buffered", kind="transform", transform_op="buffer",
@@ -71,8 +72,11 @@ def _chain_doc(
                   to_node="aggregate", to_port="in"),
     ]
     if output_node:
-        nodes.append(ModelNode(node_id="map", kind="cartography"))
+        nodes.append(ModelNode(node_id="stats_out", kind="output"))
         edges.append(ModelEdge(from_node="aggregate", from_port="out",
+                               to_node="stats_out", to_port="in"))
+        nodes.append(ModelNode(node_id="map", kind="cartography"))
+        edges.append(ModelEdge(from_node="buffered", from_port="out",
                                to_node="map", to_port="in"))
         if outputs:
             nodes.append(ModelNode(node_id="model_output", kind="output"))
@@ -104,8 +108,8 @@ def test_compile_happy_path() -> None:
     assert compiled is not None
     assert not any(f.severity == SEVERITY_ERROR for f in findings)
     graph = compiled.typed_graph
-    assert len(graph.nodes) == 5
-    assert len(graph.edges) == 4
+    assert len(graph.nodes) == 6
+    assert len(graph.edges) == 5
     assert graph.primary_output == "model_output"
     # data_input 输出端口 = 角色名（contracts.node_ports 契约直映）。
     src_edge = graph.edges[0]
@@ -130,7 +134,7 @@ def test_transform_wire_node_id_is_runtime_authoritative() -> None:
     算子）；其余 kind 恒等；node_id_map author→wire 且 rsplit 可逆。"""
     compiled, _ = compile_document(_chain_doc(), model_slug="facility_agg")
     id_map = compiled.node_id_map
-    assert set(id_map) == {"facilities", "buffered", "aggregate",
+    assert set(id_map) == {"facilities", "buffered", "aggregate", "stats_out",
                            "map", "model_output"}
     assert id_map["buffered"] == "transform:buffer:buffered"
     # 非 transform kind：wire id = 作者 slug（driver 不解析其 id 段）。
@@ -273,7 +277,7 @@ def test_roundtrip_projection_restores_author_view() -> None:
     proj = roundtrip_projection(compiled)
     assert proj["primary_output"] == "model_output"
     nodes = {n["node_id"]: n for n in proj["nodes"]}
-    assert set(nodes) == {"facilities", "buffered", "aggregate",
+    assert set(nodes) == {"facilities", "buffered", "aggregate", "stats_out",
                           "map", "model_output"}
     assert nodes["facilities"]["role"] == "facility"
     assert nodes["aggregate"]["capability"] == "admin_aggregation"
@@ -282,7 +286,7 @@ def test_roundtrip_projection_restores_author_view() -> None:
     assert nodes["facilities"]["outputs"][0]["artifact_type"] == "poi_feature_set"
     assert nodes["aggregate"]["inputs"][0]["artifact_type"] == "feature_collection"
     edges = proj["edges"]
-    assert len(edges) == 4
+    assert len(edges) == 5
     assert edges[0] == {"from": "facilities.facility",
                         "to": "buffered.in"}
     # 投影里不存在 wire 形态 id（作者视图纯净）。

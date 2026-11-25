@@ -41,8 +41,10 @@ from app.services.gis_harness.workflow_v4.typed_dag import (
     TypedWorkflowEdge,
     TypedWorkflowGraph,
     TypedWorkflowNode,
+    validate_typed_dag,
 )
 from app.services.model_authoring.contracts import (
+    F_PORT_TYPE_MISMATCH,
     SEVERITY_ERROR,
     ModelFinding,
     node_ports,
@@ -236,7 +238,9 @@ def compile_document(
     assert len(t_edges) <= _MAX_GRAPH_EDGES, "authored graph exceeds runtime edge cap"
 
     if doc.output_node_ids:
-        primary = doc.output_node_ids[0]
+        # primary_output 必须是 **wire id**（id_map 投影）—— author id 在
+        # transform 节点上与 wire id 不同，落 author id 会悬空（P2-4）。
+        primary = id_map[doc.output_node_ids[0]]
     else:
         topo = _topo_order(t_nodes, t_edges)
         primary = topo[-1] if topo else ""
@@ -244,6 +248,24 @@ def compile_document(
         nodes=t_nodes, edges=t_edges, primary_output=primary,
         validation_violations=[],
     )
+    # 编译出口自检：既有 typed DAG 校验器（悬空引用/端口存在性/环/主输出
+    # 可达）零违规 —— 违规即契约破坏，编译拒绝（不静默固化坏包）。
+    # 例外：`TYPED_DAG_UNKNOWN_KIND:*:cartography` —— cartography 是
+    # driver 的独立分派 kind（driver.py 执行阶梯），compile 期词表
+    # （TYPED_NODE_KINDS）未收录属上游词表滞后，不是作者图的结构错误。
+    dag_violations = [
+        v for v in validate_typed_dag(graph)
+        if not (v.startswith("TYPED_DAG_UNKNOWN_KIND:")
+                and v.endswith(":cartography"))
+    ]
+    if dag_violations:
+        findings.extend(
+            ModelFinding(
+                code=F_PORT_TYPE_MISMATCH, severity=SEVERITY_ERROR,
+                detail=f"typed dag violation: {v[:200]}")
+            for v in dag_violations[:8]
+        )
+        return None, findings
 
     # wire 形态 = typed graph 的 bounded dict，节点 dict 补 params
     # （WorkflowNode TypedDict 声明了 params 字段；to_bounded_dict 不含，

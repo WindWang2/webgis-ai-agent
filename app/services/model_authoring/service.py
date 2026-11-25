@@ -20,6 +20,7 @@ from app.schemas.model_authoring_schema import ModelDocument, ModelParamSpec
 from app.services.model_authoring import contracts as MA
 from app.services.model_authoring.store import (
     ModelDraftStore,
+    ModelStoreError,
 )
 
 logger = logging.getLogger(__name__)
@@ -336,17 +337,42 @@ class ModelAuthoringService:
             raise ModelAuthoringError(
                 "PUBLISH_FAILED",
                 f"package {row['package_id']}@{row['version']} not found")
-        updated = await asyncio.to_thread(
-            self.store.record_publication,
-            project_id=project_id, model_slug=model_slug,
-            package_id=row["package_id"], version=row["version"],
-            expected_revision=int(draft["revision_no"]))
+        # 指针写入是**幂等收尾**而非成败裁决：包已发布（不可变事实），
+        # CAS 冲突（并发编辑推进了 revision）只影响指针新鲜度 —— 读回
+        # 最新 revision 重试一次；仍冲突则成功返回并诚实标注
+        # pointer_stale（P2-2：不产生"已发布但报失败"的误导态）。
+        pointer_stale = False
+        try:
+            updated = await asyncio.to_thread(
+                self.store.record_publication,
+                project_id=project_id, model_slug=model_slug,
+                package_id=row["package_id"], version=row["version"],
+                expected_revision=int(draft["revision_no"]))
+        except ModelStoreError as e:
+            if e.code != "REVISION_CONFLICT":
+                raise
+            latest = await self.get_draft(project_id, model_slug)
+            if latest is not None \
+                    and latest.get("latest_published_package_id") == row["package_id"] \
+                    and latest.get("latest_published_version") == row["version"]:
+                updated = latest
+            else:
+                try:
+                    updated = await asyncio.to_thread(
+                        self.store.record_publication,
+                        project_id=project_id, model_slug=model_slug,
+                        package_id=row["package_id"], version=row["version"],
+                        expected_revision=int(latest["revision_no"]))
+                except ModelStoreError:
+                    pointer_stale = True
+                    updated = latest or draft
         return {
             "model_slug": model_slug,
             "package_id": row["package_id"],
             "version": row["version"],
             "fingerprint": row["fingerprint"],
             "next_draft_revision": updated["revision_no"],
+            "pointer_stale": pointer_stale,
             "findings": [f.to_bounded() for f in findings],
         }
 
@@ -359,14 +385,22 @@ class ModelAuthoringService:
         input_bindings: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         draft = await self.get_draft(project_id, model_slug)
-        if draft is None:
-            raise ModelAuthoringError("DRAFT_NOT_FOUND", model_slug)
-        doc = _require_document(draft)
-        package_id = draft.get("latest_published_package_id") or ""
-        if version or not package_id:
-            pkg_id = f"umodel_{model_slug}"[:64]
+        # P3-7：已发布包是不可变事实，草稿删除不废其可实例化性 —— 无草稿
+        # 且调用方未要求参数覆盖时按包默认继续（wire params 已烘焙默认值；
+        # 需要参数覆盖而文档缺席 → typed 拒绝，指引恢复草稿）。
+        doc: Optional[ModelDocument] = None
+        if draft is not None:
+            doc = _require_document(draft)
+        elif param_values:
+            raise ModelAuthoringError(
+                "PARAMS_UNRESOLVABLE",
+                f"draft {model_slug!r} missing; cannot resolve param_values")
+        if doc is not None:
+            pkg_id = (draft.get("latest_published_package_id")
+                      or f"umodel_{model_slug}")[:64] \
+                if not version else f"umodel_{model_slug}"[:64]
         else:
-            pkg_id = package_id
+            pkg_id = f"umodel_{model_slug}"[:64]
         # 发布存在性（require_published；未发布 → typed 拒绝）
         row = await asyncio.to_thread(
             self.registry.resolve, pkg_id, owner_scope=owner_scope,
@@ -377,9 +411,13 @@ class ModelAuthoringService:
                 f"{model_slug} has no published version"
                 + (f" {version}" if version else ""))
         param_values = param_values or {}
-        resolved = await asyncio.to_thread(
-            validate_param_values, doc.params, param_values)
-        node_params = await asyncio.to_thread(resolve_node_params, doc, resolved)
+        if doc is not None:
+            resolved = await asyncio.to_thread(
+                validate_param_values, doc.params, param_values)
+            node_params = await asyncio.to_thread(
+                resolve_node_params, doc, resolved)
+        else:
+            resolved, node_params = {}, {}
         from app.services.workflow_runtime.registry import PackageConflict  # noqa: F401
 
         inst = await asyncio.to_thread(
@@ -418,7 +456,11 @@ class ModelAuthoringService:
         param_values: Optional[Dict[str, Any]] = None,
         project_id: str = "", deadline_s: float = 60.0,
     ) -> Dict[str, Any]:
-        """运行已实例化的模型（参数覆盖经 node_params 注入既有 driver）。"""
+        """运行已实例化的模型（参数覆盖经 node_params 注入既有 driver）。
+
+        草稿查找一律以**实例行存储的 project_id** 为准（P1-1：不信任
+        调用方转述的项目 —— 跨项目同 slug 草稿不可经此处读出）。
+        """
         inst = await asyncio.to_thread(
             self.runtime.store.get_instance, instance_id, owner_scope)
         if inst is None:
@@ -429,15 +471,25 @@ class ModelAuthoringService:
         # 洗掉 wire 参数的 $param 默认——显式逐节点注入面恒胜出。
         node_params: Dict[str, Dict[str, Any]] = {}
         values = param_values if param_values is not None else {}
-        if project_id:
+        # 实例归属项目是唯一权威（实例化时写入）；调用方 project_id 仅作
+        # 为空缺省的回退且不得覆盖实例归属。
+        inst_project = str(inst.get("project_id") or "") or project_id
+        if inst_project:
             draft_pkg_id = str(inst.get("package_id") or "")
             slug = draft_pkg_id[len("umodel_"):] if draft_pkg_id.startswith("umodel_") else ""
             if slug:
-                draft = await self.get_draft(project_id, slug)
+                draft = await self.get_draft(inst_project, slug)
                 if draft is not None:
                     doc = _require_document(draft)
                     node_params = await asyncio.to_thread(
                         resolve_node_params, doc, values)
+                elif values:
+                    # 用户显式给了参数但文档不可解析 —— typed 拒绝而非
+                    # 静默按包默认执行（诚实失败，指引恢复草稿）。
+                    raise ModelAuthoringError(
+                        "PARAMS_UNRESOLVABLE",
+                        f"draft {slug!r} missing in project {inst_project!r}; "
+                        "cannot resolve provided param_values")
         result = await self.runtime.run_instance(
             instance_id, owner_scope=owner_scope,
             deadline_s=max(1.0, min(float(deadline_s), 300.0)),

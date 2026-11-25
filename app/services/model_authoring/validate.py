@@ -31,7 +31,7 @@ from app.services.model_authoring.contracts import (
     F_CAPABILITY_NOT_NATIVE,
     F_CAPABILITY_UNKNOWN,
     F_CYCLE,
-    F_DATA_ROLE_BLOCKED,
+    F_OUTPUT_KIND_INVALID,
     F_EMPTY_GRAPH,
     F_EDGE_PORT_UNKNOWN,
     F_GEOMETRY_MISMATCH,
@@ -64,7 +64,6 @@ _PARAM_REF_PREFIX = "$param:"
 _TIME_WINDOW_RE = re.compile(r"^\d{4}-\d{2}-\d{2}/\d{4}-\d{2}-\d{2}$")
 
 #: table 族数据角色（stats_table 端口；无 analysis 消费者 → warning 披露）。
-_TABLE_ROLES = ("measure", "denominator", "population")
 
 
 def _edge_label(edge: ModelEdge) -> str:
@@ -306,7 +305,14 @@ def validate_document(doc: ModelDocument) -> List[ModelFinding]:
     if not doc.output_node_ids:
         _warn(F_OUTPUT_UNREACHABLE, detail="no explicit outputs")
     else:
+        kinds = {n.node_id: n.kind for n in nodes}
         for oid in doc.output_node_ids:
+            if kinds.get(oid) != "output":
+                # 输出义务必须是 output 汇点 —— 否则 compile 的
+                # primary_output 会把 author id 固化进不可变包而 wire
+                # id（transform:<op>:<slug>）对不上（悬空契约）。
+                _err(F_OUTPUT_KIND_INVALID, node_id=oid,
+                     detail=f"kind={kinds.get(oid, '?')} != output")
             if oid in has_outgoing:
                 _err(F_OUTPUT_NOT_SINK, node_id=oid,
                      detail="output node has outgoing edges")
@@ -394,17 +400,9 @@ def validate_document(doc: ModelDocument) -> List[ModelFinding]:
             _err(F_INPUT_NODE_MISSING, node_id=n.node_id,
                  detail=f"{n.kind} node has no data input edge")
 
-    # ── 12. table 族角色缺 analysis 消费者 ───────────────────────────
-    for n in nodes:
-        if n.kind == "data_input" and n.role in _TABLE_ROLES:
-            consumed = any(
-                e.from_node == n.node_id
-                and by_id[e.to_node].kind == "analysis"
-                for e in edges
-            )
-            if not consumed:
-                _warn(F_DATA_ROLE_BLOCKED, node_id=n.node_id,
-                      detail="table role has no analysis consumer")
+    # （原 check 12 已删：table 角色只接 output 汇点是 descriptor 契约下
+    # 唯一可运行接线（required 端口 feature_count==0 必被运行时门阻断），
+    # 旧 warning 恰好把正确接线标记为可疑 —— P2-1 修复。）
 
     # 确定性排序：主键 (severity, node_id, code)，其余字段为稳定 tie-break。
     findings.sort(key=lambda f: (

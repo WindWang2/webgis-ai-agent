@@ -147,30 +147,25 @@ const ARTIFACT_TYPES: Record<string, ArtifactMeta> = {
 /** 宽特征类型（运行时绑定门 ANY-FEATURE 端口，contracts._WIDE_FEATURE_TYPE 同词）。 */
 const WIDE_FEATURE_TYPE = 'feature_collection';
 /** 宽特征端口可喂入的目标几何族（先于 category 裁决 —— contracts 同序）。 */
-const FEATURE_GEOMETRIES = new Set(['point', 'line', 'polygon', 'network']);
-/** 宽特征端口可喂入的目标 category（table/aggregate/raster 不收 —— 同词）。 */
-const FEATURE_CATEGORIES = new Set(['feature_set', 'zone', 'network']);
-
-function geometryKindOf(artifactType: string): string {
-  return ARTIFACT_TYPES[artifactType]?.geometry ?? 'unknown';
-}
+/** 运行时绑定门 `_ANY_FEATURE_CATEGORIES`（binding.py 单一事实源）的镜像。 */
+const ANY_FEATURE_CATEGORY = 'feature_set';
 
 /**
- * 边兼容裁决（contracts.ports_compatible 同序复刻）：
- * 同类型直通 → 目标宽类型收一切 → 源宽类型喂特征族 → 其余同 category。
+ * 边兼容裁决（contracts.ports_compatible 同规则 —— 运行时绑定门语义的
+ * 忠实镜像，P2-1 对齐）：同类型直通 → 目标空类型（output 汇点）收一切 →
+ * 目标宽类型只收 feature_set 类源（`_ANY_FEATURE_CATEGORIES` 同门）→
+ * 其余（宽喂窄/窄喂窄≠/未知类型）运行时门必拒 —— 前端同样拒绝。
  */
 export function portsCompatible(srcArtifact: string, dstArtifact: string): boolean {
   if (srcArtifact === dstArtifact) return true;
-  if (dstArtifact === WIDE_FEATURE_TYPE) return true;
-  if (srcArtifact === WIDE_FEATURE_TYPE) {
-    if (FEATURE_GEOMETRIES.has(geometryKindOf(dstArtifact))) return true;
-    const meta = ARTIFACT_TYPES[dstArtifact];
-    return meta != null && FEATURE_CATEGORIES.has(meta.category);
-  }
+  if (dstArtifact === '') return true; // output 汇点：任意产物
   const src = ARTIFACT_TYPES[srcArtifact];
   const dst = ARTIFACT_TYPES[dstArtifact];
-  if (src == null || dst == null) return srcArtifact === dstArtifact;
-  return src.category === dst.category && src.category !== '';
+  if (src == null || dst == null) return false;
+  if (dstArtifact === WIDE_FEATURE_TYPE) {
+    return src.category === ANY_FEATURE_CATEGORY;
+  }
+  return false;
 }
 
 /* ── 角色端口默认（contracts._ROLE_PORT_DEFAULTS 同表） ──────────────── */
@@ -182,7 +177,7 @@ const ROLE_PORT_DEFAULTS: Record<string, { artifactType: string; geometryKind: s
   boundary: { artifactType: 'admin_boundary_set', geometryKind: 'polygon' },
   denominator: { artifactType: 'stats_table', geometryKind: 'table' },
   network: { artifactType: WIDE_FEATURE_TYPE, geometryKind: 'network' },
-  elevation: { artifactType: 'surface', geometryKind: 'raster' },
+  elevation: { artifactType: 'terrain_surface', geometryKind: 'raster' },
   hazard: { artifactType: WIDE_FEATURE_TYPE, geometryKind: 'unknown' },
   receptor: { artifactType: WIDE_FEATURE_TYPE, geometryKind: 'unknown' },
   population: { artifactType: 'stats_table', geometryKind: 'table' },
@@ -243,17 +238,20 @@ export function nodeOutputPorts(node: ModelNode, catalog?: CapabilityIOMap | nul
 }
 
 /**
- * 节点输入端口清单（contracts.node_ports 同推导）：
- * data_input 无输入；transform/cartography/output 单输入 "in"
- * （feature_collection）；analysis 单输入 "in"（钉定类型或能力接受集首项）。
+ * 节点输入端口清单（contracts.node_ports 同推导，P2-1 对齐）：
+ * data_input 无输入；transform/cartography 单输入 "in"（宽特征）；
+ * output 汇点空 artifactType + required=false（任意产物收口点，收口不做
+ * 基数门）；analysis 单输入 "in"（钉定类型或宽特征缺省 —— 与后端同构）。
  */
-export function nodeInputPorts(node: ModelNode, catalog?: CapabilityIOMap | null): PortInfo[] {
+export function nodeInputPorts(node: ModelNode, _catalog?: CapabilityIOMap | null): PortInfo[] {
   if (node.kind === 'data_input') return [];
-  if (node.kind === 'transform' || node.kind === 'cartography' || node.kind === 'output') {
+  if (node.kind === 'output') {
+    return [{ name: 'in', artifactType: '', geometryKind: 'unknown', required: false }];
+  }
+  if (node.kind === 'transform' || node.kind === 'cartography') {
     return [{ name: 'in', artifactType: WIDE_FEATURE_TYPE, geometryKind: 'unknown', required: true }];
   }
-  const accepted = catalog?.[node.capability ?? '']?.input_artifact_types ?? [];
-  const pinned = node.input_artifact_type || accepted[0] || WIDE_FEATURE_TYPE;
+  const pinned = node.input_artifact_type || WIDE_FEATURE_TYPE;
   return [{ name: 'in', artifactType: pinned, geometryKind: 'unknown', required: true }];
 }
 

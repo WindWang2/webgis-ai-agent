@@ -21,7 +21,7 @@ import type { ModelDocument } from '@/lib/workflow/model-graph';
 
 /** 草稿行（store._row_to_dict 投影）。 */
 export interface ModelDraft {
-  id: number;
+  id: string;
   project_id: string;
   model_slug: string;
   name: string;
