@@ -471,8 +471,12 @@ def compile_map(
         layout=layout_fact,
         desired_revision=rev_fact, fingerprint=fingerprint,
         layers=layers_fact, layer_count=layer_count_fact,
+        # layer_ids 是「完整身份清单」（消费方用它判断某层是否仍在），
+        # 不做上限裁剪 —— 裁剪后 >100 层的地图会被误判缺失。体量由
+        # layer_count/layers 摘要（已在 :412 裁剪并披露 omitted_layers）
+        # 承担。
         layer_ids=(known([str(row["id"]) for row in raw_layers
-                          if isinstance(row, dict) and row.get("id")][:MAX_LAYER_SUMMARIES],
+                          if isinstance(row, dict) and row.get("id")],
                          source="mapspec.layers", revision=revision)
                    if isinstance(mapspec.get("layers"), list)
                    else unknown(source="mapspec.layers")),

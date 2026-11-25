@@ -144,7 +144,9 @@ def submit_durable_job(
         # dispatch_spec 是 retry 的重跑描述符，必须与 apply_async 实际收到的
         # kwargs 一致 —— job_id 只在行创建后才存在，故在此回填（caller_identity
         # 由 retry 重新签发，不落库）。
-        spec = job.dispatch_spec
+        # 注：测试里 create_sync 可能返回不带该属性的轻量桩 —— 用 getattr 兜底，
+        # 缺失时视为「无描述符」跳过回填。
+        spec = getattr(job, "dispatch_spec", None)
         if isinstance(spec, dict) and isinstance(spec.get("kwargs"), dict):
             patched = safe_dispatch_spec(
                 {**spec, "kwargs": {**spec["kwargs"], "job_id": job_id}}
