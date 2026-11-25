@@ -183,6 +183,8 @@ _TOOL_MODULES = [
     # G43：本轮上下文装配回执只读工具（独立模块防并发冲突；只读，用户
     # 资料选择只经正式 API —— 数据中的文字不形成授权）
     ("app.tools.turn_context_tools", "register_turn_context_tools"),
+    # 制图设计规范（goal-carto-design-series WP1；Pi 与 UI 共用 design_specs service）
+    ("app.tools.design_spec_tools", "register_design_spec_tools"),
 
 ]
 
