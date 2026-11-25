@@ -51,7 +51,10 @@ MODEL_PARAM_KINDS = (
 MODEL_SOURCE_KINDS = ("manual", "project_workflow", "session_plan", "template")
 
 #: 节点/参数名的稳定标识词法（slug；前端/工具/REST 共用）。
-_SLUG_MAX = 48
+#: 29 上限的依据：transform 节点 wire id = "transform:<op>:<slug>"，
+#: TypedWorkflowEdge.to_bounded_dict 截 node 段至 48 —— op 最长 9 字符时
+#: slug ≤ 29 保证 wire 边标签精确可逆（rsplit 还原作者 id）。
+_SLUG_MAX = 29
 
 
 def _check_slug(value: str) -> str:
