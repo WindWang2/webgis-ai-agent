@@ -12,7 +12,7 @@
 ## 用户旅程（新增能力）
 1. **从既有分析生成草案**：成功 SessionPlan / 项目工作流 → 确定性转换成可编辑模型草稿（复用 promotion，skipped 项诚实披露）
 2. **可视化编辑**：前端模型构建器 tab（画布增删节点/连线即时合法性提示/参数面板/typed findings/运行 overlay/撤销恢复）
-3. **静态验证**：21 码 typed findings（结构/端口/角色/能力可用性/参数约束），error 级阻断发布
+3. **静态验证**：20 码 typed findings（运行时绑定门忠实镜像）（结构/端口/角色/能力可用性/参数约束），error 级阻断发布
 4. **参数实例化**：`$param:` 引用 + 声明校验（required/default/min/max/enum）→ 逐节点 wire 注入既有 driver
 5. **版本化发布**：零 error 才可发布；`umodel_<slug>` 包进既有 PackageRegistry（semver、不可变指纹、owner/org 域隔离、deprecated 撤回）
 6. **跨城市复用**：同模型 revision + 不同 session 数据绑定 → 独立实例（缓存按指纹+权限+输入版本，既有 reuse 栈）
@@ -39,10 +39,18 @@
 - API 契约：response_model 全覆盖；字段快照 sanctioned 刷新（API_CONTRACT_FIELDS_UPDATE=1，+79 行 additive）
 - 迁移：`alembic heads` 单头；upgrade→downgrade→upgrade 循环验证
 - 前端：pnpm typecheck（零新增错误）/ eslint 定向 / vitest 定向 + i18n 完整性 / 生产 build
-（定稿时贴真实输出 digest）
+实测（2026-11-26，本 worktree）：
+- 后端：model_authoring 143 + Pi journey 1 绿（含 heavy 真实 driver e2e）；workflow_runtime 376 绿；api_contract 绿；extensions+gis_tool_conformance 2816 绿（NDVI 1 失败=master 预存）；gis_harness 3623 绿（4 失败=master 预存 catalog 指纹漂移，基线 worktree 逐字节复现）
+- 前端：typecheck 零新增（基线 5 错 diff 为空）；eslint 3 警告与 master 逐字节一致；vitest 全量 5796 绿 / 3 失败=master 预存（geoai×2 + i18n 占位符×1）；生产 build 通过
+- 迁移：alembic heads 单头 m0111；upgrade→downgrade→upgrade 循环验证；model_drafts 零漂移（master 唯一漂移 lifecycle_policies 为预存）
 
 ## 独立评审
-（R1/R2 结果与 P0-P3 关闭情况定稿时填）
+- R1 冷审（未参与实现的独立 agent，2026-11-26）：0 P0 / 1 P1 / 4 P2 / 8 P3，全部关闭（42fb6161a）：
+  - P1-1 run 端点 project_id 无鉴权（跨项目草稿参数泄漏 IDOR）→ 写权限 + 实例归属项目派生 + PARAMS_UNRESOLVABLE；
+  - P2-1 作者端口规则与运行时绑定门分歧 → 静态规则改为绑定门忠实镜像（elevation→terrain_surface；删除把正确接线标可疑的 warning）；前后端同构；
+  - P2-2 publish 指针竞态孤儿态 → 幂等收尾 + pointer_stale 回执；P2-3 slug 文案插值；P2-4 primary_output 悬空 → wire id + validate_typed_dag 出口自检；
+  - P3：IntegrityError 归一/ref 超长 typed 拒绝/remove_param NOT_FOUND/无草稿可实例化已发布包/文档计数修正等。
+- R2 复审：（复审完成后填写）
 
 ## 未完成/跳过
 （定稿时如实填）

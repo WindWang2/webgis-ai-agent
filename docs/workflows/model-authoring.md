@@ -8,7 +8,7 @@ GIS 模型。模型作者域（model authoring）是既有权威之上的**用�
 
 ```text
 ModelDocument（作者草稿；CAS 修订；可变）
-  │  validate_document  → typed findings（21 码，error 阻断发布）
+  │  validate_document  → typed findings（20 码，error 阻断发布；端口规则=运行时绑定门忠实镜像）
   │  compile_document   ↓
 WorkflowPackage（不可变；umodel_ 前缀；canonical 指纹；semver）
   │  PackageRegistry.register / publish（既有 draft→published→deprecated）

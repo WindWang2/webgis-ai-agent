@@ -5,7 +5,7 @@
 | WP1 | 模型作者契约（nodes/ports/params/edges/输出义务/来源），从既有工作流/plan 导入草案 | `app/schemas/model_authoring_schema.py` + `contracts.py`；`imports.py`（from_project_workflow/from_session_plan_steps 复用 promotion）；test_imports | ✅ 代码+测试 |
 | WP1 | 禁止任意代码/SQL/网络/凭证；结构/AST 严格上限 | schema closed-vocabulary + extra=forbid + 上限（32 节点/64 边/16 参数/256KB）；无任何执行语言 | ✅ |
 | WP2 | editor graph → 既有 compiler/plan 映射 + roundtrip | compile.py（TypedWorkflowGraph→WorkflowPackage，指纹同源）；roundtrip_projection | ✅ |
-| WP2 | 静态验证（端口/CRS 类/角色/参数/能力可用性），typed reason + 最小修复建议 | validate.py 21 finding 码（双语 detail）；发布/实例化强制 error=0 | ✅ |
+| WP2 | 静态验证（端口/CRS 类/角色/参数/能力可用性），typed reason + 最小修复建议 | validate.py 20 finding 码（双语 detail；CRS 类由运行时绑定门裁决）；发布/实例化强制 error=0 | ✅ |
 | WP2 | 模型与绑定实例分离；发布不带私有 ref/credential | 发布只产包（声明）；绑定只在实例化（session ref）；validate 拒未声明引用 | ✅ |
 | WP2 | 不可行时不能启动；参数缺失引导填写 | MODEL_INVALID 阻断发布；REQUIRED_PARAM_MISSING 阻断实例化 | ✅ |
 | WP3 | 可增删节点/连线/参数面板/拖动/合法性即时提示/选中预览/运行 overlay/撤销恢复 | Subagent B 前端交付（画布 SVG/palette/props/findings/run-overlay/undo 接线） | 🔄 进行中 |
