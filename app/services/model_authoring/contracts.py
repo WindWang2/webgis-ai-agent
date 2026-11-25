@@ -155,11 +155,14 @@ def node_ports(node: ModelNode) -> Tuple[List[Dict[str, str]], List[Dict[str, st
     - data_input：无输入；单输出（名 = role，宽类型按角色默认）。
     - transform：单输入 "in"（feature_collection）；单输出 "out"
       （reproject/buffer/filter/clip/dissolve 保持特征集语义）。
-    - analysis：单输入 "in"（能力接受集第一项或作者钉定）；单输出 "out"
+    - analysis：单输入 "in"（缺省宽类型 feature_collection——运行时绑定门
+      `_ANY_FEATURE_CATEGORIES` 同门；作者可经 input_artifact_type 钉定
+      具体类型，由运行时对真实 descriptor 复核）；单输出 "out"
       （能力第一输出类型）。
     - cartography：单输入 "in"（feature_collection）；单输出 "out"
       （map_image）。
-    - output：单输入 "in"；无输出（汇点）。
+    - output：单输入 "in"；无输出（汇点；空 artifact_type = 任意产物——
+      图/表/统计皆可，运行时绑定门对空端口不查类型只查非空）。
     """
     ins: List[Dict[str, str]] = []
     outs: List[Dict[str, str]] = []
@@ -174,7 +177,7 @@ def node_ports(node: ModelNode) -> Tuple[List[Dict[str, str]], List[Dict[str, st
                      "geometry_kind": "unknown", "required": True})
     elif node.kind == "analysis":
         accepted, produced, _gk = _cap_io(node.capability)
-        pinned = node.input_artifact_type or (accepted[0] if accepted else "feature_collection")
+        pinned = node.input_artifact_type or "feature_collection"
         ins.append({"name": "in", "artifact_type": pinned,
                     "geometry_kind": "unknown", "required": True})
         out_type = produced[0] if produced else "feature_collection"
@@ -185,9 +188,13 @@ def node_ports(node: ModelNode) -> Tuple[List[Dict[str, str]], List[Dict[str, st
                     "geometry_kind": "unknown", "required": True})
         outs.append({"name": "out", "artifact_type": "map_image",
                      "geometry_kind": "unknown", "required": True})
-    else:  # output
-        ins.append({"name": "in", "artifact_type": "feature_collection",
-                    "geometry_kind": "unknown", "required": True})
+    else:  # output：终产物收口点 —— 空 artifact_type = 任意产物
+        # required=False 的依据：收口点不做计算，绑定门的基数检查
+        # （feature_count==0）只该拦"空输入喂计算"，不该拦"表产物进
+        # 汇点"（descriptor 契约：非 FC 载荷 feature_count 恒 0、无
+        # row_count）；汇点空产物的诚实性由运行 receipts 呈现。
+        ins.append({"name": "in", "artifact_type": "",
+                    "geometry_kind": "unknown", "required": False})
     return ins, outs
 
 
@@ -245,13 +252,14 @@ def ports_compatible(src_artifact: str, dst_artifact: str) -> bool:
 
     - 同类型直通；
     - 目标宽类型（feature_collection）收一切；
+    - 目标空类型（output 汇点）收一切（运行时对空端口只查非空）；
     - 源宽类型可喂特征族目标（feature_set/zone/network category 或
       point/line/polygon/network 几何）—— 不喂 table/aggregate/raster；
     - 其余要求注册表 category 相同。
     """
     if src_artifact == dst_artifact:
         return True
-    if dst_artifact == _WIDE_FEATURE_TYPE:
+    if dst_artifact in (_WIDE_FEATURE_TYPE, ""):
         return True
     if src_artifact == _WIDE_FEATURE_TYPE:
         dst_gk = geometry_kind_of(dst_artifact)

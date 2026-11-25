@@ -116,11 +116,12 @@ def test_compile_happy_path() -> None:
     buffered = graph.node("transform:buffer:buffered")
     assert buffered is not None and buffered.parameters == ("radius",)
     assert buffered.kind == "transform"
-    # analysis 节点端口 = 钉定/接受集第一（poi_feature_set）。
+    # analysis 输入端口缺省宽类型（运行时绑定门 _ANY_FEATURE_CATEGORIES
+    # 同门：feature_collection 收特征族；真实 descriptor 由运行时复核）。
     aggregate = graph.node("aggregate")
     assert aggregate is not None
     assert aggregate.capability == "admin_aggregation"
-    assert aggregate.inputs[0].artifact_type == "poi_feature_set"
+    assert aggregate.inputs[0].artifact_type == "feature_collection"
     assert aggregate.outputs[0].artifact_type == "admin_aggregate_table"
 
 
@@ -279,7 +280,7 @@ def test_roundtrip_projection_restores_author_view() -> None:
     assert nodes["buffered"]["op"] == "buffer"
     assert nodes["buffered"]["params"] == {"distance_m": 500}
     assert nodes["facilities"]["outputs"][0]["artifact_type"] == "poi_feature_set"
-    assert nodes["aggregate"]["inputs"][0]["artifact_type"] == "poi_feature_set"
+    assert nodes["aggregate"]["inputs"][0]["artifact_type"] == "feature_collection"
     edges = proj["edges"]
     assert len(edges) == 4
     assert edges[0] == {"from": "facilities.facility",

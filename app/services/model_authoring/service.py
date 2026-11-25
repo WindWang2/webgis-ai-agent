@@ -143,10 +143,11 @@ def _check_value(p: ModelParamSpec, raw: Any) -> Any:
 def resolve_node_params(
     doc: ModelDocument, values: Dict[str, Any],
 ) -> Dict[str, Dict[str, Any]]:
-    """文档节点参数 + `$param:` 引用 → {node_id: effective params}。
+    """文档节点参数 + `$param:` 引用 → {wire node_id: effective params}。
 
-    语义与 driver 的合并方向一致（node.params ∪ 运行时覆盖）：本函数
-    产出**逐节点**注入面，供 ``run_instance(node_params=...)``。
+    语义与 driver 的合并方向一致（node.params ∪ 运行时覆盖）：键是
+    **wire node_id**（transform 节点 = ``transform:<op>:<slug>``，与
+    compile 的 wire 命名同规则）—— driver 以 wire id 查 ``node_params``。
     """
     resolved = validate_param_values(doc.params, values)
     out: Dict[str, Dict[str, Any]] = {}
@@ -162,8 +163,16 @@ def resolve_node_params(
             else:
                 effective[key] = v
         if effective:
-            out[node.node_id] = effective
+            out[wire_node_id(node)] = effective
     return out
+
+
+def wire_node_id(node: Any) -> str:
+    """作者节点 → 运行时 wire node_id（与 compile._wire_node_id 同规则）。"""
+    if getattr(node, "kind", "") == "transform":
+        op = str(getattr(node, "transform_op", "") or "")
+        return f"transform:{op}:{node.node_id}"[:64]
+    return node.node_id[:64]
 
 
 class ModelAuthoringService:
@@ -428,7 +437,12 @@ class ModelAuthoringService:
             instance_id, owner_scope=owner_scope,
             deadline_s=max(1.0, min(float(deadline_s), 300.0)),
             node_params=node_params or None)
-        return {"run": result, "node_params": node_params}
+        # runtime.run_instance 返回 RunResult{"run": RunSummary, "instance"}；
+        # 解包为扁平 summary（避免双层嵌套——调用方读 run["run"]["status"]）。
+        summary = result.get("run") if isinstance(result, dict) else None
+        return {"run": summary if isinstance(summary, dict) else {},
+                "instance": result.get("instance") if isinstance(result, dict) else None,
+                "node_params": node_params}
 
     # ── 目录 / 版本（受限 scope 检索：本项目 + 本 owner）──────────────
 
@@ -512,4 +526,22 @@ __all__ = [
     "ModelAuthoringError",
     "validate_param_values",
     "resolve_node_params",
+    "get_service",
+    "reset_service",
 ]
+
+# ── 进程单例（与 workflow_runtime.service 同纪律；测试可 reset 注入）──
+
+_service: Optional[ModelAuthoringService] = None
+
+
+def get_service() -> ModelAuthoringService:
+    global _service
+    if _service is None:
+        _service = ModelAuthoringService()
+    return _service
+
+
+def reset_service() -> None:
+    global _service
+    _service = None

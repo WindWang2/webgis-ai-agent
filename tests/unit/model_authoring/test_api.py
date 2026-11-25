@@ -15,7 +15,6 @@ from sqlalchemy.pool import StaticPool
 from app.core.database import Base
 from app.services.model_authoring.service import (
     ModelAuthoringService,
-    get_service,
 )
 from app.services.model_authoring.store import ModelDraftStore
 

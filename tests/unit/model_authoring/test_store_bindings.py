@@ -5,7 +5,6 @@ bindings 用注入的 runtime stub（哑 store + 真 session_data），不触 dr
 """
 from __future__ import annotations
 
-import asyncio
 
 import pytest
 from sqlalchemy import create_engine
@@ -218,12 +217,12 @@ class TestParamResolution:
             output_node_ids=["out1"],
         )
         np = resolve_node_params(doc, {"buf": 1200})
-        assert np["buf1"]["distance"] == 1200
-        assert np["buf1"]["fixed"] == "m"
+        assert np["transform:buffer:buf1"]["distance"] == 1200
+        assert np["transform:buffer:buf1"]["fixed"] == "m"
         assert "src" not in np
         # 可选参数未提供 → 键省略
         np2 = resolve_node_params(doc, {})
-        assert np2["buf1"]["distance"] == 800
+        assert np2["transform:buffer:buf1"]["distance"] == 800
 
 
 # ── bindings：真实 store + 真 session_data ────────────────────────────

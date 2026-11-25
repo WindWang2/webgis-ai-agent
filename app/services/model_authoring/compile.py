@@ -168,7 +168,8 @@ def _typed_node(
     else:
         inputs = [
             TypedPort(name=p["name"], artifact_type=p["artifact_type"],
-                      geometry_kind=p["geometry_kind"], required=True)
+                      geometry_kind=p["geometry_kind"],
+                      required=bool(p.get("required", True)))
             for p in ins
         ]
         outputs = [
