@@ -54,6 +54,7 @@ import zhCoordinateOperations from '@/messages/zh-CN/coordinateOperations.json'
 import enCoordinateOperations from '@/messages/en-US/coordinateOperations.json'
 import zhFieldContracts from '@/messages/zh-CN/fieldContracts.json'
 import zhCartogram from '@/messages/zh-CN/cartogram.json'
+import zhModelBuilder from '@/messages/zh-CN/modelBuilder.json'
 import enCommon from '@/messages/en-US/common.json'
 import enSettings from '@/messages/en-US/settings.json'
 import enErrors from '@/messages/en-US/errors.json'
@@ -98,6 +99,7 @@ import enDataJoin from '@/messages/en-US/dataJoin.json'
 import enLinkedExploration from '@/messages/en-US/linkedExploration.json'
 import enFieldContracts from '@/messages/en-US/fieldContracts.json'
 import enCartogram from '@/messages/en-US/cartogram.json'
+import enModelBuilder from '@/messages/en-US/modelBuilder.json'
 import type { AppLocale } from './config'
 
 export interface AppMessages {
@@ -146,6 +148,7 @@ export interface AppMessages {
   georeferencing: typeof zhGeoreferencing
   topology: typeof zhTopology
   cartogram: typeof zhCartogram
+  modelBuilder: typeof zhModelBuilder
 }
 
 export const messages: Record<AppLocale, AppMessages> = {
@@ -195,6 +198,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     modelops: zhModelops,
     market: zhMarket,
     flow: zhFlow,
+    modelBuilder: zhModelBuilder,
   },
   'en-US': {
     // en 与 zh 的 catalog 结构由 test/i18n/key-completeness.test.ts 强制一致。
@@ -243,5 +247,6 @@ export const messages: Record<AppLocale, AppMessages> = {
     modelops: enModelops as unknown as AppMessages['modelops'],
     market: enMarket as unknown as AppMessages['market'],
     flow: enFlow as unknown as AppMessages['flow'],
+    modelBuilder: enModelBuilder as unknown as AppMessages['modelBuilder'],
   },
 }

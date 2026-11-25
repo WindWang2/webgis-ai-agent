@@ -37,6 +37,7 @@ import {
   Store,
   Radar,
   Cpu,
+  Workflow,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
@@ -81,6 +82,8 @@ const RAIL_GROUPS: Array<Array<RailTabDef>> = [
   [{ key: 'ops', icon: Activity }],
   // Agent 运行控制台（cockpit.v1）—— append-only 注册行，居词表尾。
   [{ key: 'cockpit', icon: Radar }],
+  // 可视化 GIS 模型构建器 —— append-only 注册行，居词表尾。
+  [{ key: 'model', icon: Workflow }],
 ];
 
 const RAIL_TABS: RailTabDef[] = RAIL_GROUPS.flat();

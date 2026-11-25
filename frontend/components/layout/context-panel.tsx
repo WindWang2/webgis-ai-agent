@@ -31,6 +31,7 @@ import {
   LayoutDashboard,
   Activity,
   Radar,
+  Workflow,
   Maximize2,
   Minimize2,
 } from 'lucide-react';
@@ -62,6 +63,7 @@ import { OpsConsole } from '@/components/sidebar/ops/ops-console';
 import { AgentOpsCockpit } from '@/components/cockpit/agent-ops-cockpit';
 import { MarketTab } from '@/components/sidebar/market/market-tab';
 import { ModelOpsTab } from '@/components/sidebar/modelops/modelops-tab';
+import { ModelBuilderTab } from '@/components/model-builder/model-builder-tab';
 import { PanelErrorBoundary } from '@/components/layout/panel-error-boundary';
 import { BottomSheet } from '@/components/layout/bottom-sheet';
 import type { LayoutMode } from '@/lib/hooks/use-layout-mode';
@@ -156,6 +158,8 @@ const PANEL_META: Record<string, PanelMeta> = {
   ops: { icon: Activity },
   // Agent 运行控制台（append-only 注册行）。
   cockpit: { icon: Radar },
+  // 可视化 GIS 模型构建器（append-only 注册行）。
+  model: { icon: Workflow },
 };
 
 export function ContextPanel({
@@ -492,6 +496,11 @@ export function ContextPanel({
             <ModelOpsTab sessionId={sessionId} ownerToken={ownerToken} />
           </PanelErrorBoundary>
         )}
+{activeTab === 'model' && (
+          <PanelErrorBoundary label={t('panel.boundary.model')}>
+            <ModelBuilderTab ownerToken={ownerToken} />
+          </PanelErrorBoundary>
+        )}
         </div>
       </BottomSheet>
     );
@@ -639,6 +648,12 @@ export function ContextPanel({
         {activeTab === 'modelops' && (
           <PanelErrorBoundary label="ModelOps">
             <ModelOpsTab sessionId={sessionId} ownerToken={ownerToken} />
+          </PanelErrorBoundary>
+        )}
+        {/* 可视化 GIS 模型构建器（画布 + 验证/发布/运行）。 */}
+        {activeTab === 'model' && (
+          <PanelErrorBoundary label={t('panel.boundary.model')}>
+            <ModelBuilderTab ownerToken={ownerToken} />
           </PanelErrorBoundary>
         )}
       </div>

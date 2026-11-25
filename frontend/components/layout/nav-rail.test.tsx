@@ -66,6 +66,7 @@ const TAB_LABELS: Record<string, string> = {
   ops: '运维',
   // Agent 运行控制台追加 tab
   cockpit: '控制台',
+  model: '建模',
 };
 
 describe('NavRail', () => {
@@ -93,7 +94,7 @@ describe('NavRail', () => {
     // ADR-0142：ops 运维 tab append-only 注册（词表尾）。
     // Agent 运行控制台 cockpit tab append-only 注册（词表尾）。
     const tabs = screen.getAllByRole('tab');
-    const exploreOrder = ['chat', 'project', 'data_sources', 'lakehouse', 'layers', 'tasks', 'market', 'modelops', 'ops', 'cockpit'];
+    const exploreOrder = ['chat', 'project', 'data_sources', 'lakehouse', 'layers', 'tasks', 'market', 'modelops', 'ops', 'cockpit', 'model'];
     expect(tabs).toHaveLength(exploreOrder.length);
     expect(tabs.map((t) => t.getAttribute('aria-label'))).toEqual(
       exploreOrder.map((k) => TAB_LABELS[k])
@@ -151,13 +152,13 @@ describe('NavRail', () => {
     render(<NavRail />);
     const tablist = screen.getByRole('tablist', { name: '工作区面板' });
 
-    // explore 可见序：chat → project → data_sources → lakehouse → layers → tasks → market → modelops → ops → cockpit
-    // （cockpit tab append-only 注册，居词表尾）
+    // explore 可见序：chat → project → data_sources → lakehouse → layers → tasks → market → modelops → ops → cockpit → model
+    // （model 建模器 tab append-only 注册，居词表尾）
     fireEvent.keyDown(tablist, { key: 'ArrowDown' });
     expect(setActiveLeftTab).toHaveBeenCalledWith('project');
 
     fireEvent.keyDown(tablist, { key: 'ArrowUp' });
-    expect(setActiveLeftTab).toHaveBeenCalledWith('cockpit');
+    expect(setActiveLeftTab).toHaveBeenCalledWith('model');
   });
 
   it('Home/End jump to first/last tab (mode-filtered)', () => {
@@ -166,7 +167,7 @@ describe('NavRail', () => {
     const tablist = screen.getByRole('tablist', { name: '工作区面板' });
 
     fireEvent.keyDown(tablist, { key: 'End' });
-    expect(setActiveLeftTab).toHaveBeenCalledWith('cockpit');
+    expect(setActiveLeftTab).toHaveBeenCalledWith('model');
 
     fireEvent.keyDown(tablist, { key: 'Home' });
     expect(setActiveLeftTab).toHaveBeenCalledWith('chat');
@@ -267,7 +268,7 @@ describe('NavRail 底部档（variant=bottom，#1666）', () => {
     // mock 的 setActiveLeftTab 不回落 store.activeLeftTab —— 当前仍 chat，
     // ArrowLeft 依半开环绕语义落到末位（与竖排档 ArrowUp 同规则）。
     fireEvent.keyDown(tablist, { key: 'ArrowLeft' });
-    expect(setActiveLeftTab).toHaveBeenCalledWith('cockpit');
+    expect(setActiveLeftTab).toHaveBeenCalledWith('model');
 
     // 方向一致性：底部档 Up/Down 不是导航键（竖排档才认）。
     setActiveLeftTab.mockClear();
@@ -282,7 +283,7 @@ describe('NavRail 底部档（variant=bottom，#1666）', () => {
     const tablist = screen.getByRole('tablist', { name: '工作区面板' });
 
     fireEvent.keyDown(tablist, { key: 'End' });
-    expect(setActiveLeftTab).toHaveBeenCalledWith('cockpit');
+    expect(setActiveLeftTab).toHaveBeenCalledWith('model');
 
     fireEvent.keyDown(tablist, { key: 'Home' });
     expect(setActiveLeftTab).toHaveBeenCalledWith('chat');

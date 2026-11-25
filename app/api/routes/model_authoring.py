@@ -219,7 +219,7 @@ async def list_capabilities(
         out: List[ModelCapabilityEntry] = []
         try:
             reg = get_capability_registry()
-            for cap_id in reg.all_ids():
+            for cap_id in reg.all_ids:
                 desc = reg.get(cap_id)
                 status = str(getattr(desc, "status", "") or "")
                 if status != "native":

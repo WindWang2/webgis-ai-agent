@@ -423,8 +423,13 @@ class ModelAuthoringService:
             self.runtime.store.get_instance, instance_id, owner_scope)
         if inst is None:
             raise ModelAuthoringError("INSTANCE_NOT_FOUND", instance_id)
+        # 有项目上下文就**总是**解析 node_params（param_values 缺省 = {} →
+        # 文档声明 default）：runtime `_node_params` 对非模型包形态的参数
+        # 行读 `p.get("value")`（模型包写 default 键），缺省注入 None 会
+        # 洗掉 wire 参数的 $param 默认——显式逐节点注入面恒胜出。
         node_params: Dict[str, Dict[str, Any]] = {}
-        if param_values is not None and project_id:
+        values = param_values if param_values is not None else {}
+        if project_id:
             draft_pkg_id = str(inst.get("package_id") or "")
             slug = draft_pkg_id[len("umodel_"):] if draft_pkg_id.startswith("umodel_") else ""
             if slug:
@@ -432,7 +437,7 @@ class ModelAuthoringService:
                 if draft is not None:
                     doc = _require_document(draft)
                     node_params = await asyncio.to_thread(
-                        resolve_node_params, doc, param_values)
+                        resolve_node_params, doc, values)
         result = await self.runtime.run_instance(
             instance_id, owner_scope=owner_scope,
             deadline_s=max(1.0, min(float(deadline_s), 300.0)),

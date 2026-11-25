@@ -23,6 +23,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from app.services.gis_harness.failure_observation import observe_optional_failure
+from app.services.model_authoring.store import ModelStoreError
 from app.tools.registry import ToolRegistry, tool
 
 logger = logging.getLogger(__name__)
@@ -33,9 +34,6 @@ _MAX_PATCH_OPS = 16
 
 def _caller_identity() -> tuple[Optional[str], Optional[int], Optional[str]]:
     """(user_id, org_id, session_id)——与 project_tools 同源。"""
-    from app.services.gis_harness.failure_observation import (
-        observe_optional_failure as _ob,
-    )
     try:
         from app.services.provenance.context import get_tool_execution_context
 
@@ -43,7 +41,7 @@ def _caller_identity() -> tuple[Optional[str], Optional[int], Optional[str]]:
         if ctx is not None:
             return ctx.user_id, ctx.org_id, ctx.session_id
     except Exception:  # noqa: BLE001 — context unavailable → anonymous
-        _ob("model-authoring-caller-identity")
+        observe_optional_failure("model-authoring-caller-identity")
     return None, None, None
 
 
@@ -99,7 +97,7 @@ def register_model_authoring_tools(registry: ToolRegistry) -> None:
             "确认节点词汇。只读。"
         ),
         param_descriptions={},
-        side_effect="read_only",
+        side_effect="pure",
         data_mutations=[],
         network=False,
         deterministic=True,
@@ -119,7 +117,7 @@ def register_model_authoring_tools(registry: ToolRegistry) -> None:
 
             reg = get_capability_registry()
             out: List[Dict[str, Any]] = []
-            for cap_id in reg.all_ids():
+            for cap_id in reg.all_ids:
                 desc = reg.get(cap_id)
                 status = str(getattr(desc, "status", "") or "")
                 if status != "native":
@@ -199,7 +197,6 @@ def register_model_authoring_tools(registry: ToolRegistry) -> None:
             return _err("MODEL_SCHEMA_INVALID", str(e)[:300])
         from app.services.model_authoring.service import (
             ModelAuthoringError,
-            ModelStoreError,
             get_service,
         )
 
@@ -234,7 +231,7 @@ def register_model_authoring_tools(registry: ToolRegistry) -> None:
             "project_id": "项目 id",
             "model_slug": "模型 slug",
         },
-        side_effect="read_only",
+        side_effect="pure",
         data_mutations=[],
         network=False,
         deterministic=True,
@@ -355,7 +352,6 @@ def register_model_authoring_tools(registry: ToolRegistry) -> None:
         )
         from app.services.model_authoring.service import (
             ModelAuthoringError,
-            ModelStoreError,
             get_service,
         )
 
@@ -402,7 +398,7 @@ def register_model_authoring_tools(registry: ToolRegistry) -> None:
             "project_id": "项目 id",
             "model_slug": "模型 slug",
         },
-        side_effect="read_only",
+        side_effect="pure",
         data_mutations=[],
         network=False,
         deterministic=True,
@@ -566,13 +562,19 @@ def register_model_authoring_tools(registry: ToolRegistry) -> None:
                 input_bindings=bindings)
             run = await svc.run_model_instance(
                 instance_id=inst["instance"]["instance_id"],
-                owner_scope=owner, deadline_s=deadline_s)
+                owner_scope=owner, deadline_s=deadline_s,
+                project_id=project_id,
+                param_values=params if params else None)
         except ModelAuthoringError as e:
             return _err(e.code, e.detail)
+        # 节点状态取**运行后**投影（run_model_instance 返回的 RunResult
+        # instance 是 driver 终态回读；实例化时的投影必然陈旧）。
+        post_nodes = ((run.get("instance") or {}).get("nodes")
+                      or inst["instance"].get("nodes") or [])
         node_states = [
             {"node_id": n.get("node_id"), "state": n.get("state", ""),
              "error_code": n.get("error_code", "")}
-            for n in (inst["instance"].get("nodes") or [])[:64]
+            for n in post_nodes[:64]
         ]
         return {
             "success": True,
@@ -600,7 +602,7 @@ def register_model_authoring_tools(registry: ToolRegistry) -> None:
         param_descriptions={
             "project_id": "项目 id",
         },
-        side_effect="read_only",
+        side_effect="pure",
         data_mutations=[],
         network=False,
         deterministic=True,
