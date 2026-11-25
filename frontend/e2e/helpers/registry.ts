@@ -218,6 +218,14 @@ export const JOURNEYS: JourneyEntry[] = [
     modes: ['real'],
     owner: 'g48-georeferencing',
   },
+  {
+    id: 'j50',
+    file: 'journeys/j50-shared-topology-edit.journey.ts',
+    title: '共享拓扑约束编辑：提案卡 impact→approve→applied / reject 负例',
+    smoke: false,
+    modes: ['mock'],
+    owner: 'goal-gis-topology-authoring',
+  },
 ];
 
 export const smokeJourneys = (): JourneyEntry[] => JOURNEYS.filter((j) => j.smoke);
