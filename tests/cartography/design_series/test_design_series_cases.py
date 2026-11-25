@@ -282,7 +282,6 @@ class TestCaseExtractRoundtrip:
         from app.services.design_specs.contract import validate_design_spec_payload
         from app.services.design_specs.extract import extract_design_spec_draft_sync
 
-        case = get_case("facility_density")
         document = {
             "version": "1.1",
             "sources": {"src": {"type": "geojson"}},
