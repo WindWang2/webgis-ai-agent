@@ -92,8 +92,21 @@ WORKDIR /app
 COPY vendor/pi/package.json vendor/pi/package-lock.json ./vendor/pi/
 RUN cd vendor/pi && npm ci --no-audit --no-fund && rm -rf node_modules
 COPY vendor/pi/ ./vendor/pi/
+# ADR-0301 D3：镜像侧构建清单。node:slim 无 git，pin 经 build-arg 传入
+# （production.yml 用 `git ls-tree HEAD vendor/pi` 的 gitlink SHA）；
+# 未传时如实记录 unknown——identity/doctor 把无 git 镜像的清单状态标为
+# manifest_only，不冒充已验证 pin。
+ARG PI_VENDOR_PIN=unknown
 RUN cd vendor/pi && npm ci --no-audit --no-fund && npm run build \
-    && test -f packages/coding-agent/dist/bundle/rpc-entry.js
+    && test -f packages/coding-agent/dist/bundle/rpc-entry.js \
+    && printf '{\n  "pin": "%s",\n  "describe": "docker-image-build",\n  "node_version": "%s",\n  "lockfile_sha256_16": "%s",\n  "entry": "packages/coding-agent/dist/bundle/rpc-entry.js",\n  "entry_sha256_16": "%s",\n  "built_at": "%s",\n  "builder": "Dockerfile pi-builder (ADR-0301)"\n}\n' \
+      "${PI_VENDOR_PIN}" \
+      "$(node --version)" \
+      "$(sha256sum package-lock.json | cut -c1-16)" \
+      "$(sha256sum packages/coding-agent/dist/bundle/rpc-entry.js | cut -c1-16)" \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      > .build-manifest.json \
+    && cat .build-manifest.json
 
 # Stage 5: Runner
 FROM python:3.12-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df AS runner

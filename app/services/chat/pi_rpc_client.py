@@ -27,6 +27,7 @@ import atexit
 import json
 import logging
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -71,22 +72,77 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 # also requires its locked external jiti package under vendor/pi/node_modules.
 # The tsgo-emitted `dist/rpc-entry.js` (workspace-wide build) stays a fallback
 # for source checkouts. First existing entry wins; pi_doctor surfaces which.
-PI_RPC_ENTRY_CANDIDATES = (
-    REPO_ROOT / "vendor" / "pi" / "packages" / "coding-agent" / "dist" / "bundle" / "rpc-entry.js",
-    REPO_ROOT / "vendor" / "pi" / "packages" / "coding-agent" / "dist" / "rpc-entry.js",
-)
+
+# ADR-0301 D4：开发期 vendor 目录 override（仅显式 opt-in）。生产镜像与 CI 不设置
+# 该变量，行为与默认路径完全一致；设置后 identity/doctor 会把来源标注为
+# env_override（身份可追溯）。指向非 Pi checkout 时忽略并回退 canonical 路径。
+PI_VENDOR_DIR_ENV = "PI_VENDOR_DIR"
+
+
+def vendor_pi_dir() -> tuple[Path, str]:
+    """(directory, source) — ``source`` is ``"default"`` or ``"env_override"``."""
+    override = os.environ.get(PI_VENDOR_DIR_ENV, "").strip()
+    if override:
+        candidate = Path(override).expanduser().resolve()
+        if (candidate / "package.json").is_file():
+            return candidate, "env_override"
+        logger.warning(
+            "CONFIG: ignoring %s=%r — not a Pi checkout (no package.json); "
+            "using canonical vendor/pi",
+            PI_VENDOR_DIR_ENV, override[:128],
+        )
+    return REPO_ROOT / "vendor" / "pi", "default"
+
+
+def pi_rpc_entry_candidates(vendor_dir: Path | None = None) -> tuple[Path, ...]:
+    base = (vendor_dir or vendor_pi_dir()[0]) / "packages" / "coding-agent" / "dist"
+    return (base / "bundle" / "rpc-entry.js", base / "rpc-entry.js")
 
 
 def resolve_pi_rpc_entry() -> Path:
     """First built Pi RPC entry that exists (bundle preferred), else the
     canonical bundle path (so the FileNotFoundError names the primary target)."""
-    for candidate in PI_RPC_ENTRY_CANDIDATES:
+    candidates = pi_rpc_entry_candidates()
+    for candidate in candidates:
         if candidate.is_file():
             return candidate
-    return PI_RPC_ENTRY_CANDIDATES[0]
+    return candidates[0]
 
 
+# Evaluated at import: an env override set before process start wins; tests that
+# mutate the environment afterwards should call resolve_pi_rpc_entry() directly.
 PI_RPC_ENTRY = resolve_pi_rpc_entry()
+
+#: 版本探针超时（秒）。探针每次 spawn 一个 ``node --version`` 进程，必须短。
+PI_VERSION_PROBE_TIMEOUT = 10.0
+
+
+def probe_pi_entry_version(entry: Path | None = None) -> tuple[str | None, str]:
+    """Run the *actual* RPC entry with ``--version`` and return ``(version,
+    source)``. Source is ``"entry_probe"`` on success, ``"unknown"`` otherwise
+    (missing node, unbuilt entry, timeout). This is the vendor's own answer
+    about itself — the strongest runtime version evidence short of an RPC
+    handshake, and the same entry the bridge will spawn."""
+    target = Path(entry) if entry is not None else resolve_pi_rpc_entry()
+    if not target.is_file():
+        return None, "unknown"
+    try:
+        res = subprocess.run(
+            ["node", str(target), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=PI_VERSION_PROBE_TIMEOUT,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None, "unknown"
+    if res.returncode != 0:
+        return None, "unknown"
+    m = re.fullmatch(r"(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)", res.stdout.strip())
+    if not m:
+        return None, "unknown"
+    return m.group(1), "entry_probe"
+
+
 PI_AGENT_DIR = REPO_ROOT / ".pi" / "agent"
 DEFAULT_SESSION_DIR = REPO_ROOT / ".pi" / "sessions"
 BUNDLED_PI_PROVIDER = "webgis"

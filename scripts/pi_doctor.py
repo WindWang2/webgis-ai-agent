@@ -90,15 +90,29 @@ def _live_registry() -> ToolRegistry | None:
 # ── 1. vendor identity ──────────────────────────────────────────────────────
 
 def check_vendor() -> Report:
-    from app.services.chat.pi_compat import PI_MIN_VENDOR_TAG, pi_vendor_identity
+    from app.services.chat.pi_compat import (
+        GITLINK_MODE,
+        PI_MIN_VENDOR_TAG,
+        pi_capability_snapshot,
+        pi_vendor_identity,
+    )
 
     ident = pi_vendor_identity()
+    caps = pi_capability_snapshot(ident.entry_path)
     facts = {
         "head": ident.head_commit,
         "describe": ident.describe,
         "expected_pin": ident.expected_pin,
         "entry": ident.entry_kind,
         "node": ident.node_version,
+        "tree_mode": ident.tree_mode,
+        "vendor_dir_source": ident.vendor_dir_source,
+        "observed_version": ident.observed_version,
+        "observed_version_source": ident.observed_version_source,
+        "manifest_state": ident.manifest_state,
+        "manifest_pin": ident.manifest_pin,
+        "capabilities_supported": len(caps.supported_names()),
+        "capabilities_total": len(caps.supported_names()) + len(caps.unsupported_names()),
     }
     # ADR-0288（W08）：期望配置代（不可逆短指纹）—— 与 /config/llm 的
     # expected_generation 及 worker spawn 锚定的生效代同一口径，可对账
@@ -109,6 +123,18 @@ def check_vendor() -> Report:
         facts["expected_config_generation"] = config_generation() or None
     except Exception:  # noqa: BLE001 — 观测面缺席不阻断诊断
         facts["expected_config_generation"] = None
+    # ADR-0301 D2：非 gitlink 树形态（#2169 symlink 回归类）必须 FAIL——
+    # 此前该形态让 pin 判定静默降级 unknown，同类回归会漏网。
+    if ident.vendor_tree_not_gitlink:
+        return Report(
+            "vendor", FAIL,
+            f"vendor/pi tree entry is mode {ident.tree_mode}, not a gitlink "
+            f"({GITLINK_MODE}): fresh clones / CI / Docker cannot build; pin "
+            f"verification silently degraded (symlink regression class)",
+            "git rm --cached vendor/pi && git update-index --add "
+            "--cacheinfo 160000,<pin>,vendor/pi && git submodule update --init vendor/pi",
+            facts,
+        )
     if ident.matches_expected_pin is False:
         return Report(
             "vendor", WARN,
@@ -116,21 +142,38 @@ def check_vendor() -> Report:
             f"({ident.expected_pin})",
             "git -C vendor/pi checkout <recorded-pin>", facts,
         )
+    if ident.manifest_state == "pin_mismatch":
+        return Report(
+            "vendor", FAIL,
+            f"build manifest pin ({ident.manifest_pin}) != submodule checkout "
+            f"({ident.head_commit}): rebuild before trusting this runtime",
+            "bash scripts/build-vendor-pi.sh --reinstall", facts,
+        )
     if ident.meets_floor is False:
         return Report(
             "vendor", FAIL,
             f"Pi {ident.describe} is below the bridge protocol floor {PI_MIN_VENDOR_TAG}",
             "upgrade the submodule pin together with the bridge contract tests", facts,
         )
-    if ident.head_commit is None:
+    if ident.head_commit is None and ident.manifest_state in ("absent", "unparsed"):
         return Report(
             "vendor", WARN,
-            "no git metadata (deployed image?); identity limited to filesystem facts",
+            "no git metadata and no usable build manifest (deployed image?); "
+            "identity limited to filesystem facts",
             "", facts,
+        )
+    if ident.head_commit is None:
+        return Report(
+            "vendor", PASS,
+            f"manifest pin ok ({ident.manifest_pin}); no git metadata (image); "
+            f"floor {PI_MIN_VENDOR_TAG}", "", facts,
         )
     return Report(
         "vendor", PASS,
-        f"pin ok ({ident.describe or ident.head_commit}); floor {PI_MIN_VENDOR_TAG}", "", facts,
+        f"pin ok ({ident.describe or ident.head_commit}); floor {PI_MIN_VENDOR_TAG}; "
+        f"version {ident.observed_version or '?'} ({ident.observed_version_source}); "
+        f"manifest {ident.manifest_state}; capabilities "
+        f"{facts['capabilities_supported']}/{facts['capabilities_total']}", "", facts,
     )
 
 
@@ -158,8 +201,19 @@ def check_build() -> Report:
                 "install node >= 22.19 (vendor/pi engines field)", {"entry": ident.entry_kind},
             )
     entry = ident.entry_kind or "?"
+    # ADR-0301 D3：构建清单对账。entry_drift/absent/unparsed 都是 WARN 级
+    # （上游 esbuild 产物非字节级可复现、旧构建/镜像可能没有清单），
+    # 只有 pin 对不上才升级 FAIL（vendor 检已覆盖）。
+    manifest_note = f"; manifest {ident.manifest_state}"
+    manifest_detail = f"rpc entry ready ({entry}); node {ident.node_version or 'unknown'}{manifest_note}"
+    if ident.manifest_state in ("absent", "unparsed") and ident.head_commit is not None:
+        return Report(
+            "build", WARN, manifest_detail + " — rebuild to (re)generate the manifest",
+            "bash scripts/build-vendor-pi.sh",
+            facts={"entry": ident.entry_kind, "entry_path": ident.entry_path},
+        )
     return Report(
-        "build", PASS, f"rpc entry ready ({entry}); node {ident.node_version or 'unknown'}",
+        "build", PASS, manifest_detail,
         facts={"entry": ident.entry_kind, "entry_path": ident.entry_path},
     )
 

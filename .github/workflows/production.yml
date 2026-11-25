@@ -79,6 +79,9 @@ jobs:
           fi
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
         if: steps.inputs.outputs.changed == 'true'
+      - name: Resolve vendor/pi gitlink pin
+        if: steps.inputs.outputs.changed == 'true'
+        run: echo "PI_VENDOR_PIN=$(git ls-tree HEAD vendor/pi | awk '{print $3}')" >> "$GITHUB_ENV"
       - name: Build runner without waiting for test lanes
         if: steps.inputs.outputs.changed == 'true'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
@@ -87,6 +90,8 @@ jobs:
           file: Dockerfile.prod
           target: runner
           push: false
+          build-args: |
+            PI_VENDOR_PIN: ${{ env.PI_VENDOR_PIN }}
           cache-from: type=gha,scope=docker-smoke
           cache-to: type=gha,mode=max,scope=docker-smoke
 
@@ -1251,6 +1256,8 @@ jobs:
             type=ref,event=branch
             type=semver,pattern={{major}}.{{minor}}.{{patch}}
 
+      - name: Resolve vendor/pi gitlink pin
+        run: echo "PI_VENDOR_PIN=$(git ls-tree HEAD vendor/pi | awk '{print $3}')" >> "$GITHUB_ENV"
       - name: Build Production Image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
@@ -1266,6 +1273,8 @@ jobs:
           load: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            PI_VENDOR_PIN: ${{ env.PI_VENDOR_PIN }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -1692,7 +1701,8 @@ jobs:
         if: steps.pull.outcome == 'failure'
         run: |
           echo "⚠️ registry 中未找到 ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.PREV_SHA }}，回退从源码构建"
-          docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:rollback -f Dockerfile.prod .
+          PI_PIN="$(git ls-tree "$(git rev-parse "${{ env.PREV_SHA }}^{commit}")" vendor/pi | awk '{print $3}')"
+          docker build --build-arg PI_VENDOR_PIN="$PI_PIN" -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:rollback -f Dockerfile.prod .
 
       - name: Configure SSH Access
         if: vars.SSH_HOST != ''

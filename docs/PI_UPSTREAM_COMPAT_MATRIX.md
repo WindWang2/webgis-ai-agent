@@ -1,10 +1,17 @@
 # Pi 上游兼容矩阵（PI_UPSTREAM_COMPAT_MATRIX）
 
-> G01-PI-NATIVE-RUNTIME / PI-10；G12 更新（ADR-0288）；G22 升级 v1.5.2。
-> 当前 pin：**v1.5.2**（gitlink `b4afdddf`，上游 `earendil-works/pi`，原
-> `badlogic/pi-mono`）。协议 floor 仍 **v1.5.1**（`PI_MIN_VENDOR_TAG`——floor
-> 是「已消费协议的最低下限」声明，v1.5.2 未引入任何新消费协议，故不跟
-> pin 联动）。
+> G01-PI-NATIVE-RUNTIME / PI-10；G12 更新（ADR-0288）；G22 升级 v1.5.2；
+> goal-pi-native-gis-host-20261125 升级 v1.6.1（ADR-0301）。
+> 当前 pin：**v1.6.1**（gitlink `ef4a1cfcca62b77ad3558337ff3e1c7f6beeadfe`，
+> 上游 `earendil-works/pi`，原 `badlogic/pi-mono`；lightweight tag，
+> published 2026-11-25T13:41:35Z）。协议 floor 仍 **v1.5.1**
+> （`PI_MIN_VENDOR_TAG`——floor 是「已消费协议的最低下限」声明，pin/floor
+> 解耦：floor 不盲随 pin 上移，旧 checkout 仍可经 PI_VENDOR_DIR 开发
+> override 使用且身份可追溯）。
+> 能力判定：**按 feature 而非版本号**——`pi_compat.PiCapabilitySnapshot`
+> （typed、封闭词表、唯一 feature→min-version 映射点）；本矩阵 §4.5 记录
+> v1.5.2→v1.6.1 差异裁决。gitlink 形态守卫：树条目 mode 必须 160000
+> （#2169 symlink 回归类 → doctor FAIL，§4.5 C17）。
 > 纪律：**不擅自升级**——升级需先更新本矩阵 + contract tests，走 feature-gated
 > adapter（ADR-0282 语义）。
 
@@ -93,6 +100,43 @@
   --reinstall` + doctor/契约复跑（floor 不动，v1.5.1 仍满足下限；G22-P7
   已演练，见 TEST_EVIDENCE.md）。
 
+
+## 4.5 v1.5.2 → v1.6.1 差异裁决（ADR-0301，2026-11-26）
+
+先修供应链再升 pin：master 的 `vendor/pi` 在 merge `1b3f9e415`（PR #2169，
+2026-11-16）被误改成本机悬空 symlink（mode 120000 blob `dd645f502`），
+本波次恢复 gitlink 形态并直升 v1.6.1。四栏口径：
+
+- **已消费协议（C1–C16）：零漂移**——`json.md`/`rpc.md`/`rpc-extension-ui.md`
+  在 v1.5.1→v1.6.1 间**逐字节一致**（本机 `git diff` 核实）；
+  `rpc-commands.md` 仅两处文档级变更，且本仓零消费：
+  ① `bash` 响应加性 `fullOutputError`（本仓不经 RPC bash 命令）；
+  ② `get_last_assistant_text` 语义澄清——跳过 aborted/failed turn 或仅工具
+  调用的无文本消息（本仓无该命令消费点，`rg` 零命中）。
+- **新能力（本仓消费，C17–C22）**：见下表。
+- **破坏性变化（评估不触及本仓消费面）**：① v1.6.0 扩展组件 `render()`
+  返回 `readonly string[]`——`app/extensions/webgis-tools/index.mjs` 不实现
+  自定义组件渲染，不受影响；② v1.6.1 `notices.*` 设置替换
+  `showCacheMissNotices`——本仓 settings.json 投影不写该键，无迁移面。
+- **项目采纳**：**升级 pin v1.5.2 → v1.6.1**（tag `ef4a1cfc`）。证据：
+  pi_doctor 六域 PASS（529 tools / native 7/7 / deferred 522 / 事件词表全量 /
+  真实 rpc-entry handshake-turn-settled live 探测）；`npm ci`（root lockfile
+  `f05391f4…`）；build manifest 对账 consistent；能力快照 14/14
+  （`entry_probe@1.6.1`）。非字节级可复现已知限制：上游 esbuild 产物含
+  内容寻址 chunk hash，重建换 hash（manifest entry_drift 观测性 WARN，
+  pin 对账不受影响）。
+
+### 新增契约面（C17–C22）
+
+| # | 上游契约（版本） | 本仓库消费点 | 契约测试 |
+|---|---|---|---|
+| C17 | vendor/pi git 树形态必须是 gitlink（mode 160000）；120000 symlink = 供应链回归（#2169 实证），pin 判定不得静默降级 | `pi_compat._expected_pin`（type 必须 `commit`，symlink blob 40-hex 不再误判）、`pi_doctor` vendor 域 FAIL、identity `vendor_tree_not_gitlink` | `tests/unit/test_pi_vendor_capability_snapshot.py`（临时 git 仓 fixture） |
+| C18 | 构建清单 `.build-manifest.json`（pin/node/lock/entry sha16；位于子模块工作树内、超项目索引不可见）；状态机 absent/consistent/manifest_only/pin_mismatch/entry_drift/unparsed | `build-vendor-pi.sh` 写入；Dockerfile(.prod) pi-builder 经 `PI_VENDOR_PIN` build-arg 写入；`pi_compat._manifest_facts` 对账；doctor build/vendor 域消费 | 同上（manifest 状态机用例） |
+| C19 | 入口自证版本：`node <rpc-entry> --version`（mode 分发前处理，v1.5.1 即支持）；identity `observed_version`（`entry_probe` 证据） | `pi_rpc_client.probe_pi_entry_version`（唯一 spawn 点，10s 上限）；`pi_compat.pi_vendor_identity` 汇聚 | 同上（live 本 checkout 断言 1.6.1） |
+| C20 | typed 能力快照：feature→min-version 唯一映射（14 项封闭词表）；未知版本一律 unsupported 不谎报；消费方查 `caps.has()` 禁止散落版本比较 | `pi_compat.PiCapabilitySnapshot`/`capabilities_for_version`；v1.6.0 组=extension_error/abort_batch_terminal/session_lifecycle_fix/unreported_diagnostics，v1.6.1 组=provider_failure_events/decision_model_classify/rpc_line_scan_fix | 同上（边界用例 v1.5.1/v1.6.0/v1.6.1/unknown/prerelease） |
+| C21 | v1.6.0 RPC 会话生命周期修复：`new_session`/`switch_session`/`fork` 的扩展 `session_start` 单跑 + `entry_appended` 事件转发 RPC 客户端；Esc 中止批量工具未启动项获 "Operation aborted" 终态结果 | 事件映射按封闭词表处理（桥无需行为变化）；能力位 `RPC_SESSION_LIFECYCLE_FIX`/`ABORT_BATCH_TERMINAL` 记录 | vendor contract 车道（真 rpc-entry）+ 能力快照测试 |
+| C22 | v1.6.1 provider 可观测性：`after_provider_response` 覆盖 HTTP 4xx/5xx 与每次重试尝试（WP5 挂点）；codemode `models.classify()` + `responseId`（默认不启用，能力门控） | 能力位 `PROVIDER_FAILURE_EVENTS`/`DECISION_MODEL_CLASSIFY`；WP5 把失败/重试事件接入 typed usage/diagnostic ledger（不记录请求全文/密钥） | 能力快照测试 + WP5 治理测试 |
+
 ## 5. 版本历史
 
 | pin | 引入 | 备注 |
@@ -100,4 +144,5 @@
 | v0.81.1+1 | PR #1973 前 | 旧基线 |
 | v1.5.0 | PR #1973（ADR-0282） | 两段加载/prompt disposition/pi-schema 校验等契约面以此为准 |
 | v1.5.1 | G12（ADR-0288） | 原生工具发现/嵌套调用/有序停机契约面（C11–C16）以此为准；floor 下限 |
-| **v1.5.2**（当前） | G22（2026-11-11） | pin-only 升级；消费面零漂移（§4 正式裁决）；interactive missing-cwd UX/导入清理不触及 rpc 面 |
+| v1.5.2 | G22（2026-11-11） | pin-only 升级；消费面零漂移（§4 正式裁决）；interactive missing-cwd UX/导入清理不触及 rpc 面 |
+| **v1.6.1**（当前） | goal-pi-native-gis-host-20261125（ADR-0301，2026-11-26） | 先修 #2169 symlink 回归再升 pin；消费面零漂移（§4.5 裁决，json/rpc/rpc-extension-ui 文档逐字节一致）；新契约面 C17–C22（供应链守卫/manifest/版本探针/能力快照/v1.6.x 生命周期与 provider 事件）|
