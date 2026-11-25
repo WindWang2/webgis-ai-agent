@@ -78,34 +78,6 @@ class TestFreezePlanContract:
 # ── 真实执行器 ───────────────────────────────────────────────────────
 
 
-@pytest.fixture()
-def store_root(tmp_path, monkeypatch):
-    import app.services.mapspec.store as store_module
-
-    root = tmp_path / "mapspec_store"
-    root.mkdir()
-    monkeypatch.setattr(store_module, "BASE_STORAGE_DIR", root, raising=False)
-    yield root
-
-
-@pytest.fixture()
-def exports_dir(tmp_path, monkeypatch):
-    from app.services import export_paths
-
-    root = tmp_path / "exports"
-    root.mkdir()
-    monkeypatch.setattr(export_paths, "exports_root", lambda: root)
-    return root
-
-
-@pytest.fixture(autouse=True)
-def _owner_kind(monkeypatch):
-    monkeypatch.setattr(
-        "app.services.session_data_protocol._conversation_owner_kind",
-        lambda sid: "none",
-    )
-
-
 def _make_fc(prefix="zone", n=6) -> dict:
     features = []
     for i in range(n):
