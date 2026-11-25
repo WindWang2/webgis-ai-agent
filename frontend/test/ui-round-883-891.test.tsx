@@ -38,16 +38,18 @@ describe('U-1 (#883) 图层样式编辑入口可达', () => {
 
   it('context-panel 源码锚点：editingLayerId 驱动 LayerStylePanel 钻入', async () => {
     const fs = await import('fs');
-    const src = fs.readFileSync('components/layout/context-panel.tsx', 'utf-8');
+    const { resolve } = await import('node:path');
+    const src = fs.readFileSync(resolve(__dirname, '../components/layout/context-panel.tsx'), 'utf-8');
     expect(src).toContain("editingLayerId ? <LayerStylePanel /> : <LayersTab />");
   });
 
   it('workspace 源码锚点：图层管理收敛到工作区 Layers 标签（设置面板不再保留第二入口）', async () => {
     const fs = await import('fs');
-    const src = fs.readFileSync('components/layout/context-panel.tsx', 'utf-8');
+    const { resolve } = await import('node:path');
+    const src = fs.readFileSync(resolve(__dirname, '../components/layout/context-panel.tsx'), 'utf-8');
     expect(src).toContain("<LayersTab />");
     // Workspace V2（Goal C2 折叠）：settings 面板不再含图层 tab/组件。
-    const settings = fs.readFileSync('components/settings/settings-panel.tsx', 'utf-8');
+    const settings = fs.readFileSync(resolve(__dirname, '../components/settings/settings-panel.tsx'), 'utf-8');
     expect(settings).not.toContain("key: 'layers'");
     expect(settings).not.toContain('LayerManagement');
   });

@@ -202,7 +202,7 @@ export function invalidateCache(pathPrefix: string): number {
   cache.forEach((_value, key) => {
     const unscoped = key.includes('::') ? key.slice(key.indexOf('::') + 2) : key;
     const path = unscoped.split('?')[0].split('|').slice(1).join('|');
-    if (path === pathPrefix || path.startsWith(`${pathPrefix}/`) || path.startsWith(`${pathPrefix}?`)) {
+    if (path === pathPrefix || path.startsWith(`${pathPrefix}/`)) {
       keysToRemove.push(key);
     }
   });

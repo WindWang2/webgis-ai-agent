@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any, Dict, List, Optional, Tuple
 
 import geopandas as gpd
@@ -71,7 +72,7 @@ def _clean_geometry_layer(gdf: gpd.GeoDataFrame) -> Tuple[gpd.GeoDataFrame, int]
 def _parse_weights(
     ancillary: gpd.GeoDataFrame, weight_field: str
 ) -> Tuple[Optional[List[float]], Dict[str, int]]:
-    """控制面权重解析：NaN→0（计数）、负值钳 0（计数）。
+    """控制面权重解析：NaN/inf→0（计数）、负值钳 0（计数）。
 
     返回 (weights 或 None, 披露计数)。weight_field 为空或字段缺失时
     返回 None —— 调用方退化为纯面积权重（area-proportional）。
@@ -89,7 +90,7 @@ def _parse_weights(
             stats["nan_weights"] += 1
             weights.append(w)
             continue
-        if w != w:  # NaN
+        if not math.isfinite(w):
             w = 0.0
             stats["nan_weights"] += 1
         elif w < 0.0:

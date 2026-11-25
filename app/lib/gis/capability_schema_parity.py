@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping
 
 PARITY_SCHEMA_VERSION = "capability-schema-parity/v1"
 CODE_SUMMARY_VALUE_LOSS = "SUMMARY_VALUE_LOSS"
@@ -39,18 +39,6 @@ def _required_from_model(model: Any) -> set[str]:
         return {n for n, f in model.model_fields.items() if f.is_required()}
     except Exception:  # noqa: BLE001
         return set()
-
-
-def _schema_required(schemas: Mapping[str, Any], name: str) -> Optional[set[str]]:
-    for entry in schemas.values() if isinstance(schemas, dict) else (schemas or []):
-        fn = entry.get("function", entry) if isinstance(entry, Mapping) else {}
-        nm = fn.get("name") if isinstance(fn, Mapping) else None
-        if nm != name:
-            continue
-        params = fn.get("parameters", {}) if isinstance(fn, Mapping) else {}
-        if isinstance(params, Mapping) and "required" in params:
-            return set(str(x) for x in (params.get("required") or []))
-    return None
 
 
 def _summary_probe(payload: dict[str, Any]) -> dict[str, Any]:
@@ -110,7 +98,7 @@ def parity_report(
         else:
             from app.lib.gis.tool_capability_conformance import collect_live_facts
 
-            registry = collect_live_facts(bootstrap=bootstrap or True).registry
+            registry = collect_live_facts(bootstrap=bootstrap).registry
 
     all_names = sorted(str(n) for n in registry.tool_names())
     # 报告面上限只截报告，不截真相：超出时显式披露，且 LEGACY_TOOLS

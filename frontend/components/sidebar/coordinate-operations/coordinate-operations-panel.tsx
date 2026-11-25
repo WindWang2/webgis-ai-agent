@@ -85,6 +85,7 @@ export function CoordinateOperationsPanel({
   const [run, setRun] = useState<CoordOpRunView | null>(null);
   const [running, setRunning] = useState(false);
   const [resultRows, setResultRows] = useState<Array<{ properties: Record<string, unknown>; first_coordinate: number[] | null }>>([]);
+  const [resultTotal, setResultTotal] = useState<number | null>(null);
   const [error, setError] = useState<{ code: string; message: string; hint?: string } | null>(null);
 
   const sessionIdRef = useRef<string | null>(null);
@@ -129,6 +130,7 @@ export function CoordinateOperationsPanel({
       epochRef.current += 1;
       setDescribe(null); setListing(null); setCrsLookup(null);
       setPlan(null); setPreview(null); setRun(null); setResultRows([]);
+      setResultTotal(null);
       setError(null); setSelectedCandidate(null);
       return;
     }
@@ -259,13 +261,18 @@ export function CoordinateOperationsPanel({
       if (epochRef.current !== epoch) return;
       setRun(started);
       // 轮询直至终态（进度来自服务器 job 行）
+      let terminal = false;
       for (let i = 0; i < 600; i += 1) {
         await new Promise((r) => setTimeout(r, 1000));
         if (epochRef.current !== epoch) return;
         const view = await api.inspectRun(started.run_id);
         if (epochRef.current !== epoch) return;
         setRun(view);
-        if (['completed', 'failed', 'cancelled'].includes(view.status)) break;
+        if (['completed', 'failed', 'cancelled'].includes(view.status)) { terminal = true; break; }
+      }
+      // 超时不是「无终态」的静默退出：如实置错误，用户可区分仍在跑与已放弃。
+      if (!terminal) {
+        setError({ code: 'poll_timeout', message: t('errors.default', { code: 'poll_timeout' }) });
       }
     } catch (err) {
       if (epochRef.current !== epoch) return;
@@ -273,7 +280,7 @@ export function CoordinateOperationsPanel({
     } finally {
       if (epochRef.current === epoch) setRunning(false);
     }
-  }, [api, plan]);
+  }, [api, plan, t]);
 
   const cancelRun = useCallback(async () => {
     if (!api || !run) return;
@@ -287,6 +294,7 @@ export function CoordinateOperationsPanel({
       const page = await api.resultPage(runId, 0, 20);
       if (epochRef.current !== epoch) return;
       setResultRows(page.rows);
+      setResultTotal(page.total_rows);
     } catch (err) {
       setError(asCoordOpError(err));
     }
@@ -583,6 +591,11 @@ export function CoordinateOperationsPanel({
                   </li>
                 ))}
               </ul>
+            )}
+            {resultRows.length > 0 && (
+              <div className="text-xs text-muted-foreground" data-testid="co-result-count">
+                {resultRows.length} / {resultTotal ?? resultRows.length}
+              </div>
             )}
           </section>
         )}

@@ -155,6 +155,22 @@ describe('transport auth (Bearer attach + 401 recovery)', () => {
     expect(err.status).toBe(500);
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
+
+  it('rebuilds the Authorization header for each retry attempt', async () => {
+    setAuth({ accessToken: 'old', refreshToken: null }, null);
+    mockFetch
+      .mockImplementationOnce(async () => {
+        setAuth({ accessToken: 'fresh', refreshToken: null }, null);
+        return errResponse(503);
+      })
+      .mockResolvedValueOnce(jsonOk({ ok: true }));
+
+    await apiFetch('/x', { retries: 1, retryDelayMs: 0 });
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch.mock.calls[0][1].headers['Authorization']).toBe('Bearer old');
+    expect(mockFetch.mock.calls[1][1].headers['Authorization']).toBe('Bearer fresh');
+  });
 });
 
 describe('transport apiFetchBlob (#515: authenticated downloads)', () => {

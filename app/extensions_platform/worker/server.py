@@ -62,7 +62,6 @@ class WorkerServer:
         self._ctx: Optional[WorkerContext] = None
         self._module: Any = None
         self._pending: list[dict[str, Any]] = []
-        self._broker_wait_id: Optional[str] = None
         self._broker_seq = 0
         self._broker_response: Optional[dict[str, Any]] = None
         # V3 流式：共享信用账本 / 取消集（C-7：任何阻塞读点都可消费
@@ -233,40 +232,35 @@ class WorkerServer:
         self._broker_seq += 1
         request_id = f"b{self._broker_seq}-{op}"
         write_frame(self._outfile, {"type": "broker_request", "id": request_id, "op": op, "payload": payload})
-        self._broker_wait_id = request_id
-        try:
-            while True:
-                if self._broker_response is not None:
-                    response = self._broker_response
-                    self._broker_response = None
-                    self._broker_wait_id = None
-                    if response.get("ok"):
-                        return response.get("value")
-                    err = response.get("error") or {}
-                    raise ExtensionPlatformError(
-                        ExtensionDiagnostic.error(
-                            DiagnosticCode.BROKER_DENIED,
-                            f"broker op {op!r} denied/failed: "
-                            f"{err.get('message', 'unknown')}",
-                            extension_id=self._ctx.extension_id if self._ctx else None,
-                        )
+        while True:
+            if self._broker_response is not None:
+                response = self._broker_response
+                self._broker_response = None
+                if response.get("ok"):
+                    return response.get("value")
+                err = response.get("error") or {}
+                raise ExtensionPlatformError(
+                    ExtensionDiagnostic.error(
+                        DiagnosticCode.BROKER_DENIED,
+                        f"broker op {op!r} denied/failed: "
+                        f"{err.get('message', 'unknown')}",
+                        extension_id=self._ctx.extension_id if self._ctx else None,
                     )
-                frame = read_frame(self._infile)  # EOF → ProtocolError → crash
-                if frame.get("type") == "broker_response" and frame.get("id") == request_id:
-                    self._broker_response = frame
-                    continue
-                # C-7：broker 等待循环的合法帧 += {stream_credit, stream_cancel}
-                # ——宿主在流式工具经 broker 取数时照常补信用/取消，迟到帧
-                # 幂等入账，绝不按协议违规崩溃。
-                if self._account_stream_frame(frame):
-                    continue
-                if frame.get("type") in _PENDING_FRAME_TYPES:
-                    self._pending.append(frame)
-                    continue
-                # 握手外协议违规：信任失败，立即终止。
-                raise ProtocolError(f"unexpected frame while awaiting broker response: {frame.get('type')!r}")
-        finally:
-            self._broker_wait_id = None
+                )
+            frame = read_frame(self._infile)  # EOF → ProtocolError → crash
+            if frame.get("type") == "broker_response" and frame.get("id") == request_id:
+                self._broker_response = frame
+                continue
+            # C-7：broker 等待循环的合法帧 += {stream_credit, stream_cancel}
+            # ——宿主在流式工具经 broker 取数时照常补信用/取消，迟到帧
+            # 幂等入账，绝不按协议违规崩溃。
+            if self._account_stream_frame(frame):
+                continue
+            if frame.get("type") in _PENDING_FRAME_TYPES:
+                self._pending.append(frame)
+                continue
+            # 握手外协议违规：信任失败，立即终止。
+            raise ProtocolError(f"unexpected frame while awaiting broker response: {frame.get('type')!r}")
 
     # ── 事件循环 ──────────────────────────────────────────────────────
     def serve(self) -> int:
@@ -409,9 +403,15 @@ class WorkerServer:
                     cancelled = True
                     break
                 while self._stream_credits.get(call_id, 0) <= 0:
-                    # 背压阻塞点：合法帧 = stream_credit / stream_cancel；
-                    # EOF（read_frame 抛 ProtocolError）= host 死亡，自然失败。
+                    # 背压阻塞点：合法帧 = stream_credit / stream_cancel /
+                    # broker_response（protocol.py 状态机）；EOF（read_frame
+                    # 抛 ProtocolError）= host 死亡，自然失败。
                     frame = read_frame(self._infile)
+                    if frame.get("type") == "broker_response":
+                        # 单线程 worker 在信用等待点没有在途 broker 请求
+                        # （broker 等待循环是同步的），故到达这里的应答只
+                        # 可能是迟到/重复帧：幂等丢弃，绝不按协议违规杀 worker。
+                        continue
                     if not self._account_stream_frame(frame):
                         raise ProtocolError(
                             f"unexpected frame while awaiting stream credit: "

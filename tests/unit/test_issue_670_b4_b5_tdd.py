@@ -168,3 +168,38 @@ async def test_b5_filterable_fields_parity_including_truncation():
     store._descriptors[sid].pop(ref_big, None)
     fb_big2 = await asyncio.to_thread(_compute_descriptor_fallback, fc_big)
     assert fb_big2["filterable_fields"] == direct
+
+
+class _CountingFeatureList(list):
+    """Counts full iterations so a redundant property scan is observable."""
+
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.full_iterations = 0
+
+    def __iter__(self):
+        self.full_iterations += 1
+        return super().__iter__()
+
+
+def test_compute_descriptor_derives_filterable_fields_from_field_schema_pass(monkeypatch):
+    """P3：filterable_fields 由 field_schema 同一趟键集派生，不再单独再扫一趟。
+
+    旧实现：几何/bbox 一趟 + collect_filterable_fields 一趟 +
+    collect_field_schema 一趟 = 3 次全量属性遍历；修复后属性只扫一趟。
+    """
+    monkeypatch.setenv("WEBGIS_REF_CONTENT_HASH", "off")
+    features = _CountingFeatureList([
+        {"type": "Feature", "geometry": {"type": "Point", "coordinates": [0, 0]},
+         "properties": {"a": 1, "b": 2}},
+        {"type": "Feature", "geometry": {"type": "Point", "coordinates": [1, 1]},
+         "properties": {"b": 3, "c": "x"}},
+    ])
+    desc = compute_descriptor(
+        "ref:one-pass", {"type": "FeatureCollection", "features": features})
+    assert desc.filterable_fields == ["a", "b", "c"]
+    assert list(desc.field_schema) == ["a", "b", "c"]
+    assert features.full_iterations <= 2, (
+        "feature/property list must not be rescanned for filterable_fields "
+        f"(got {features.full_iterations} full passes)"
+    )

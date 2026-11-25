@@ -355,7 +355,7 @@ def remove_thermal_noise(
         if lut.shape != plane.shape:
             raise ValueError(
                 f"noise_lut 形状 {lut.shape} 与网格 {plane.shape} 不一致")
-        if np.isfinite(lut).all() and (lut < 0).any():
+        if (lut < 0).any():
             raise ValueError(
                 "noise_lut 存在负值——噪声底在强度域非负，检查单位/量纲")
         lut_valid = valid & np.isfinite(lut)

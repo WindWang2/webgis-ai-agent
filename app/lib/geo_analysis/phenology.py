@@ -264,7 +264,9 @@ def temporal_anomaly(
     import warnings
 
     v = np.where(cube.valid_mask(), cube.stack, np.nan)
-    clim = cube.climatology()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        clim = cube.climatology()
     mean, std = clim["mean"], clim["std"]
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=RuntimeWarning)
@@ -277,17 +279,19 @@ def temporal_anomaly(
     if not 1 <= split < t_len:
         raise DegenerateData(
             f"baseline_slices ({baseline_slices!r}) 须在 [1, {t_len - 1}]")
-    with np.errstate(invalid="ignore"):
-        front = np.nanmean(v[:split], axis=0)
-        back = np.nanmean(v[split:], axis=0)
-        n1 = np.sum(np.isfinite(v[:split]), axis=0)
-        n2 = np.sum(np.isfinite(v[split:]), axis=0)
-        s1 = np.nanstd(v[:split], axis=0, ddof=1)
-        s2 = np.nanstd(v[split:], axis=0, ddof=1)
-        change = back - front
-        denom = np.sqrt(s1 ** 2 / np.maximum(n1, 1)
-                        + s2 ** 2 / np.maximum(n2, 1))
-        change_z = np.where(denom > 0, change / denom, np.nan)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        with np.errstate(invalid="ignore"):
+            front = np.nanmean(v[:split], axis=0)
+            back = np.nanmean(v[split:], axis=0)
+            n1 = np.sum(np.isfinite(v[:split]), axis=0)
+            n2 = np.sum(np.isfinite(v[split:]), axis=0)
+            s1 = np.nanstd(v[:split], axis=0, ddof=1)
+            s2 = np.nanstd(v[split:], axis=0, ddof=1)
+            change = back - front
+            denom = np.sqrt(s1 ** 2 / np.maximum(n1, 1)
+                            + s2 ** 2 / np.maximum(n2, 1))
+            change_z = np.where(denom > 0, change / denom, np.nan)
 
     meta = {
         "algorithm": "temporal.anomaly",

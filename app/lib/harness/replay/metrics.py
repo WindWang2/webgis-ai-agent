@@ -11,6 +11,7 @@
 ``cartography_ratchet.evaluate_ratchet``。
 """
 from __future__ import annotations
+import math
 from typing import Any, Dict, List, Optional
 
 from app.lib.harness.result_contracts import GateResult, GoalSatisfaction, MetricRow
@@ -28,9 +29,10 @@ def _finite(value: Any) -> Optional[float]:
     if value is None or isinstance(value, bool):
         return None
     try:
-        return float(value)
+        numeric = float(value)
     except (TypeError, ValueError, OverflowError):
         return None
+    return numeric if math.isfinite(numeric) else None
 
 
 def project_metrics(
@@ -108,8 +110,10 @@ def project_metrics(
     if tool_calls:
         errors = sum(1 for c in tool_calls if isinstance(c, dict) and c.get("is_error"))
         _add("replay.tool_error_rate", errors * 100.0 / max(1, len(tool_calls)))
+        # arg_bytes=-1 是"未知"哨兵（无参数/仅为 digest）：未知不得从
+        # 总量里扣减（否则 replay.arg_bytes_total 可为负）。
         arg_bytes_total = sum(
-            float(c.get("arg_bytes") or 0)
+            max(0.0, float(c.get("arg_bytes") or 0))
             for c in tool_calls if isinstance(c, dict)
         )
         _add("replay.arg_bytes_total", arg_bytes_total)

@@ -17,4 +17,9 @@ describe('renderWithStore mock lifecycle', () => {
     useHudStore.setState({ baseLayer: 'ESRI 影像' });
     expect(useHudStore.getState().baseLayer).toBe('ESRI 影像');
   });
+
+  it('mock state carries the real HudState focusLayerId key', () => {
+    renderWithStore(<div />);
+    expect(useHudStore.getState().focusLayerId).toBeNull();
+  });
 });

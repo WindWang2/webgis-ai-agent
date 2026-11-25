@@ -890,8 +890,18 @@ export function FieldContractsPanel({ sessionId, ownerToken }: FieldContractsPan
               <div className="rounded-md border border-status-warning/40 bg-status-warning/10 p-2 text-caption text-ink" data-testid="fc-batch-error">
                 {(() => {
                   switch (fc.error.code) {
-                    case 'selection_too_large': return t('batch.tooLarge', { count: Number(fc.error.message) || 0, max: MAX_BATCH_TARGETS });
-                    case 'selection_incomplete': return t('batch.incomplete', { got: Number(fc.error.message.split('/')[0]) || 0, total: Number(fc.error.message.split('/')[1]) || 0 });
+                    case 'selection_too_large': {
+                      const count = Number(fc.error.message);
+                      return fc.error.message.trim() && Number.isFinite(count)
+                        ? t('batch.tooLarge', { count, max: MAX_BATCH_TARGETS })
+                        : fc.error.message;
+                    }
+                    case 'selection_incomplete': {
+                      const [got, total] = fc.error.message.split('/').map((part) => Number(part));
+                      return Number.isFinite(got) && Number.isFinite(total)
+                        ? t('batch.incomplete', { got, total })
+                        : fc.error.message;
+                    }
                     case 'selection_count_unknown': return t('batch.countUnknown');
                     case 'selection_ref_mismatch': return t('batch.selectionRefMismatch', { ref: fc.error.message });
                     case 'invalid_value': return t('batch.invalidValue', { value: fc.error.message });

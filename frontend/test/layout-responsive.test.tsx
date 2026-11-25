@@ -61,10 +61,15 @@ function installMatchMedia(width: number) {
 
 function setWidth(width: number) {
   for (const [query, mql] of queries) {
-    const matches =
-      query === `(max-width: ${MOBILE_MAX_PX}px)`
-        ? width <= MOBILE_MAX_PX
-        : width > MOBILE_MAX_PX && width <= THIN_MAX_PX
+    let matches: boolean
+    if (query === `(max-width: ${MOBILE_MAX_PX}px)`) {
+      matches = width <= MOBILE_MAX_PX
+    } else if (query === `(min-width: ${MOBILE_MAX_PX + 1}px) and (max-width: ${THIN_MAX_PX}px)`) {
+      matches = width > MOBILE_MAX_PX && width <= THIN_MAX_PX
+    } else {
+      // Non-width queries (e.g. prefers-reduced-motion) are not derived from width.
+      continue
+    }
     if (mql.matches !== matches) act(() => mql.set(matches))
   }
 }
@@ -109,6 +114,13 @@ describe('use-layout-mode 三档', () => {
     act(() => setWidth(1000))
     expect(screen.getByTestId('mode').textContent).toBe('thin')
     expect(currentLayoutMode()).toBe('thin')
+  })
+
+  it('非宽度 media query 不被 setWidth 的宽度区间覆盖', () => {
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
+    expect(reducedMotion.matches).toBe(false)
+    act(() => setWidth(1000))
+    expect(reducedMotion.matches).toBe(false)
   })
 })
 

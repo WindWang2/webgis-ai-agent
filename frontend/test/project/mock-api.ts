@@ -16,6 +16,7 @@ export const ASSETS_API_KEYS = [
   'attachDataset',
   'auditSpatialQuality',
   'cloneArtifact',
+  'cloneWorkspaceSnapshot',
   'deleteWorkspaceSnapshot',
   'detachDataset',
   'executeDataGc',

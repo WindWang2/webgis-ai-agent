@@ -191,9 +191,14 @@ def _windowed_zonal_stats(
             elif polygons_geojson.get("type") in ("Polygon", "MultiPolygon"):
                 feat_list = [{"type": "Feature", "geometry": polygons_geojson, "properties": {}}]
             else:
-                feat_list = []
+                raise ValueError(
+                    "polygons_geojson must be a FeatureCollection, Feature, or "
+                    "GeoJSON Polygon/MultiPolygon; got dict "
+                    f"type={polygons_geojson.get('type')!r}")
         else:
-            feat_list = []
+            raise ValueError(
+                "polygons_geojson must be a dict FeatureCollection/Feature/"
+                f"geometry (got {type(polygons_geojson).__name__})")
         out: list[dict] = []
         for f in feat_list:
             geom = (f or {}).get("geometry")

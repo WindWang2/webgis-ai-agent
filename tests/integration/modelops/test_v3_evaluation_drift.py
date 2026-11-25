@@ -152,3 +152,39 @@ def test_drift_report_regions_and_psi(service, tmp_path):
     assert any(e["event_type"] == "evaluation" and
                "agreement_miou" in (e.get("payload", {}).get("metrics_summary") or {})
                for e in events)
+
+
+def test_drift_confidence_grid_mismatch_is_typed_not_silently_skipped(service, tmp_path):
+    """bconf/cconf 与 base/cur 不同网格：typed 拒绝（不得静默跳过指标）。"""
+    import rasterio
+    from rasterio.transform import from_origin
+
+    from app.lib.modelops.errors import ModelOpsError
+    from app.services.modelops.evaluation_service import DriftEvaluationRequest
+
+    def _write(name, data):
+        with rasterio.open(
+            tmp_path / name, "w", driver="GTiff", width=data.shape[1],
+            height=data.shape[0], count=1, dtype="uint8", crs="EPSG:4326",
+            transform=from_origin(0, data.shape[0], 1, 1), nodata=255,
+        ) as dst:
+            dst.write(data, 1)
+        return tmp_path / name
+
+    grid = np.zeros((32, 32), dtype=np.uint8)
+    grid[0:16, :] = 1
+    conf_small = np.zeros((16, 16), dtype=np.uint8)
+
+    with pytest.raises(ModelOpsError, match="resample|shape"):
+        service.evaluate_drift(
+            DriftEvaluationRequest(
+                owner_scope={"session_id": "s-drift-conf"},
+                baseline_path=_write("base.tif", grid),
+                current_path=_write("cur.tif", grid),
+                baseline_confidence_path=_write("bconf.tif", conf_small),
+                current_confidence_path=_write("cconf.tif", conf_small),
+                num_classes=2,
+                output_dir=tmp_path / "out",
+            ),
+            allowed_roots=[tmp_path],
+        )

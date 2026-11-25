@@ -180,7 +180,6 @@ def _k_curve(
                     estimated=f"~{n_pairs_est * 16 / 1e9:.2f} GB COO pairs",
                     limit=f"{_MAX_RIPLEY_PAIRS} pairs",
                 )
-        tree = cKDTree(xy)
     coo = tree.sparse_distance_matrix(
         tree, max_distance=float(r_grid[-1]), output_type="coo_matrix")
     keep = coo.row != coo.col
@@ -424,19 +423,18 @@ def quadrat_test(
 
     window = _require_window(xy, window)   # 恒非 None（缺省取数据 bbox）
     xmin, ymin, xmax, ymax = window
-    if True:
-        # Fixed study area: points outside it would be silently dropped by
-        # histogram2d — refuse instead (a window/points mismatch, not CSR).
-        inside = (
-            (xy[:, 0] >= xmin) & (xy[:, 0] <= xmax)
-            & (xy[:, 1] >= ymin) & (xy[:, 1] <= ymax)
+    # Fixed study area: points outside it would be silently dropped by
+    # histogram2d — refuse instead (a window/points mismatch, not CSR).
+    inside = (
+        (xy[:, 0] >= xmin) & (xy[:, 0] <= xmax)
+        & (xy[:, 1] >= ymin) & (xy[:, 1] <= ymax)
+    )
+    if not inside.all():
+        raise ValueError(
+            f"{int((~inside).sum())} points lie outside the fixed window "
+            f"[{xmin}, {ymin}, {xmax}, {ymax}] — the quadrat test would "
+            "silently drop them; fix the window or the data"
         )
-        if not inside.all():
-            raise ValueError(
-                f"{int((~inside).sum())} points lie outside the fixed window "
-                f"[{xmin}, {ymin}, {xmax}, {ymax}] — the quadrat test would "
-                "silently drop them; fix the window or the data"
-            )
     counts, _, _ = np.histogram2d(
         xy[:, 0], xy[:, 1],
         bins=(grid_cols, grid_rows),

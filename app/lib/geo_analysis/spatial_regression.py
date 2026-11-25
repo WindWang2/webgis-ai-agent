@@ -1353,9 +1353,12 @@ def gwr_regression_narrated(
     ss_tot = float(((y - y.mean()) ** 2).sum())
     r2 = 1.0 - sse / ss_tot if ss_tot > 0 else 0.0
     q_eff = tr_s + 1.0  # +1 计 σ²
-    aic = n * (np.log(2.0 * np.pi) + np.log(sse / n) + 1.0) + 2.0 * q_eff
-    aicc = aic + (2.0 * q_eff * (q_eff + 1.0) / (n - q_eff - 1.0)
-                  if n - q_eff - 1.0 > 0 else 0.0)
+    if sse > 0:
+        aic = n * (np.log(2.0 * np.pi) + np.log(sse / n) + 1.0) + 2.0 * q_eff
+        aicc = aic + (2.0 * q_eff * (q_eff + 1.0) / (n - q_eff - 1.0)
+                      if n - q_eff - 1.0 > 0 else 0.0)
+    else:
+        aic = aicc = None  # 完全拟合：高斯似然无定义（诚实留空）
     rmse = float(np.sqrt(sse / n))
 
     # 审计 F-4（P0）：descriptor 无条件声明 sensitivity_envelope，fixed
@@ -1397,8 +1400,8 @@ def gwr_regression_narrated(
         "target_field": str(target_field),
         "explanatory_fields": list(names),
         "r_squared": round(float(r2), 6),
-        "aic": round(float(aic), 6),
-        "aicc": round(float(aicc), 6),
+        "aic": None if aic is None else round(float(aic), 6),
+        "aicc": None if aicc is None else round(float(aicc), 6),
         "effective_params": round(float(q_eff), 6),
         "rmse": round(rmse, 6),
         "bandwidth": {
@@ -1513,7 +1516,9 @@ def gwr_regression_narrated(
     narrative = (
         f"GWR（bisquare 自适应核，带宽={k_used} 最近邻"
         f"{'，CV 选择' if selection == 'cv' else ''}）："
-        f"R²={r2:.4f}，AICc={aicc:.1f}。局部 R² ∈ "
+        f"R²={r2:.4f}，AICc="
+        f"{'不可用（完全拟合）' if aicc is None else f'{aicc:.1f}'}。"
+        f"局部 R² ∈ "
         f"[{data_out['local_r2']['min']:.4f}, "
         f"{data_out['local_r2']['max']:.4f}]；截距 IQR="
         f"{variation['intercept']['iqr']:.4g} —— "

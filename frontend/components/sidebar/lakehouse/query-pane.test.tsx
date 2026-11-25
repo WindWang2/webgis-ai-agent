@@ -55,6 +55,7 @@ import { QueryPane } from './query-pane';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  window.sessionStorage.clear();
 });
 
 function fill(ref: string, value: string, label: string) {
@@ -142,6 +143,43 @@ describe('QueryPane — scan / revise / rs', () => {
     fireEvent.click(screen.getByTestId('lakehouse-query-submit'));
     await waitFor(() => expect(screen.getByText('构建回执')).toBeInTheDocument());
     expect(screen.getByText('published')).toBeInTheDocument();
+  });
+});
+
+describe('QueryPane — 历史重放', () => {
+  function seedHistory(records: unknown[]) {
+    window.sessionStorage.setItem(
+      'geoagent-lakehouse-history:anonymous',
+      JSON.stringify(records),
+    );
+  }
+
+  it('scan 历史记录重放：切回 scan 模式并回填 bbox/max_rows/columns（不再看似无动作）', async () => {
+    seedHistory([{
+      id: 'q1', kind: 'scan', label: '矢量扫描 · ref:x', ref: 'ref:x', createdAt: 1,
+      request: { session_id: SESSION_ID, ref: 'ref:x', bbox: [1, 2, 3, 4], max_rows: 321, columns: ['a', 'b'] },
+    }]);
+    render(<QueryPane sessionId={SESSION_ID} />);
+    const replay = await screen.findByTestId('lakehouse-replay-latest');
+    fireEvent.click(replay);
+    expect(screen.getByRole('radio', { name: '矢量扫描' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByLabelText('bbox')).toHaveValue('1, 2, 3, 4');
+    expect(screen.getByLabelText('最大行数')).toHaveValue(321);
+  });
+
+  it('revise 历史记录重放：切回修订模式并回填 band/source', async () => {
+    seedHistory([{
+      id: 'q2', kind: 'revise', label: '修订 · band_0', ref: 'ref:cube/src', createdAt: 1,
+      request: {
+        session_id: SESSION_ID, ref: 'ref:cube/src', title: '修正版',
+        updates: [{ band: 'band_0', time_index: 3, source: 'ref:fabric-parquet/new' }],
+      },
+    }]);
+    render(<QueryPane sessionId={SESSION_ID} />);
+    fireEvent.click(await screen.findByTestId('lakehouse-replay-latest'));
+    expect(screen.getByRole('radio', { name: '修订' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByLabelText('修订 band')).toHaveValue('band_0');
+    expect(screen.getByLabelText('修订来源')).toHaveValue('ref:fabric-parquet/new');
   });
 });
 

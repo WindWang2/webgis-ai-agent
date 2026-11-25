@@ -374,4 +374,26 @@ describe('FieldComputePanel', () => {
     await act(async () => { await Promise.resolve(); });
     expect(screen.getByTestId('fc-describe')).not.toBeDisabled();
   });
+
+  it('在途 listUploads 切换会话：旧会话迟到列表不覆盖新会话', async () => {
+    const d = deferred();
+    mockListUploads.mockImplementationOnce(() => d.promise as Promise<never>);
+    mockListUploads.mockResolvedValueOnce({
+      total: 1,
+      uploads: [{ session_ref: 'ref:new', original_name: 'new.csv', feature_count: 3 }],
+    });
+    const view = render(<FieldComputePanel sessionId="sess-1" ownerToken={null} />);
+    await waitFor(() => expect(mockListUploads).toHaveBeenCalledTimes(1));
+    view.rerender(<FieldComputePanel sessionId="sess-2" ownerToken={null} />);
+    await waitFor(() => expect(mockListUploads).toHaveBeenCalledTimes(2));
+    expect((await screen.findByTestId('fc-source-select')).textContent).toContain('new.csv');
+    await act(async () => {
+      d.resolve({
+        total: 1,
+        uploads: [{ session_ref: 'ref:old', original_name: 'old.csv', feature_count: 9 }],
+      });
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId('fc-source-select').textContent).not.toContain('old.csv');
+  });
 });

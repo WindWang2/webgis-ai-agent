@@ -185,14 +185,19 @@ class FaultInjector:
         self._provider = provider
         self._plan = [f for f in plan if f.type in self._TRANSFORM_FAULTS]
         self._restart_seen: Dict[str, bool] = {}
+        # provider 不保证暴露 calls（_Provider 协议只有 metadata/dispatch）：
+        # 无 calls 时按自有派发账本计数 target_turn。
+        self._calls: List[Dict[str, Any]] = []
 
     def _match(self, fault: FaultStep, call_id: str, tool: str) -> bool:
         if fault.target_call:
             return fault.target_call == call_id
         # 无 target_call：按 target_turn 语义退化为"第 N 次同工具调用"
         # （target_turn 即 0 基序号；确定性匹配，不依赖 wall-clock）。
-        tool_calls = [c for c in (self._provider.calls if self._provider else [])
-                      if c["tool"] == tool]
+        provider_calls = getattr(self._provider, "calls", None)
+        calls = provider_calls if isinstance(provider_calls, list) else self._calls
+        tool_calls = [c for c in calls
+                      if isinstance(c, dict) and c.get("tool") == tool]
         return len(tool_calls) - 1 == max(0, fault.target_turn)
 
     async def dispatch(self, tool_name: str, tool_args_raw: Any,
@@ -202,6 +207,7 @@ class FaultInjector:
             raise RuntimeError("FaultInjector requires a provider")
         outcome = await self._provider.dispatch(
             tool_name, tool_args_raw, session_id=session_id, call_id=call_id)
+        self._calls.append({"tool": tool_name, "call_id": call_id})
         for fault in self._plan:
             if not self._match(fault, call_id, tool_name):
                 continue

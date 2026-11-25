@@ -581,6 +581,25 @@ def test_weights_diagnostics_island_detection():
     assert res_q.data["connected_components"]["count"] == 1
 
 
+def test_weights_diagnostics_contract_does_not_require_numeric_field():
+    """权重诊断只吃几何/方案，不需要数值字段：科学前置不得声明
+    numeric_field_required（否则与契约「无必填统计字段」冲突）。"""
+    from app.lib.gis.algorithm_registry import get_algorithm_registry
+
+    algo = get_algorithm_registry().get("stats.weights_diagnostics")
+    assert algo is not None
+    assert "numeric_field_required" not in algo.scientific_preconditions
+
+
+def test_general_g_references_getis_ord_1992():
+    """General G 出自 Getis & Ord (1992)，不是 Ord & Getis (1995)。"""
+    from app.lib.gis.algorithm_registry import get_algorithm_registry
+
+    algo = get_algorithm_registry().get("stats.general_g")
+    assert algo is not None
+    assert algo.method_references == ["getis_ord1992"]
+
+
 # ── spatial.hotspot.local：significance_method 附加参数 ─────────────
 
 def _hotspot_fc():

@@ -187,6 +187,10 @@ class RegistryService:
         offset: int = 0,
         limit: int = 20,
     ) -> SearchResult:
+        if offset < 0:
+            raise _store_error(f"search offset must be >= 0, got {offset}")
+        if limit < 1:
+            raise _store_error(f"search limit must be >= 1, got {limit}")
         state = self._store.load_state()
         q = query.strip().lower()
         hits: list[PackageRecord] = []

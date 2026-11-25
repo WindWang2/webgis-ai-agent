@@ -2,7 +2,7 @@ import type { Layer } from "@/lib/types/layer";
 import type { GeoJSONFeatureCollection, HeatmapRasterSource } from "@/lib/types";
 import type { MapSpec, MapSpecSource, MapSpecLayer } from "@/lib/mapspec-compiler/types";
 import { legendSpecToColorExpression, thematicField } from "@/lib/mapspec-runtime/thematic-paint";
-import { heatmapRadiusExpression } from "@/lib/map-kit/symbol-law";
+import { heatmapRadiusExpression, recordSymbolLawEvidence } from "@/lib/map-kit/symbol-law";
 // C11：Renderer ABI 类型边界（唯一 audited cast 集）。
 import { asExpression, type MapLibrePaint } from "@/lib/carto-ir/style-abi";
 
@@ -60,7 +60,10 @@ function isHeatmapRasterSource(source: Layer["source"]): source is HeatmapRaster
 }
 
 function isGeoJSONSource(source: Layer["source"]): source is GeoJSONFeatureCollection {
-  return typeof source === "object" && source !== null && "type" in source && source.type === "FeatureCollection";
+  // features 必须是数组：畸形 FeatureCollection（features 为 {} 等真值非数组）
+  // 此前被此守卫放行，geometryProfileOf 的 .some 直接 TypeError 打崩整遍 reconcile。
+  return typeof source === "object" && source !== null && "type" in source && source.type === "FeatureCollection"
+    && Array.isArray((source as { features?: unknown }).features);
 }
 
 /** 大 ref 图层（_tileUrl 已配 + 要素数超阈值 + MVT 编码器可处理）→ MVT 矢量瓦片。
@@ -282,6 +285,13 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
       sources[sourceId] = { type: "geojson", inlineData: layer.source };
     } else {
       // Unknown source shape — emit empty geojson to keep the source present.
+      // 该层随后得不到任何几何 profile（src=null → 0 个子层），整层静默
+      // 消失；不能零披露 —— 符号律证据面登记（sourceType 只记类型，有界）。
+      recordSymbolLawEvidence(
+        "unknown-source-type",
+        { sourceType: typeof layer.source, layerType: layer.type },
+        layer.id,
+      );
       sources[sourceId] = {
         type: "geojson",
         inlineData: { type: "FeatureCollection", features: [] } as unknown as GeoJSONFeatureCollection,
@@ -414,11 +424,14 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
         // style.radius_px（dispatch 授权层投影）；legacy style.radius 只来自
         // px 标注的面板/模板（4-100 窗口），结果统一 clamp [4,80] —— 不存在
         // 越过契约上限的渲染值；缺省 30px。
-        const explicitPx = Number(layer.style?.radius_px);
+        const explicitPx = layer.style?.radius_px == null
+          ? NaN
+          : Number(layer.style.radius_px);
         const legacyPx = Number(layer.style?.radius);
         let r: number;
-        // 0 与后端 _coerce_int 语义一致：有限数值即显式（clamp 到 4），只有
-        // NaN/undefined 才走 legacy/default。
+        // 0 与后端 _coerce_int 语义一致：有限数值即显式（clamp 到 4）；
+        // null/undefined（NaN）才走 legacy/default —— 注意 Number(null)===0，
+        // 不能用 Number() 直判 null（否则 null 被压成 4px）。
         if (Number.isFinite(explicitPx)) {
           r = Math.max(4, Math.min(80, Math.floor(explicitPx)));
         } else if (Number.isFinite(legacyPx) && legacyPx >= 4 && legacyPx <= 60) {

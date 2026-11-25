@@ -67,3 +67,28 @@ def test_seq_survives_store_reopen(tmp_path):
     event = reopened.append("m", "1.0.0", event_type="provenance_note", payload={})
     assert event["seq"] == 3  # 不与历史 seq 碰撞
     assert reopened.deployment_state("m", "1.0.0") == "retired"
+
+
+def _write_raw_lineage(tmp_path, lines):
+    root = tmp_path / "lineage"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "m@1.0.0.jsonl").write_text(lines, encoding="utf-8")
+    return root
+
+
+def test_load_skips_valid_non_object_json_lines(tmp_path):
+    """合法但非对象的 JSON 行（[]/42/"s"/null）不得击穿 load() 的坏行容忍。"""
+    root = _write_raw_lineage(
+        tmp_path, '[]\n42\n"s"\nnull\n{"seq": 7, "event_type": "promotion"}\n'
+    )
+    store = ModelLineageStore(root)
+    events = store.load("m", "1.0.0")
+    assert [e["seq"] for e in events] == [7]
+
+
+def test_append_seq_recovery_skips_valid_non_object_json_lines(tmp_path):
+    """seq 恢复扫描同样不得被非对象行打断（否则该版本 append 永久失败）。"""
+    root = _write_raw_lineage(tmp_path, '[]\n42\n"s"\nnull\n')
+    store = ModelLineageStore(root)
+    event = store.append("m", "1.0.0", event_type="provenance_note", payload={})
+    assert event["seq"] == 1

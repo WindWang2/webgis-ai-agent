@@ -12,6 +12,7 @@ import { FieldContractsPanel } from './field-contracts-panel';
 import { useFieldContractsPanelStore } from '@/lib/hooks/use-field-contracts';
 
 const mockSaveDraft = vi.hoisted(() => vi.fn());
+const mockError = vi.hoisted(() => ({ current: null as null | { code: string; message: string } }));
 
 vi.mock('@/lib/hooks/use-field-contracts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/hooks/use-field-contracts')>();
@@ -49,7 +50,7 @@ vi.mock('@/lib/hooks/use-field-contracts', async (importOriginal) => {
       batchRunning: false,
       batchResult: null,
       runBatchFill: async () => null,
-      error: null,
+      error: mockError.current,
       clearError: () => {},
     }),
   };
@@ -67,6 +68,7 @@ function crossRuleIds(): string[] {
 describe('FieldContractsPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockError.current = null;
     useFieldContractsPanelStore.getState().close();
   });
 
@@ -113,5 +115,11 @@ describe('FieldContractsPanel', () => {
     // 再新增：必须是未占用的 rule_4（旧实现按长度编号会得到 rule_3 → 重名）
     fireEvent.click(screen.getByTestId('fc-add-cross'));
     expect(crossRuleIds()).toEqual(['rule_2', 'rule_3', 'rule_4']);
+  });
+
+  it('批量填值错误文案格式漂移：显示原始 message，不静默显示 0', () => {
+    mockError.current = { code: 'selection_too_large', message: '超过上限（无法解析为数字）' };
+    openPanel();
+    expect(screen.getByTestId('fc-batch-error').textContent).toContain('超过上限（无法解析为数字）');
   });
 });

@@ -89,7 +89,14 @@ export function recordFabricDisclosure(payload: unknown): boolean {
   }
   if (recorded) {
     const snap = getDisclosureSnapshot();
-    for (const fn of listeners) fn(snap);
+    for (const fn of listeners) {
+      try {
+        fn(snap);
+      } catch {
+        // A faulty subscriber must not break the query path that recorded the
+        // disclosure, nor starve the remaining subscribers.
+      }
+    }
   }
   return recorded;
 }

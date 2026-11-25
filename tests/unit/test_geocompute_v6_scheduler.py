@@ -163,6 +163,112 @@ def _wait_terminal(store: ClusterRunStore, run_id: str, timeout: float = 10.0) -
     return (row or {}).get("status") or "timeout"
 
 
+class TestPreemptionScanWindow:
+    def test_local_victim_not_crowded_out_by_remote_running(self, env, monkeypatch):
+        """受害者扫描必须在 SQL 侧先过滤本 coordinator：集群在跑 > limit
+        时，全局扫描窗口全是远端 run → 本地抢占静默失效。"""
+        _, make_coordinator, _ = env
+        coord = make_coordinator("coord-a", local_slots=1, preempt_wait_s=0.0)
+        old_created = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
+        waiter = {
+            "run_id": "w1", "tenant_key": "t:1", "priority": 10,
+            "created_at": old_created, "required_profiles": [],
+            "resource_request": None, "preempts": 0, "id": 99,
+        }
+        remotes = [
+            {"run_id": f"r{i}", "coordinator_id": "coord-b",
+             "tenant_key": "t:1", "priority": 0, "preempts": 0}
+            for i in range(33)
+        ]
+        local = {"run_id": "local", "coordinator_id": "coord-a",
+                 "tenant_key": "t:1", "priority": 0, "preempts": 0}
+
+        def fake_scan_running(*, limit=64, coordinator_id=None):
+            rows = remotes + [local]
+            if coordinator_id is not None:
+                rows = [r for r in rows if r["coordinator_id"] == coordinator_id]
+            return rows[:limit]
+
+        requested: list[str] = []
+        monkeypatch.setattr(coord._store, "scan_dispatchable", lambda **kw: [waiter])
+        monkeypatch.setattr(coord._store, "scan_running", fake_scan_running)
+        monkeypatch.setattr(
+            coord._store, "request_yield",
+            lambda run_id: requested.append(run_id) or True,
+        )
+        coord._inflight["local"] = object()
+        assert coord._maybe_preempt() == 1
+        assert requested == ["local"]
+
+
+class TestPreemptionFuse:
+    def test_exhausted_fuse_emits_failed_not_preempted(self, env):
+        """store 保险丝把 PREEMPTED 改写为 failed[PREEMPT_EXHAUSTED] 时，
+        coordinator 事件必须跟随行终态（不得发 run_preempted 丢错误码）。"""
+        from app.lib.cancellation import CancellationToken
+        from app.models.db_model import GeoComputeClusterRun
+        from app.services.geocompute.cluster.contracts import (
+            MAX_PREEMPTS,
+            ClusterRunStatus,
+        )
+        from app.services.geocompute.cluster.scheduler import _RunExecution
+
+        store, make_coordinator, factory = env
+        coord = make_coordinator("coord-a")
+        rid = _submit(store, _simple_plan(unique="fuse"))
+        epoch = store.claim_lease(rid, coordinator_id="coord-a", ttl_s=30)
+        assert epoch is not None
+        with factory() as db:
+            db.query(GeoComputeClusterRun).filter_by(run_id=rid).update(
+                {"preempts": MAX_PREEMPTS - 1}
+            )
+            db.commit()
+        state = _RunExecution(run_id=rid, epoch=epoch,
+                              token=CancellationToken(job_id=rid))
+        coord._finish_locked(state, ClusterRunStatus.PREEMPTED, None)
+        row = store.get_run(rid)
+        assert row["status"] == "failed"
+        assert row["error_code"] == "PREEMPT_EXHAUSTED"
+        names = [e["event"] for e in coord._events.window(rid)]
+        assert "run_preempted" not in names
+        assert "run_failed" in names
+
+
+class TestDispatchRequestProjection:
+    def test_resource_request_built_once_per_candidate(self, env, monkeypatch):
+        """同一 candidate 每 tick 只构造一次 ResourceRequest（gating 与
+        稀缺度排序键共用投影，避免重复 pydantic 校验）。"""
+        from app.services.geocompute.cluster import placement as placement_mod
+
+        _, make_coordinator, _ = env
+        coord = make_coordinator("coord-a", local_slots=2,
+                                 gpu_fallback_wait_s=-1)
+        candidate = {
+            "run_id": "r1", "id": 1, "tenant_key": "t:1", "priority": 0,
+            "required_profiles": [], "resource_request": {"min_mem_mb": 1},
+        }
+        calls: list[str] = []
+        real_request = placement_mod.request_from_run_row
+
+        def counting(row):
+            calls.append(row["run_id"])
+            return real_request(row)
+
+        monkeypatch.setattr(placement_mod, "request_from_run_row", counting)
+        monkeypatch.setattr(
+            placement_mod, "eligible_workers", lambda req, workers: [{}]
+        )
+        monkeypatch.setattr(coord, "_eligible_workers",
+                            lambda: [{"worker_id": "w"}])
+        monkeypatch.setattr(coord._store, "scan_dispatchable",
+                            lambda **kw: [candidate])
+        monkeypatch.setattr(coord._store, "tenant_last_dispatch", lambda: {})
+        monkeypatch.setattr(coord._store, "claim_lease",
+                            lambda *a, **kw: (None, None))
+        coord._dispatch({"dispatched": 0})
+        assert calls == ["r1"]
+
+
 class TestDurableScheduling:
     def test_submit_then_execute_to_terminal(self, env):
         """端到端：submit → tick 认领并执行 → 终态持久化 + 证据可读。"""

@@ -1,6 +1,7 @@
 """Raster math operations: reclassify, calculator, resample."""
 import logging
 import math
+import sys
 from pathlib import Path
 from typing import Optional, Tuple, Union
 
@@ -165,6 +166,11 @@ def _validate_scheme(scheme: list[dict]) -> None:
     for i, rule in enumerate(scheme):
         if "value" not in rule:
             raise ValueError(f"scheme[{i}] missing required 'value' key")
+        value = rule["value"]
+        if isinstance(value, bool) or not isinstance(
+                value, (int, float, np.integer, np.floating)):
+            raise ValueError(
+                f"scheme[{i}] 'value' must be numeric, got {value!r}")
         if "min" not in rule and "max" not in rule:
             raise ValueError(f"scheme[{i}] must have 'min' and/or 'max'")
         if "min" in rule and "max" in rule and rule["min"] > rule["max"]:
@@ -662,7 +668,7 @@ def raster_calculator(
             finalized = writer.finalize()
         finally:
             if b_ctx is not None:
-                b_ctx.__exit__(None, None, None)
+                b_ctx.__exit__(*sys.exc_info())
 
     # 质量证据（§35，有界）：对齐事实 + 输入/输出网格 + 有效/nodata 计数。
     evidence: dict = {

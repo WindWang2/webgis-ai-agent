@@ -137,14 +137,14 @@ export function PlanWaterfall({
     <div className="flex flex-col gap-1" data-testid="ops-waterfall" aria-label={t('waterfallAria', { runId })}>
       {spans.map((span) => {
         const leftPct = ((span.startMs - lo) / (hi - lo)) * 100;
-        const endMs = span.endMs ?? Date.now();
+        const endMs = Math.min(span.endMs ?? Date.now(), hi);
         const widthPct = Math.max(1.5, ((endMs - span.startMs) / (hi - lo)) * 100);
         return (
           <div key={span.nodeId} className="flex items-center gap-2">
             <span className="w-24 shrink-0 truncate text-right font-mono text-micro text-ink-secondary" title={span.nodeId}>
               {span.nodeId}
             </span>
-            <div className="relative h-3 flex-1 rounded-sm bg-surface-sunken">
+            <div className="relative h-3 flex-1 overflow-hidden rounded-sm bg-surface-sunken">
               <div
                 className={`absolute inset-y-0 rounded-sm ${STATE_COLOR[span.state] ?? STATE_COLOR.running}`}
                 style={{ left: `${leftPct}%`, width: `${widthPct}%` }}

@@ -151,3 +151,31 @@ def test_publish_layers_rejects_paths_outside_output_root_review_f7(service, tmp
         session_id="s-f7",
     ))
     assert set(captured) == {"detections"}, captured
+
+
+def test_publish_layers_alias_failure_keeps_registered_true():
+    """store 成功但 set_alias 失败：ref 已入存储，registered 不得倒退为 False。"""
+    import asyncio
+
+    from app.services.modelops.layer_delivery import publish_layers
+
+    class _AliasConflictManager:
+        async def store(self, owner_id, payload, prefix=""):
+            return "ref-1"
+
+        async def set_alias(self, owner_id, ref_id, alias):
+            raise RuntimeError("alias conflict")
+
+    result = asyncio.run(
+        publish_layers(
+            {"classes": {"path": "/tmp/x.tif", "data_object_id": "do-1"}},
+            {"task_type": "semantic_segmentation"},
+            session_id="s-alias",
+            session_data_manager=_AliasConflictManager(),
+        )
+    )
+    layer = result["layers"][0]
+    assert layer["ref_id"] == "ref-1"
+    assert layer["registered"] is True
+    assert result["registered_count"] == 1
+    assert "alias conflict" in layer["alias_error"]

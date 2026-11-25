@@ -40,7 +40,7 @@ class EditTargetModel(BaseModel):
 
     mode: Literal["selection", "explicit"] = "selection"
     ref_id: Optional[str] = None                       # explicit 必填；selection 缺省取 selection.dataset_ref
-    feature_ids: Optional[List[str]] = None            # explicit 必填（≤200）
+    feature_ids: Optional[List[str]] = Field(default=None, max_length=200)  # explicit 必填（≤200）
 
 
 class FeatureEditPreviewRequest(BaseModel):

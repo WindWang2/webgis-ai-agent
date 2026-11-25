@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Sequence
 import numpy as np
 from scipy.spatial import cKDTree
 
+from app.lib.cancellation import checkpoint
 from app.lib.gis.crs_safety import classify_crs
 from app.lib.gis.scientific_errors import (
     DegenerateData,
@@ -265,6 +266,7 @@ def emerging_hotspot_narrated(
     q_mat = np.ones((n, n_periods))
     degenerate_periods: List[int] = []
     for t in range(n_periods):
+        checkpoint()
         x = mat[:, t]
         x_bar = float(x.mean())
         s = float(x.std(ddof=0))
@@ -297,6 +299,7 @@ def emerging_hotspot_narrated(
     mk_dn = np.zeros(n, dtype=bool)
     n_trend_available = 0
     for i in range(n):
+        checkpoint()
         try:
             mk = mann_kendall(z_mat[i, :], alpha)
         except InsufficientSamples:

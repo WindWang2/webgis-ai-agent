@@ -61,8 +61,9 @@ class RefDescriptor:
     # change identity) and costs O(1) per write instead of a full-payload hash.
     content_revision: int = 0
     filterable_fields: Optional[List[str]] = None
-    # 有界字段 schema（store 时同一次遍历产出，见 collect_field_schema）：
-    # {field: {type, null_count, min/max?, sampleValues?}}。供
+    # 有界字段 schema（store 时单趟属性遍历产出，见 collect_field_schema）：
+    # {field: {type, null_count, min/max?, sampleValues?}}。filterable_fields
+    # 由同一次遍历的键集派生（不再单独再扫一趟）。供
     # profile_from_descriptor 派生 fields 证据 —— PAINT_FIELD_EXISTS /
     # CLASSIFICATION_DOMAIN_COVERAGE 等语义检查由此从 not_evaluated
     # （质量环"证据不完整"）变为可评。
@@ -174,7 +175,8 @@ _FIELD_SCHEMA_MAX_SAMPLES = 5
 def collect_field_schema(features) -> Tuple[Optional[Dict[str, Dict[str, Any]]], bool]:
     """有界逐字段 schema：type / null_count / 数值 min·max / 样本值。
 
-    store 时与 bbox 同一趟 O(n·k) 遍历产出，profile_from_descriptor 据此
+    store 时单趟 O(n·k) 属性遍历产出（几何/bbox 是另一趟）；filterable_fields
+    白名单由本函数的键集派生，profile_from_descriptor 据此
     派生 fields 证据，语义检查（PAINT_FIELD_EXISTS、
     CLASSIFICATION_DOMAIN_COVERAGE 等）不再因"descriptor 无字段信息"而
     not_evaluated → 质量环"证据不完整"。与全量 profiler 的 fields 同构但
@@ -404,9 +406,10 @@ def compute_descriptor(ref_id: str, data) -> RefDescriptor:
     # unchanged.
     content_hash = _opt_in_content_hash(data)
 
-    # #668: attribute whitelist via shared helper (identical to fallback path)
-    filterable_fields = collect_filterable_fields(features)
+    # #668: attribute whitelist derived from the same bounded field-schema
+    # pass (avoids a second O(n·k) property traversal over the same features).
     field_schema, field_schema_complete = collect_field_schema(features)
+    filterable_fields = sorted(field_schema) if field_schema else None
 
     # V4（ADR-0104 #4）：仅采信载荷显式声明的 CRS 证据（FC ``crs`` 成员，
     # pre-RFC dict 形取 properties.name）——与全量 profiler 同一提取语义；

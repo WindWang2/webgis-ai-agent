@@ -3089,7 +3089,7 @@ def landform_classification(
 
     z_valid = z[valid]
     pct = rankdata(z_valid, method="average")
-    pct = pct / max(1, z_valid.size - 1)
+    pct = (pct - 1.0) / max(1, z_valid.size - 1)
     p = np.zeros(z.shape)
     p[valid] = pct
     tol = float(elevation_tolerance)

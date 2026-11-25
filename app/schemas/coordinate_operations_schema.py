@@ -5,17 +5,20 @@ from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.data_delivery_schema import SourceKind
+
 
 class SourceSpec(BaseModel):
     """源锚（G18 DeliverySourceRef 的子集；授权解析复用同一入口）。"""
 
-    kind: str = Field(description="session_ref | fabric_parquet | project_artifact")
-    session_id: Optional[str] = None
-    ref: Optional[str] = None
-    project_id: Optional[str] = None
-    artifact_id: Optional[str] = None
+    kind: SourceKind = Field(
+        description="session_ref | fabric_parquet | project_artifact | table_rows")
+    session_id: Optional[str] = Field(default=None, max_length=128)
+    ref: Optional[str] = Field(default=None, max_length=256)
+    project_id: Optional[str] = Field(default=None, max_length=128)
+    artifact_id: Optional[str] = Field(default=None, max_length=128)
     revision_no: Optional[int] = None
-    table_ref: Optional[str] = None
+    table_ref: Optional[str] = Field(default=None, max_length=256)
 
     model_config = {"extra": "forbid"}
 

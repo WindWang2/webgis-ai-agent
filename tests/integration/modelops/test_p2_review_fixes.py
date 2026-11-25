@@ -617,6 +617,35 @@ def test_remote_deeply_nested_json_is_typed_error():
         provider.infer(model, batch, ctx)
 
 
+# ── remote_client.py:217 —— guarded_client 每批新建（无连接复用）─────
+
+
+def test_remote_client_is_reused_across_requests(monkeypatch):
+    """懒创建的 guarded_client 按 provider 实例复用（不再每批新建/关闭）。"""
+    import app.core.egress as egress
+    from app.services.modelops.providers.remote_client import (
+        RemoteEndpointPolicy,
+        RemoteInferenceProvider,
+    )
+
+    calls = []
+
+    def _fake_guarded_client(**kwargs):
+        client = SimpleNamespace(kwargs=kwargs)
+        calls.append(client)
+        return client
+
+    monkeypatch.setattr(egress, "guarded_client", _fake_guarded_client)
+    provider = RemoteInferenceProvider(
+        "http://10.0.0.1:9000",
+        policy=RemoteEndpointPolicy(allowlist=("http://10.0.0.1:9000",)),
+    )
+    first = provider._client_or_default()
+    second = provider._client_or_default()
+    assert first is second
+    assert len(calls) == 1
+
+
 # ── reuse.py:120 / :121 —— staging 同名覆盖 + 清理 ──────────────────
 
 
@@ -845,3 +874,107 @@ def _refine_request(source, compiled, *, session):
         prompt_audit=compiled["audit"],
         return_candidates=True,
     )
+
+
+# ── service.py:638/:783 —— source_uri 不得先截断再过门/打开 ──────────
+
+
+def _deep_nonexistent_path(root: Path, min_len: int = 2100) -> str:
+    deep = root
+    index = 0
+    while len(str(deep)) < min_len:
+        deep = deep / (chr(97 + index % 26) * 200)
+        index += 1
+    return str(deep)
+
+
+def test_refine_opens_full_untruncated_source_uri(service, tmp_path, monkeypatch):
+    from app.lib.geo_raster.reader import RasterReader
+
+    artifact = {
+        "crs": "EPSG:4326",
+        "polygons": [[[22.0, 36.0], [45.0, 36.0], [45.0, 10.0], [22.0, 10.0]]],
+    }
+    source = _promptable_raster(
+        tmp_path, name="src_long.tif", crs="EPSG:4326", origin=(20.0, 38.0)
+    )
+    compiled = service.compile_geo_prompt(
+        artifact, str(source), allowed_roots=[tmp_path]
+    )
+    first = service.run_inference(
+        _refine_request(source, compiled, session="p3-long-uri")
+    )
+    long_source = _deep_nonexistent_path(tmp_path)
+    assert len(long_source) > 2048
+
+    captured = {}
+
+    def _capture(uri):
+        captured["uri"] = uri
+        raise ModelOpsError("stop-after-capture")
+
+    monkeypatch.setattr(RasterReader, "open", staticmethod(_capture))
+    with pytest.raises(ModelOpsError, match="stop-after-capture"):
+        service.run_prompt_refine(
+            "tiny-promptable-seg", long_source,
+            first.outputs["prompt_candidates"]["path"], 0,
+            session_id="p3-long-uri", allowed_roots=[tmp_path],
+        )
+    assert captured["uri"] == long_source
+
+
+# ── service.py:820 —— refine sidecar 必须原子发布（tmp + os.replace）──
+
+
+def test_refine_sidecar_crash_never_leaves_partial_final_file(
+    service, tmp_path, monkeypatch
+):
+    import rasterio
+
+    artifact = {
+        "crs": "EPSG:4326",
+        "polygons": [[[22.0, 36.0], [45.0, 36.0], [45.0, 10.0], [22.0, 10.0]]],
+    }
+    source = _promptable_raster(
+        tmp_path, name="src_atomic.tif", crs="EPSG:4326", origin=(20.0, 38.0)
+    )
+    compiled = service.compile_geo_prompt(
+        artifact, str(source), allowed_roots=[tmp_path]
+    )
+    first = service.run_inference(
+        _refine_request(source, compiled, session="p3-sidecar")
+    )
+
+    real_open = rasterio.open
+
+    def _failing_open(path, mode="r", *args, **kwargs):
+        if mode == "w" and "prompt_refs" in str(path):
+            class _PartialWriter:
+                def __enter__(self):
+                    Path(path).write_bytes(b"partial")
+                    return self
+
+                def __exit__(self, *exc):
+                    return False
+
+                def write(self, *_a, **_k):
+                    raise OSError("simulated crash mid-write")
+
+            return _PartialWriter()
+        return real_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(rasterio, "open", _failing_open)
+    with pytest.raises(OSError, match="simulated crash"):
+        service.run_prompt_refine(
+            "tiny-promptable-seg", str(source),
+            first.outputs["prompt_candidates"]["path"], 0,
+            session_id="p3-sidecar", allowed_roots=[tmp_path],
+        )
+    ref_dir = (
+        service._settings.registry_dir
+        / "outputs"
+        / "session_id-p3-sidecar"
+        / "prompt_refs"
+    )
+    assert list(ref_dir.glob("refine-*.tif")) == []
+    assert list(ref_dir.glob("*.tmp*")) == []

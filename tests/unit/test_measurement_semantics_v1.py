@@ -110,6 +110,15 @@ def test_signed_change_cross_zero_gets_center():
     assert measurement_diverging_center(fs.measurement_kind) == 0.0
 
 
+def test_signed_rate_upgrades_kind_to_diverging():
+    """带符号变化率（变化命名 + 跨 0 样本）→ SIGNED_CHANGE（diverging），
+    不得停留在 RATE → sequential 而丢失 center。"""
+    fs = _kind_of("population_growth_rate", [-0.02, 0.01, 0.03])
+    assert fs.measurement_kind == MeasurementKind.SIGNED_CHANGE.value
+    assert fs.center_hint == 0.0
+    assert measurement_to_data_kind(fs.measurement_kind) == "diverging"
+
+
 def test_category_kind_from_semantic_role():
     """类别字段 → CATEGORY + none 维度（qualitative 面）。"""
     p = DatasetProfile(source="synthetic", fields={"land_use_type": "string"})

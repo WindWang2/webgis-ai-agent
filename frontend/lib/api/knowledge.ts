@@ -106,7 +106,9 @@ export async function searchKnowledge(
     `/api/v1/knowledge/search?${params.toString()}`,
     { signal: opts.signal, label: 'Knowledge search error' },
   );
-  if (!body.success || !body.data) throw new Error(body.message || '检索失败');
+  if (!body.success || !body.data || !Array.isArray(body.data.results)) {
+    throw new Error(body.message || '检索失败');
+  }
   return body.data.results;
 }
 

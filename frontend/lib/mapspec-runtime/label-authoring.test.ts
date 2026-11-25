@@ -139,4 +139,19 @@ describe('R1 review fixes（G16）', () => {
     expect(proj.unprojectable).toContain('toString');
     expect(buildHiddenExcludeFilter(proj)).toBeNull();
   });
+
+  it('P3：覆写文本恰等于多键哨兵 → 哨兵动态避让，覆写不被静默丢弃', () => {
+    const collision = '\u0000__fallback__';
+    const proj = projectAuthoring([
+      { featureId: 's1', text: collision },
+      { featureId: 's2', text: '自定义二', idKey: 'OBJECTID' },
+    ], feats);
+    const expr = buildTextFieldExpr(proj, 'name') as unknown[];
+    expect(expr).toBeTruthy();
+    // 外层 case 的 consequent 是首组 match，尾元素即「组内未命中」哨兵。
+    const firstMatch = expr[2] as unknown[];
+    const sentinel = firstMatch[firstMatch.length - 1];
+    expect(sentinel).not.toBe(collision);
+    expect(JSON.stringify(expr)).toContain('__fallback__');
+  });
 });

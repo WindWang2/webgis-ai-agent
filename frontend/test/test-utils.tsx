@@ -19,6 +19,7 @@ export function createMockLayer(overrides?: Partial<Layer>): Layer {
 export function createMockStoreState(overrides?: Partial<HudState>): Record<string, unknown> {
   return {
     layers: [],
+    focusLayerId: null,
     editingLayerId: null,
     currentTask: null,
     processLayers: {},

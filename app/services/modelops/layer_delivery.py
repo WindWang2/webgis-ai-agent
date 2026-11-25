@@ -225,16 +225,22 @@ async def publish_layers(
             ref_id = await session_data_manager.store(
                 session_id or project_id, payload, prefix="modelops"
             )
-            package["ref_id"] = ref_id
-            package["alias"] = f"modelops_{package['role']}"
-            await session_data_manager.set_alias(
-                session_id or project_id, ref_id, package["alias"]
-            )
-            package["registered"] = True
         except Exception as exc:  # noqa: BLE001 — 图层注册失败不毁产物
             logger.warning("layer registration for role %s failed: %s", package["role"], exc)
             package["registered"] = False
             package["reason"] = str(exc)[:200]
+            refs.append(package)
+            continue
+        package["ref_id"] = ref_id
+        package["alias"] = f"modelops_{package['role']}"
+        package["registered"] = True
+        try:
+            await session_data_manager.set_alias(
+                session_id or project_id, ref_id, package["alias"]
+            )
+        except Exception as exc:  # noqa: BLE001 — ref 已入存储，别名失败不倒退注册态
+            logger.warning("layer alias for role %s failed: %s", package["role"], exc)
+            package["alias_error"] = str(exc)[:200]
         refs.append(package)
     return {
         "layers": refs,

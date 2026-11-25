@@ -32,7 +32,14 @@ def generate_fishnet(bounds: tuple[float, float, float, float], cell_size: float
             error_type="ValueError",
         )
 
-    xmin, ymin, xmax, ymax = bounds
+    try:
+        xmin, ymin, xmax, ymax = bounds
+    except (TypeError, ValueError) as exc:
+        return GeoAnalysisResult(
+            False, None,
+            f"bounds must be a 4-element (minx, miny, maxx, maxy) sequence: {exc}",
+            error_type="ValueError",
+        )
 
     # Pick a metric CRS for the (WGS84) bounds: UTM, or polar stereographic.
     if float(ymax) > 84.0 or float(ymin) < -80.0:
@@ -461,13 +468,10 @@ def aggregate_with_denominator(
     joined = gpd.sjoin(feats, zones, how="inner", predicate="intersects")
 
     nan_numerator_excluded = 0
-    if numerator_field is None:
-        counts = joined.groupby("index_right").size()
-        numerator = zones.index.map(counts).fillna(0).astype("int64")
     support_counts = joined.groupby("index_right").size()
     has_support = zones.index.map(support_counts).fillna(0) > 0
     if numerator_field is None:
-        numerator = zones.index.map(counts).fillna(0).astype("int64")
+        numerator = zones.index.map(support_counts).fillna(0).astype("int64")
     else:
         values = pd.to_numeric(joined[numerator_field], errors="coerce")
         # ADR-0284 B2（数值极值修复）：非有限值（±inf）与 NaN 同为无效观测

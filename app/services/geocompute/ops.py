@@ -475,6 +475,13 @@ def _op_attribute_join(ctx: OperatorContext, node: "ExecutionNode", payloads: di
         raise NodeExecutionError(
             "ATTRIBUTE_JOIN node requires parameters.join_field_left", node_id=node.node_id
         )
+    if len(node.inputs) < 2:
+        # 与 SPATIAL_JOIN 同一诚实边界：缺右输入在 plan 校验期不可达时
+        # 也必须类型化失败，而不是裸 IndexError 收编成 NODE_FAILED。
+        raise NodeExecutionError(
+            "ATTRIBUTE_JOIN node requires two inputs (left, right)",
+            node_id=node.node_id,
+        )
     left_in = payloads.get(node.inputs[0], {}) if node.inputs else {}
     left_rows = _rows_channel(left_in)
     if left_rows is None and not left_in.get("features"):
@@ -673,7 +680,10 @@ def _op_materialize(ctx: OperatorContext, node: "ExecutionNode", payloads: dict[
             "MATERIALIZE requires a session context", node_id=node.node_id
         )
     source = payloads.get(node.inputs[0]) if node.inputs else None
-    data = (source or {}).get("features") or (source or {}).get("rows")
+    feats = (source or {}).get("features")
+    rows = (source or {}).get("rows")
+    # 空列表是合法载荷（0 行结果集）—— 不能用 or 把它当成缺失。
+    data = feats if feats is not None else rows
     if data is None:
         data = node.parameters.get("data")
     if data is None:

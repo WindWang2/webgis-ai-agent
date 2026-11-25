@@ -68,9 +68,12 @@ export function useSpatialCatalog() {
       });
       if (seq !== catalogReqRef.current.seq) return; // superseded by a newer query
       const page = res.items || [];
+      const prevLen = append ? itemsRef.current.length : 0;
       const combined = append ? [...itemsRef.current, ...page] : page;
       itemsRef.current = Array.from(new Map(combined.map((item) => [item.id, item])).values());
-      offsetRef.current = (append ? offsetRef.current : 0) + page.length;
+      // offset 按「去重后实际新增数」前进：两页之间服务端插入新项时，
+      // 按 page.length 前进会跳过边界处的真实条目（静默缺条）。
+      offsetRef.current = (append ? offsetRef.current : 0) + (itemsRef.current.length - prevLen);
       setCatalogItems(itemsRef.current);
       setCatalogTotal(res.total || 0);
     } catch (e) {

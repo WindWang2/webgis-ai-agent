@@ -122,6 +122,19 @@ class TestTraceReplay:
         report = replay_trace(events)
         assert not report["valid"]
 
+    def test_admitted_node_without_terminal_event_is_caught(self):
+        """run_finished 存在但 admitted 节点缺终态事件（worker 崩溃/事件
+        漏写）→ 不得判 valid（此前为假阴性，且死分支永不可达）。"""
+        events = [
+            {"event": "run_started", "run_id": "r"},
+            {"event": "node_admitted", "run_id": "r", "node_id": "a"},
+            {"event": "run_finished", "run_id": "r"},
+        ]
+        report = replay_trace(events)
+        assert not report["valid"]
+        assert any("never reached a terminal" in v
+                   for v in report["violations"])
+
     def test_retry_run_replay_records_attempt_failures(self):
         plan = ExecutionPlan(plan_id="r4", nodes=[
             _node("boom", parameters={

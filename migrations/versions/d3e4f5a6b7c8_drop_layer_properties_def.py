@@ -26,10 +26,19 @@ def _is_sqlite() -> bool:
     return context.get_context().dialect.name == "sqlite"
 
 
+def _column_exists(table: str, column: str) -> bool:
+    return column in {
+        c["name"] for c in sa.inspect(op.get_bind()).get_columns(table)
+    }
+
+
 def upgrade() -> None:
     if _is_sqlite():
-        with op.batch_alter_table('layers', schema=None) as batch_op:
-            batch_op.drop_column('properties_def')
+        # create_all 共存守卫：模型已删该列，create_all 库上无守卫的
+        # batch drop_column 对不存在列抛 KeyError（PG 分支已有 IF EXISTS）。
+        if _column_exists('layers', 'properties_def'):
+            with op.batch_alter_table('layers', schema=None) as batch_op:
+                batch_op.drop_column('properties_def')
     else:
         op.execute("ALTER TABLE layers DROP COLUMN IF EXISTS properties_def;")
 

@@ -55,6 +55,11 @@ describe('classifyAckDelivery', () => {
     expect(classifyAckDelivery({ status: 422 })).toEqual({ kind: 'permanent', reason: 'validation' });
   });
 
+  it('treats 3xx redirects as non-success (never a delivered ACK)', () => {
+    expect(classifyAckDelivery({ status: 302 })).toEqual({ kind: 'transient', reason: 'http_3xx' });
+    expect(classifyAckDelivery({ status: 304 })).toEqual({ kind: 'transient', reason: 'http_3xx' });
+  });
+
   it('treats HTTP 200 without dropped as success', () => {
     expect(classifyAckDelivery({ status: 200 })).toEqual({ kind: 'success', reason: 'ok' });
     expect(classifyAckDelivery({ status: 200, dropped: 0 })).toEqual({ kind: 'success', reason: 'ok' });
@@ -669,6 +674,47 @@ describe('map action ACK delivery (fault matrix)', () => {
     );
     expect(secondIds).toEqual(['ma-new']);
     releaseFirst?.(jsonResponse({ accepted: 1, duplicates: 0 }));
+    sender.dispose();
+  });
+
+  it('15. a fired debounce timer is untracked instead of leaking its handle', async () => {
+    const setSpy = vi.spyOn(globalThis, 'setTimeout');
+    const clearSpy = vi.spyOn(globalThis, 'clearTimeout');
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ accepted: 1, duplicates: 0 }));
+    const sender = makeSender(fetchImpl);
+
+    sender.sink(ack('ma-timer'));
+    const debounceId = setSpy.mock.results.at(-1)?.value as ReturnType<typeof setTimeout>;
+
+    await vi.advanceTimersByTimeAsync(10);
+    await flushMicrotasks();
+
+    expect(clearSpy).toHaveBeenCalledWith(debounceId);
+    sender.dispose();
+    setSpy.mockRestore();
+    clearSpy.mockRestore();
+  });
+
+  it('14. a zero-delay retry is still scheduled (readyAt === now is not starved)', async () => {
+    const fetchImpl = vi.fn()
+      .mockRejectedValueOnce(new TypeError('net'))
+      .mockResolvedValue(jsonResponse({ accepted: 1, duplicates: 0 }));
+    const sender = makeSender(fetchImpl, {
+      retryBaseMs: 1,
+      retryMaxMs: 1,
+      random: () => 0,
+      maxAttempts: 2,
+    });
+
+    sender.sink(ack('ma-zero'));
+    sender.flush();
+    await flushMicrotasks();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
     sender.dispose();
   });
 

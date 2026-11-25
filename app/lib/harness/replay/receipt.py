@@ -284,12 +284,20 @@ class _MemorySessionStore:
 
     async def append_event(self, session_id: str, event: str,
                            data: dict) -> None:
-        self._events.append({"event": str(event)[:48], "data": dict(data)})
+        self._events.append({
+            "session_id": str(session_id),
+            "event": str(event)[:48],
+            "data": dict(data),
+        })
         if len(self._events) > self._MAX_EVENTS:
             del self._events[: len(self._events) - self._MAX_EVENTS]
 
     async def get_event_log(self, session_id: str) -> List[Dict[str, Any]]:
-        return list(self._events)
+        # 事件按 session 归属过滤（与 list_refs 的 session 隔离一致）。
+        return [
+            {"event": e["event"], "data": e["data"]}
+            for e in self._events if e["session_id"] == session_id
+        ]
 
     async def list_refs(self, session_id: str) -> Dict[str, str]:
         return {

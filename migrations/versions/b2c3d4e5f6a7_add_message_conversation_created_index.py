@@ -13,6 +13,7 @@ so that filter + sort are both served from the index.
 from typing import Sequence, Union
 
 from alembic import op, context
+import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
@@ -31,11 +32,16 @@ def upgrade() -> None:
     """Add index on messages(conversation_id, created_at)."""
     if _is_sqlite():
         # SQLite: use batch_alter_table (render_as_batch=True in env.py).
-        with op.batch_alter_table("messages", schema=None) as batch_op:
-            batch_op.create_index(
-                "idx_message_conversation_created",
-                ["conversation_id", "created_at"],
-            )
+        # create_all 共存守卫：模型已声明同名索引，create_all 库上无守卫的
+        # create_index 直接 "index already exists"。（PG 分支有 IF NOT EXISTS。）
+        if "idx_message_conversation_created" not in {
+            i["name"] for i in sa.inspect(op.get_bind()).get_indexes("messages")
+        }:
+            with op.batch_alter_table("messages", schema=None) as batch_op:
+                batch_op.create_index(
+                    "idx_message_conversation_created",
+                    ["conversation_id", "created_at"],
+                )
     else:
         # PostgreSQL
         # IF NOT EXISTS: Base.metadata.create_all() 在启动时已按模型定义建好同名索引，

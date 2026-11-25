@@ -181,6 +181,22 @@ class TestUnifiedFeedback:
         assert "TEMPLATE_CODEGEN_FITNESS" in rules
         assert "CARTOGRAPHY_FEEDBACK_AXES" in rules
 
+    def test_template_fitness_evidence_checks_is_always_list(self):
+        """findings 有无不得让 evidence["checks"] 在 list/dict 间漂移。"""
+        failing = {"version": "1.0", "layers": [{"id": 1}]}
+        evidence = CartographicReviewEvidence(session_id="s1")
+        attach_unified_feedback(evidence, failing, is_compiled=True)
+        rows = [c for c in evidence.checks
+                if c["rule"] == "TEMPLATE_CODEGEN_FITNESS"]
+        assert rows and isinstance(rows[-1]["evidence"]["checks"], list)
+        assert rows[-1]["evidence"]["checks"]
+
+        clean = CartographicReviewEvidence(session_id="s2")
+        attach_unified_feedback(clean, None, is_compiled=True)
+        rows = [c for c in clean.checks
+                if c["rule"] == "TEMPLATE_CODEGEN_FITNESS"]
+        assert rows and isinstance(rows[-1]["evidence"]["checks"], list)
+
     def test_visual_errors_fail_visual_axis(self):
         evidence = CartographicReviewEvidence(session_id="s1", desired_status="pass")
         evidence.visual_evidence.append({

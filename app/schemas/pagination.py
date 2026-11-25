@@ -8,8 +8,8 @@ runs, data-fabric sources, catalog) must:
      a few headline fields)
   3. keep the full detail DTO on a per-item detail endpoint
 
-The contract is intentionally minimal: ``Page[T]`` and ``paginate(...)`` are
-the only things every route needs to import. Existing clients that still
+The contract is intentionally minimal: ``Page[T]`` and ``clamp_pagination(...)``
+are the only things every route needs to import. Existing clients that still
 expect a bare list will get one (we mirror the list as ``items`` while
 also exposing ``total`` and ``limit``/``offset`` for new callers).
 """
@@ -20,16 +20,6 @@ from typing import Generic, List, Optional, TypeVar
 from pydantic import BaseModel, Field
 
 T = TypeVar("T")
-
-
-class PageMeta(BaseModel):
-    """Pagination metadata. ``total`` is the real DB count; the per-page
-    list is in ``items``."""
-
-    total: int = Field(..., ge=0, description="Total matching rows (real count)")
-    limit: int = Field(..., ge=1, description="Page size applied (after clamping)")
-    offset: int = Field(..., ge=0, description="Row offset applied")
-    has_more: bool = Field(..., description="True if offset+limit < total")
 
 
 class Page(BaseModel, Generic[T]):

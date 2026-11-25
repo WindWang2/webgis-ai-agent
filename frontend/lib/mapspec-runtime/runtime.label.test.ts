@@ -176,12 +176,11 @@ describe("MapSpecRuntime × label sublayers (ADR-0154)", () => {
     const events = rt.getLabelEvents();
     const disabled = events.find((e) => e.kind === "disabled");
     const added = map._calls.addLayer.some((c: any) => c.def.id === "pois-label");
-    if (disabled) {
-      expect(added).toBe(false);
-      expect((disabled.detail as any).reason).toBe("ink_ratio_extreme");
-    } else {
-      expect(added).toBe(true);
-    }
+    // 3200 × ~5.6 CJK 字符 × 12px² / (1024×768) ≈ 3.3 > 1.5 → 确定性 L4。
+    // （if/else 双分支断言两端 = 永真断言，回归无从发现。）
+    expect(disabled).toBeTruthy();
+    expect(added).toBe(false);
+    expect((disabled!.detail as any).reason).toBe("ink_ratio_extreme");
   });
 
   it("degrade ladder: moderate ink shrinks font and drops halo", () => {

@@ -221,3 +221,43 @@ def test_list_templates_v2_pagination_contract():
     page, total = list_templates_v2(kind="basemap", limit=5, offset=0)
     assert len(page) <= 5
     assert total >= len(page)
+
+
+# --------------------------------------------------------------------
+# Source filter (P3 regression) + validate lock safety
+# --------------------------------------------------------------------
+def test_search_source_user_includes_template_without_is_builtin_flag():
+    """add_user_template 未显式带 is_builtin 的条目必须按 user 归类。"""
+    r = TemplateRegistry()
+    r.load_builtins()
+    r.add_user_template({
+        "id": "user_tpl_no_flag",
+        "kind": "thematic",
+        "name": "无 is_builtin 标记的用户模板",
+        "keywords": ["user-no-flag"],
+    })
+    user_page, user_total = r.search(source="user", limit=1000)
+    assert any(e["id"] == "user_tpl_no_flag" for e in user_page)
+    assert user_total >= 1
+    builtin_page, _ = r.search(source="builtin", limit=1000)
+    assert all(e["id"] != "user_tpl_no_flag" for e in builtin_page)
+
+
+class _LockGuardDict(dict):
+    """值迭代断言调用方持有 registry 锁（validate 并发读的回归探针）。"""
+
+    def __init__(self, *args, lock, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._guard_lock = lock
+
+    def values(self):
+        assert self._guard_lock._is_owned(), (
+            "validate() iterates _by_id without holding the registry lock")
+        return super().values()
+
+
+def test_validate_iterates_registry_under_lock():
+    r = TemplateRegistry()
+    r.load_builtins()
+    r._by_id = _LockGuardDict(r._by_id, lock=r._lock)
+    assert r.validate() == []

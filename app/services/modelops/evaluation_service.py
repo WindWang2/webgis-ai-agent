@@ -248,12 +248,20 @@ class EvaluationService:
         report["class_distribution_psi"] = class_distribution_psi(base_counts, cur_counts)
         # 置信度分布 PSI（可选）。
         if request.baseline_confidence_path and request.current_confidence_path:
-            bconf = self._read_single(request.baseline_confidence_path)
-            cconf = self._read_single(request.current_confidence_path)
+            bconf = self._read_single(
+                request.baseline_confidence_path, reference=base_meta
+            )
+            cconf = self._read_single(
+                request.current_confidence_path, reference=base_meta
+            )
             mask = (base != request.ignore_index) & (cur != request.ignore_index)
-            if mask.any() and bconf.shape == base.shape and cconf.shape == cur.shape:
+            if mask.any():
                 report["confidence_psi"] = population_stability_index(
                     bconf[mask].tolist(), cconf[mask].tolist()
+                )
+            else:
+                report["confidence_psi_note"] = (
+                    "skipped: no comparable pixels after ignore_index mask"
                 )
         # 地理切片：逐 region 的一致性（地理漂移定位）。region 栅格必须与
         # baseline/current 同网格——异形会让逐 region 切片错位或裸崩。

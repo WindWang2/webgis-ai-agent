@@ -3,7 +3,7 @@
  * 五类指标时序（recharts 以 mock 面替换 —— 同 chart-core.test.tsx 模式）。
  */
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import React from 'react';
 
 vi.mock('recharts', async () => {
@@ -49,9 +49,10 @@ import {
 } from './ops-shared';
 import { WorkersTable } from './workers-table';
 import { MetricsTrend } from './metrics-trend';
+import { PlanWaterfall } from './plan-waterfall';
 import { clusterWorkersFixture, emptyClusterMetricsFixture } from '@/test/fixtures/geocompute-fixtures';
 import { buildMetricSeries, type MetricPoint } from '@/test/fixtures/metric-series';
-import { toMetricsSample, appendSample } from './metrics-sample';
+import { toMetricsSample, appendSample, deltas } from './metrics-sample';
 
 describe('格式化', () => {
   it('formatBytes 阶梯', () => {
@@ -65,6 +66,9 @@ describe('格式化', () => {
     expect(formatDuration(45)).toBe('45s');
     expect(formatDuration(90)).toBe('1m30s');
     expect(formatDuration(3700)).toBe('1h1m');
+    // 秒数四舍五入到 60 时进位，不输出 "1m60s"/丢秒
+    expect(formatDuration(119.6)).toBe('2m');
+    expect(formatDuration(3599.6)).toBe('1h');
   });
   it('formatPercent 诚实缺失', () => {
     expect(formatPercent(null)).toBe('—');
@@ -113,7 +117,7 @@ describe('WorkersTable（P3）', () => {
   });
   it('键盘导航：ArrowDown 焦点移到下一行', () => {
     render(<WorkersTable workers={clusterWorkersFixture.workers} />);
-    const rows = screen.getAllByRole('row').filter((r) => r.getAttribute('tabindex') === '0');
+    const rows = screen.getAllByRole('row').filter((r) => r.getAttribute('aria-rowindex') !== null);
     rows[0].focus();
     fireEvent.keyDown(rows[0], { key: 'ArrowDown' });
     expect(rows[1]).toHaveFocus();
@@ -121,6 +125,54 @@ describe('WorkersTable（P3）', () => {
     expect(rows[0]).toHaveFocus();
     fireEvent.keyDown(rows[0], { key: 'End' });
     expect(rows[rows.length - 1]).toHaveFocus();
+  });
+
+  it('roving tabindex：只有一个行可 Tab 进入', async () => {
+    render(<WorkersTable workers={clusterWorkersFixture.workers} />);
+    const rows = screen.getAllByRole('row').filter((r) => r.getAttribute('aria-rowindex') !== null);
+    expect(rows.filter((r) => r.getAttribute('tabindex') === '0')).toHaveLength(1);
+    expect(rows[0]).toHaveAttribute('tabindex', '0');
+    fireEvent.focus(rows[1]);
+    await waitFor(() => {
+      expect(rows[0]).toHaveAttribute('tabindex', '-1');
+      expect(rows[1]).toHaveAttribute('tabindex', '0');
+    });
+  });
+
+  it('列表缩短后 End 落到最后一个现存行（不命中已卸载的 null ref）', async () => {
+    const { rerender } = render(
+      <WorkersTable workers={clusterWorkersFixture.workers.slice(0, 5)} />,
+    );
+    rerender(<WorkersTable workers={clusterWorkersFixture.workers.slice(0, 2)} />);
+    const rows = screen.getAllByRole('row').filter((r) => r.getAttribute('aria-rowindex') !== null);
+    expect(rows).toHaveLength(2);
+    fireEvent.focus(rows[0]);
+    fireEvent.keyDown(rows[0], { key: 'End' });
+    await waitFor(() => expect(rows[1]).toHaveFocus());
+  });
+});
+
+describe('PlanWaterfall / deltas', () => {
+  it('running 条不越过窗口右界（宽度与 left 合计 ≤ 100%）', async () => {
+    const events = [
+      {
+        id: 'e1', run_id: 'r1', event: 'node_started', node_id: 'a',
+        attempt: 1, created_at: '2026-09-12T01:00:00Z',
+      },
+      {
+        id: 'e2', run_id: 'r1', event: 'node_output_ready', node_id: 'b',
+        created_at: '2026-09-12T01:00:10Z',
+      },
+    ] as unknown as Parameters<typeof PlanWaterfall>[0]['events'];
+    render(<PlanWaterfall events={events} runId="r1" />);
+    const bar = await screen.findByRole('img', { name: /a running/ });
+    const left = Number.parseFloat(bar.style.left);
+    const width = Number.parseFloat(bar.style.width);
+    expect(left + width).toBeLessThanOrEqual(100.01);
+  });
+
+  it('24h 滑窗计数下降 → 断点（null），不钳成假零', () => {
+    expect(deltas([10, 20, 15, 18])).toEqual([null, 10, null, 3]);
   });
 });
 

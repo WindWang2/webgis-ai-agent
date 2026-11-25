@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { hudStateToMapSpec, _resetSceneEvidenceForTests, sceneEvidenceSnapshot } from "./adapter";
+import { getSymbolLawEvidence, resetSymbolLawEvidence } from "@/lib/map-kit/symbol-law";
 import { toMapLibrePaint } from "./paint-bridge";
 import type { Layer } from "@/lib/types/layer";
 import type { GeoJSONFeatureCollection, HeatmapRasterSource } from "@/lib/types";
@@ -601,6 +602,20 @@ describe("native heatmap mode — #679 single color source", () => {
     const r3 = spec3.layers.find((l) => l.type === "heatmap")!.paint!["heatmap-radius"] as unknown as unknown[];
     expect(r3[6]).toBe(25);
   });
+
+  it("radius contract: radius_px=null is 'unset' → default 30px (Number(null)===0 trap)", () => {
+    // Number(null)===0 会让 null 走「有限数值即显式」分支压成 4px；null 必须
+    // 与 undefined 同义（未设置）→ 缺省 30px。
+    const layer = baseLayer({
+      type: "heatmap",
+      source: fc(pointFeature({ weight: 0.7 })),
+      legend_spec: legendSpec,
+      style: { renderType: "heatmap", radius_px: null as unknown as number },
+    });
+    const spec = hudStateToMapSpec({ layers: [layer], processLayers: {}, activeFilters: {}, is3D: false });
+    const radius = spec.layers.find((l) => l.type === "heatmap")!.paint!["heatmap-radius"] as unknown as unknown[];
+    expect(radius).toEqual(["interpolate", ["linear"], ["zoom"], 0, 2, 9, 30, 13, 51]);
+  });
 });
 
 describe("heatgrid mode — #679 single color source", () => {
@@ -639,5 +654,33 @@ describe("heatgrid mode — #679 single color source", () => {
     const fills = spec.layers.filter((l) => l.type === "fill");
     const color = fills[0].paint!["fill-color"] as unknown as unknown[];
     expect(color).toContain("rgba(0,242,255,0.4)");
+  });
+});
+
+describe("source-shape robustness", () => {
+  it("malformed FeatureCollection (features not an array) does not crash the adapter", () => {
+    const malformed = {
+      type: "FeatureCollection",
+      features: {},
+    } as unknown as GeoJSONFeatureCollection;
+    const layer = baseLayer({ source: malformed });
+    expect(() => hudStateToMapSpec({
+      layers: [layer], processLayers: {}, activeFilters: {}, is3D: false,
+    })).not.toThrow();
+  });
+
+  it("unrecognized source shape is disclosed via unknown-source-type evidence", () => {
+    resetSymbolLawEvidence();
+    // heatmap 型 + string URL：非 raster/tile、非热力栅格、非矢量瓦片、非 FC。
+    const layer = baseLayer({
+      id: "heat-unknown",
+      type: "heatmap",
+      source: "https://example.com/tiles/{z}/{x}/{y}.png" as unknown as Layer["source"],
+    });
+    const spec = hudStateToMapSpec({ layers: [layer], processLayers: {}, activeFilters: {}, is3D: false });
+    expect(spec.layers).toHaveLength(0); // 该层无 sublayer（既有行为）
+    const events = getSymbolLawEvidence().events
+      .filter((e) => e.kind === "unknown-source-type");
+    expect(events.some((e) => e.id === "heat-unknown")).toBe(true);
   });
 });

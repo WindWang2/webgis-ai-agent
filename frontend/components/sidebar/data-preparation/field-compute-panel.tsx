@@ -154,8 +154,10 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
 
   const refreshUploads = useCallback(async () => {
     if (!sessionId) return;
+    const gen = generationRef.current;
     try {
       const res = await listUploads(sessionId, { ownerToken });
+      if (generationRef.current !== gen) return;
       const options = (res.uploads ?? [])
         .filter((u) => u.session_ref)
         .map((u) => ({
@@ -164,6 +166,7 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
         }));
       setUploads(options);
     } catch {
+      if (generationRef.current !== gen) return;
       setUploads([]);
     }
   }, [sessionId, ownerToken]);

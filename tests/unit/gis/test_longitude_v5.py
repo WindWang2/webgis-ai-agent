@@ -128,6 +128,20 @@ def test_normalize_e360_to_pm180_yields_collection_for_am_geometry():
     assert len(out["geometries"]) == 2
 
 
+def test_normalize_pm180_wrapped_geometry_is_split():
+    """pm180 环绕表示（175 → -175）同样跨 AM：归一必须拆分，不得原样返回。"""
+    poly = {"type": "Polygon", "coordinates": [[
+        [175.0, 0.0], [-175.0, 0.0], [-175.0, 10.0], [175.0, 10.0],
+        [175.0, 0.0],
+    ]]}
+    out = normalize_geojson_geometry(poly, target_convention="pm180")
+    assert out["type"] == "GeometryCollection"
+    assert len(out["geometries"]) == 2
+    for part in out["geometries"]:
+        lons = [c[0] for c in part["coordinates"][0]]
+        assert not geometry_crosses_antimeridian(lons)
+
+
 def test_normalize_never_raises_on_junk():
     junk = {"type": "Unknown", "coordinates": None}
     assert normalize_geojson_geometry(junk) == junk

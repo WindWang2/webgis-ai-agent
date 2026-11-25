@@ -110,7 +110,12 @@ def merge_contributions(
     平均分不得掩盖任何一方的 correctness failure（E15 红线）。
     """
     merged: Dict[str, DimensionVerdict] = {}
-    for dim in DIMENSIONS:
+    # 外部注册 adapter 可贡献词表外维度：静默丢弃会让其裁决不进 SpecEval
+    #（fail 也不使 spec 红）。词表顺序在前，词表外维度按名称稳定排序。
+    extra_dims = sorted({
+        c.dimension for c in contributions if c.dimension not in DIMENSIONS
+    })
+    for dim in (*DIMENSIONS, *extra_dims):
         rows = [c for c in contributions if c.dimension == dim]
         if not rows:
             merged[dim] = DimensionVerdict(

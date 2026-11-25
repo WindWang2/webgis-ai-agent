@@ -105,6 +105,7 @@ _ID_MAX = 128
 _PARAMS_KEYS_MAX = 16
 _PARAMS_BYTES_MAX = 2048
 _COMPENSATION_ARGS_KEYS_MAX = 8
+_COMPENSATION_ARGS_BYTES_MAX = 2048
 
 
 def _canon(value: Any) -> str:
@@ -177,6 +178,11 @@ class Compensation(_Bounded):
             raise ValueError(
                 f"Compensation.args 键数 {len(self.args)} 超上限 "
                 f"{_COMPENSATION_ARGS_KEYS_MAX}")
+        args_bytes = len(_canon(self.args).encode("utf-8"))
+        if args_bytes > _COMPENSATION_ARGS_BYTES_MAX:
+            raise ValueError(
+                f"Compensation.args 字节 {args_bytes} 超预算 "
+                f"{_COMPENSATION_ARGS_BYTES_MAX}（IR refs-only：数据不入 IR）")
 
 
 # ── 动作面 ───────────────────────────────────────────────────────────────
@@ -283,6 +289,10 @@ def describe_plan(plan: GISActionPlan, *, max_lines: int = 24) -> str:
     ]
     overflow = len(plan.actions) > max_lines - 2
     shown = max_lines - 2 if overflow else max_lines - 1
+    if max_lines <= 1:
+        # 预算连 header 都放不下时不追加动作行：硬保证 ≤ max_lines
+        # （旧逻辑 max_lines=1 时恒 overflow 且 shown=-1，输出 2 行）。
+        return "\n".join(lines[:max(0, max_lines)])
     for i, action in enumerate(plan.actions[:max(shown, 0)]):
         target = action.tool or action.capability or "?"
         deps = f" deps={len(action.depends_on)}" if action.depends_on else ""

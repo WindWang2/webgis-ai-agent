@@ -53,6 +53,18 @@ class TestMapProductEvidenceDataclass:
         dumped = ev.to_dict()
         assert dumped["completeness"]["complete"] is True
 
+    def test_from_result_tolerates_explicit_none_lists(self):
+        """显式 null 的 fallback/component 列表不得让提取崩溃。"""
+        ev = MapProductEvidence.from_result({
+            "map_product_evidence": {
+                "fallback_decisions": None,
+                "component_selection": None,
+            }
+        })
+        assert ev is not None
+        assert ev.fallback_decisions == []
+        assert ev.component_selection == []
+
 
 class TestEvaluatorMapProductDimension:
     def test_exempt_without_product_evidence(self):

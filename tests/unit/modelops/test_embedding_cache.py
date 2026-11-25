@@ -232,3 +232,34 @@ def test_stats_shape_stable(tmp_path):
         "entries", "bytes", "max_entries", "max_bytes",
         "hits", "misses", "evictions", "digest_failures",
     }
+
+
+def test_get_sidecar_update_is_atomic(tmp_path, monkeypatch):
+    """命中时的 last_used 回写不得直接覆写 sidecar（截断 = 条目静默丢失）。
+
+    注入 os.replace 失败（模拟崩溃/并发写竞争）：旧实现已截断并重写最终
+    sidecar（last_used 变为新时间），文件仍可能半写；修复后最终 sidecar
+    保持旧内容，tmp 残件被清理。
+    """
+    import json
+
+    import app.services.modelops.embedding_cache as ec
+
+    clock = {"now": 100.0}
+    cache = EmbeddingCache(tmp_path, max_entries=8, clock=lambda: clock["now"])
+    key = _key()
+    vec = np.zeros((4, 4), dtype=np.float32)
+    assert cache.put(key, vec, owner_scope=OWNER)
+    sidecar = next(tmp_path.rglob(f"{key}.json"))
+    assert json.loads(sidecar.read_text(encoding="utf-8"))["last_used"] == 100.0
+
+    clock["now"] = 200.0
+
+    def _fail_replace(src, dst):
+        raise OSError("simulated crash before publish")
+
+    monkeypatch.setattr(ec.os, "replace", _fail_replace)
+    got = cache.get(key, owner_scope=OWNER)
+    assert got is not None
+    assert json.loads(sidecar.read_text(encoding="utf-8"))["last_used"] == 100.0
+    assert list(tmp_path.rglob("*.tmp*")) == []

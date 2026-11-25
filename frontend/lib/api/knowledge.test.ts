@@ -127,6 +127,13 @@ describe('searchKnowledge', () => {
     expect(url).toContain('top_k=10');
     expect(url).toContain('document_id=doc_1');
   });
+
+  it('treats a success envelope without a results array as failure (no hollow success)', async () => {
+    mockFetch.mockResolvedValueOnce(
+      jsonOk({ code: 'SUCCESS', success: true, message: '', data: {} }),
+    );
+    await expect(searchKnowledge({ q: 'q' })).rejects.toThrow('检索失败');
+  });
 });
 
 describe('deleteKnowledgeDocument', () => {

@@ -78,10 +78,20 @@ def build_inference_manifest(
     fingerprint = sha256_hex(canonical_dumps(manifest))
     # R2 m-2：分节 redaction —— 整体 redact 超 4KB 会退化为 str 形态
     # （redaction 被整体跳过）；按节处理后每节都远小于全局界。
-    redacted: Dict[str, Any] = {
-        key: redacted_section
-        for key, value in manifest.items()
-        if isinstance(redacted_section := redact_provenance_args(value), (dict, list, str, int, float, bool)) or redacted_section is None
-    }
+    # 非 JSON 基类型（tuple/set/bytes/numpy 标量/Path…）不得静默丢节：
+    # 指纹已按原值计算，丢节会让 manifest 与指纹不符。留显式标记。
+    redacted: Dict[str, Any] = {}
+    for key, value in manifest.items():
+        redacted_section = redact_provenance_args(value)
+        if (
+            isinstance(redacted_section, (dict, list, str, int, float, bool))
+            or redacted_section is None
+        ):
+            redacted[key] = redacted_section
+        else:
+            redacted[key] = {
+                "redacted_type": type(redacted_section).__name__,
+                "note": "non-JSON section replaced with marker after redaction",
+            }
     redacted["manifest_fingerprint"] = fingerprint
     return redacted

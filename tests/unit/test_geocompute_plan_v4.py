@@ -13,6 +13,7 @@ from app.services.geocompute import (
     ExecutionNode,
     ExecutionPlan,
     ExecutionPolicyKind,
+    GeoComputeError,
     NodeCategory,
     NodeReusePolicy,
     PayloadKind,
@@ -220,3 +221,20 @@ class TestApiContractRoundTrip:
         assert plan.nodes[1].accepts == [PayloadKind.FEATURES]
         assert plan.nodes[1].lineage_inputs[0].ref_id == "artifact-1"
         assert plan.nodes[1].upstream_fingerprints == {"a": "fp-a"}
+
+    def test_build_plan_rejects_missing_node_id_with_typed_error(self):
+        with pytest.raises(GeoComputeError, match="requires a node_id"):
+            build_plan_from_json(
+                {"plan_id": "bad", "nodes": [{"category": "filter"}]}
+            )
+
+    def test_build_plan_rejects_non_object_retry_and_estimate(self):
+        with pytest.raises(GeoComputeError, match="retry policy"):
+            build_plan_from_json(
+                {"nodes": [{"node_id": "a", "category": "filter", "retry": "boom"}]}
+            )
+        with pytest.raises(GeoComputeError, match="estimate must be an object"):
+            build_plan_from_json(
+                {"nodes": [{"node_id": "a", "category": "filter",
+                            "estimate": ["not", "a", "dict"]}]}
+            )

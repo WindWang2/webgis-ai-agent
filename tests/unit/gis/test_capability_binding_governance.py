@@ -165,6 +165,8 @@ class TestDurableHonesty:
                             raising=False)
         facts = durable_label_honesty_facts({})
         assert facts["label_effective"] is True
+        # 形状稳定：正常部署下 affected_count 仍在场（0），消费方按固定键读取。
+        assert facts["affected_count"] == 0
 
     def test_unknown_broker_stays_unknown(self, monkeypatch):
         import sys

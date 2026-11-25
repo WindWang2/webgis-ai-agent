@@ -5,10 +5,11 @@
     <registry_root>/
         state.json              # RegistryState（唯一索引事实源）
         objects/<digest[:2]>/<digest>   # 包 blob（.tar.gz，内容寻址）
-        .registry.lock          # publish 串行化锁（O_EXCL）
+        .registry.lock          # publish 串行化锁（fcntl.flock）
 
 并发语义（架构修订 M-3）：POSIX 无原子 CAS-rename —— **publish 全程持
-文件锁串行化**（O_EXCL 创建 + 超时 + 陈旧锁接管），索引写 = temp+rename
+文件锁串行化**（fcntl.flock LOCK_EX|LOCK_NB 重试至超时；锁由内核持有，
+进程死亡即释放，无陈旧锁接管），索引写 = temp+rename
 原子替换；generation 在锁内单调递增，锁外只读。
 
 GC：持同一把锁、只删「不在当前索引且 mtime 超过 TTL」的 blob（先写
@@ -34,7 +35,6 @@ BLOB_MAX_BYTES = 64 * 1024 * 1024
 MAX_PACKAGES = 4096
 MAX_VERSIONS_PER_PACKAGE = 256
 LOCK_TIMEOUT_S = 10.0
-LOCK_STALE_S = 30.0
 GC_MIN_AGE_S = 7 * 24 * 3600.0
 
 

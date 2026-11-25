@@ -121,7 +121,9 @@ class _SnapshotCache:
         # 声明面代：能力/算法注册表（不可变种子；计数 + ids 摘要兜底，
         # 防御测试内 load_builtins 之外的动态 register 路径）。
         try:
-            parts.append(f"caps:{len(get_capability_registry().all_ids)}")
+            cap_reg = get_capability_registry()
+            cap_ids_digest = hash(tuple(cap_reg.all_ids)) & 0xFFFFFFFF
+            parts.append(f"caps:{cap_reg.count}:{cap_ids_digest}")
         except Exception:  # noqa: BLE001
             parts.append("caps:unavailable")
         try:

@@ -2221,8 +2221,11 @@ def _process_peak_rss_bytes() -> int:
     """进程峰值 RSS（R2-M8）：POSIX resource / win32 ctypes；失败 = 0。"""
     try:
         import resource
+        import sys
 
-        return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) * 1024
+        rss = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        # ru_maxrss 单位随平台而异：Linux = KiB，macOS = 字节。
+        return rss if sys.platform == "darwin" else rss * 1024
     except Exception:  # noqa: BLE001
         pass
     try:

@@ -59,6 +59,10 @@ from app.lib.gis.scientific_errors import (
     VerticalUnitMismatch,
 )
 
+#: Row-block size (in quads) for surface_area: keeps the per-quad float64
+#: intermediates bounded instead of materializing them for the full DEM.
+_SURFACE_BLOCK_QUADS = 2_000_000
+
 __all__ = [
     "VERTICAL_DATUM_VOCABULARY",
     "Z_UNIT_VOCABULARY",
@@ -875,13 +879,23 @@ def surface_area(
 
     # 两三角面（米制空间，quad 中心观测）：T1=(SW,SE,NE) u=(cx,0,z1)
     # v=(cx,cy,z2)；T2=(SW,NE,NW) u=(cx,cy,a) v=(0,cy,b)
-    z1 = z[:-1, 1:] - z[:-1, :-1]  # SE − SW
-    z2 = z[1:, 1:] - z[:-1, :-1]  # NE − SW
-    b = z[1:, :-1] - z[:-1, :-1]  # NW − SW
-    a = z2
-    t1 = 0.5 * np.sqrt((cy * z1) ** 2 + (cx * (z1 - z2)) ** 2 + (cx * cy) ** 2)
-    t2 = 0.5 * np.sqrt((cy * (b - a)) ** 2 + (cx * b) ** 2 + (cx * cy) ** 2)
-    surface = float((t1 + t2)[usable_quads].sum())
+    # 按行块计算：只对 usable_quads 求和，中间数组不按整幅 DEM 物化。
+    block_rows = max(1, _SURFACE_BLOCK_QUADS // max(w, 1))
+    cx_cy = cx * cy
+    surface = 0.0
+    for r0 in range(0, h - 1, block_rows):
+        r1 = min(r0 + block_rows, h - 1)
+        z00 = z[r0:r1, :-1]          # SW
+        z01 = z[r0:r1, 1:]           # SE
+        z10 = z[r0 + 1:r1 + 1, :-1]  # NW
+        z11 = z[r0 + 1:r1 + 1, 1:]   # NE
+        z1 = z01 - z00               # SE − SW
+        z2 = z11 - z00               # NE − SW
+        b = z10 - z00                # NW − SW
+        a = z2
+        t1 = 0.5 * np.sqrt((cy * z1) ** 2 + (cx * (z1 - z2)) ** 2 + cx_cy ** 2)
+        t2 = 0.5 * np.sqrt((cy * (b - a)) ** 2 + (cx * b) ** 2 + cx_cy ** 2)
+        surface += float((t1 + t2)[usable_quads[r0:r1]].sum())
     planar = usable * cx * cy
     stats: AreaStatistics = {
         "planar_area_m2": round(planar, 4),

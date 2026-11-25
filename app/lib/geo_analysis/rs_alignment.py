@@ -277,7 +277,7 @@ def align_acquisitions(
         "tolerance_days": int(tolerance_days),
         "n_optical_times": len(optical_times),
         "n_sar_times": len(sar_times),
-        "valid_optical_assets": n_valid_optical,
+        "n_valid_optical_times": n_valid_optical,
         "n_pairs": len(pairs),
         "pair_rate": round(pair_rate, 6),
         "joint_missing_slots": joint_missing,

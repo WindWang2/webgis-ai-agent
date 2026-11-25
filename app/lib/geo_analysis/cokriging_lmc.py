@@ -119,10 +119,11 @@ def fit_lmc(
         rho = float(np.corrcoef(z1, z2)[0, 1])
     else:
         rho = _rho_from_pairs(pts1, z1, pts2, z2)
-    if abs(rho) > 1.0 + _LMC_RHO_TOL:
+    if not np.isfinite(rho) or abs(rho) > 1.0 + _LMC_RHO_TOL:
         raise NumericalInstability(
-            f"经验相关系数 |ρ|={abs(rho):.6f} 越界 (>1+1e-9)",
-            correction_hint="检查两变量是否重复同一列/单位错位")
+            f"经验相关系数 ρ={rho!r} 非有限或越界 (|ρ|>1+1e-9)",
+            correction_hint="检查两变量是否重复同一列/单位错位；"
+                            "配对子集零方差时无法估计相关系数")
 
     v1 = fit_variogram(pts1, z1, model="auto",
                        anisotropy_angle=anisotropy_angle,

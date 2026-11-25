@@ -148,12 +148,6 @@ class FeedbackCorpusWriter:
         except OSError:
             return False
 
-    def _count_lines(self) -> int:
-        if not os.path.exists(self._sink_path):
-            return 0
-        with open(self._sink_path, "rb") as fh:
-            return sum(1 for _ in fh)
-
 
 __all__ = [
     "FEEDBACK_SCHEMA_VERSION",

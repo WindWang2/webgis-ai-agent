@@ -54,6 +54,7 @@ export function StacExplorer({ ownerType, ownerId, sessionId, ownerToken }: Stac
       reqRef.current.seq += 1;
       reqRef.current.controller?.abort();
       setResult(null);
+      setLoading(false);
       return;
     }
     const seq = ++reqRef.current.seq;

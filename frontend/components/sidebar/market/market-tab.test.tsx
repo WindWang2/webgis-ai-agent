@@ -65,15 +65,6 @@ describe('MarketTab', () => {
 
   it('列表渲染包卡片 → 点击进详情 → 版本/权限/依赖与诚实安装说明', async () => {
     const user = userEvent.setup();
-    route(() =>
-      mockFetch.mock.calls.length <= 1
-        ? jsonOk({ total: 1, offset: 0, limit: 50, items: [summary] })
-        : jsonOk({
-            ...summary,
-            versions: summary.versions,
-          }),
-    );
-    // 更直接：按 URL 路由
     mockFetch.mockImplementation((url: string | URL) => {
       const u = String(url);
       if (u.includes('/versions/1.2.0') && !u.endsWith('/download')) {

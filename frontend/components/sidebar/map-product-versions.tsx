@@ -55,11 +55,9 @@ const LINEAGE_LABEL: Record<NonNullable<MapProductLineageKind>, string> = {
 };
 
 function formatTime(iso: string): string {
-  try {
-    return new Date(iso).toLocaleString();
-  } catch {
-    return iso;
-  }
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleString();
 }
 
 function shortFp(fp?: string | null, n = 10): string {
@@ -142,6 +140,7 @@ export function MapProductVersionsPanel({
       diffAbortRef.current?.abort();
       if (from == null || to == null || from === to) {
         setDiff(null);
+        setDiffLoading(false);
         return;
       }
       const ctrl = new AbortController();

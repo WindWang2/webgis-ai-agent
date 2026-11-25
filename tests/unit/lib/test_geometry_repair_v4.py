@@ -81,7 +81,8 @@ def test_sequence_report_aggregates():
     assert report.checked == 3 and report.invalid == 1 and report.repaired == 1
     assert report.records[0].index == 1
     d = report.to_dict()
-    assert d["failed"] == 0 and d["area_delta_total"] is not None
+    # P3: the always-zero "failed" field was removed (repair failures raise).
+    assert "failed" not in d and d["area_delta_total"] is not None
 
 
 def _tiny_raster(tmp_path):

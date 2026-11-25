@@ -288,6 +288,25 @@ def test_error_recovery_requires_same_tool_success():
     assert harness.compute_error_recovery_rate() == 100.0
 
 
+def test_error_recovery_rate_uses_lifetime_denominator(monkeypatch):
+    """FIFO 淘汰不得让分母缩水：4 恢复 / 5 异常 = 80%，而不是被 clamp 成 100%。
+
+    旧实现分母只数 exceptions 列表（MAX_EVENTS=2 时只剩 2 条可见异常），
+    recovered=4 → 200% → clamp 成假 100.0。
+    """
+    harness = PiAgentHarness(session_id="s-recovery-fifo")
+    monkeypatch.setattr(harness, "MAX_EVENTS", 2)
+    harness.record_tool_result("a1", "tool_a", {}, is_error=True)
+    harness.record_tool_result("a2", "tool_a", {}, is_error=True)
+    harness.record_tool_result("a3", "tool_a", {"success": True})
+    for tool, cid in (("tool_b", "b1"), ("tool_c", "c1"), ("tool_d", "d1")):
+        harness.record_tool_result(cid, tool, {}, is_error=True)
+    for tool, cid in (("tool_b", "b2"), ("tool_c", "c2"), ("tool_d", "d2")):
+        harness.record_tool_result(cid, tool, {"success": True})
+    assert len(harness.exceptions) == 2
+    assert harness.compute_error_recovery_rate() == 80.0
+
+
 def test_free_text_ref_mention_is_not_a_ref_cursor():
     """#793: a literal ref-shaped string inside free-text argument fields
     (query/title/text/description/name) must not become a ref cursor; a real

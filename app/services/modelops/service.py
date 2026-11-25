@@ -636,7 +636,7 @@ class ModelOpsService:
         source_roots = allowed_roots
         ref_roots = allowed_roots
         source_uri = self._gate_path(
-            source_uri[:2048], what="source_uri", roots=source_roots,
+            source_uri, what="source_uri", roots=source_roots,
             error_cls=PromptArtifactError,
         )
         with RasterReader.open(source_uri) as reader:
@@ -723,6 +723,8 @@ class ModelOpsService:
         """
         import hashlib as _hashlib
         import json as _json
+        import os as _os
+        import uuid as _uuid
 
         import numpy as np
         import rasterio
@@ -780,7 +782,7 @@ class ModelOpsService:
                 f"candidate {candidate_index} not present (available: {available})",
                 correction_hint="pick one of the available candidate indexes",
             )
-        uri = source_uri[:2048]
+        uri = source_uri
         with RasterReader.open(uri) as reader:
             meta = reader.metadata()
             transform = reader.dataset.transform
@@ -825,11 +827,20 @@ class ModelOpsService:
         ).hexdigest()
         sidecar = ref_dir / f"refine-{mask_digest[:16]}-{grid_digest[:16]}-c{int(candidate_index)}.tif"
         if not sidecar.exists():
-            with rasterio.open(
-                sidecar, "w", driver="GTiff", width=meta.width, height=meta.height,
-                count=1, dtype="uint8", crs=meta.crs, transform=transform,
-            ) as dst:
-                dst.write(mask.astype("uint8"), 1)
+            # 原子发布：先写同目录 tmp 再 os.replace —— 并发 refine 的读者
+            # 绝不会读到半写的最终 sidecar（否则 sha256 不符/掩膜损坏）。
+            tmp_sidecar = sidecar.with_name(
+                f"{sidecar.name}.tmp.{_os.getpid()}.{_uuid.uuid4().hex[:8]}"
+            )
+            try:
+                with rasterio.open(
+                    tmp_sidecar, "w", driver="GTiff", width=meta.width, height=meta.height,
+                    count=1, dtype="uint8", crs=meta.crs, transform=transform,
+                ) as dst:
+                    dst.write(mask.astype("uint8"), 1)
+                _os.replace(tmp_sidecar, sidecar)
+            finally:
+                tmp_sidecar.unlink(missing_ok=True)
         payload = {
             "mask_ref": {
                 "path": str(sidecar),
@@ -938,7 +949,7 @@ class ModelOpsService:
             return {
                 "model": (manifest.get("model") or {}).get("model_id"),
                 "model_version": (manifest.get("model") or {}).get("model_version"),
-                "checksum": (manifest.get("model") or {}).get("checksum", "")[:12],
+                "checksum": str((manifest.get("model") or {}).get("checksum") or "")[:12],
                 "provider": (manifest.get("provider") or {}).get("provider_ref"),
                 "device": (manifest.get("device_plan") or {}).get("device"),
                 "batch": (manifest.get("device_plan") or {}).get("batch"),

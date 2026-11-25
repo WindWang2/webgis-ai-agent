@@ -337,9 +337,9 @@ class DatasetProfile(BaseModel):
         if isinstance(profile_numeric, list):
             numeric = [str(x) for x in profile_numeric] or numeric
         if isinstance(profile_binary, list):
-            binary = [str(x) for x in profile_binary]
+            binary = [str(x) for x in profile_binary] or binary
         if isinstance(profile_categorical, list):
-            categorical = [str(x) for x in profile_categorical]
+            categorical = [str(x) for x in profile_categorical] or categorical
         has_time = p.get("hasTimeField")
         obs = p.get("temporalObservationCount")
         # review R2 MAJOR-4：尊重输入画像的 fields_status —— 非 explicit
@@ -417,7 +417,15 @@ class DatasetProfile(BaseModel):
         fields_truncated = False
         if vector is not None:
             source_fields = getattr(vector, "fields", None)
-            row_count = int(getattr(vector, "row_count", 0) or 0)
+            # 未知 ≠ 0：row_count 缺席/None 保持 None，避免凭空产出
+            # feature_count=0 → is_empty=True 的「空数据集」证据。
+            raw_row_count = getattr(vector, "row_count", None)
+            row_count = (
+                int(raw_row_count)
+                if isinstance(raw_row_count, int)
+                and not isinstance(raw_row_count, bool)
+                else None
+            )
             geometry_types = [str(g) for g in (getattr(vector, "geometry_types", None) or [])]
             scanned_rows = int(getattr(vector, "scanned_rows", 0) or 0)
             temporal_fields = [str(t) for t in (getattr(vector, "temporal_fields", None) or [])]

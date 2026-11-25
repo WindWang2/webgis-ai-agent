@@ -139,10 +139,7 @@ def build_sbom(pack_dir: Path, manifest: GisExtensionManifest, fingerprint: str)
     # ——签名文件同样可能携带泄漏。此处补扫包根的签名文件。
     sig_path = pack_dir / SIGNATURE_FILENAME
     if sig_path.is_file() and not sig_path.is_symlink():
-        try:
-            _scan_secrets(findings, SIGNATURE_FILENAME, sig_path.read_bytes().decode("utf-8", errors="replace"))
-        except UnicodeDecodeError:
-            pass  # 二进制噪声不构成扫描面
+        _scan_secrets(findings, SIGNATURE_FILENAME, sig_path.read_bytes().decode("utf-8", errors="replace"))
     findings.sort(key=lambda f: (f["file"], f["kind"]))
     stdlib = sys.stdlib_module_names
     python_imports = sorted(

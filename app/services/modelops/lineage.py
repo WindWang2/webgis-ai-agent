@@ -123,7 +123,10 @@ class ModelLineageStore:
                 if path.exists():
                     for line in path.read_text(encoding="utf-8").splitlines():
                         try:
-                            max_seq = max(max_seq, int(json.loads(line).get("seq", 0)))
+                            parsed = json.loads(line)
+                            if not isinstance(parsed, dict):
+                                continue
+                            max_seq = max(max_seq, int(parsed.get("seq", 0)))
                         except (ValueError, TypeError):
                             continue
                 self._seqs[key] = max_seq
@@ -165,9 +168,14 @@ class ModelLineageStore:
             if not line.strip():
                 continue
             try:
-                events.append(json.loads(line))
+                parsed = json.loads(line)
             except ValueError:
                 bad += 1
+                continue
+            if not isinstance(parsed, dict):
+                bad += 1
+                continue
+            events.append(parsed)
         events.sort(key=lambda e: int(e.get("seq", 0)))
         with self._lock:
             key = f"{model_id}@{model_version}"

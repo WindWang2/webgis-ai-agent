@@ -30,4 +30,5 @@ def extract_centroids(gdf) -> np.ndarray:
             )
     except Exception:  # crs access must never break centroid extraction
         logging.getLogger(__name__).warning('CRS inspection failed; returning source-coordinate centroids', exc_info=True)
-    return np.column_stack((gdf.geometry.centroid.x.values, gdf.geometry.centroid.y.values))
+    centroid = gdf.geometry.centroid
+    return np.column_stack((centroid.x.values, centroid.y.values))

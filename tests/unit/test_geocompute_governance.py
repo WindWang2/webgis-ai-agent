@@ -146,6 +146,34 @@ class TestGovernorInExecutor:
         assert sum(charged) >= 2
         assert gov.usage("global:root") == (0, 0, 0)
 
+    def test_cleanup_failure_marks_run_failed_and_releases_token(self):
+        """清理阶段抛非预期异常时，run 注册表不得滞留 RUNNING，取消令牌
+        与输出条目不得泄漏（异常仍原样穿透）。"""
+        class _TeardownBoomGovernor:
+            def create_scope(self, parent, kind, name, *, limits=None):
+                return f"{parent}/{name}"
+
+            def reserve(self, *a, **kw):
+                return None
+
+            def release(self, *a, **kw):
+                return None
+
+            def charge(self, *a, **kw):
+                return None
+
+            def teardown_scope(self, path):
+                raise RuntimeError("teardown boom")
+
+        engine = GeoExecutionEngine(max_workers=1)
+        plan = ExecutionPlan(plan_id="p", nodes=[_filter_node()])
+        with pytest.raises(RuntimeError, match="teardown boom"):
+            engine.execute_plan(plan, run_id="run-boom",
+                                governor=_TeardownBoomGovernor())
+        assert engine._runs["run-boom"].status is ExecutionRunStatus.FAILED
+        assert "run-boom" not in engine._run_tokens
+        assert "run-boom" not in engine._run_outputs
+
 
 # -------------------------------------------------------------------- drift
 

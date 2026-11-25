@@ -165,12 +165,12 @@ class SetLayoutBody(ClientMutationIdMixin):
     intent: Literal["set_layout"]
     expected_revision: int = Field(ge=0)
     legend: Optional[dict[str, Any]] = None
-    controls: Optional[list[dict[str, Any]]] = None
+    controls: Optional[list[dict[str, Any]]] = Field(default=None, max_length=64)
     margins: Optional[dict[str, Any]] = None
     # CartographyComponent 列表（id/type/enabled/position/priority/style/options）
-    components: Optional[list[dict[str, Any]]] = None
+    components: Optional[list[dict[str, Any]]] = Field(default=None, max_length=128)
     # G15：spec 级 atlas 帧整表写入（MapSpecFrame 列表；None = 不触碰）
-    frames: Optional[list[dict[str, Any]]] = None
+    frames: Optional[list[dict[str, Any]]] = Field(default=None, max_length=200)
     # G34：纸面作者计划整笔写入（print_layout.v1；None = 不触碰）。
     # 关闭词表/未知版本/越界由 print_layout_schema 在 handler 严格复验。
     print_layout: Optional[dict[str, Any]] = None

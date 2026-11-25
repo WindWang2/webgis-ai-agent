@@ -100,7 +100,7 @@ def behavior_digest(trace: Dict[str, Any]) -> str:
                 {k: ("present" if k == "duration_ms" and v is not None
                      else v)
                  for k, v in call.items()
-                 if k not in ("tool_call_id", "duration_ms")}
+                 if k != "tool_call_id"}
                 for call in value
                 if isinstance(call, dict)
             ]

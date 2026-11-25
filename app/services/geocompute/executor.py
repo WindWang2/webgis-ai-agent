@@ -619,6 +619,8 @@ class GeoExecutionEngine:
                      budget_scope=gov_path)
         started = time.monotonic()
         preempt_requested = {"flag": False}
+        completed = False
+        cleaned = False
         try:
             self._run_ready_set(run, plan, outputs, outputs_fp,
                                 session_id=session_id,
@@ -630,29 +632,41 @@ class GeoExecutionEngine:
                                 preempt_flag=preempt_requested,
                                 resource_envelope=resource_envelope,
                                 emit_events=emit_events)
+            completed = True
         finally:
-            if governor is not None and gov_path:
-                # Wave 8 R1：本 run 在祖先链上的全部占用（预留估计 + 实际
-                # 记账）一次性归还 —— rows/bytes/nodes 由此是**并发在飞
-                # 量衡**而非终生计数（审计 07 R1 Critical：原先只增不减，
-                # ~25 个估计偏大的 run 即可永久打满 global 预算 → 自我
-                # DoS）。钳零语义（budgets.release）是重复归还的兜底。
-                try:
-                    charged_rows, charged_bytes, charged_nodes = (
-                        charge_ledger.snapshot()
-                    )
-                    governor.release(
-                        gov_path,
-                        rows=reserved["rows"] + charged_rows,
-                        bytes_=reserved["bytes"] + charged_bytes,
-                        nodes=reserved["nodes"] + charged_nodes,
-                    )
-                except Exception:  # noqa: BLE001 - 归还失败不阻断作用域摘除
-                    tracing.emit("budget_release_failed", run_id=run_id,
-                                 status=run.status.value)
-                # 摘除 execution 作用域（归还后祖先链已回到基本线）
-                governor.teardown_scope(gov_path)
-            run.wall_time_s = round(time.monotonic() - started, 6)
+            try:
+                if governor is not None and gov_path:
+                    # Wave 8 R1：本 run 在祖先链上的全部占用（预留估计 + 实际
+                    # 记账）一次性归还 —— rows/bytes/nodes 由此是**并发在飞
+                    # 量衡**而非终生计数（审计 07 R1 Critical：原先只增不减，
+                    # ~25 个估计偏大的 run 即可永久打满 global 预算 → 自我
+                    # DoS）。钳零语义（budgets.release）是重复归还的兜底。
+                    try:
+                        charged_rows, charged_bytes, charged_nodes = (
+                            charge_ledger.snapshot()
+                        )
+                        governor.release(
+                            gov_path,
+                            rows=reserved["rows"] + charged_rows,
+                            bytes_=reserved["bytes"] + charged_bytes,
+                            nodes=reserved["nodes"] + charged_nodes,
+                        )
+                    except Exception:  # noqa: BLE001 - 归还失败不阻断作用域摘除
+                        tracing.emit("budget_release_failed", run_id=run_id,
+                                     status=run.status.value)
+                    # 摘除 execution 作用域（归还后祖先链已回到基本线）
+                    governor.teardown_scope(gov_path)
+                run.wall_time_s = round(time.monotonic() - started, 6)
+                cleaned = True
+            finally:
+                if not completed or not cleaned:
+                    # 非预期异常（含清理阶段自身抛错）：注册表不得滞留
+                    # RUNNING，取消令牌/输出条目不得泄漏。
+                    run.status = ExecutionRunStatus.FAILED
+                if not self._retain_outputs:
+                    with self._run_lock:
+                        self._run_outputs.pop(run_id, None)
+                self._run_tokens.pop(run_id, None)
 
         failed = [nid for nid, ev in run.evidence.items() if ev.status == "failed"]
         if preempt_requested["flag"]:

@@ -105,13 +105,6 @@ def _index_exists(table: str, index: str) -> bool:
     }
 
 
-def _constraint_exists(table: str, name: str) -> bool:
-    return name in {
-        ck["name"]
-        for ck in sa.inspect(op.get_bind()).get_check_constraints(table)
-    }
-
-
 def upgrade() -> None:
     for spec in _TABLES:
         name = spec["name"]

@@ -782,7 +782,7 @@ def rx_anomaly(
     delta = _backfill(delta_vals, common, height, width)
     anomaly = np.isfinite(delta) & (delta > threshold) if not zero_variance \
         else np.zeros_like(delta, dtype=bool)
-    anomaly_fraction = float(np.sum(anomaly) / max(1, delta.size))
+    anomaly_fraction = float(np.sum(anomaly) / max(1, n_valid))
     meta: Dict[str, object] = {
         "n_bands": n_bands,
         "band_order": band_names,
@@ -1640,6 +1640,7 @@ def robust_normalize(
                 "method='percentile_match' 需要 reference 参考栈"
                 "（缺省请改用 method='percentile_stretch'）")
         ref, _ = _as_stack(reference)
+        _check_scale(ref, "参考栈归一化")
         if ref.shape[0] != n_bands:
             raise ValueError(
                 f"reference 波段数 {ref.shape[0]} != 栈波段数 {n_bands}"
@@ -1661,12 +1662,13 @@ def robust_normalize(
         warnings.simplefilter("ignore", category=RuntimeWarning)
         src_lo = np.nanpercentile(values, lo_q, axis=(1, 2))
         src_hi = np.nanpercentile(values, hi_q, axis=(1, 2))
-    degenerate = (src_hi - src_lo) <= 1e-15
+    degenerate = ~np.isfinite(src_hi) | ~np.isfinite(src_lo) \
+        | ((src_hi - src_lo) <= 1e-15)
     if degenerate.any():
         raise DegenerateData(
-            f"波段 {np.where(degenerate)[0].tolist()} 分位区间为 0"
-            "（常量场）——拉伸无定义",
-            correction_hint="剔除常量波段")
+            f"波段 {np.where(degenerate)[0].tolist()} 分位区间为 0 或全无"
+            "有效像元（常量场）——拉伸无定义",
+            correction_hint="剔除常量/全 nodata 波段")
     stretched = np.clip(
         (values - src_lo[:, None, None])
         / (src_hi - src_lo)[:, None, None], 0.0, 1.0)
@@ -1762,6 +1764,10 @@ def cloud_qc_basic(
             warnings.simplefilter("ignore", category=RuntimeWarning)
             threshold = float(np.nanpercentile(
                 (red_arr + nir_arr) / 2.0, brightness_percentile))
+        if not np.isfinite(threshold):
+            raise NoValidObservations(
+                "red/nir 全为 nodata/NaN——亮度分位无法确定云阈值",
+                correction_hint="检查 nodata 掩膜，或显式传 brightness_thresholds")
         threshold_source = f"p{float(brightness_percentile)}"
 
     brightness = (red_arr + nir_arr) / 2.0

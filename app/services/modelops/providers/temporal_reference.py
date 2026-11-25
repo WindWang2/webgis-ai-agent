@@ -170,4 +170,6 @@ def _fill_missing(series: np.ndarray) -> np.ndarray:
                 fill = (prev + nxt) / 2.0
         fill = np.where(np.isnan(fill), np.nanmean(series, axis=2), fill)
         out[:, :, ti] = np.where(nan_mask, fill, sl)
-    return out
+    # 整栈全缺失的像元没有可用观测：以 0 输出（nodata 语义），绝不把 NaN
+    # 静默写进产出栅格。
+    return np.nan_to_num(out, nan=0.0)

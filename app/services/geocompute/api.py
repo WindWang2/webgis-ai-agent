@@ -89,10 +89,17 @@ def build_plan_from_json(data: dict[str, Any]) -> ExecutionPlan:
                 details={"category": category,
                          "hint": "use in_process, or materialize first"},
             )
+        if raw.get("node_id") is None:
+            raise GeoComputeError("each node requires a node_id")
         retry = raw.get("retry") or {}
         produces_raw = raw.get("produces")
         accepts_raw = raw.get("accepts") or []
         rc_raw = raw.get("resource_class") or {}
+        estimate_raw = raw.get("estimate")
+        if retry and not isinstance(retry, dict):
+            raise GeoComputeError("node retry policy must be an object")
+        if estimate_raw and not isinstance(estimate_raw, dict):
+            raise GeoComputeError("node estimate must be an object")
         nodes.append(
             ExecutionNode(
                 node_id=str(raw["node_id"]),
@@ -104,7 +111,7 @@ def build_plan_from_json(data: dict[str, Any]) -> ExecutionPlan:
                 },
                 parameters=dict(raw.get("parameters") or {}),
                 crs=CrsExpectation(**raw["crs"]) if raw.get("crs") else None,
-                estimate=ResourceEstimate(**raw["estimate"]) if raw.get("estimate") else None,
+                estimate=ResourceEstimate(**estimate_raw) if estimate_raw else None,
                 policy=policy_kind,
                 reuse=NodeReusePolicy(raw.get("reuse", "allow")),
                 retry=RetryPolicy(**retry) if retry else RetryPolicy(),

@@ -818,3 +818,29 @@ def test_cap_o14_parity_regression_guard():
     if not (has_value or has_ref):
         assert "SUMMARY_VALUE_LOSS" in report["diagnostics"], (
             "slim 摘要丢失关键数值且无 ref，parity_report 必须记 SUMMARY_VALUE_LOSS")
+
+
+def test_parity_report_honors_bootstrap_argument(monkeypatch):
+    """bootstrap 入参必须真正传给 collect_live_facts（不得 `or True`）。"""
+    from types import SimpleNamespace
+
+    import app.lib.gis.capability_schema_parity as csp
+    import app.lib.gis.tool_capability_conformance as tcc
+
+    calls = []
+
+    class _Reg:
+        def tool_names(self):
+            return []
+
+        def get_schemas(self):
+            return {}
+
+    def _collect(registry=None, *, bootstrap=False):
+        calls.append(bootstrap)
+        return SimpleNamespace(registry=_Reg())
+
+    monkeypatch.setattr(tcc, "collect_live_facts", _collect)
+    report = csp.parity_report(bootstrap=False)
+    assert calls == [False]
+    assert report["tools"] == {}

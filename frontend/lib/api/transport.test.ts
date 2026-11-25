@@ -57,6 +57,21 @@ describe('transport (F-FE-3)', () => {
       expect(err.body).toBe('<html>proxy error</html>');
     });
 
+    it('wraps a non-JSON 200 body in ApiError instead of a raw SyntaxError', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        text: () => Promise.resolve('<html>proxy login</html>'),
+      });
+      const err = (await apiFetch('/x', { retries: 1, retryDelayMs: 0 }).catch((e: unknown) => e)) as ApiError;
+      expect(err).toBeInstanceOf(ApiError);
+      expect(err.status).toBe(200);
+      expect(err.body).toBe('<html>proxy login</html>');
+      expect(err.retryable).toBe(false);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
     it('marks 5xx retryable and 4xx not', async () => {
       mockFetch.mockResolvedValueOnce(errResponse(503, 'Service Unavailable'));
       const e5 = (await apiFetch('/x').catch((e: unknown) => e)) as ApiError;

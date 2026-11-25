@@ -220,7 +220,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             method_references=["dijkstra1959"],
             assumptions=[
                 "有向图 Dijkstra 可达集（respect 单行线/障碍），逐 break 分类可达边并按剩余预算截断部分边（#618-20）",
-                "break 单位 minutes/meters/seconds（km 为米别名）；minutes 断点按墙钟时间换算（#618-20/#706）",
+                "工具契约 break 单位为分钟（工具 schema 未暴露 break_unit）；底层 engine 另支持 meters/seconds/km（km 按千米值换算为米）",
                 "边界多边形 = 可达边在局部 UTM 的固定米半径缓冲并集（GIS-08/09，不桥接不可达缝隙）",
             ],
             limitations=[
@@ -846,7 +846,7 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
     ),
     ParameterContract(
         id="network_service_area", version=1,
-        description="多断点服务区：breaks 断点列表 + 出行模式；断点单位为分钟（工具签名缺省 [5,10,15]）。",
+        description="多断点服务区：breaks 断点列表 + 出行模式；本工具契约断点单位为分钟（工具签名缺省 [5,10,15]；meters/seconds 仅底层 engine 可表达）。",
         parameters=[
             ParameterSpec(
                 name="breaks", type="string",

@@ -54,12 +54,11 @@ describe('100k 行压力（ADR-0143 P8）', () => {
     const elapsed = performance.now() - t0;
     // DOM 行数有界：body 内表格行 ≪ 总行数（分页窗口）
     const rows = document.querySelectorAll('tbody tr, [role="row"]');
-    expect(rows.length).toBeLessThan(TOTAL / 10);
+    expect(rows.length).toBe(PAGE_ROWS);
     expect(rows.length).toBeGreaterThan(0);
     // jsdom 宽松预算：初始化（100k 对象构造 + 单页渲染）应 < 5s
     expect(elapsed).toBeLessThan(5_000);
     expect(screen.getByText(/共 100000 行/)).toBeInTheDocument();
-    void PAGE_ROWS;
   }, 20_000);
 
   it('S3: 足迹图坐标提取有界（抽验函数不炸）', () => {

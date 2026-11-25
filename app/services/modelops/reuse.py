@@ -46,6 +46,9 @@ class ReuseStore:
 
     # ── 路径 ────────────────────────────────────────────────────────
     _SCOPE_VALUE_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,128}$")
+    #: key 直接拼进两级目录：必须与 scope 值同口径白名单（否则 "/" 或
+    #: ".." 可穿越 owner 目录读写任意路径）。
+    _KEY_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,128}$")
 
     def _owner_dir(self, owner_scope: Dict[str, str]) -> Path:
         """R1-C6：scope 值白名单（防注册表路径穿越；对齐 data_object 口径）。"""
@@ -58,6 +61,14 @@ class ReuseStore:
         return self._root / scope_key
 
     def _entry_dir(self, owner_scope: Dict[str, str], key: str) -> Path:
+        if (
+            not isinstance(key, str)
+            or not self._KEY_RE.match(key)
+            or key in {".", ".."}
+        ):
+            from app.lib.modelops.errors import ModelOpsError
+
+            raise ModelOpsError("invalid reuse key (charset/length whitelist)")
         return self._owner_dir(owner_scope) / key[:2] / key
 
     # ── API ─────────────────────────────────────────────────────────

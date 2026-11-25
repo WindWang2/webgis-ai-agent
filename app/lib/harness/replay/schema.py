@@ -262,7 +262,10 @@ def _tool_calls_from_chain(chain_dict: TraceChainRecord) -> List[RecordedToolCal
             continue
         call_id = candidates[offset]
         result_cursor[name] = offset + 1
-        calls[call_id]["status"] = bounded_str(rec.get("status") or "ok", 32)
+        # 缺 status = 未知，不得默认升级为 "ok"（否则 roundtrip 会据此
+        # 生成假成功的 receipt pin）。
+        calls[call_id]["status"] = bounded_str(
+            rec.get("status") or "unknown", 32)
         result_raw = rec.get("result")
         if result_raw is None:
             # 生产 dispatch 面（tool_dispatch_service）把 ref 作为顶层
@@ -469,6 +472,21 @@ def build_trace(
             {k: d[k] for k in ("tool", "action") if d.get(k) is not None}
             for d in trace.dispatch_evidence
         ]
+        trace.truncated = True
+        trace.recording = {**(trace.recording or {}), "budget_degraded": True}
+        trace.behavior_digest = behavior_digest(trace.to_dict())
+    # 降级后复检：单轮 TOOL_CALLS 本身可独自超预算（chain 已是摘要形态）。
+    # 摘要化并截断前缀直到真实尺寸达标，绝不留"已 truncated 却仍超限"。
+    if len(canonical_json(trace.to_dict()).encode("utf-8")) > _TRACE_BUDGET_BYTES:
+        trace.tool_calls = [
+            {k: c.get(k) for k in ("tool_call_id", "tool_name", "status")
+             if c.get(k) is not None}
+            for c in trace.tool_calls
+        ]
+        while trace.tool_calls and len(
+                canonical_json(trace.to_dict()).encode("utf-8")
+        ) > _TRACE_BUDGET_BYTES:
+            trace.tool_calls = trace.tool_calls[: len(trace.tool_calls) // 2]
         trace.truncated = True
         trace.recording = {**(trace.recording or {}), "budget_degraded": True}
         trace.behavior_digest = behavior_digest(trace.to_dict())

@@ -203,3 +203,19 @@ def test_owner_scope_value_traversal_rejected(tmp_path):
     assert not (tmp_path / "mo" / "pwned").exists()
     outputs_root = tmp_path / "mo" / "outputs"
     assert not outputs_root.exists() or not any(outputs_root.iterdir())
+
+
+def test_process_peak_rss_respects_platform_units(monkeypatch):
+    """ru_maxrss 单位：Linux=KiB（*1024），macOS=字节（不乘）。"""
+    import sys
+
+    from app.services.modelops import engine as engine_mod
+
+    class _Usage:
+        ru_maxrss = 100_000
+
+    monkeypatch.setattr("resource.getrusage", lambda *_a, **_k: _Usage())
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert engine_mod._process_peak_rss_bytes() == 100_000 * 1024
+    monkeypatch.setattr(sys, "platform", "darwin")
+    assert engine_mod._process_peak_rss_bytes() == 100_000

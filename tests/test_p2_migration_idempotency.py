@@ -100,6 +100,10 @@ def _tables(db_path: Path) -> set[str]:
          "analysis_tasks", "idx_task_owner_token"),
         ("0020_drop_data_fabric_prefix_indexes", "0019_drop_leftover_duplicate_indexes",
          "knowledge_documents", "ix_knowledge_documents_creator_id"),
+        ("0103_workflow_run_session", "0102_owner_token_hashes",
+         "workflow_runs", "session_id"),
+        ("b2c3d4e5f6a7", "6ef479051297",
+         "messages", "idx_message_conversation_created"),
     ],
 )
 def test_upgrade_is_idempotent_on_create_all_db(tmp_path, monkeypatch, target, down, table, artifact):
@@ -261,3 +265,110 @@ def test_g45_job_id_is_bigint_in_model_and_migration():
     assert 'sa.BigInteger().with_variant(sa.Integer(), "sqlite")' in src, (
         "g45 迁移 job_id 应为 BigInteger().with_variant(Integer, sqlite)"
     )
+
+
+# ── D. P3 波次：SQLite 分支幂等 / 0030 NULL 排序 ──────────────────────────────
+
+def test_f123_sqlite_create_index_guard_on_create_all_db(tmp_path, monkeypatch):
+    """f123 四个复合索引都是模型 index 名；create_all 库上 SQLite 分支裸
+    create_index 即 duplicate index（PG 分支已有 IF NOT EXISTS）。"""
+    from alembic import command
+
+    db_path = tmp_path / "ca.db"
+    db_url = f"sqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", db_url)
+    _create_all_db(db_url)
+    cfg = _cfg(db_url)
+    command.stamp(cfg, "a1b2c3d4e5f6")
+    command.upgrade(cfg, "f123456789ab")  # 未修复代码在此崩溃
+    assert {
+        "idx_layer_org_status",
+        "idx_layer_org_category_status",
+        "idx_task_org_status",
+        "idx_task_org_type_status",
+    } <= _indexes(db_path, "layers") | _indexes(db_path, "analysis_tasks")
+
+
+def test_c1d2_sqlite_create_table_and_seed_guard_on_create_all_db(tmp_path, monkeypatch):
+    """cartography_templates 由模型声明：create_all 库上 SQLite 分支无守卫
+    create_table 即 duplicate table；表已存在且种子行已存在时 seed 亦主键冲突。"""
+    from alembic import command
+    from sqlalchemy import create_engine, text
+
+    from app.schemas.template_schema import SEED_TEMPLATES
+
+    db_path = tmp_path / "ca.db"
+    db_url = f"sqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", db_url)
+    _create_all_db(db_url)
+    seed_id = SEED_TEMPLATES[0]["id"]
+    engine = create_engine(db_url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO cartography_templates "
+                    "(id, kind, name, keywords, payload, is_builtin, version) "
+                    "VALUES (:id, 'basemap', 'pre-existing', '[]', '{}', 0, 1)"
+                ),
+                {"id": seed_id},
+            )
+    finally:
+        engine.dispose()
+    cfg = _cfg(db_url)
+    command.stamp(cfg, "b2c3d4e5f6a7")
+    command.upgrade(cfg, "c1d2e3f4a5b6")  # 未修复代码在此崩溃
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM cartography_templates WHERE id=?", (seed_id,)
+        ).fetchone()[0] == 1
+        assert conn.execute(
+            "SELECT COUNT(*) FROM cartography_templates"
+        ).fetchone()[0] == len(SEED_TEMPLATES)
+
+
+def test_d3e4_sqlite_drop_column_guard_on_create_all_db(tmp_path, monkeypatch):
+    """layers.properties_def 已从模型删除；create_all 库上 SQLite 分支
+    batch drop_column 对不存在列抛 KeyError（PG 分支有 IF EXISTS）。"""
+    from alembic import command
+
+    db_path = tmp_path / "ca.db"
+    db_url = f"sqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", db_url)
+    _create_all_db(db_url)
+    cfg = _cfg(db_url)
+    command.stamp(cfg, "c1d2e3f4a5b6")
+    command.upgrade(cfg, "d3e4f5a6b7c8")  # 未修复代码在此崩溃
+    assert "properties_def" not in _columns(db_path, "layers")
+
+
+def test_0030_dedup_keeps_dated_row_over_null_created_at(tmp_path):
+    """同组 created_at 为 NULL 与有值并存时，「保留最早」必须两端一致：
+    显式 NULLS LAST 与 PG 默认同序；SQLite 默认 NULLS FIRST 会保留 NULL 行。"""
+    from sqlalchemy import create_engine, text
+
+    module = importlib.import_module(
+        "migrations.versions.0030_revision_no_unique"
+    )
+    engine = create_engine(f"sqlite:///{tmp_path}/rev.db")
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "CREATE TABLE artifact_revisions ("
+                " id VARCHAR(36) PRIMARY KEY, artifact_id VARCHAR(36) NOT NULL,"
+                " revision_no INTEGER NOT NULL, created_at DATETIME)"
+            ))
+            conn.execute(text(
+                "INSERT INTO artifact_revisions "
+                "(id, artifact_id, revision_no, created_at) VALUES "
+                "('null-row', 'a1', 1, NULL),"
+                "('dated-row', 'a1', 1, '2026-01-01 00:00:00')"
+            ))
+            module._dedup_revision_numbers(conn)
+            rows = dict(conn.execute(text(
+                "SELECT id, revision_no FROM artifact_revisions"
+            )).fetchall())
+        assert rows["dated-row"] == 1
+        assert rows["null-row"] == 2
+    finally:
+        engine.dispose()

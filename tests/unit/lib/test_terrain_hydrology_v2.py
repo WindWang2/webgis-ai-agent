@@ -237,6 +237,21 @@ def test_strahler_confluence_orders_exact():
         tlib.stream_order(d8, np.zeros((4, 4)), threshold)
 
 
+def test_extract_streams_threshold_mask_exact():
+    """河网掩膜 = accum >= threshold（含等值边界；NaN 不计河网）。"""
+    acc = np.array([[0.0, 1.0, 3.0, 4.0],
+                    [2.0, np.nan, 3.0, 0.0]])
+    mask, meta = tlib.extract_streams(acc, 3.0)
+    assert mask.dtype == bool
+    assert np.array_equal(mask, np.array([[False, False, True, True],
+                                          [False, False, True, False]]))
+    assert meta["algorithm"] == "terrain.streams"
+    assert meta["threshold"] == 3.0
+    assert meta["stream_cells"] == 3
+    assert meta["cells_total"] == 8
+    assert meta["cells_valid_accum"] == 7
+
+
 # ── 5. Watershed morphometry ──────────────────────────────────────────
 
 

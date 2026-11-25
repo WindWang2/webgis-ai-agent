@@ -181,6 +181,22 @@ class TestMethodUseContract:
         c = build_method_use_contract("interpolation.cokriging")
         assert len(c.findings) <= 12
 
+    def test_findings_overflow_is_disclosed(self, monkeypatch):
+        """超过 12 条 finding 时不静默截断：末条披露总数。"""
+        from types import SimpleNamespace
+
+        import app.lib.gis.algorithm_registry as ar
+
+        base = get_algorithm_registry().get("interpolation.cokriging")
+        algo = base.model_copy(update={
+            "method_references": [f"no_such_ref_{i}" for i in range(13)]})
+        monkeypatch.setattr(
+            ar, "get_algorithm_registry",
+            lambda: SimpleNamespace(get=lambda _aid: algo))
+        c = build_method_use_contract("interpolation.cokriging")
+        assert len(c.findings) == 12
+        assert c.findings[-1] == "findings_truncated:13"
+
     def test_full_registry_projection_fast_and_clean(self):
         # 现状断言：注册表自洽 → 全量投影零 finding（若未来引入新 finding
         # 属注册表数据债，应显式修数据而非删本断言）。

@@ -350,6 +350,53 @@ def test_server_broker_wait_accepts_credit_frames(tmp_path):
     assert end["cancelled"] is False
 
 
+def test_credit_wait_accepts_late_broker_response(tmp_path):
+    """protocol.py：信用等待循环的合法帧 += broker_response（迟到帧幂等）。"""
+    import threading
+
+    pack = _make_pack(
+        tmp_path,
+        textwrap.dedent(
+            """
+            from app.extensions_platform.sdk.tool import ToolExtensionSpec
+
+            def activate(ctx):
+                def stream_two():
+                    yield {"i": 0}
+                    yield {"i": 1}
+                ctx.register_tool(ToolExtensionSpec(
+                    name="stream_two", description="d", func=stream_two,
+                    parameters={"type": "object", "properties": {}},
+                ))
+            """
+        ),
+        tools=[{"name": "stream_two", "description": "d"}],
+    )
+    pipe = FakePipe()
+    server = _boot(pack, pipe, window=1)
+    assert pipe.host_recv()["type"] == "handshake_ok"
+    pipe.host_send(
+        {"type": "call", "id": "c1", "tool": "v3demo_stream_two",
+         "args": {}, "stream": True}
+    )
+    pump = threading.Thread(target=lambda: server.serve_once(), daemon=True)
+    pump.start()
+    assert pipe.host_recv()["type"] == "stream_start"
+    first = pipe.host_recv()
+    assert first["type"] == "stream_frame" and first["seq"] == 0
+    # 初始窗口 1 已耗尽 → worker 阻塞在信用等待点。此处协议合法的
+    # broker_response（单线程下无在途请求 = 迟到帧）不得杀 worker。
+    pipe.host_send({"type": "broker_response", "id": "b-late", "ok": True, "value": {}})
+    pipe.host_send({"type": "stream_credit", "id": "c1", "n": 1})
+    pump.join(timeout=10)
+    assert not pump.is_alive()
+    second = pipe.host_recv()
+    assert second["type"] == "stream_frame" and second["seq"] == 1
+    end = pipe.host_recv()
+    assert end["type"] == "stream_end"
+    assert end["cancelled"] is False
+
+
 def test_stream_idle_timeout_not_counted_as_crash(tmp_path):
     """C-3：流 idle 超时 → typed STREAM_FLOW_CONTROL；crash_count 不变。"""
     pack = _make_pack(tmp_path, STREAM_TOOL_MAIN)

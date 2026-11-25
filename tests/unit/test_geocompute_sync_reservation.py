@@ -52,6 +52,32 @@ def test_exception_releases_only_after_operation_has_stopped(factory):
     assert _cluster(factory)
 
 
+def test_finish_failure_does_not_mask_successful_result(factory, monkeypatch):
+    """终态写失败不得把已成功的 ExecutionRun 换成 RuntimeError。"""
+    reservation = _reserve(factory)
+
+    def boom(*a, **kw):
+        raise RuntimeError('finish unavailable')
+
+    monkeypatch.setattr(sync, '_finish', boom)
+    result = sync.execute_reserved(reservation, lambda token, run_id: _result(run_id))
+    assert result.status == ExecutionRunStatus.COMPLETED
+
+
+def test_finish_failure_does_not_mask_operation_exception(factory, monkeypatch):
+    reservation = _reserve(factory)
+
+    def boom(*a, **kw):
+        raise RuntimeError('finish unavailable')
+
+    def fail(token, run_id):
+        raise ValueError('operation failed')
+
+    monkeypatch.setattr(sync, '_finish', boom)
+    with pytest.raises(ValueError, match='operation failed'):
+        sync.execute_reserved(reservation, fail)
+
+
 def test_two_sync_reservations_compete_for_one_durable_slot(factory):
     barrier = threading.Barrier(2)
     def reserve():

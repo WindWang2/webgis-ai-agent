@@ -129,7 +129,7 @@ export function DataJoinPanel({ sessionId, ownerToken }: DataJoinPanelProps): Re
       if (epoch !== epochRef.current || sessionIdRef.current !== sessionId) return;
       setSide((s) => ({ ...s, describe: view, loading: false }));
     } catch (err) {
-      if (epoch !== epochRef.current) return;
+      if (epoch !== epochRef.current || sessionIdRef.current !== sessionId) return;
       setSide((s) => ({ ...s, describe: null, loading: false }));
       setError(asDataJoinError(err));
     }

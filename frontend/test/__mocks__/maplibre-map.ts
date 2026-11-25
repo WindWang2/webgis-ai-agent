@@ -463,7 +463,9 @@ export function makeMockMaplibreMap(options: MakeMockMaplibreMapOptions = {}) {
     _sources: sources,
     _layers: layers,
     _images: images,
-    _terrain: terrain,
+    get _terrain() {
+      return terrain;
+    },
     _controls: controls,
     _viewport: viewport,
     _setViewport(partial: Partial<MockMapViewport>) {

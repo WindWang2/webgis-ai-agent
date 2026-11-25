@@ -187,3 +187,33 @@ def test_reference_layer_prompt_end_to_end(service, synthetic_raster, tmp_path):
     )
     assert result.status == "completed"
     assert result.manifest["prompt_audit"]["derived_mask_source"] == "reference_layer"
+
+
+def test_compile_geo_prompt_gates_full_untruncated_source_uri(
+    service, tmp_path, monkeypatch
+):
+    """source_uri 先截断到 2048 再过门 = 静默改指向另一路径（必须保留全串）。"""
+    from app.lib.modelops.errors import ModelOpsError
+
+    deep = tmp_path
+    index = 0
+    while len(str(deep)) < 2100:
+        deep = deep / (chr(97 + index % 26) * 200)
+        index += 1
+    long_uri = str(deep)
+    assert len(long_uri) > 2048
+
+    captured = {}
+
+    def _capture(uri, **kwargs):
+        captured["uri"] = uri
+        raise ModelOpsError("stop-after-capture")
+
+    monkeypatch.setattr(service, "_gate_path", _capture)
+    artifact = {
+        "crs": "EPSG:4326",
+        "polygons": [[[118.0, -8.0], [123.0, -8.0], [123.0, -13.0], [118.0, -13.0]]],
+    }
+    with pytest.raises(ModelOpsError, match="stop-after-capture"):
+        service.compile_geo_prompt(artifact, long_uri, allowed_roots=[tmp_path])
+    assert captured["uri"] == long_uri

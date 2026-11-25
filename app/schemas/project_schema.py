@@ -23,12 +23,16 @@ def _cap_input_bindings(bindings: Dict[str, Any]) -> None:
 
 
 class ProjectCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(..., max_length=255, description="项目名称")
     description: Optional[str] = Field(None, max_length=16000, description="项目描述")
     metadata_json: Optional[BoundedJson] = Field(default_factory=dict, description="扩展元数据")
 
 
 class ProjectUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: Optional[str] = Field(None, max_length=255)
     description: Optional[str] = Field(None, max_length=16000)
     status: Optional[str] = Field(None, pattern="^(active|archived)$", description="active / archived")
@@ -50,6 +54,8 @@ class ProjectResponse(BaseModel):
 
 
 class DatasetAttach(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(..., max_length=255)
     source_type: str = Field(..., description="upload / layer / external / vector / raster")
     source_ref: Optional[str] = Field(None, max_length=255, description="UploadRecord ID or Layer ID or URL")
@@ -109,6 +115,8 @@ class WorkflowGraphSpec(BaseModel):
 
 
 class WorkflowCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(..., max_length=255)
     description: Optional[str] = Field(None, max_length=16000)
     graph_spec: WorkflowGraphSpec

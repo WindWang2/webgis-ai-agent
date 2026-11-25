@@ -248,9 +248,10 @@ def normalize_geojson_geometry(
         coords = geometry.get("coordinates")
         lons = _sample_lons(coords)
         conv = detect_longitude_convention(lons)
-        if conv == "e360":
-            # e360 输入 → 平移回 pm180；>180 部分取模后可能与 <=180 部分
-            # 拼出环绕几何 —— AM 穿越时必须拆分。
+        if conv == "e360" or geometry_crosses_antimeridian(lons):
+            # e360 输入 → 平移回 pm180；pm180 环绕表示（如 175 → -175）
+            # 同样是跨 AM 几何 —— 两者都必须拆分。>180 部分取模后可能与
+            # <=180 部分拼出环绕几何，不拆分即输出自交碎片。
             parts = split_geometry_at_antimeridian(geometry)
             if len(parts) == 1:
                 return parts[0]

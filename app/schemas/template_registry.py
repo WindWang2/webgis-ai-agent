@@ -606,9 +606,9 @@ class TemplateRegistry:
         if category:
             pool = [e for e in pool if e.get("category") == category]
         if source == "builtin":
-            pool = [e for e in pool if e.get("is_builtin", True)]
+            pool = [e for e in pool if e.get("is_builtin", False)]
         elif source == "user":
-            pool = [e for e in pool if not e.get("is_builtin", True)]
+            pool = [e for e in pool if not e.get("is_builtin", False)]
 
         if q:
             kw = q.lower()
@@ -652,9 +652,15 @@ class TemplateRegistry:
         messages (empty list = valid)."""
         errors: List[str] = []
         seen_ids: Set[str] = set()
-        seen_pipeline_refs: Set[str] = set()
+        # Snapshot under the lock: add_user_template/remove mutate the indexes
+        # under self._lock, so iterating live views concurrently can raise
+        # RuntimeError (dictionary changed size during iteration).
+        with self._lock:
+            entries = list(self._by_id.values())
+            composite_entries = list(self._by_kind.get("composite", ()))
+            known_ids = set(self._by_id)
 
-        for entry in self._by_id.values():
+        for entry in entries:
             eid = entry.get("id", "")
             if eid in seen_ids:
                 errors.append(f"duplicate template id: {eid}")
@@ -708,15 +714,14 @@ class TemplateRegistry:
                                 f"{eid}: compatibility.artifact_type '{at}' not registered")
 
         # Composite-specific: every pipeline reference must resolve.
-        for entry in self._by_kind.get("composite", ()):
+        for entry in composite_entries:
             pipeline = entry.get("pipeline") or {}
             for slot, ref in pipeline.items():
                 if not isinstance(ref, str) or not ref:
                     errors.append(f"{entry.get('id')}: pipeline.{slot} must be a non-empty string")
                     continue
-                if ref not in self._by_id:
+                if ref not in known_ids:
                     errors.append(f"{entry.get('id')}: pipeline.{slot} references missing template '{ref}'")
-                seen_pipeline_refs.add(ref)
 
         return errors
 

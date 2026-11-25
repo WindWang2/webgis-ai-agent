@@ -324,6 +324,19 @@ class TestSettingsBridgeV2:
                 monkeypatch, EXTENSION_TRUSTED_PUBLISHERS="acme-no-path"
             )
 
+    def test_publishers_reject_conflicting_duplicate_key_id(self, tmp_path):
+        from app.extensions_platform.diagnostics import ExtensionPlatformError
+        from app.extensions_platform.settings_bridge import parse_trusted_publishers
+
+        first = tmp_path / "first.pub"
+        second = tmp_path / "second.pub"
+        first.write_bytes(b"k")
+        second.write_bytes(b"k")
+        with pytest.raises(ExtensionPlatformError, match="conflicting"):
+            parse_trusted_publishers(f"acme:{first},acme:{second}")
+        # 同一路径的重复条目仍幂等（不构成公钥切换）。
+        assert parse_trusted_publishers(f"acme:{first},acme:{first}") == {"acme": first}
+
     @pytest.mark.parametrize("value", [0, 11, "many"])
     def test_max_worker_crashes_bounds(self, monkeypatch, value):
         from app.extensions_platform.diagnostics import ExtensionPlatformError

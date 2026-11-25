@@ -216,10 +216,11 @@ def compare_interpolation_models(
     trend_order = _feasible_trend_order(n)
     comparison: list[dict] = []
     budget_used = 0
-    n_errors = 0
+    n_skipped = 0
     for method in COMPARE_METHODS:
         estimate = _estimate_cv_cost(method, n)
         if budget_used + estimate > budget:
+            n_skipped += 1
             comparison.append({
                 "method": method, "eligible": False,
                 "skipped_reason": (
@@ -240,7 +241,7 @@ def compare_interpolation_models(
         if row["eligible"]:
             budget_used += estimate
         else:
-            n_errors += 1
+            n_skipped += 1
         comparison.append(row)
 
     eligible_rows = [r for r in comparison if r["eligible"]]
@@ -268,8 +269,8 @@ def compare_interpolation_models(
         "method_order": list(COMPARE_METHODS),
         "n_eligible": len(eligible_rows),
     }
-    if n_errors:
-        metadata["n_skipped"] = n_errors
+    if n_skipped:
+        metadata["n_skipped"] = n_skipped
     return {
         "comparison": comparison,
         "recommended": recommended,

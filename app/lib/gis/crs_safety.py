@@ -164,7 +164,8 @@ def classify_crs(crs: Optional[str]) -> CRSDataClass:
 def recommend_metric_crs(bbox: Optional[Tuple[float, float, float, float]], crs: Optional[str] = None) -> str:
     """从 bbox（minx, miny, maxx, maxy，度）推荐度量 CRS（纯计算）。
 
-    极区（|lat|>84）→ UPS 极方位；否则 UTM 分带（中央经线最近原则）。
+    极区（北纬 >84° 或南纬 <-80°）→ UPS 极方位；否则 UTM 分带
+    （中央经线最近原则；UTM 仅定义到 80°S/84°N）。
     返回 EPSG 字符串；bbox 非法时返回通用 Web Mercator 之外的保守值
     （WGS84 UTM 带无法推断 → 返回空串由调用方处理）。
     """

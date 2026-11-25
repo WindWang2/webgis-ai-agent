@@ -333,16 +333,28 @@ class ClusterCoordinator:
         candidates = self._store.scan_dispatchable(limit=self._batch_size)
         workers = self._eligible_workers()
 
+        # 同一 tick 内每个 candidate 的 ResourceRequest 只构造一次：
+        # GPU 回退预检 / gating / 稀缺度排序键共用同一投影（此前至多
+        # 3 次 request_from_run_row = 3 次 pydantic 校验）。
+        from app.services.geocompute.cluster.placement import (
+            request_from_run_row,
+        )
+
+        req_cache: dict[str, Any] = {}
+
+        def _request(row: dict[str, Any]) -> Any:
+            run_id = row["run_id"]
+            req = req_cache.get(run_id)
+            if req is None:
+                req = req_cache[run_id] = request_from_run_row(row)
+            return req
+
         # V8 GPU fallback：声明 fallback_cpu 的 GPU run 等过等待窗且集群里
         # **一个存活 GPU worker 都没有** → 持久剥离 gpu 要求（下一 tick 走
         # CPU 路径）。诚实可见：事件 + metric。eager（workers=None = 无
         # worker 注册表视图 = 无 GPU worker）同样适用 —— 否则单进程部署
         # 上声明了 fallback 的 GPU run 永远卡死。
         if self._gpu_fallback_wait_s >= 0:
-            from app.services.geocompute.cluster.placement import (
-                request_from_run_row,
-            )
-
             has_gpu_worker = any(
                 int(((w.get("capability") or {}).get("gpu_count")) or 0) > 0
                 for w in (workers or [])
@@ -350,7 +362,7 @@ class ClusterCoordinator:
             if not has_gpu_worker:
                 now_ts = time.time()
                 for c in candidates:
-                    req = request_from_run_row(c)
+                    req = _request(c)
                     if req.gpu <= 0 or not req.fallback_cpu:
                         continue
                     if (now_ts - _created_ts(c)) < self._gpu_fallback_wait_s:
@@ -374,14 +386,13 @@ class ClusterCoordinator:
             from app.services.geocompute.cluster.contracts import ResourceRequest
             from app.services.geocompute.cluster.placement import (
                 eligible_workers,
-                request_from_run_row,
                 scarcity_rank_key,
             )
 
             gated: list[dict[str, Any]] = []
             eligible_counts: dict[str, int] = {}
             for c in candidates:
-                req = request_from_run_row(c)
+                req = _request(c)
                 if req == ResourceRequest():
                     # V6 语义保留：无 profile、无 envelope 要求的 run 恒可
                     # 派发（本地直跑路径不依赖 worker 存活 —— 逐字节兼容）
@@ -397,7 +408,7 @@ class ClusterCoordinator:
             # 防同租户饿死）；跨租户公平环不受影响。
             within_tenant_key = lambda r: (  # noqa: E731 - 派发循环内的小适配器
                 scarcity_rank_key(
-                    request_from_run_row(r),
+                    _request(r),
                     eligible_counts.get(r["run_id"], 0),
                 )
                 + (-int(r.get("priority") or 0), int(r.get("id") or 0))
@@ -426,6 +437,12 @@ class ClusterCoordinator:
                     if reject_dim == "mem_mb":
                         record_oom_avoided()
                 continue  # 竞争失败/账本拒绝（enforcing）→ 留队下轮再试
+            if reject_dim is not None:
+                # advisory 账本超卖：认领成功照常派发，但拒绝维度必须
+                # 可观测（否则 resource_rejections / oom_avoided 恒为 0）。
+                record_resource_rejection(reject_dim)
+                if reject_dim == "mem_mb":
+                    record_oom_avoided()
             self._events.append(run_id, "run_started",
                                 worker_id=self._coordinator_id)
             self._waiting_noted.discard(run_id)
@@ -651,8 +668,15 @@ class ClusterCoordinator:
             ledger=self._ledger,
         )
         if ok and status == ClusterRunStatus.PREEMPTED:
-            # 两段：PREEMPTED 可驻留（客户端可见）→ 立即回队尾重排。
-            self._store.requeue_preempted(run_id, epoch=epoch)
+            # 保险丝可能已把行改写为 failed[PREEMPT_EXHAUSTED]：事件必须跟随
+            # 行的实际终态，绝不发 run_preempted 而丢失错误码。
+            row = self._store.get_run(run_id) or {}
+            if row.get("status") == ClusterRunStatus.FAILED.value:
+                status = ClusterRunStatus.FAILED
+                error_code = row.get("error_code") or "PREEMPT_EXHAUSTED"
+            else:
+                # 两段：PREEMPTED 可驻留（客户端可见）→ 立即回队尾重排。
+                self._store.requeue_preempted(run_id, epoch=epoch)
         if ok:
             # V7：run 级终态事件（豁免节点级预算 —— 终态可见性不因洪泛丢失）
             event = {
@@ -707,11 +731,12 @@ class ClusterCoordinator:
                 return 0
         # M4：受害者仅限**本 coordinator** 的在跑 run —— 抢占的目的是给
         # 本地等待者腾槽位；对远端 run 让出不释放本地槽位，只是浪费一次
-        # 完整重执行。
-        running = [
-            r for r in self._store.scan_running(limit=self._batch_size)
-            if r.get("coordinator_id") == self._coordinator_id
-        ]
+        # 完整重执行。过滤必须在 SQL 侧（先全局 LIMIT 再过滤会让集群在跑
+        # > limit 时本地受害者落在窗口外，抢占静默失效）。
+        running = self._store.scan_running(
+            limit=self._batch_size,
+            coordinator_id=self._coordinator_id,
+        )
         if not running:
             return 0
         now = time.time()

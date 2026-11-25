@@ -46,7 +46,8 @@ class ConnectionProfile(BaseModel):
             u = urlparse(eff_url)
             if u.hostname:
                 self.host = u.hostname
-                self.port = u.port or 5432
+                if self.port is None:
+                    self.port = u.port or 5432
                 db = u.path.lstrip("/")
                 if db and not self.database:
                     self.database = db

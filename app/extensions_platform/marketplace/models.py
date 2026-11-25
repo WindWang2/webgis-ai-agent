@@ -69,13 +69,6 @@ class VersionRecord(BaseModel):
             raise ValueError(f"digest/fingerprint {v!r} must be sha256 hex")
         return v
 
-    @field_validator("size_bytes")
-    @classmethod
-    def _positive(cls, v: int) -> int:
-        if v <= 0:
-            raise ValueError("size_bytes must be positive")
-        return v
-
 
 class PackageRecord(BaseModel):
     """一个包的注册表条目（版本表 + 生命周期状态）。"""
@@ -138,10 +131,3 @@ class RegistryState(BaseModel):
 
     generation: int = Field(ge=0)
     packages: dict[str, PackageRecord] = Field(default_factory=dict)
-
-    @field_validator("generation")
-    @classmethod
-    def _gen_nonneg(cls, v: int) -> int:
-        if v < 0:
-            raise ValueError("generation must be >= 0")
-        return v

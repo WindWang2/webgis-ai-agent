@@ -175,7 +175,6 @@ def make_worker_provider_class(
 
         def __init__(self, connection_profile: Any):
             super().__init__(connection_profile)
-            self._serial = serial
             dump = getattr(connection_profile, "model_dump", None)
             self._profile_payload = (
                 dump(mode="json") if callable(dump) else None

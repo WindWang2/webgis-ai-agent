@@ -119,7 +119,7 @@ def _worker_pythonpath() -> str:
             return str(_REPO_ROOT)
         _PYTHONPATH_STAGE = stage
         return str(stage)
-_BROKER_ENV_DENY = object()
+
 
 BrokerHandler = Callable[[str, dict[str, Any]], tuple[bool, Any]]
 
@@ -211,10 +211,8 @@ class WorkerProcess:
             budget.release_one()
 
     def _reject_reader_frame(self, frames: Any, proc: Any, message: str) -> None:
-        try:
-            frames.put({"type": "__protocol_error__", "message": message}, timeout=0.25)
-        except queue.Full:
-            pass
+        # _frames 是无界队列（预算由 _FrameByteBudget 承担），put 永不阻塞/失败。
+        frames.put({"type": "__protocol_error__", "message": message})
         with self._lock:
             if self._proc is proc:
                 self.kill()
@@ -381,13 +379,9 @@ class WorkerProcess:
         max_bytes = getattr(self, "_max_frame_bytes", None) or FRAME_MAX_BYTES
 
         def deliver(frame: dict[str, Any]) -> bool:
-            while True:
-                try:
-                    frames.put(frame, timeout=0.25)
-                    return True
-                except queue.Full:
-                    if proc is not None and (self._proc is not proc or proc.poll() is not None):
-                        return False
+            # 无界队列 + 字节预算：put 恒定成功，await 循环会阻塞的只有消费者。
+            frames.put(frame)
+            return True
 
         try:
             for line in iter_frames_bounded(stdout, max_bytes=max_bytes):

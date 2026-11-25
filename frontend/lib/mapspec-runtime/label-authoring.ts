@@ -136,12 +136,17 @@ const UNSAFE_MATCH_LABELS = new Set([
   'isPrototypeOf', 'propertyIsEnumerable', 'toLocaleString',
 ]);
 
+/** 组内未命中哨兵（多键 case 链）。text 覆写路径必须避开用户文本同值
+ *  —— 用户文本恰等于哨兵时 case 会误判为未命中并静默丢弃覆写。 */
+const FALLBACK_SENTINEL = '\u0000__fallback__';
+
 /** 分组 match：ids → values（成对），default 兜底。多键时 case 链。 */
 function groupedMatch(
   idsByKeys: Map<string | null, string[]>,
   valueOf: (fid: string) => unknown,
   fallback: unknown,
   maxKeys = 3,
+  fallbackSentinel: string = FALLBACK_SENTINEL,
 ): unknown | null {
   const keys = Array.from(idsByKeys.keys())
     .filter((k) => (idsByKeys.get(k) ?? []).length > 0)
@@ -162,9 +167,9 @@ function groupedMatch(
   for (let i = usable.length - 1; i >= 0; i -= 1) {
     const m = matchOf(usable[i]);
     // 组内未命中（fallback 哨兵）→ 落到下一组（expr）。
-    expr = ['case', ['!=', m, '\u0000__fallback__'], m, expr];
+    expr = ['case', ['!=', m, fallbackSentinel], m, expr];
     // 用哨兵替换组内 fallback：重建（matchOf 尾元素即 fallback）。
-    (m as unknown[])[m.length - 1] = '\u0000__fallback__';
+    (m as unknown[])[m.length - 1] = fallbackSentinel;
   }
   return expr;
 }
@@ -174,18 +179,25 @@ export function buildTextFieldExpr(
   proj: AuthoringProjection, field: string,
 ): unknown | null {
   if (proj.textById.size === 0) return null;
+  // 哨兵必须与所有覆写文本不同值（追加 NUL 直至不碰撞）。
+  const usedText = new Set(proj.textById.values());
+  let sentinel = FALLBACK_SENTINEL;
+  while (usedText.has(sentinel)) sentinel += '\u0000';
   return groupedMatch(
     filterKeys(proj, (fid) => proj.textById.has(fid)),
     (fid) => proj.textById.get(fid) ?? '',
     ['get', field],
+    3,
+    sentinel,
   );
 }
 
 /** 隐藏 ids → 排除 filter 片段（无隐藏 → null）。 */
 export function buildHiddenExcludeFilter(proj: AuthoringProjection): unknown | null {
   if (proj.hiddenIds.length === 0) return null;
+  const hidden = new Set(proj.hiddenIds);
   return groupedMatch(
-    filterKeys(proj, (fid) => proj.hiddenIds.includes(fid)),
+    filterKeys(proj, (fid) => hidden.has(fid)),
     () => false,
     true,
   );
@@ -195,13 +207,19 @@ export function buildHiddenExcludeFilter(proj: AuthoringProjection): unknown | n
 export function buildTextOffsetExpr(
   proj: AuthoringProjection, onlyPinned: boolean,
 ): unknown | null {
+  // 首次出现为准（与 Array.find 语义一致）。
+  const activeById = new Map<string, LabelAuthoringOverride>();
+  for (const o of proj.active) {
+    if (!activeById.has(o.featureId)) activeById.set(o.featureId, o);
+  }
   const ids = Array.from(proj.offsetById.keys()).filter((fid) => {
-    const ov = proj.active.find((o) => o.featureId === fid);
+    const ov = activeById.get(fid);
     return ov && (!onlyPinned || ov.pinned === true);
   });
   if (ids.length === 0) return null;
+  const idSet = new Set(ids);
   return groupedMatch(
-    filterKeys(proj, (fid) => ids.includes(fid)),
+    filterKeys(proj, (fid) => idSet.has(fid)),
     (fid) => proj.offsetById.get(fid) ?? [0, 0],
     [0, 0],
   );
@@ -214,8 +232,9 @@ export function buildPinnedFilter(proj: AuthoringProjection): unknown | null {
     .filter((o) => o.hidden !== true)
     .map((o) => o.featureId);
   if (pinnedIds.length === 0) return null;
+  const pinnedIdSet = new Set(pinnedIds);
   return groupedMatch(
-    filterKeys(proj, (fid) => pinnedIds.includes(fid)),
+    filterKeys(proj, (fid) => pinnedIdSet.has(fid)),
     () => true,
     false,
   );

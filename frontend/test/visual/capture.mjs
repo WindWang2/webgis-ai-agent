@@ -857,7 +857,7 @@ async function installStubs(page) {
       return route.fulfill({ status: 200, contentType: 'image/png', body: BLANK_TILE });
     }
 
-    if (/\.pbf(\?|$)/i.test(url) || /\/tiles?\//i.test(url) && !url.startsWith(BASE_URL)) {
+    if ((/\.pbf(\?|$)/i.test(url) || /\/tiles?\//i.test(url)) && !url.startsWith(BASE_URL)) {
       return route.fulfill({ status: 204, body: '' });
     }
 

@@ -97,6 +97,35 @@ def test_profile_from_spatial_profile_camel_case():
     assert p.to_resolver_profile()["crs"] == "EPSG:4326"
 
 
+def test_profile_explicit_empty_binary_fields_keeps_schema_derived_evidence():
+    """显式空 binaryFields/categoricalFields 不得抹掉 schema 派生的
+    boolean/string 证据（与 numericFields 的 `or` 回退同口径）。"""
+    p = DatasetProfile.from_spatial_profile({
+        "fields": {"flag": {"type": "boolean"}, "name": {"type": "string"}},
+        "binaryFields": [],
+        "categoricalFields": [],
+    })
+    assert p.binary_fields == ["flag"]
+    assert "flag" in p.categorical_fields
+    assert "name" in p.categorical_fields
+
+
+def test_profile_v3_missing_row_count_stays_unknown():
+    """vector.row_count 缺席 → feature_count=None（不得归一成 0 产假空证据）。"""
+    from types import SimpleNamespace
+
+    profile = SimpleNamespace(
+        category="vector", crs="EPSG:4326", extent=None,
+        longitude_facts=None, profile_quality="partial", raster=None, table=None,
+        vector=SimpleNamespace(
+            fields={}, geometry_types=["Point"], scanned_rows=0,
+            temporal_fields=[], fields_truncated=False),
+    )
+    p = DatasetProfile.from_profile_v3(profile)
+    assert p.feature_count is None
+    assert p.is_empty is False
+
+
 def test_profile_geometry_kind_priority_matches_resolver():
     # 与 resolver._dominant_geometry 同一归约口径：point > polygon > line。
     assert DatasetProfile.from_spatial_profile(

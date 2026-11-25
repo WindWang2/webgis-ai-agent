@@ -888,7 +888,7 @@ def hotspot_narrated(
 
     coords = np.column_stack((gdf.centroid.x.values, gdf.centroid.y.values))
     
-    if distance_band <= 0:
+    if distance_band is None or distance_band <= 0:
         # Auto-calculate distance band using the k-th nearest-neighbour
         # distance (E-7): the mean 1st-NN distance is the scale where each
         # point has ~1 neighbour, leaving ~half the points disconnected and
@@ -3760,8 +3760,13 @@ def bivariate_local_moran_narrated(
     结果中性；与 esda 归一化的对齐仅在无 island 权重时严格成立。共位相关
     ≠ 因果/超前-滞后。
     """
-    import esda as _esda
-    import libpysal as _libpysal
+    try:
+        import esda as _esda
+        import libpysal as _libpysal
+    except ImportError:
+        return GeoAnalysisResult(
+            False, None, "esda or libpysal not installed",
+            error_type="ImportError")
 
     gdf, vx, vy = validated_two_field_frame(
         geojson,

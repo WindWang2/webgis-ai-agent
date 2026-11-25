@@ -102,7 +102,7 @@ class TinyReferenceProvider:
         anchors = derive_anchors(descriptor.checksum)
         if self._load_latency_s:
             time.sleep(self._load_latency_s)
-        handle_id = f"{descriptor.model_id}@{descriptor.model_version}#{id(anchors):x}"
+        handle_id = f"{descriptor.model_id}@{descriptor.model_version}#tiny"
         model = LoadedModel(
             descriptor=descriptor,
             provider_id=self._provider_id,

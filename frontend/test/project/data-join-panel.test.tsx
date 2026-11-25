@@ -253,4 +253,24 @@ describe('DataJoinPanel', () => {
     await act(async () => { await new Promise((r) => setTimeout(r, 1300)); });
     expect(apiMock.inspectRun).not.toHaveBeenCalled();
   });
+
+  it('会话切换后迟到的 describe 失败不显示在新会话面板', async () => {
+    let reject!: (err: unknown) => void;
+    apiMock.describe.mockImplementation(
+      () => new Promise((_resolve, rej) => { reject = rej; }),
+    );
+    openPanel();
+    const view = render(<DataJoinPanel sessionId="s1" ownerToken={null} />);
+    const inputs = screen.getAllByLabelText(/源|source/i);
+    fireEvent.change(inputs[0], { target: { value: 'ref:fc' } });
+    fireEvent.click(screen.getAllByRole('button', { name: /检查|inspect/i })[0]);
+    await waitFor(() => expect(apiMock.describe).toHaveBeenCalled());
+    // 请求在飞时切换会话 → 迟到的失败不得写进新会话面板
+    view.rerender(<DataJoinPanel sessionId="s2" ownerToken={null} />);
+    await act(async () => {
+      reject(new Error('late failure'));
+      await Promise.resolve();
+    });
+    expect(screen.queryByTestId('dj-error')).toBeNull();
+  });
 });

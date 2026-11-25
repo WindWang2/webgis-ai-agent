@@ -209,6 +209,19 @@ def test_compare_and_provenance(service, synthetic_raster):
     assert full["model"]["model_id"] == "tiny-landcover-seg"
 
 
+def test_compare_results_tolerates_null_checksum(service):
+    """外部/旧 manifest 的 checksum=null：不得 None[:12] 裸 TypeError。"""
+    manifest = {
+        "model": {"model_id": "m", "model_version": "1", "checksum": None},
+        "provider": {},
+        "device_plan": {},
+        "performance": {},
+    }
+    comparison = service.compare_results(manifest, manifest)
+    assert comparison["a"]["checksum"] == ""
+    assert comparison["differences"] == {}
+
+
 def test_manifest_secret_redaction(service, synthetic_raster):
     """secret 词根字段经统一 redaction 后不出现在 manifest。"""
     result = service.run_inference(

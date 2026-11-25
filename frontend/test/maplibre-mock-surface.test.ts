@@ -102,6 +102,15 @@ describe('shared MapLibre mock covers the app-level MapLibre surface (#404)', ()
     expect(map.hasImage('asset')).toBe(false);
   });
 
+  it('reflects the current terrain instead of the creation-time null snapshot', () => {
+    const map = makeMockMaplibreMap();
+    expect(map._terrain).toBeNull();
+    map.setTerrain({ source: 'dem', exaggeration: 2 });
+    expect(map._terrain).toEqual({ source: 'dem', exaggeration: 2 });
+    map.setTerrain(null);
+    expect(map._terrain).toBeNull();
+  });
+
   it('every map.<method> the application source touches exists on the mock', () => {
     const map = makeMockMaplibreMap();
     const accesses = collectAccesses();

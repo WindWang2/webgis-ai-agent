@@ -208,6 +208,10 @@ export function MapStudioTab() {
     const downloadName = item.filename || item.name;
     if (!downloadName || !/^[a-zA-Z0-9._-]+$/.test(downloadName)) {
       devOnly.warn('[MapStudioTab] 拒绝非法 download filename:', downloadName);
+      useToastStore.getState().addToast(
+        t('sidebar.studio.downloadFailed', { reason: downloadName || '—' }),
+        'error',
+      );
       return;
     }
     // #515: 下载端点只认 Bearer；裸 <a> 导航无法携带 header → 恒 401。
@@ -341,13 +345,11 @@ export function MapStudioTab() {
             e.preventDefault();
             // Review P2 修复：APG activation-on-focus —— 方向键切换后焦点跟随
             // 到新激活的 tab（roving tabindex 已随之更新）。
-            setActiveSubTab((prev) => {
-              // G15：三子页签循环（layout → frames → history → layout）。
-              const order: SubTab[] = ['layout', 'frames', 'history'];
-              const next = order[(order.indexOf(prev) + 1) % order.length];
-              setTimeout(() => document.getElementById(`map-studio-tab-${next}`)?.focus(), 0);
-              return next;
-            });
+            const order: SubTab[] = ['layout', 'frames', 'history'];
+            const delta = e.key === 'ArrowLeft' ? -1 : 1;
+            const next = order[(order.indexOf(activeSubTab) + delta + order.length) % order.length];
+            setActiveSubTab(next);
+            setTimeout(() => document.getElementById(`map-studio-tab-${next}`)?.focus(), 0);
           }}
         >
           <button

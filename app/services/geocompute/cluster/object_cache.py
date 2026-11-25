@@ -146,4 +146,10 @@ def get_worker_cache(worker_id: Optional[str] = None) -> PayloadCache:
                 _default_cache = PayloadCache(
                     registry=registry, worker_id=worker_id
                 )
+    # 单例晚到的 worker 身份必须补接：首次无参调用后注册表接线若永久缺席，
+    # put/hit 的位置声明会静默失效（缓存仍在，只是 placement 看不到）。
+    if worker_id and _default_cache._worker_id is None:
+        with _cache_lock:
+            if _default_cache._worker_id is None:
+                _default_cache._worker_id = worker_id
     return _default_cache

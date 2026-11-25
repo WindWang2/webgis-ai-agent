@@ -173,7 +173,7 @@ def local_join_count_narrated(
     counts = {"co_location_cluster": int(np.sum(significant)),
               "neutral": int(n - int(np.sum(significant)))}
     sig_count = int(np.sum(significant))
-    expected_fp = round(0.05 * n, 1)
+    expected_fp = round(0.05 * int(np.sum(ones_mask)), 1)
 
     gdf_wgs84 = gdf.to_crs("EPSG:4326")
     features = _assemble_features(

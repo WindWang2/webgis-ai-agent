@@ -14,6 +14,7 @@ class GenerateReportRequest(BaseModel):
     """POST /reports 请求体。"""
 
     model_config = ConfigDict(
+        extra="forbid",
         json_schema_extra={
             "examples": [
                 {

@@ -340,6 +340,9 @@ class PiAgentHarness:
         # Round-2 P2：单例 harness 跨 session 累积时，错误状态必须按 session
         # 隔离 —— session A 的错误绝不能被 session B 的后续成功"恢复"。
         self._recovered_exceptions_count: Dict[str, int] = {}
+        #: 每 session 生命周期异常总数：exceptions 列表 FIFO 淘汰不得让
+        #: 恢复率分母缩水（否则 recovered/total 可 >100% 被 clamp 成假 100）。
+        self._exception_totals: Dict[str, int] = {}
         # #793: error state is keyed by (session_id, tool_name) — recovery is a
         # later SUCCESSFUL call of the SAME tool. Previously any next success
         # (e.g. an unrelated fly_to) "recovered" the error, making
@@ -397,6 +400,7 @@ class PiAgentHarness:
         self._validity_cache.clear()
         self._cartography_review_cache.clear()
         self._recovered_exceptions_count.clear()
+        self._exception_totals.clear()
         self._in_error_state.clear()
 
     # ── Raw event recording (sync, legacy-compatible) ────────────────────
@@ -492,6 +496,9 @@ class PiAgentHarness:
                 "turn_id": eff_turn_id,
                 "session_id": eff_session_id,
             })
+            self._exception_totals[eff_session_id] = (
+                self._exception_totals.get(eff_session_id, 0) + 1
+            )
             # #793: key by (session, tool) so only a later success of the SAME
             # tool counts as recovery.
             self._in_error_state.add((eff_session_id, name))
@@ -515,7 +522,7 @@ class PiAgentHarness:
             if not any(
                 mutation["tool_call_id"] == tool_call_id
                 and mutation.get("session_id") == eff_session_id
-                for mutation in self.mapspec_mutations
+                for mutation in reversed(self.mapspec_mutations)
             ):
                 # record_tool_call already appended for MAPSPEC_MUTATION_TOOLS
                 # names; this branch covers fingerprint-carrying analysis tools
@@ -2053,10 +2060,9 @@ class PiAgentHarness:
         return min(100.0, max(0.0, efficiency))
 
     def compute_error_recovery_rate(self) -> float:
-        total_exceptions = sum(
-            1 for e in self.exceptions
-            if e.get("session_id") == self.session_id
-        )
+        # 分母是生命周期异常总数：exceptions 列表 FIFO 淘汰（MAX_EVENTS）
+        # 不得让 recovered 超过可见异常数——那会被下方 clamp 成假 100.0。
+        total_exceptions = self._exception_totals.get(self.session_id, 0)
         if total_exceptions == 0:
             return 100.0
         recovered = self._recovered_exceptions_count.get(self.session_id, 0)

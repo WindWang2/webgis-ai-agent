@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 import zlib
 from dataclasses import dataclass
@@ -348,15 +349,13 @@ class ArtifactExchange:
 
 #: 进程内单例（懒构建；root 缺席 = 停用实例）。
 _default_exchange: Optional[ArtifactExchange] = None
-_exchange_lock = None
+#: import 期即建锁 —— 懒建会让并发首次调用各持一把锁、构造两个实例。
+_exchange_lock = threading.Lock()
 
 
 def get_exchange() -> ArtifactExchange:
-    global _default_exchange, _exchange_lock
-    import threading
+    global _default_exchange
 
-    if _exchange_lock is None:
-        _exchange_lock = threading.Lock()
     if _default_exchange is None:
         with _exchange_lock:
             if _default_exchange is None:

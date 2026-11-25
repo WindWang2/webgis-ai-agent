@@ -90,7 +90,7 @@ describe('Wave 12 · 组件布局几何语料', () => {
     // 拿到索引的成员有堆叠偏移；位移随索引不重复（同一时刻不重叠）。
     const tops = styles
       .map((s) => (s ? Number((s as { top: string }).top.match(/(\d+)px/)?.[1]) : null))
-      .filter((v): v is number => v != null);
+      .filter((v): v is number => v != null && Number.isFinite(v));
     expect(new Set(tops).size).toBe(tops.length);
   });
 

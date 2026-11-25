@@ -284,9 +284,10 @@ class ClusterRunStore:
 
         V8：``return_detail=True`` 时返回 ``(epoch_or_None, reject_dim)``；
         ``reject_dim`` ∈ RESOURCE_DIMENSIONS（enforcing 账本按维拒绝时）
-        或 None（成功/竞争失败）。scheduler 据此发 ``waiting_resource
-        [resource:<dim>]`` 事件 + OOM-avoided 计数（内存维）—— 拒绝从
-        静默留队变成可观测调度决策。
+        或 None（成功/竞争失败）。advisory 模式超卖不阻塞认领，但同样
+        返回拒绝维度 —— 超卖从静默变成可观测的调度决策。
+        scheduler 据此发 ``waiting_resource[resource:<dim>]`` 事件 +
+        OOM-avoided 计数（内存维）。
         """
         # 账本 scope 行预建（独立事务；业务事务内只读检查，无 session 中毒）
         if ledger is not None:
@@ -326,12 +327,13 @@ class ClusterRunStore:
             ).rowcount
             if not claimed:
                 return (None, None) if return_detail else None
+            reject_dim: Optional[str] = None
             if ledger is not None:
                 claims = _claims_for_row(row, units=1)
                 reject_dim = ledger.reserve_claims_checked(db, claims)
                 # enforcing 拒绝 → 整体回滚留队（不制造超卖）；
                 # advisory 拒绝 → 放行（V6 语义：只记账诚实暴露超卖），
-                # 维度仅供调用方观测计数。
+                # 维度随成功返回供调用方观测计数（不再静默丢弃）。
                 if reject_dim is not None and ledger.enforcing:
                     db.rollback()
                     return (None, reject_dim) if return_detail else None
@@ -345,7 +347,7 @@ class ClusterRunStore:
                             reserved_gpu=claims["global"].gpu)
                 )
             db.commit()
-            return (new_epoch, None) if return_detail else new_epoch
+            return (new_epoch, reject_dim) if return_detail else new_epoch
         return (None, None) if return_detail else None
 
     def mark_running(self, run_id: str, *, epoch: int) -> bool:
@@ -692,16 +694,22 @@ class ClusterRunStore:
             ).scalars().all()
             return [_scan_projection(r) for r in rows]
 
-    def scan_running(self, *, limit: int = 64) -> list[dict[str, Any]]:
+    def scan_running(self, *, limit: int = 64,
+                     coordinator_id: Optional[str] = None) -> list[dict[str, Any]]:
         """在跑 run（leased/running；抢占受害者扫描用）。
 
         排序 = 抢占受害者优先序（低优先级在前；同优先级后启动者在前）。
+        ``coordinator_id`` 过滤在 SQL 侧生效 —— 抢占只对本 coordinator 的
+        在跑 run 有意义，先全局 LIMIT 再过滤会让本地受害者落在窗口外。
         """
         with self._factory() as db:
+            q = select(_Run).where(
+                _Run.status.in_([s.value for s in LEASED_STATUSES])
+            )
+            if coordinator_id is not None:
+                q = q.where(_Run.coordinator_id == coordinator_id)
             rows = db.execute(
-                select(_Run)
-                .where(_Run.status.in_([s.value for s in LEASED_STATUSES]))
-                .order_by(_Run.priority.asc(), _Run.started_at.desc())
+                q.order_by(_Run.priority.asc(), _Run.started_at.desc())
                 .limit(max(1, int(limit)))
             ).scalars().all()
             return [_scan_projection(r) for r in rows]
@@ -925,6 +933,27 @@ class ClusterRunStore:
             ]
 
     # ------------------------------------------------- V7 admin / waves
+
+    def live_leaders(self, *, limit: int = 8) -> list[dict[str, Any]]:
+        """在任 coordinator 投影（leadership lease 未过期）。
+
+        standby 每 tick 也刷新 worker 心跳（acquire_leadership 的续心跳
+        分支），因此 leader 视图绝不能按 role+心跳统计 —— 必须校验
+        leadership lease。
+        """
+        now = _utcnow()
+        with self._factory() as db:
+            rows = db.execute(
+                select(_Worker.worker_id)
+                .where(
+                    _Worker.role == "coordinator",
+                    _Worker.lease_expires_at.is_not(None),
+                    _Worker.lease_expires_at >= now,
+                )
+                .order_by(_Worker.worker_id.asc())
+                .limit(max(1, int(limit)))
+            ).scalars().all()
+        return [{"worker_id": wid} for wid in rows]
 
     def waiting_profiles(self) -> dict[str, int]:
         """留队 run 的必需 profile 计数（封闭词表维度；metrics 用）。

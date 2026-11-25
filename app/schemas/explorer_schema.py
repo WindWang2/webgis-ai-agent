@@ -27,10 +27,10 @@ class StartExploreRequest(BaseModel):
     )
 
     query: str = Field(..., min_length=1, max_length=500)
-    session_id: Optional[str] = None
-    expected_data_type: str = "poi_list"
-    source_hint: list[str] = Field(default_factory=list)
-    auto_threshold: float = 0.7
+    session_id: Optional[str] = Field(None, max_length=128)
+    expected_data_type: str = Field("poi_list", max_length=64)
+    source_hint: list[str] = Field(default_factory=list, max_length=16)
+    auto_threshold: float = Field(0.7, ge=0.0, le=1.0)
 
 
 class StartExploreResponse(BaseModel):

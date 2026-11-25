@@ -61,7 +61,7 @@ export function QueryResults({
       if (!entry) return null;
       const [name, data] = entry;
       const frame = pickFrame(data);
-      return { name, frame, nodata: windowResult.nodata, steps: windowResult.times.length };
+      return { name, frame, nodata: windowResult.nodata };
     }
     if (labeledResult) {
       const entry = Object.entries(labeledResult.variables)[0];
@@ -73,9 +73,6 @@ export function QueryResults({
         frame,
         nodata:
           labeledResult.attrs.nodata_per_variable?.[name] ?? labeledResult.attrs.nodata,
-        // 评审 P2：coords.time 可能缺席（labeled 只选 bbox/tags）—— 未判空即取
-        // .length 会抛 TypeError 白屏。
-        steps: (Array.isArray(labeledResult.coords.time) ? labeledResult.coords.time.length : 0) || 1,
       };
     }
     return null;

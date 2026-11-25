@@ -137,3 +137,23 @@ def test_sanitize_profile_dict_redacts_nested_options_password():
     assert sanitized["metadata"]["note"] == "keep"
     # Non-sensitive top-level value untouched.
     assert sanitized["url"] == "https://db.example.com"
+
+
+# ── DSN 解析不覆盖显式结构化字段（P3 回归）────────────────────────────
+
+
+def test_dsn_parse_does_not_override_explicit_port():
+    """显式 port 是结构化字段，DSN 解析只补缺省，绝不覆盖。"""
+    conn = ConnectionProfile(
+        url="postgresql://u:p@db.example.com:6543/gis", port=1234,
+    )
+    assert conn.host == "db.example.com"
+    assert conn.port == 1234, "DSN port must not override an explicit port"
+
+
+def test_dsn_parse_fills_port_when_absent():
+    """未显式给 port 时，DSN 端口（或 5432 缺省）照常填充。"""
+    assert ConnectionProfile(
+        url="postgresql://u:p@db.example.com:6543/gis").port == 6543
+    assert ConnectionProfile(
+        url="postgresql://u:p@db.example.com/gis").port == 5432
