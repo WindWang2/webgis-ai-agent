@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 import subprocess
 
-import pytest
 
 from app.services.chat import pi_compat
 from app.services.chat.pi_compat import (
