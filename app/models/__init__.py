@@ -95,6 +95,9 @@ from app.models.field_contracts import (  # noqa: F401 — 模型注册 + 再导
     FieldContract,
     FieldContractAssessment,
 )
+from app.models.model_authoring import (  # noqa: F401 — 模型注册 + 再导出（模型构建器域）
+    ModelDraft,
+)
 from app.models.data_lifecycle import (  # noqa: F401 — 模型注册 + 再导出（V9）
     LifecycleObject,
     LifecyclePolicy,
