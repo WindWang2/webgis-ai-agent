@@ -10,7 +10,7 @@ FeatureCollection 本体绝不进响应（数据一律 ref 直通）。
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field

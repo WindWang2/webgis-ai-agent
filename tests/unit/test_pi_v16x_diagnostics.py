@@ -145,7 +145,7 @@ def test_diag_stats_kind_cap_overflows_to_single_key():
     snap = stats.snapshot()
     assert len(snap["counts"]) == em._BoundedEventStats.MAX_KINDS + 1
     assert snap["counts"].get("_overflow") == 10
-    assert f"alien_kind_0" in snap["counts"]  # 首个超顶前的键保留
+    assert "alien_kind_0" in snap["counts"]  # 首个超顶前的键保留
 
 
 def test_diag_stats_reset():
