@@ -6,11 +6,14 @@
 import { apiFetch } from '../api/transport';
 import type {
   ChartSpec,
+  DrillResponse,
   ExplorationCondition,
   ExplorationPlanJson,
   ExplorationView,
   InspectResponse,
+  MultiSourcePlanJson,
   OpenViewResponse,
+  PlanPreviewResponse,
   PreviewResponse,
 } from './contracts';
 
@@ -135,6 +138,21 @@ export function createLinkedExplorationClient(ownerToken?: string | null) {
       apiFetch<{ applied_components: string[]; count: number; state: string }>(
         `${BASE}/views/${encodeURIComponent(viewId)}/apply?${q(sessionId)}`,
         opts({ method: 'POST', body: { expected_revision: expectedRevision ?? null }, ownerToken })),
+    planPreview: (
+      sessionId: string,
+      plan: MultiSourcePlanJson,
+      signal?: AbortSignal,
+      createHandle = true,
+    ) =>
+      apiFetch<PlanPreviewResponse>(`${BASE}/plan-preview?${q(sessionId)}`,
+        opts({ method: 'POST', body: { plan, create_handle: createHandle }, ownerToken, signal })),
+    drill: (
+      sessionId: string,
+      args: { plan: MultiSourcePlanJson; source_id: string; direction: 'down' | 'up'; parent_value?: unknown },
+      signal?: AbortSignal,
+    ) =>
+      apiFetch<DrillResponse>(`${BASE}/drill?${q(sessionId)}`,
+        opts({ method: 'POST', body: { ...args, create_handle: false }, ownerToken, signal })),
   };
 }
 

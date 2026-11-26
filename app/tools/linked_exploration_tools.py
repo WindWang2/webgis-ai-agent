@@ -76,6 +76,22 @@ class ApplyArgs(ViewIdArgs):
     expected_revision: Optional[int] = Field(default=None, ge=1)
 
 
+class PlanPreviewArgs(BaseModel):
+    plan: Dict[str, Any] = Field(
+        ..., description="ExplorationPlan（v3 多源：sources/links/"
+                         "metrics/charts/conditions；v2 单源同面兼容）",
+        json_schema_extra={"ref_cursor": True})
+
+
+class DrillArgs(BaseModel):
+    plan: Dict[str, Any] = Field(
+        ..., json_schema_extra={"ref_cursor": True})
+    source_id: str = Field(..., min_length=1, max_length=64)
+    direction: str = Field(..., description="down（钻入父级）| up（上卷）")
+    parent_value: Optional[Any] = Field(
+        default=None, description="down 必填：父级键（typed scalar）")
+
+
 def register_linked_exploration_tools(registry: ToolRegistry) -> None:
     """注册 G46 工具（只读×2 + 视图管理×3 + 受控写×1）。"""
     from app.services.linked_exploration import contract, service
@@ -472,6 +488,174 @@ def register_linked_exploration_tools(registry: ToolRegistry) -> None:
             "state": result.get("state"),
             "reconcile_via": "mapspec_event",
             "note": "图表组件已写入 MapSpec；条件激活/组合过滤由前端探索面板承载",
+        }
+
+    # ─── 多源（v3）：计划预览与层级钻取 ──────────────────────────────
+
+    @tool(
+        registry,
+        name="webgis_exploration_plan_preview",
+        capabilities=["linked_exploration", "layer_browse"],
+        tier=2,
+        domains=["exploration", "cartography"],
+        args_model=PlanPreviewArgs,
+        description=(
+            "多源联动预览（零 mutation）：逐源同代冻结+锚核对 → per-source "
+            "条件（跨控件 AND、同控件 OR）→ 关系传播键集半连接（DAG 单遍；"
+            "未过滤上游不限制；上游零匹配→下游零匹配）→ 每源精确匹配计数 + "
+            "每图 facet/full 统计 + 指标（rate 分母治理：分母 0/空 → 该组 "
+            "unavailable，绝不冒充 0 率）。回答『选中 X 后另一源有多少、每万人"
+            "指标是多少』。空集如实返回 0。"
+            "\n何时用：多源任务（如学校点×区县人口表）的组合范围/指标问答。"
+            "\n何时不用：单源快速筛选用 webgis_exploration_preview。"
+        ),
+        side_effect="cacheable_read",
+        network=False,
+        deterministic=True,
+        latency_class="slow",
+        memory_class="medium",
+        scale_class="large",
+        tags=("多源联动", "指标", "传播", "linked exploration"),
+        output_semantic_type="json",
+        result_size_policy="bounded",
+        failure_modes=("invalid_args", "invalid_plan", "stale_source",
+                       "propagation_keyset_over_limit", "no_strong_revision",
+                       "source_mutation_during_read", "stats_over_limit",
+                       "metric_over_limit", "spatial_metric_unsupported"),
+    )
+    async def webgis_exploration_plan_preview(
+        plan: Dict[str, Any], session_id: str = "",
+    ) -> dict:
+        if not session_id:
+            return {"success": False, "code": "SOURCE_UNAVAILABLE",
+                    "message": "Missing session_id context"}
+        result = await _guard(service.preview_plan(
+            session_id, plan, _actor(session_id)))
+        if result.get("success") is False:
+            return result
+        per_source_out = {}
+        for sid, entry in (result.get("per_source") or {}).items():
+            handle = entry.get("selection_handle") or {}
+            skipped = entry.get("selection_handle_skipped") or {}
+            per_source_out[sid] = {
+                "role": entry.get("role"),
+                "match_count": entry.get("match_count"),
+                "match_count_exact": entry.get("match_count_exact"),
+                "total": entry.get("total"),
+                "map_filter_projected": entry.get("map_filter_projected"),
+                "propagations": [
+                    {k: p.get(k) for k in
+                     ("link_id", "from_source", "target_fields", "key_count",
+                      "from_unfiltered", "skipped_missing", "skipped_invalid")}
+                    for p in (entry.get("propagations") or [])
+                ],
+                "selection_handle": (
+                    {"handle": handle.get("handle"),
+                     "count": handle.get("count"),
+                     "note": "最终联动范围句柄（600s TTL）"} if handle else None),
+                "handle_skipped_reason": skipped.get("reason") or None,
+            }
+        charts_brief = []
+        for c in result.get("charts", []):
+            facet = c.get("facet", {}).get("statistics", {})
+            full = c.get("full", {}).get("statistics", {})
+            rows = (facet.get("rows") or facet.get("bins") or [])[:_MAX_ROWS]
+            charts_brief.append({
+                "chart_id": c.get("chart_id"),
+                "source_id": c.get("source_id"),
+                "kind": c.get("kind"),
+                "field": c.get("field"),
+                "facet_matched": facet.get("matched"),
+                "facet_rows": rows,
+                "facet_truncated": bool(facet.get("truncated")),
+                "full_matched": full.get("matched"),
+                "denominator_notes": {
+                    "facet": facet.get("denominator_note"),
+                    "full": full.get("denominator_note"),
+                },
+            })
+        metrics_out = []
+        for m in result.get("metrics", []):
+            groups = []
+            for g in (m.get("groups") or [])[:_MAX_ROWS]:
+                groups.append({
+                    "key": g.get("key"),
+                    "value": g.get("value") if g.get("available") else None,
+                    "available": g.get("available"),
+                    "unavailable_reason": g.get("unavailable_reason"),
+                    "numerator": g.get("numerator"),
+                    "denominator": g.get("denominator"),
+                })
+            metrics_out.append({
+                "metric_id": m.get("metric_id"),
+                "op": m.get("op"),
+                "unit": m.get("unit"),
+                "scale": m.get("scale"),
+                "truncated": m.get("truncated"),
+                "groups": groups,
+                "disclosure": m.get("disclosure"),
+            })
+        return {
+            "success": True,
+            "schema_version": result.get("schema_version"),
+            "primary_source_id": result.get("primary_source_id"),
+            "anchors": result.get("anchors"),
+            "conditions_digest": result.get("conditions_digest"),
+            "plan_digest": result.get("plan_digest"),
+            "per_source": per_source_out,
+            "charts": charts_brief,
+            "metrics": metrics_out,
+            "note": "rows/组截断到 top；分母 0/空 → unavailable+原因码；"
+                    "完整统计走 UI plan-preview",
+        }
+
+    @tool(
+        registry,
+        name="webgis_exploration_drill",
+        capabilities=["linked_exploration", "layer_browse"],
+        tier=2,
+        domains=["exploration", "cartography"],
+        args_model=DrillArgs,
+        description=(
+            "多源计划层级钻取/上卷（零 mutation）：按计划内显式声明的 "
+            "hierarchy.parent_field 改写钻取条件并重放权威 preview；返回逐父级"
+            "计数摘要（下一级有哪些、各多少）。源未声明层级 → HIERARCHY_NOT_"
+            "DECLARED 诚实阻塞（不按字段名称猜测行政区层级）。"
+            "\n何时用：『选中武侯区后按区钻取学校』等跨粒度下探/上卷。"
+            "\n何时不用：同粒度内筛选（直接改 conditions 走 plan_preview）。"
+        ),
+        side_effect="cacheable_read",
+        network=False,
+        deterministic=True,
+        latency_class="slow",
+        memory_class="medium",
+        scale_class="large",
+        tags=("多源联动", "钻取", "层级", "linked exploration"),
+        output_semantic_type="json",
+        result_size_policy="bounded",
+        failure_modes=("invalid_args", "invalid_plan", "unknown_source",
+                       "hierarchy_not_declared", "invalid_drill_value",
+                       "stale_source", "propagation_keyset_over_limit"),
+    )
+    async def webgis_exploration_drill(
+        plan: Dict[str, Any], source_id: str, direction: str,
+        parent_value: Optional[Any] = None, session_id: str = "",
+    ) -> dict:
+        if not session_id:
+            return {"success": False, "code": "SOURCE_UNAVAILABLE",
+                    "message": "Missing session_id context"}
+        result = await _guard(service.drill_plan(
+            session_id, plan, _actor(session_id), source_id=source_id,
+            direction=direction, parent_value=parent_value))
+        if result.get("success") is False:
+            return result
+        return {
+            "success": True,
+            "plan": result.get("plan"),
+            "drill": result.get("drill"),
+            "preview_brief": result.get("preview_brief"),
+            "note": "返回的 plan 为改写后的完整计划（含钻取条件与摘要图）；"
+                    "继续追问请用它调用 plan_preview，保存用 view_save",
         }
 
 

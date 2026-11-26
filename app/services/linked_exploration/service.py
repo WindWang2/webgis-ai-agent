@@ -554,6 +554,128 @@ def _source_has_incoming(plan: contract.ExplorationPlan, sid: str) -> bool:
     return False
 
 
+# ─── 层级钻取：显式层级声明 + 计划改写重放（无层级 → 诚实阻塞） ──────────
+
+_DRILL_CHART_PREFIX = "drill-"
+_DRILL_COND_PREFIX = "drill-cond-"
+
+
+async def drill_plan(
+    session_id: str,
+    plan_raw: Dict[str, Any],
+    actor: Dict[str, Any],
+    *,
+    source_id: str,
+    direction: str,
+    parent_value: Any = None,
+    create_handle: bool = False,
+) -> Dict[str, Any]:
+    """按源声明的层级做一次显式钻取/上卷，并重放权威 preview。
+
+    - 层级只来自计划内 ``SourceBinding.hierarchy`` 声明（parent_field）；
+      未声明 → ``HIERARCHY_NOT_DECLARED`` 诚实阻塞（绝不按字段名称猜测
+      行政区划映射 —— 名称猜测是不可靠的隐式 join）。
+    - ``down``：``parent_value`` 必填（typed scalar）→ 在该源追加/替换
+      parent_field 条件（同控件 OR 语义单值）；``up``：移除该源
+      parent_field 上的钻取条件（回上一级汇总视野）。
+    - 钻取摘要 = 以 parent_field 分类图（full 口径）给出逐父级计数
+      （typed 分组、溢出披露），回答"下一级有哪些、各多少"。
+    """
+    plan = _validate_plan_payload(plan_raw)
+    binding = next((b for b in contract.plan_source_bindings(plan)
+                    if b.source_id == source_id), None)
+    if binding is None:
+        raise LinkedExplorationError(
+            "UNKNOWN_SOURCE",
+            f"source_id {source_id!r} 不在计划 sources 中", status_code=422)
+    if direction not in ("down", "up"):
+        raise LinkedExplorationError(
+            "INVALID_DRILL_DIRECTION", "direction 必须是 down/up",
+            status_code=422)
+    hierarchy = binding.hierarchy
+    if hierarchy is None or not hierarchy.parent_field:
+        raise LinkedExplorationError(
+            "HIERARCHY_NOT_DECLARED",
+            f"源 {source_id} 未声明层级映射（hierarchy.parent_field）—— "
+            "钻取需要显式父子字段关系（用户指定或既有字段关系），"
+            "本域不按名称猜测行政区层级",
+            status_code=422,
+            correction_hint="在计划中为该源声明 hierarchy.parent_field "
+                            "（子粒度行持有父级键的字段）后再钻取。")
+    if direction == "down":
+        if parent_value is None or not isinstance(
+                parent_value, (str, int, float, bool)):
+            raise LinkedExplorationError(
+                "INVALID_DRILL_VALUE",
+                "down 需要父级键 parent_value（typed scalar）",
+                status_code=422)
+
+    parent_field = hierarchy.parent_field
+    chart_id = f"{_DRILL_CHART_PREFIX}{source_id}"
+    cond_id = f"{_DRILL_COND_PREFIX}{source_id}"
+
+    # 1. 移除本源旧钻取条件/图（幂等重入），再按方向追加
+    conditions = [c for c in plan.conditions
+                  if not (isinstance(c, dict)
+                          and str(c.get("condition_id", "")).startswith(cond_id))]
+    if direction == "down":
+        conditions.append({
+            "kind": "category", "condition_id": cond_id,
+            "chart_id": chart_id, "field": parent_field,
+            "values": [parent_value], "source_id": source_id,
+        })
+    charts = [c for c in plan.charts if c.chart_id != chart_id]
+    if len(charts) >= contract.MAX_CHARTS:
+        raise LinkedExplorationError(
+            "DRILL_PLAN_CAP",
+            f"计划图表已满（{contract.MAX_CHARTS}），无法注入钻取摘要图",
+            status_code=422,
+            correction_hint="移除次要图表后再钻取。")
+    charts.append(contract.ChartSpec(
+        chart_id=chart_id, kind="category", field=parent_field,
+        source_id=source_id,
+        title=f"钻取摘要 · {parent_field}"))
+    new_plan = plan.model_copy(update={"charts": charts,
+                                       "conditions": conditions})
+
+    # 2. 权威重放（同代 + 传播 + 指标全口径）
+    preview = await preview_plan(session_id, new_plan.model_dump(mode="json"),
+                                 actor, create_handle=create_handle)
+    drill_chart = next((c for c in preview.get("charts", [])
+                        if c.get("chart_id") == chart_id), None)
+    stats = (drill_chart or {}).get("full", {}).get("statistics", {})
+    rows = (stats.get("rows") or stats.get("bins") or [])
+    summary_rows = [
+        {"key": r.get("machine_value", r.get("label")),
+         "label": r.get("label"), "count": r.get("count")}
+        for r in rows[:32]
+    ]
+    return {
+        "plan": new_plan.model_dump(mode="json"),
+        "drill": {
+            "source_id": source_id,
+            "direction": direction,
+            "parent_field": parent_field,
+            "parent_value": parent_value if direction == "down" else None,
+            "hierarchy_note": hierarchy.level_note,
+            "groups": summary_rows,
+            "group_count": len(rows),
+            "truncated": bool(stats.get("truncated"))
+            or len(rows) > len(summary_rows),
+            "matched_in_scope": stats.get("matched"),
+            "denominator_note": stats.get("denominator_note"),
+        },
+        "preview_brief": {
+            "conditions_digest": preview.get("conditions_digest"),
+            "per_source": {
+                sid: {"match_count": e.get("match_count"),
+                      "total": e.get("total")}
+                for sid, e in (preview.get("per_source") or {}).items()
+            },
+        },
+    }
+
+
 # ─── 命名视图：持久化 CRUD + 锚校验 ──────────────────────────────────────
 
 def _row_to_view(row: Any, *, include_plan: bool = True) -> Dict[str, Any]:
@@ -1110,7 +1232,7 @@ async def _rollback_components(session_id: str, component_ids: List[str]) -> Non
 
 
 __all__ = [
-    "inspect_source", "preview_conditions", "preview_plan",
+    "inspect_source", "preview_conditions", "preview_plan", "drill_plan",
     "save_view", "list_views", "get_view", "update_view", "delete_view",
     "open_view", "apply_view_to_mapspec",
 ]
