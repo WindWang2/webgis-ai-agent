@@ -624,6 +624,15 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/data-fusion-authoring/sessions/{session_id}/plans/{plan_id}/refresh` | Refresh Plan | FusionRefreshResponse |
 | `POST` | `/api/v1/data-fusion-authoring/sessions/{session_id}/recover` | Recover | FusionRecoverResponse |
 
+### 任务数据供给工作台
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/api/v1/task-data-supply/coverage` | Compare Task Coverage | object |
+| `POST` | `/api/v1/task-data-supply/plans` | Create Supply Plan | object |
+| `POST` | `/api/v1/task-data-supply/plans/{plan_id}/execute` | Execute Supply Plan | object |
+| `GET` | `/api/v1/task-data-supply/plans/{plan_id}` | Get Supply Plan | object |
+
 ### 坐标操作工作台 G45
 
 | 方法 | 路径 | 说明 | 响应模型 |
@@ -722,6 +731,52 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/cartogram/sessions/{session_id}/layouts/{layout_ref}` | Layout Detail | CartogramLayoutDetailResponse |
 | `GET` | `/api/v1/cartogram/sessions/{session_id}/layouts/{layout_ref}/export` | Layout Export | object |
 
+### 方法实验工作台
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/api/v1/method-experiment/sessions/{session_id}/inspect` | Inspect Method Cards | object |
+| `POST` | `/api/v1/method-experiment/sessions/{session_id}/plan` | Plan Experiment | object |
+| `POST` | `/api/v1/method-experiment/sessions/{session_id}/run` | Run Experiment | object |
+| `GET` | `/api/v1/method-experiment/sessions/{session_id}/status/{experiment_id}` | Experiment Status | object |
+| `GET` | `/api/v1/method-experiment/sessions/{session_id}/compare/{experiment_id}` | Compare Experiment | object |
+| `POST` | `/api/v1/method-experiment/sessions/{session_id}/adopt` | Adopt Experiment | object |
+
+### 制图设计规范
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/design-specs` | List Design Specs | object |
+| `POST` | `/api/v1/design-specs` | Create Design Spec | object |
+| `GET` | `/api/v1/design-specs/{spec_id}` | Get Design Spec | object |
+| `POST` | `/api/v1/design-specs/{spec_id}/versions` | Create Design Spec Version | object |
+| `GET` | `/api/v1/design-specs/{spec_id}/versions/{version}` | Get Design Spec Version | object |
+| `POST` | `/api/v1/design-specs/{spec_id}/versions/{version}/deprecate` | Deprecate Design Spec Version | object |
+| `POST` | `/api/v1/design-specs/{spec_id}/publish` | Publish Design Spec | object |
+| `POST` | `/api/v1/design-specs/{spec_id}/retire` | Retire Design Spec | object |
+| `GET` | `/api/v1/design-specs/{spec_id}/preview` | Preview Design Spec | object |
+
+### 系列地图计划
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/map-series` | List Map Series | object |
+| `POST` | `/api/v1/map-series` | Create Map Series | object |
+| `GET` | `/api/v1/map-series/{series_id}` | Get Map Series | object |
+| `POST` | `/api/v1/map-series/{series_id}/versions` | Create Map Series Version | object |
+| `POST` | `/api/v1/map-series/{series_id}/members` | Series Member Op | object |
+| `GET` | `/api/v1/map-series/{series_id}/consistency` | Series Consistency | object |
+| `POST` | `/api/v1/map-series/{series_id}/propagation/preview` | Series Propagation Preview | object |
+| `POST` | `/api/v1/map-series/{series_id}/propagation/apply` | Series Propagation Apply | object |
+| `POST` | `/api/v1/map-series/{series_id}/freeze-plan` | Series Freeze Plan | object |
+
+### 系列出版生产
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/api/v1/series-production/submit` | Submit Series Production | object |
+| `GET` | `/api/v1/series-production/jobs/{job_id}` | Get Series Production Job | object |
+
 ### 报告生成
 
 | 方法 | 路径 | 说明 | 响应模型 |
@@ -773,6 +828,8 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/chat/sessions/{session_id}/workbench/artifact-status` | Get Workbench Artifact Status | WorkbenchArtifactStatusResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/scale-portrayal` | Get Scale Portrayal | object |
 | `POST` | `/api/v1/chat/sessions/{session_id}/scale-portrayal` | Apply Scale Portrayal Route | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/paper-scale` | Get Paper Scale Generalization | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/paper-scale` | Apply Paper Scale Generalization Route | object |
 | `POST` | `/api/v1/chat/sessions/{session_id}/flow-product/inspect` | Inspect Flow | object |
 | `POST` | `/api/v1/chat/sessions/{session_id}/flow-product/preview` | Preview Flow | object |
 | `POST` | `/api/v1/chat/sessions/{session_id}/flow-product/query` | Query Flow | object |
@@ -780,6 +837,16 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/chat/sessions/{session_id}/interaction-events/projection` | Get Interaction Projection | InteractionProjectionResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/situation` | Get Situation View | object |
 | `GET` | `/api/v1/chat/sessions/{session_id}/turn-chain` | Get Turn Chain | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/scenario/overview` | Get Scenario Overview | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/scenario/compare` | Get Scenario Compare | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/scenario/candidates` | Post Scenario Candidate | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/scenario/candidates/{candidate_id}/execute` | Post Scenario Execute | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/scenario/candidates/{candidate_id}/adopt` | Post Scenario Adopt | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/scenario/adoptions/{adoption_id}/revert` | Post Scenario Revert | object |
+| `DELETE` | `/api/v1/chat/sessions/{session_id}/scenario/candidates/{candidate_id}` | Delete Scenario Candidate | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/scenario/locks` | Get Scenario Locks | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/scenario/locks` | Post Scenario Lock | object |
+| `DELETE` | `/api/v1/chat/sessions/{session_id}/scenario/locks/{lock_id}` | Delete Scenario Lock | object |
 | `POST` | `/api/v1/chat/sessions/{session_id}/feature-edits/preview` | Preview Feature Edit | object |
 | `GET` | `/api/v1/chat/sessions/{session_id}/feature-edits/plans/{plan_id}` | Get Feature Edit Plan | object |
 | `POST` | `/api/v1/chat/sessions/{session_id}/feature-edits/plans/{plan_id}/decision` | Decide Feature Edit Plan | object |
@@ -793,6 +860,9 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/chat/sessions/{session_id}/feature-edits/datasets/{ref_id}/editable-copy` | Make Editable Copy | object |
 | `GET` | `/api/v1/chat/sessions/{session_id}/feature-edits/datasets/{ref_id}/qualification` | Get Edit Qualification | object |
 | `GET` | `/api/v1/chat/sessions/{session_id}/feature-edits/{ref_id}/lineage` | Get Feature Lineage | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/feature-edits/{ref_id}/constraints/inspect` | Inspect Feature Edit Constraints | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/feature-edits/{ref_id}/impact` | Preview Feature Edit Impact | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/feature-edits/{ref_id}/revalidate` | Revalidate Feature Edit Constraints | object |
 | `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals` | Create Feature Proposal | FeatureProposalSummaryResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/feature-proposals` | List Feature Proposals | FeatureProposalListResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}` | Get Feature Proposal | FeatureProposalDetailResponse |
@@ -1312,6 +1382,24 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/workflow-runtime/instances/{instance_id}/clone` | Clone Instance | InstanceCloneResponse |
 | `GET` | `/api/v1/workflow-runtime/instances/{instance_id}/debug` | Debug Instance | InstanceDebugResponse |
 
+### Model Authoring / 模型构建器
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/model-authoring/capabilities` | List Capabilities | CapabilitiesResponse |
+| `POST` | `/api/v1/model-authoring/projects/{project_id}/models` | Create Model | ModelDraftResponse |
+| `GET` | `/api/v1/model-authoring/projects/{project_id}/models` | List Models | ModelListResponse |
+| `GET` | `/api/v1/model-authoring/projects/{project_id}/models/{model_slug}` | Get Model | ModelDraftResponse |
+| `PUT` | `/api/v1/model-authoring/projects/{project_id}/models/{model_slug}` | Update Model | ModelDraftResponse |
+| `DELETE` | `/api/v1/model-authoring/projects/{project_id}/models/{model_slug}` | Delete Model | ModelDeleteResponse |
+| `POST` | `/api/v1/model-authoring/projects/{project_id}/models/{model_slug}/validate` | Validate Model | ModelValidateResponse |
+| `POST` | `/api/v1/model-authoring/projects/{project_id}/models/{model_slug}/publish` | Publish Model | ModelPublishResponse |
+| `POST` | `/api/v1/model-authoring/projects/{project_id}/models/{model_slug}/instantiate` | Instantiate Model | ModelInstantiateResponse |
+| `POST` | `/api/v1/model-authoring/instances/{instance_id}/run` | Run Instance | ModelRunResponse |
+| `GET` | `/api/v1/model-authoring/projects/{project_id}/catalog` | Model Catalog | ModelCatalogResponse |
+| `GET` | `/api/v1/model-authoring/projects/{project_id}/models/{model_slug}/export` | Export Model | ModelExportResponse |
+| `POST` | `/api/v1/model-authoring/projects/{project_id}/models/import` | Import Model | ModelDraftResponse |
+
 ### Mission Runtime
 
 | 方法 | 路径 | 说明 | 响应模型 |
@@ -1573,6 +1661,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `DELETE` | `/api/v1/temporal-media/jobs/{job_id}` | Cancel Job | object |
 | `GET` | `/api/v1/temporal-media/jobs/{job_id}/result` | Get Job Result | object |
 
-_端点总数：726（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：784（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->

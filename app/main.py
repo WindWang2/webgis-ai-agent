@@ -44,6 +44,7 @@ from app.api.routes import project_runtime as project_runtime_routes  # noqa: E4
 from app.api.routes import project_data_refresh as project_data_refresh_routes  # noqa: E402  # G10
 from app.api.routes import project_knowledge as project_knowledge_routes  # noqa: E402
 from app.api.routes import data_delivery as data_delivery_routes  # noqa: E402  # G18 数据交付
+from app.api.routes import task_data_supply as task_data_supply_routes  # noqa: E402  # GOAL-02 任务数据供给
 from app.api.routes import selection_handles as selection_handles_routes  # noqa: E402  # G24 权威选择集句柄
 # Spatial Event Control Plane（事件驱动空间操作控制平面）：REST/SSE/webhook/
 # replay + Mission Portfolio 只读投影（org 域；runtime 默认关，读路径常开）。
@@ -1199,6 +1200,8 @@ app.include_router(data_join_authoring_routes.router, prefix="/api/v1", tags=["�
 # 多源实体融合工作台（独立 router；UI 与 Pi 共用 data_fusion_authoring.service）
 from app.api.routes import data_fusion_authoring as data_fusion_authoring_routes  # noqa: E402
 app.include_router(data_fusion_authoring_routes.router, prefix="/api/v1", tags=["多源实体融合工作台"])
+# 任务数据供给工作台（GOAL-20261126-02；UI 与 Pi 工具共用 task_data_supply service）
+app.include_router(task_data_supply_routes.router, prefix="/api/v1", tags=["任务数据供给工作台"])
 from app.api.routes import coordinate_operations as coordinate_operations_routes  # noqa: E402
 app.include_router(coordinate_operations_routes.router, prefix="/api/v1", tags=["坐标操作工作台 G45"])
 from app.api.routes import cartographic_assets as cartographic_assets_routes  # noqa: E402
