@@ -27,6 +27,7 @@ import atexit
 import json
 import logging
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -71,22 +72,77 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 # also requires its locked external jiti package under vendor/pi/node_modules.
 # The tsgo-emitted `dist/rpc-entry.js` (workspace-wide build) stays a fallback
 # for source checkouts. First existing entry wins; pi_doctor surfaces which.
-PI_RPC_ENTRY_CANDIDATES = (
-    REPO_ROOT / "vendor" / "pi" / "packages" / "coding-agent" / "dist" / "bundle" / "rpc-entry.js",
-    REPO_ROOT / "vendor" / "pi" / "packages" / "coding-agent" / "dist" / "rpc-entry.js",
-)
+
+# ADR-0301 D4：开发期 vendor 目录 override（仅显式 opt-in）。生产镜像与 CI 不设置
+# 该变量，行为与默认路径完全一致；设置后 identity/doctor 会把来源标注为
+# env_override（身份可追溯）。指向非 Pi checkout 时忽略并回退 canonical 路径。
+PI_VENDOR_DIR_ENV = "PI_VENDOR_DIR"
+
+
+def vendor_pi_dir() -> tuple[Path, str]:
+    """(directory, source) — ``source`` is ``"default"`` or ``"env_override"``."""
+    override = os.environ.get(PI_VENDOR_DIR_ENV, "").strip()
+    if override:
+        candidate = Path(override).expanduser().resolve()
+        if (candidate / "package.json").is_file():
+            return candidate, "env_override"
+        logger.warning(
+            "CONFIG: ignoring %s=%r — not a Pi checkout (no package.json); "
+            "using canonical vendor/pi",
+            PI_VENDOR_DIR_ENV, override[:128],
+        )
+    return REPO_ROOT / "vendor" / "pi", "default"
+
+
+def pi_rpc_entry_candidates(vendor_dir: Path | None = None) -> tuple[Path, ...]:
+    base = (vendor_dir or vendor_pi_dir()[0]) / "packages" / "coding-agent" / "dist"
+    return (base / "bundle" / "rpc-entry.js", base / "rpc-entry.js")
 
 
 def resolve_pi_rpc_entry() -> Path:
     """First built Pi RPC entry that exists (bundle preferred), else the
     canonical bundle path (so the FileNotFoundError names the primary target)."""
-    for candidate in PI_RPC_ENTRY_CANDIDATES:
+    candidates = pi_rpc_entry_candidates()
+    for candidate in candidates:
         if candidate.is_file():
             return candidate
-    return PI_RPC_ENTRY_CANDIDATES[0]
+    return candidates[0]
 
 
+# Evaluated at import: an env override set before process start wins; tests that
+# mutate the environment afterwards should call resolve_pi_rpc_entry() directly.
 PI_RPC_ENTRY = resolve_pi_rpc_entry()
+
+#: 版本探针超时（秒）。探针每次 spawn 一个 ``node --version`` 进程，必须短。
+PI_VERSION_PROBE_TIMEOUT = 10.0
+
+
+def probe_pi_entry_version(entry: Path | None = None) -> tuple[str | None, str]:
+    """Run the *actual* RPC entry with ``--version`` and return ``(version,
+    source)``. Source is ``"entry_probe"`` on success, ``"unknown"`` otherwise
+    (missing node, unbuilt entry, timeout). This is the vendor's own answer
+    about itself — the strongest runtime version evidence short of an RPC
+    handshake, and the same entry the bridge will spawn."""
+    target = Path(entry) if entry is not None else resolve_pi_rpc_entry()
+    if not target.is_file():
+        return None, "unknown"
+    try:
+        res = subprocess.run(
+            ["node", str(target), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=PI_VERSION_PROBE_TIMEOUT,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None, "unknown"
+    if res.returncode != 0:
+        return None, "unknown"
+    m = re.fullmatch(r"(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)", res.stdout.strip())
+    if not m:
+        return None, "unknown"
+    return m.group(1), "entry_probe"
+
+
 PI_AGENT_DIR = REPO_ROOT / ".pi" / "agent"
 DEFAULT_SESSION_DIR = REPO_ROOT / ".pi" / "sessions"
 BUNDLED_PI_PROVIDER = "webgis"
@@ -186,6 +242,44 @@ def _pi_subprocess_env(source: "os._Environ[str] | dict[str, str]") -> dict[str,
     }
 
 
+class PiStderrDiagnostics:
+    """Bounded, redacted ring of Pi stderr diagnostics (ADR-0301 D5).
+
+    v1.6.x RPC mode writes startup/session-replacement/extension diagnostics
+    to stderr. Lines are stored truncated and path-redacted — stderr is
+    diagnostics, never protocol data, and must never carry internal paths or
+    credentials into durable surfaces.
+    """
+
+    MAX_LINES = 64
+    MAX_LINE_CHARS = 200
+
+    def __init__(self, max_lines: int = MAX_LINES) -> None:
+        self._lines: list[str] = []
+        self._max_lines = max_lines
+        self._total = 0
+
+    def record(self, line: str) -> None:
+        try:
+            from app.utils.security import redact_paths, sanitize_error_msg
+
+            # R1-P3-4（防御纵深）：redact_paths 之外再过 sanitize_error_msg
+            # （Bearer/密钥形 token 打码）——当前 stderr 来源虽不含 header
+            # 原文，诊断面不该依赖来源假设。
+            redacted = redact_paths(sanitize_error_msg(line))
+        except Exception:  # noqa: BLE001 — 诊断记录绝不打断读循环
+            redacted = line
+        self._lines.append(redacted[: self.MAX_LINE_CHARS])
+        del self._lines[:-self._max_lines]
+        self._total += 1
+
+    def snapshot(self) -> dict:
+        return {"total_lines": self._total, "recent": list(self._lines)}
+
+    def __len__(self) -> int:
+        return len(self._lines)
+
+
 class PiRpcClient:
     """Owns the Pi subprocess and the async JSON-RPC multiplexing over pipes.
 
@@ -234,6 +328,9 @@ class PiRpcClient:
         self._surface_dump_path: Optional[Path] = None
         self._reader_task: Optional[asyncio.Task] = None
         self._stderr_task: Optional[asyncio.Task] = None
+        # ADR-0301 D5：stderr 有界诊断环（v1.6.x RPC 模式把启动/会话替换/
+        # 扩展诊断写到 stderr——不再只进 debug 日志，stop 时对账）。
+        self._stderr_diagnostics = PiStderrDiagnostics()
         # 审计 AGENT-05：Pi 进程死亡后标记为 True，让 _use_pi_bridge() 能回退
         self._process_died = False
         # 与 _process_died 同步翻转的 asyncio.Event：stream_prompt 把它和事件
@@ -248,6 +345,12 @@ class PiRpcClient:
         # container level; this hook covers the application level. SIGKILL/OOM
         # is uncatchable and remains a deployment-level concern (tini/init).
         atexit.register(self._cleanup_on_exit)
+
+    @property
+    def stderr_diagnostics(self) -> "PiStderrDiagnostics":
+        """Bounded stderr diagnostic ring (ADR-0301 D5) — read-only surface
+        for bridge/doctor consumption."""
+        return self._stderr_diagnostics
 
     def _cleanup_on_exit(self) -> None:
         """Terminate the Pi subprocess if still alive (atexit safety net).
@@ -604,6 +707,19 @@ class PiRpcClient:
         if proc is None:
             return
 
+        # ADR-0301 D5：stop 对账 —— 本代 stderr 诊断摘要有界落日志
+        #（redact 已在 record 时做；recent 只取最后 5 条，防日志膨胀）。
+        # 测试桩可经 __new__ 绕过 __init__（无该字段）——缺席即跳过。
+        _diag = getattr(self, "_stderr_diagnostics", None)
+        if _diag is not None:
+            _snap = _diag.snapshot()
+            if _snap["total_lines"]:
+                logger.info(
+                    "[PiRpcClient] stderr diagnostics: %d lines this generation; "
+                    "recent=%r",
+                    _snap["total_lines"], _snap["recent"][-5:],
+                )
+
         # CONC-F5: the reader task's finally can clear self._process the
         # moment the terminated process exits (EOF → poll() is not None) —
         # dereferencing the field again below raised AttributeError and
@@ -668,6 +784,9 @@ class PiRpcClient:
         """Read and log stderr lines from Pi subprocess to prevent OS pipe deadlock.
 
         G37（世代钉扎）：与 _read_responses 同款 —— 只读自己代际的 stderr。
+        ADR-0301 D5：v1.6.x RPC 模式把启动/会话替换/扩展诊断写到 stderr
+        （print/JSON/RPC 模式同语义）——除 debug 日志外进入有界诊断环，
+        供 stop 对账与运维快照（不进协议流、不假设语义）。
         """
         if proc is None:
             proc = self._process
@@ -678,6 +797,7 @@ class PiRpcClient:
                     break
                 line = line.strip()
                 if line:
+                    self._stderr_diagnostics.record(line)
                     logger.debug(f"[PiStderr] {line[:200]}")
         except asyncio.CancelledError:
             raise

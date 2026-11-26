@@ -256,6 +256,17 @@ TURN_SCRIPTS = {
         }},
         {"text": "缓冲区分析已完成。"},
     ],
+    # J9（ADR-0301 WP3）：英文发现闭环（双语语料第二半）—— 英文查询走同一
+    # BM25/Intl.Segmenter 检索语料（工具描述以英文为主），发现→声明→直调
+    # 全链与中文一致；发现能力不得隐含中文专用假设。
+    "Run a 500 meter buffer analysis on the selected schools": [
+        {"tool": "tool_search", "args": {"query": "buffer polygon distance"}},
+        {"tool": "buffer_analysis", "args": {
+            "geojson": INLINE_SCHOOLS_FC,
+            "distance": 500,
+        }},
+        {"text": "Buffer analysis completed."},
+    ],
 }
 
 
@@ -830,6 +841,45 @@ def main() -> int:
             }
         except Exception as exc:  # noqa: BLE001 — 单旅程失败入 verdict
             verdict["fail"].append("J8 request error: " + str(exc)[:200])
+
+        # ── J9（ADR-0301 WP3）：英文 tool_search 发现闭环（双语语料第二半）
+        #    与 J8 同链路：英文查询 → 发现 deferred 长尾 → 声明面 merge →
+        #    直调真实执行。发现能力不得隐含中文专用假设。──
+        J9_MSG = "Run a 500 meter buffer analysis on the selected schools"
+        try:
+            body9 = _post_stream_raw(J9_MSG, RUN + "-j9", owner_token=cd_owner)
+            ev9 = _parse_sse(body9)
+            declared_9 = []
+            for ln in rec.read_text(encoding="utf-8").splitlines():
+                try:
+                    row = json.loads(ln)
+                except Exception:  # noqa: BLE001
+                    continue
+                if row.get("key") == J9_MSG:
+                    declared_9.append(row.get("tools") or [])
+            verdict["journeys"]["J9"] = {
+                "names": [e["event"] for e in ev9],
+                "search_executed": any(
+                    e["event"] in ("step_result", "tool_call")
+                    and e["data"].get("tool") == "tool_search" for e in ev9),
+                "declared_buffer": any(
+                    "buffer_analysis" in (tools or []) for tools in declared_9),
+                "buffer_ok": any(
+                    e["event"] == "step_result"
+                    and e["data"].get("tool") == "buffer_analysis"
+                    and isinstance(e["data"].get("result"), dict)
+                    and (
+                        e["data"]["result"].get("success") is True
+                        or e["data"]["result"].get("status") == "ok"
+                    )
+                    for e in ev9),
+                "step_errors": [
+                    {"tool": e["data"].get("tool"), "error": str(e["data"].get("error"))[:300]}
+                    for e in ev9 if e["event"] == "step_error"
+                ],
+            }
+        except Exception as exc:  # noqa: BLE001 — 单旅程失败入 verdict
+            verdict["fail"].append("J9 request error: " + str(exc)[:200])
     finally:
         server.should_exit = True
         thread.join(timeout=10)
@@ -974,3 +1024,10 @@ async def test_a5_journeys_on_real_pi_bridge():
     assert j["J8"]["declared_buffer"] is True, j["J8"]
     assert j["J8"]["buffer_ok"] is True, j["J8"]
     assert not j["J8"]["step_errors"], j["J8"]["step_errors"]
+
+    # J9（ADR-0301 WP3）：英文发现闭环（双语语料）——同链路不同语言。
+    assert "J9" in j, verdict.get("fail")
+    assert j["J9"]["search_executed"] is True, j["J9"]
+    assert j["J9"]["declared_buffer"] is True, j["J9"]
+    assert j["J9"]["buffer_ok"] is True, j["J9"]
+    assert not j["J9"]["step_errors"], j["J9"]["step_errors"]
