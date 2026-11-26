@@ -305,6 +305,47 @@ def test_update_instance_cas_conflict_returns_none(store, factory, monkeypatch):
     assert after["revision"] == rev0 + 1
 
 
+def test_update_instance_db_busy_is_not_cas_conflict(store):
+    """库锁必须上抛 StoreUnavailable，不能与 CAS 冲突的 None 混同。"""
+    from sqlalchemy.exc import OperationalError
+
+    inst = _make(store)
+
+    class _BusyFactory:
+        def __call__(self):
+            raise OperationalError("UPDATE 1", {}, Exception("database is locked"))
+
+    store._factory = _BusyFactory()
+    with pytest.raises(ST.StoreUnavailable):
+        store.update_instance(inst["instance_id"],
+                              fields={"status": C.InstanceStatus.FAILED})
+
+
+def test_stale_cancel_flag_blocks_reuse_and_requeue(store):
+    """取消旗标置位后，STALE 不得经复用或重排越过取消。"""
+    inst = _make(store)
+    iid = inst["instance_id"]
+    nid = "data:subject"
+    store.transition_node(iid, nid, C.NodeState.READY,
+                          expected_from=C.NodeState.PENDING)
+    store.transition_node(iid, nid, C.NodeState.STALE,
+                          expected_from=C.NodeState.READY)
+    assert store.request_node_cancel(iid, [nid]) == [nid]
+
+    reused = store.transition_node(
+        iid, nid, C.NodeState.SUCCEEDED,
+        expected_from=C.NodeState.STALE, complete=True)
+    requeued = store.transition_node(
+        iid, nid, C.NodeState.READY,
+        expected_from=C.NodeState.STALE)
+
+    assert not reused.ok and reused.code == "CANCEL_REQUESTED"
+    assert not requeued.ok and requeued.code == "CANCEL_REQUESTED"
+    assert store.get_node(iid, nid)["state"] == C.NodeState.STALE
+    cancelled = store.transition_node(iid, nid, C.NodeState.CANCELLED)
+    assert cancelled.ok
+
+
 # ── registry ─────────────────────────────────────────────────────────────
 
 class _FakePkg:

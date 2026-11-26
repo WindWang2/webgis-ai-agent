@@ -383,8 +383,10 @@ class AlgorithmRegistry:
         self._tool_to_algorithms_cache: Optional[Dict[str, List[str]]] = None
         self._by_id: Dict[str, AlgorithmDescriptor] = {}
         self._by_capability: Dict[str, List[str]] = {}
+        self._mutation_revision = 0
 
     def load_builtins(self) -> None:
+        self._mutation_revision += 1
         self._by_id.clear()
         self._by_capability.clear()
         for algo in _load_seed_algorithms():
@@ -404,6 +406,7 @@ class AlgorithmRegistry:
             candidates.sort(
                 key=lambda aid: (self._by_id[aid].priority, aid),
             )
+        self._mutation_revision += 1
 
     def get(self, algorithm_id: str) -> Optional[AlgorithmDescriptor]:
         return self._by_id.get(algorithm_id)
@@ -423,6 +426,7 @@ class AlgorithmRegistry:
                     self._by_capability.pop(cap, None)
         self._tool_to_capability_cache = None
         self._tool_to_algorithms_cache = None
+        self._mutation_revision += 1
         return True
 
     def has(self, algorithm_id: str) -> bool:

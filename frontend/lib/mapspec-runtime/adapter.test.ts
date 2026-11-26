@@ -305,6 +305,33 @@ describe("MapSpec Runtime Adapter — hudStateToMapSpec (ADR-0036)", () => {
       expect(heat!.paint).toHaveProperty("heatmap-opacity");
     });
 
+    it("applies layer, legend-range and selection filters to native heatmap", () => {
+      const source = {
+        ...fc(pointFeature({ score: 10 })),
+        metadata: { field: "score" },
+      } as any;
+      const layer = baseLayer({
+        type: "heatmap",
+        source,
+        filter: ["==", ["get", "enabled"], true],
+      });
+      const spec = hudStateToMapSpec({
+        layers: [layer],
+        processLayers: {},
+        activeFilters: { L1: [[0, 25]] },
+        selectionFilters: { L1: ["==", ["get", "selected"], true] },
+        is3D: false,
+      });
+      const heat = spec.layers.find((l) => l.type === "heatmap")!;
+      expect(heat.filter).toEqual([
+        "all",
+        ["==", ["geometry-type"], "Point"],
+        ["==", ["get", "enabled"], true],
+        ["any", ["all", [">=", ["get", "score"], 0], ["<", ["get", "score"], 25]]],
+        ["==", ["get", "selected"], true],
+      ]);
+    });
+
     it("does NOT emit separate fill/line/circle sublayers in native heatmap mode", () => {
       const layer = baseLayer({
         type: "heatmap",

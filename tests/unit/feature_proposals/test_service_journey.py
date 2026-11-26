@@ -272,3 +272,76 @@ async def test_p04_same_field_conflict_blocks_merge(client, _isolated_store):
         json={"action": "approve"},
     )
     assert resp.status_code == 409
+
+
+# ── P2：rebase 回收旧 base，但跨活跃提案共享引用不得误删 ────────────────────
+
+
+async def test_rebase_deletes_unique_superseded_base_blob(client, _isolated_store):
+    from app.services.feature_proposals.snapshot import _blob_store
+
+    s = sid()
+    ref = await _seed_ref(s)
+    resp = await client.post(f"/api/v1/chat/sessions/{s}/feature-proposals", json={
+        "ref_id": ref, "submit": True,
+        "ops": [{"op": "set_fields", "wfids": ["s1"], "fields": {"capacity": 777}}],
+    })
+    assert resp.status_code == 201, resp.text
+    pid = resp.json()["proposal_id"]
+    before = await _isolated_store.get_proposal(s, pid)
+    old_key = before.base.snapshot_key
+
+    await _immediate_edit(
+        s, ref, [{"op": "set_fields", "fields": {"capacity": 1300}}], feature_ids=["s3"],
+    )
+    resp = await client.post(
+        f"/api/v1/chat/sessions/{s}/feature-proposals/{pid}/rebase",
+        json={"expected_revision": before.revision, "apply": True},
+    )
+    assert resp.status_code == 200, resp.text
+    after = await _isolated_store.get_proposal(s, pid)
+    assert after.base.snapshot_key != old_key
+    assert _blob_store().exists(old_key) is False
+    assert _blob_store().exists(after.base.snapshot_key) is True
+
+
+async def test_rebase_keeps_old_blob_while_another_active_proposal_references_it(
+    client, _isolated_store,
+):
+    from app.services.feature_proposals.snapshot import _blob_store
+
+    s = sid()
+    ref = await _seed_ref(s)
+    pids = []
+    for target, value in (("s1", 111), ("s2", 222)):
+        resp = await client.post(f"/api/v1/chat/sessions/{s}/feature-proposals", json={
+            "ref_id": ref, "submit": True,
+            "ops": [{"op": "set_fields", "wfids": [target], "fields": {"capacity": value}}],
+        })
+        assert resp.status_code == 201, resp.text
+        pids.append(resp.json()["proposal_id"])
+    first = await _isolated_store.get_proposal(s, pids[0])
+    second = await _isolated_store.get_proposal(s, pids[1])
+    assert first.base.snapshot_key == second.base.snapshot_key
+    shared_key = first.base.snapshot_key
+
+    await _immediate_edit(
+        s, ref, [{"op": "set_fields", "fields": {"capacity": 1300}}], feature_ids=["s3"],
+    )
+    resp = await client.post(
+        f"/api/v1/chat/sessions/{s}/feature-proposals/{pids[0]}/rebase",
+        json={"expected_revision": first.revision, "apply": True},
+    )
+    assert resp.status_code == 200, resp.text
+    assert _blob_store().exists(shared_key) is True
+
+    resp = await client.get(
+        f"/api/v1/chat/sessions/{s}/feature-proposals/{pids[1]}/diff",
+    )
+    assert resp.status_code == 200, resp.text
+    resp = await client.post(
+        f"/api/v1/chat/sessions/{s}/feature-proposals/{pids[1]}/withdraw",
+        json={"action": "withdraw"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert _blob_store().exists(shared_key) is False

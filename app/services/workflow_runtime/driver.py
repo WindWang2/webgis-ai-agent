@@ -1106,8 +1106,8 @@ class Driver:
         port_descs: Dict[str, Any] = {}
         port_idents: Dict[str, Dict[str, str]] = {}
         for idx, (up, to_port) in enumerate(
-                [(u, "") for u in M.upstream_of(dag).get(node_id, ())][:4]
-                if not edge_ports else edge_ports[:4]):
+                [(u, "") for u in M.upstream_of(dag).get(node_id, ())][:6]
+                if not edge_ports else edge_ports[:6]):
             row = await asyncio.to_thread(self.store.get_node, instance_id, up)
             ref = (row or {}).get("output_ref") or (row or {}).get("bound_ref") or ""
             if not ref:
@@ -1392,10 +1392,16 @@ class Driver:
             if st in (C.NodeState.SUCCEEDED, C.NodeState.FAILED,
                       C.NodeState.SKIPPED, C.NodeState.CANCELLED):
                 continue
-            await asyncio.to_thread(
+            r = await asyncio.to_thread(
                 self.store.transition_node,
                 instance_id, nid, C.NodeState.CANCELLED,
                 reason="INSTANCE_CANCELLED", event="cancel")
+            if r.ok:
+                states[nid] = C.NodeState.CANCELLED
+            else:
+                logger.warning(
+                    "[WorkflowRuntime] instance cancel failed %s/%s: %s",
+                    instance_id, nid, r.code)
         inst = await asyncio.to_thread(
             self.store.get_instance, instance_id, self.owner_scope)
         if inst is None or inst["status"] in C.INSTANCE_TERMINAL_STATUSES:

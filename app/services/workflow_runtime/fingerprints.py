@@ -9,7 +9,7 @@
 - env_fp 覆盖一切影响数值输出的版本面：运行时/编译器/执行契约版本、
   geo 数值栈（geopandas/shapely/pyproj）实际安装版本、方法论注册表
   指纹、算法注册表指纹（同 id 换实现/换版本 → 全体复用键失效）；
-- 全部确定性：同输入同指纹；有界：输入端口 ≤8 参与指纹。
+- 全部确定性：同输入同指纹；有界：输入端口 ≤6 参与指纹。
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from app.services.workflow_runtime import RUNTIME_SCHEMA_VERSION
 #: 指纹 v2（v1 未发布过；字段演进时递增使旧键自然失效）。
 _REUSE_FINGERPRINT_VERSION = 2
 #: 参与指纹的输入端口上限（与 TypedPort inputs 预算一致）。
-_MAX_FINGERPRINT_INPUTS = 8
+_MAX_FINGERPRINT_INPUTS = 6
 
 #: 内容指纹级别词表（eligibility 只认 content / profile_digest）。
 FP_LEVEL_CONTENT = "content"
@@ -35,7 +35,7 @@ REUSABLE_LEVELS = frozenset({FP_LEVEL_CONTENT, FP_LEVEL_PROFILE_DIGEST})
 _GEO_STACK_MODULES: Tuple[str, ...] = ("geopandas", "shapely", "pyproj", "numpy")
 
 _geo_stack_digest_cache: Optional[str] = None
-_algorithm_registry_fp_cache: Tuple[Optional[Any], str] = (None, "")
+_algorithm_registry_fp_cache: Tuple[Optional[Any], int, str] = (None, 0, "")
 
 
 def canonical_fingerprint(payload: Any) -> str:
@@ -67,24 +67,31 @@ def geo_stack_digest() -> str:
 
 
 def algorithm_registry_fingerprint() -> str:
-    """算法注册表指纹：(algorithm_id, version) 全集 digest（缓存随注册表
-    单例身份失效——reset 后重建）[R1-M4]。"""
+    """算法注册表指纹：算法描述符（含 id/version）全集 digest。
+
+    缓存同时跟随注册表对象身份与原地变更 revision —— register /
+    unregister / load_builtins 均会使既有复用键失效 [R1-M4]。
+    """
     global _algorithm_registry_fp_cache
     from app.lib.gis.algorithm_registry import get_algorithm_registry
 
     reg = get_algorithm_registry()
-    cached_reg, cached_fp = _algorithm_registry_fp_cache
-    if cached_reg is reg and cached_fp:
+    revision = int(getattr(reg, "_mutation_revision", 0) or 0)
+    cached_reg, cached_revision, cached_fp = _algorithm_registry_fp_cache
+    if cached_reg is reg and cached_revision == revision and cached_fp:
         return cached_fp
     try:
         pairs = sorted(
-            (algo_id, str(getattr(desc, "version", "") or ""))
+            (algo_id, str(getattr(desc, "version", "") or ""),
+             canonical_fingerprint(
+                 desc.model_dump(mode="json")
+                 if hasattr(desc, "model_dump") else repr(desc)))
             for algo_id, desc in getattr(reg, "_by_id", {}).items()
         )
     except Exception:  # noqa: BLE001 — 指纹是增值面，失败诚实留空
         pairs = []
     fp = canonical_fingerprint(pairs)
-    _algorithm_registry_fp_cache = (reg, fp)
+    _algorithm_registry_fp_cache = (reg, revision, fp)
     return fp
 
 

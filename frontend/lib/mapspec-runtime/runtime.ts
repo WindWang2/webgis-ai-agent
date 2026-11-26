@@ -186,6 +186,8 @@ export class MapSpecRuntime {
     offsets: Array<{ featureId: string; idKey: string | null; dx: number; dy: number }>;
   }>();
   private calloutMoveHooked = false;
+  /** moveend 处理器引用 —— dispose 时对称 off（与 zoomEndHandler 同款）。 */
+  private calloutMoveHandler: (() => void) | null = null;
 
   // ── 标注运行时状态（ac-05，ADR-0154；只服务 `${id}-label` 子层）──────
   /** 标注决策/降级 evidence 环形日志（cap 200；getLabelEvents() 消费）。 */
@@ -1124,6 +1126,13 @@ export class MapSpecRuntime {
       this.zoomEndHandler = null;
       this.zoomHooked = false;
     }
+    if (this.calloutMoveHandler) {
+      try {
+        (this.map as any)?.off?.("moveend", this.calloutMoveHandler);
+      } catch { /* map 已半销毁时忽略 */ }
+      this.calloutMoveHandler = null;
+    }
+    this.calloutMoveHooked = false;
     this.labelRegistrations.clear();
     // ADR-0199：对称解绑场景地形错误监听（同 #1309 语义 —— 防滞留 handler）。
     if (this.terrainErrorHandler) {
@@ -2237,12 +2246,13 @@ export class MapSpecRuntime {
     const mapAny = this.map as any;
     if (typeof mapAny.on !== "function") return;
     this.calloutMoveHooked = true;
-    mapAny.on("moveend", () => {
+    this.calloutMoveHandler = () => {
       if (this.disposed) return;
       for (const labelId of Array.from(this.labelCalloutRegs.keys())) {
         this.refreshCalloutLayer(labelId);
       }
-    });
+    };
+    mapAny.on("moveend", this.calloutMoveHandler);
   }
 
   /** G16：卸载本层的 authoring 子层（label 移除/覆写清空时）—— pinned

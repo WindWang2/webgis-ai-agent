@@ -60,6 +60,23 @@ def test_default_policy_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     assert policy.max_delay_s == 4.0
 
 
+@pytest.mark.parametrize("base_delay,max_delay", [
+    ("0", "8"),
+    ("61", "8"),
+    ("0.5", "0"),
+    ("0.5", "301"),
+    ("nan", "inf"),
+])
+def test_default_policy_invalid_delay_env_falls_back(
+    monkeypatch: pytest.MonkeyPatch, base_delay: str, max_delay: str,
+) -> None:
+    monkeypatch.setenv("GIS_WORKFLOW_RETRY_BASE_DELAY_S", base_delay)
+    monkeypatch.setenv("GIS_WORKFLOW_RETRY_MAX_DELAY_S", max_delay)
+    policy = RT.default_policy()
+    assert policy.base_delay_s == 0.5
+    assert policy.max_delay_s == 8.0
+
+
 def test_default_policy_garbage_env_falls_back(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

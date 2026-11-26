@@ -39,6 +39,58 @@ def test_reuse_fingerprint_deterministic_and_sensitive():
     assert fp1 != F.node_reuse_fingerprint(**{**kw, "env_fp": "f" * 32})
 
 
+def test_reuse_fingerprint_uses_six_input_budget():
+    """第 7 个输入不参与指纹，第 6 个仍必须敏感。"""
+    inputs = {
+        f"input{i}": {"level": "content", "fp": str(i) * 32,
+                      "content_revision": "1"}
+        for i in range(7)
+    }
+    kw = dict(package_fingerprint="pkg" * 10, node_id="cap:x",
+              algorithm_id="algo", params={}, inputs=inputs, env_fp="e" * 32)
+    base = F.node_reuse_fingerprint(**kw)
+    assert base != F.node_reuse_fingerprint(**{
+        **kw, "inputs": {**inputs, "input5": {
+            "level": "content", "fp": "x" * 32, "content_revision": "1"}}})
+    assert base == F.node_reuse_fingerprint(**{
+        **kw, "inputs": {**inputs, "input6": {
+            "level": "content", "fp": "x" * 32, "content_revision": "1"}}})
+
+
+def test_algorithm_registry_fingerprint_tracks_in_place_mutations(monkeypatch):
+    """单例身份不变时，register/unregister/load_builtins 也必须失效缓存。"""
+    from app.lib.gis.algorithm_registry import (
+        AlgorithmDescriptor,
+        AlgorithmRegistry,
+    )
+
+    reg = AlgorithmRegistry()
+    first = AlgorithmDescriptor(
+        id="ext.test", name="first", capabilities=["test"], version="1.0")
+    second = AlgorithmDescriptor(
+        id="ext.other", name="other", capabilities=["test"], version="1.0")
+    replacement = AlgorithmDescriptor(
+        id="ext.test", name="replacement", capabilities=["test"], version="1.0")
+    monkeypatch.setattr(
+        "app.lib.gis.algorithm_registry.get_algorithm_registry", lambda: reg)
+
+    reg.register(first)
+    initial = F.algorithm_registry_fingerprint()
+    assert F.algorithm_registry_fingerprint() == initial
+    reg.register(second)
+    after_register = F.algorithm_registry_fingerprint()
+    assert after_register != initial
+    reg.unregister(second.id)
+    after_unregister = F.algorithm_registry_fingerprint()
+    assert after_unregister != after_register
+    reg.unregister(first.id)
+    reg.register(replacement)
+    after_replacement = F.algorithm_registry_fingerprint()
+    assert after_replacement != after_unregister
+    reg.load_builtins()
+    assert F.algorithm_registry_fingerprint() != after_replacement
+
+
 def test_input_identity_levels():
     # content 级最高
     d = {"content_hash": "z" * 32, "content_revision": 7,

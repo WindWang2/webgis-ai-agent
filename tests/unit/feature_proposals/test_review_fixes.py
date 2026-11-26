@@ -499,3 +499,64 @@ async def test_p3_list_proposals_negative_offset_clamped(client, _isolated):
     assert listing["total"] == 2
     assert listing["offset"] == 0
     assert len(listing["items"]) == 2  # 未修复时 items[-1:49] 只剩 1 条
+
+
+# ── P2：非 FC 早返回必须保留 unresolved_conflicts（snap 依赖组装不再 500）───
+
+
+async def test_non_fc_conflict_report_is_blocked_with_snap_dependency():
+    from types import SimpleNamespace
+
+    from app.schemas.feature_proposal_schema import BaseEvidence
+    from app.services.feature_proposals.bridge import build_conflict_report
+
+    base = BaseEvidence(
+        ref_id="ref:target", content_revision=1, fingerprint="fp-base",
+        snapshot_key="a" * 64, snapshot_sha256="a" * 64, snapshot_bytes=2,
+        materialized=False, captured_at=1.0,
+    )
+    proposal = SimpleNamespace(
+        base=base,
+        ops=[{"op": "snap_to_ref", "ref_id": "ref:dep"}],
+        resolutions=[], feature_ids=None, op_seed="seed",
+    )
+    report = await build_conflict_report(
+        proposal,
+        current_payload={"type": "not-a-feature-collection"},
+        current_fingerprint="fp-current",
+        base_payload={"type": "FeatureCollection", "features": []},
+        dep_fingerprints_current={},
+    )
+    assert report["verdict"] == "blocked"
+    assert report["unresolved_conflicts"]
+    assert any(c["conflict_id"] == "payload-not-fc" for c in report["unresolved_conflicts"])
+
+
+# ── P2：dependency_changed 只删除该 ref 的 snap op，并明确记录删除数量 ───────
+
+
+def test_dependency_resolution_preserves_other_snap_refs():
+    from app.services.feature_proposals.rebase import apply_resolutions_to_ops
+
+    ops = [
+        {"op": "snap_to_ref", "ref_id": "ref:a", "wfids": ["s1"]},
+        {"op": "snap_to_ref", "ref_id": "ref:b", "wfids": ["s2"]},
+        {"op": "set_fields", "wfids": ["s3"], "fields": {"capacity": 5}},
+    ]
+    conflicts = [
+        {"conflict_id": "dependency:snap_ref:ref:a", "kind": "dependency_changed",
+         "detail": {"ref_id": "ref:a"}},
+        {"conflict_id": "dependency:snap_ref:ref:b", "kind": "dependency_changed",
+         "detail": {"ref_id": "ref:b"}},
+    ]
+    new_ops, applied, rejected = apply_resolutions_to_ops(
+        ops,
+        [{"conflict_id": "dependency:snap_ref:ref:a", "action": "keep_current"}],
+        conflicts,
+        base_payload=SCHOOLS,
+    )
+    assert rejected == []
+    assert new_ops == [ops[1], ops[2]]
+    assert len(applied) == 1
+    assert "ref:a" in applied[0]["effect"]
+    assert "1 snap_to_ref" in applied[0]["effect"]

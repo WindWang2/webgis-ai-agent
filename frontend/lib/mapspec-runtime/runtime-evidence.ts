@@ -111,8 +111,18 @@ function liveConstantOpacity(
     const opacityKeys = Object.keys(candidate.paint ?? {}).filter(
       (key) => key.endsWith("-opacity"),
     );
+    const primaryOpacityKey = `${candidate.type}-opacity`;
+    if (
+      ["fill", "fill-extrusion", "line", "circle", "heatmap", "raster"].includes(candidate.type)
+      && !opacityKeys.includes(primaryOpacityKey)
+    ) {
+      opacityKeys.push(primaryOpacityKey);
+    }
     for (const key of opacityKeys) {
-      const value = liveProperty(map, actual, candidate.id, "paint", key);
+      const liveValue = liveProperty(map, actual, candidate.id, "paint", key);
+      const value = liveValue === undefined && actual?.paint?.[key] === undefined
+        ? 1
+        : liveValue;
       if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
       values.push(value);
     }

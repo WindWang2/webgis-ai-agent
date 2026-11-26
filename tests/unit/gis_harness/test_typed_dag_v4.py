@@ -145,6 +145,39 @@ def test_validator_catches_cycle_dangling_and_unreachable() -> None:
                for v in validate_typed_dag(unk))
 
 
+def test_validator_rejects_input_budget_overflow_at_compile_boundary() -> None:
+    """有效上游与声明端口均受 6 输入预算约束，超限不得静默截断。"""
+    def _fan_in(count: int) -> TypedWorkflowGraph:
+        sources = [
+            TypedWorkflowNode(
+                node_id=f"data:{i}", kind="data_input",
+                outputs=[TypedPort(name="output")])
+            for i in range(count)
+        ]
+        target = TypedWorkflowNode(
+            node_id="cap:fan_in", kind="analysis",
+            inputs=[TypedPort(name="input")],
+            outputs=[TypedPort(name="output")],
+            depends_on=tuple(n.node_id for n in sources))
+        edges = [
+            TypedWorkflowEdge(from_node=n.node_id, from_port="output",
+                              to_node=target.node_id, to_port="input")
+            for n in sources
+        ]
+        return TypedWorkflowGraph(nodes=[*sources, target], edges=edges)
+
+    assert not any(v.startswith("TYPED_DAG_INPUT_LIMIT")
+                   for v in validate_typed_dag(_fan_in(6)))
+    assert any(v.startswith("TYPED_DAG_INPUT_LIMIT:cap:fan_in:7>6")
+               for v in validate_typed_dag(_fan_in(7)))
+
+    too_many_ports = TypedWorkflowGraph(nodes=[TypedWorkflowNode(
+        node_id="cap:ports", kind="analysis",
+        inputs=[TypedPort(name=f"input{i}") for i in range(7)])])
+    assert any(v.startswith("TYPED_DAG_INPUT_LIMIT:cap:ports:7>6")
+               for v in validate_typed_dag(too_many_ports))
+
+
 def test_build_deterministic_and_bounded() -> None:
     steps = [SimpleNamespace(capability="analytical_density", status="pending",
                              resolved_algorithm="spatial.kde.surface",

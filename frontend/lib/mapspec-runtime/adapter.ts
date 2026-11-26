@@ -468,7 +468,7 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
         "heatmap-opacity": asHeatValue(heatPaint["heatmap-opacity"] ?? [
           "interpolate", ["linear"], ["zoom"], 7, 1, 19, 0.85,
         ]),
-      });
+      }, buildLayerFilter("Point"));
     } else if (hasPolygons) {
       if (isHeatmapMode) {
         // Heatgrid fill (map-panel.tsx:275-293)

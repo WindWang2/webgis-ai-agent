@@ -241,6 +241,43 @@ def test_c2_driver_fails_node_on_truncated_input():
     assert outcome.error_code == "INPUT_TRUNCATED"
 
 
+def test_driver_gather_inputs_uses_six_input_budget():
+    """driver 与 typed_dag/指纹统一保留前 6 个上游，不得静默丢第 5、6 个。"""
+    from app.services.workflow_runtime.driver import Driver
+
+    sources = [f"src:{i}" for i in range(7)]
+    dag = {
+        "nodes": [
+            *[{"node_id": nid, "outputs": [{"name": "output"}]}
+              for nid in sources],
+            {"node_id": "cap:fan_in",
+             "inputs": [{"name": f"input{i + 1}"} for i in range(7)]},
+        ],
+        "edges": [
+            {"from": f"{nid}.output", "to": f"cap:fan_in.input{i + 1}"}
+            for i, nid in enumerate(sources)
+        ],
+    }
+
+    class _Store:
+        def get_node(self, _instance_id, node_id):
+            return {"output_ref": f"ref:{node_id}"}
+
+    async def _probe(_session_id, ref):
+        return {"ref_id": ref, "content_hash": ref[-1] * 32,
+                "content_revision": "1"}
+
+    driver = Driver(_Store(), owner_scope=_OWNER, descriptor_probe=_probe)
+
+    async def _gather():
+        return await driver._gather_inputs("wi-1", dag, "cap:fan_in", "s1")
+
+    refs, descs, idents = asyncio.run(_gather())
+    assert refs == [f"ref:{nid}" for nid in sources[:6]]
+    assert set(descs) == {f"input{i}" for i in range(1, 7)}
+    assert set(idents) == set(descs)
+
+
 # ── C3: 完成边界 drain（门控写反已修）────────────────────────────────────
 
 def test_c3_pending_changes_drained_at_completion_boundary():

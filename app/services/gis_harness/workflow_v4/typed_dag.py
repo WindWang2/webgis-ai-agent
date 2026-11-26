@@ -66,6 +66,7 @@ _PORT_TYPE_ANY_FEATURE = "feature_collection"
 
 _MAX_GRAPH_NODES = 64
 _MAX_GRAPH_EDGES = 128
+_MAX_NODE_INPUTS = 6
 
 
 class TypedPort(BaseModel):
@@ -122,7 +123,7 @@ class TypedWorkflowNode(BaseModel):
             "optional": self.optional,
             "side_effect": self.effective_side_effect()[:24],
             "parameters": [{"name": p[:48]} for p in self.parameters[:8]],
-            "inputs": [p.to_bounded_dict() for p in self.inputs[:6]],
+            "inputs": [p.to_bounded_dict() for p in self.inputs[:_MAX_NODE_INPUTS]],
             "outputs": [p.to_bounded_dict() for p in self.outputs[:6]],
         }
 
@@ -216,7 +217,8 @@ def validate_typed_dag(graph: TypedWorkflowGraph) -> List[str]:
     - 边类型兼容：ports_compatible；
     - 有向无环；
     - 主输出可达：所有无出边的 output 节点均可从 data_input 到达；
-    - 词表：kind ⊆ TYPED_NODE_KINDS。
+    - 词表：kind ⊆ TYPED_NODE_KINDS；
+    - 输入预算：每节点有效上游（数据流边 ∪ 结构依赖）≤6。
     """
     violations: List[str] = []
     ids = [n.node_id for n in graph.nodes]
@@ -234,6 +236,17 @@ def validate_typed_dag(graph: TypedWorkflowGraph) -> List[str]:
                 violations.append(f"TYPED_DAG_DANGLING_DEP:{n.node_id}:{dep}")
         if n.fallback_of and n.fallback_of not in by_id:
             violations.append(f"TYPED_DAG_DANGLING_FALLBACK:{n.node_id}")
+        if len(n.inputs) > _MAX_NODE_INPUTS:
+            violations.append(
+                f"TYPED_DAG_INPUT_LIMIT:{n.node_id}:{len(n.inputs)}"
+                f">{_MAX_NODE_INPUTS}")
+        upstream = set(n.depends_on)
+        upstream.update(e.from_node for e in graph.edges
+                        if e.to_node == n.node_id)
+        if len(upstream) > _MAX_NODE_INPUTS:
+            violations.append(
+                f"TYPED_DAG_INPUT_LIMIT:{n.node_id}:{len(upstream)}"
+                f">{_MAX_NODE_INPUTS}")
     for e in graph.edges:
         src, dst = by_id.get(e.from_node), by_id.get(e.to_node)
         if src is None or dst is None:

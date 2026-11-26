@@ -73,11 +73,11 @@ export function projectAuthoring(
     unprojectable: [],
   };
   if (!overrides || overrides.length === 0) return out;
+  const index = new Map<string, string | null>();
   if (!features) {
     // 数据不可复核（外部源）：全部按 unverified 投影（消费侧权威口径）。
     out.active = [...overrides];
   } else {
-    const index = new Map<string, string | null>();
     for (const f of features) {
       const { featureId, idKey } = resolveFeatureIdentity(f);
       if (featureId !== null && !index.has(featureId)) index.set(featureId, idKey);
@@ -96,7 +96,7 @@ export function projectAuthoring(
     if (ov.offset && typeof ov.offset.dx === 'number' && typeof ov.offset.dy === 'number') {
       out.offsetById.set(ov.featureId, [ov.offset.dx, ov.offset.dy]);
     }
-    const idKey = ov.idKey ?? null;
+    const idKey = features ? index.get(ov.featureId) ?? null : ov.idKey ?? null;
     const bucket = out.idsByKeys.get(idKey) ?? [];
     bucket.push(ov.featureId);
     out.idsByKeys.set(idKey, bucket);

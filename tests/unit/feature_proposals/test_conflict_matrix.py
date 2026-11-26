@@ -291,3 +291,31 @@ def test_p12_split_child_identity_stable_across_reloads():
     d3, _, _ = evaluate_candidate(mat, ops, ordered, op_seed="fpr-other-seed")
     ids3 = sorted(d["wfid"] for d in d3)
     assert ids1 != ids3
+
+
+# ── P13：身份可证性必须检查全部预演 wfid（>200 也不例外）────────────────────
+
+
+def test_p13_identity_proof_checks_missing_wfid_beyond_200():
+    base = _fc([
+        _feat(f"f{i}", {"n": i}) for i in range(201)
+    ])
+    from app.services.feature_edit.identity import materialize_wfids
+
+    current, _assigned = materialize_wfids(copy.deepcopy(base), FP)
+    missing_wfid = current["features"][-1]["properties"]["_wfid"]
+    del current["features"][-1]
+    first_wfid = current["features"][0]["properties"]["_wfid"]
+    report = classify_conflicts(
+        base_payload=base,
+        base_fingerprint=FP,
+        current_payload=current,
+        current_fingerprint="fp-cur",
+        ops=[{"op": "set_fields", "wfids": [first_wfid], "fields": {"n": 999}}],
+        ordered_targets=[first_wfid],
+        op_seed="seed-m",
+    )
+    assert report["identity"]["provable"] is False
+    assert report["verdict"] == "blocked"
+    conflict = next(c for c in report["unresolved_conflicts"] if c["kind"] == "identity_unprovable")
+    assert conflict["detail"]["missing_preview_wfids"] == [missing_wfid]
