@@ -1229,6 +1229,9 @@ from app.api.routes import flow_product as flow_product_routes  # noqa: E402
 app.include_router(flow_product_routes.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(interaction_events_routes.router, prefix="/api/v1", tags=["AI对话"])  # ADR-0227 Interaction IR V1
 app.include_router(situation_views_routes.router, prefix="/api/v1", tags=["AI对话"])  # ADR-0285 situation/turn-chain 只读视图
+# G05：情境化多方案候选工作台（scenario_harness 只读/采纳面 —— 与 Pi 工具同链）
+from app.api.routes import scenario_harness as scenario_harness_routes  # noqa: E402
+app.include_router(scenario_harness_routes.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(feature_edits_routes.router, prefix="/api/v1", tags=["AI对话"])  # /goal 03 feature editing
 # G32：持久要素变更提案与冲突审阅（agent 起草 / owner 审阅批准 / 真实提交桥）。
 from app.api.routes import feature_proposals as feature_proposals_routes  # noqa: E402

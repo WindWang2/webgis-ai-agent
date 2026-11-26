@@ -674,6 +674,7 @@ def compile_interaction(
 def compile_analysis(
     chapter: Dict[str, Any], plan: Any,
     claimed_scope: Optional[ClaimedScope] = None,
+    scenarios: Optional[SitFact] = None,
 ) -> AnalysisContext:
     progress = unknown(source="plan_graph")
     stale_nodes: SitFact = unknown(source="workflow_runtime.stale")
@@ -685,6 +686,10 @@ def compile_analysis(
         scope_fact = known(
             claimed_scope, source="map_state._interaction_ir_ledger",
         )
+    # G05：scenario 候选投影（None → contract 默认 unknown，零改动兼容）。
+    scenarios_fact = scenarios if scenarios is not None else unknown(
+        source="map_state._scenario_candidates",
+    )
     if isinstance(chapter, dict) and chapter:
         graph = _safe(_build_plan_graph, chapter)
         if graph is not None:
@@ -718,7 +723,7 @@ def compile_analysis(
             artifacts = known(refs, source="session_plan.progress.bound_ref")
     return AnalysisContext(
         plan_progress=progress, stale_nodes=stale_nodes, artifacts=artifacts,
-        selection_scope=scope_fact,
+        selection_scope=scope_fact, scenarios=scenarios_fact,
     )
 
 
@@ -937,6 +942,16 @@ async def compile_situation(
         affordance_ring=affordances if isinstance(affordances, list) else None,
     )
     analysis = compile_analysis(chapter, plan, claimed_scope=claimed_scope)
+    # G05：scenario 候选/基准/锁定的有界投影（只读；失败降级 unknown）。
+    try:
+        from app.services.scenario_harness.projection import scenario_situation_fact
+
+        scenarios_fact = await scenario_situation_fact(session_id, store=store)
+    except Exception:  # noqa: BLE001 — 增值上下文绝不阻断编译
+        scenarios_fact = None
+    analysis = analysis if scenarios_fact is None else analysis.model_copy(
+        update={"scenarios": scenarios_fact}
+    )
     cartographic = compile_cartographic(
         chapter,
         map_state.get("_cartographic_review"),

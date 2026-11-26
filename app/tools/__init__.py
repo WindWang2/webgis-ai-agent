@@ -144,6 +144,8 @@ _TOOL_MODULES = [
     ("app.tools.scene_orchestration_tools", "register_scene_orchestration_tools"),
     # ADR-0215：情境重验证 / mission 跨 session 续接工具面（独立模块防并发冲突）
     ("app.tools.context_revalidation_tools", "register_context_revalidation_tools"),
+    # G05：情境化多方案候选工具面（inspect/propose/execute/compare/adopt/abandon/lock）
+    ("app.tools.scenario_harness_tools", "register_scenario_harness_tools"),
     # F07：ExecutionCatalog 只读发现工具面（capability-first discovery，
     # 独立模块防并发冲突）
     ("app.tools.catalog_discovery_tools", "register_catalog_discovery_tools"),
