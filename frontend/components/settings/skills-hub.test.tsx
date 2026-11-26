@@ -6,7 +6,7 @@
  *     backend POST /api/v1/config/skills/upload (admin-only, multipart file).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 const { mockState } = vi.hoisted(() => ({
@@ -145,5 +145,65 @@ describe('SkillsHub (#551)', () => {
     await waitFor(() => expect(mockState.skills).toHaveLength(0));
     rerender(<SkillsHub />);
     expect(screen.queryByText('POI 查询')).not.toBeInTheDocument();
+  });
+
+  it('panel title goes through i18n (no hardcoded English heading)', () => {
+    // P3 i18n：title 曾是唯一不走 t() 的设置面板标题（其余面板均键化）。
+    render(<SkillsHub />);
+    expect(screen.getByText('技能中心')).toBeInTheDocument();
+    expect(screen.queryByText('Skills Hub')).not.toBeInTheDocument();
+  });
+
+  it('upload button label is localized in idle and failure states', async () => {
+    // P3 i18n：'Upload Custom Skill' / 'Failed' 曾是硬编码英文，zh 下渲染英文。
+    uploadResponse = () => jsonErr(500, 'Internal Server Error', { detail: 'boom' });
+    const { rerender } = render(<SkillsHub />);
+    await waitFor(() => expect(mockState.skills).toHaveLength(1));
+    rerender(<SkillsHub />);
+
+    expect(screen.getByRole('button')).toHaveTextContent('上传自定义技能');
+    expect(screen.queryByText('Upload Custom Skill')).not.toBeInTheDocument();
+
+    const file = new File(['def run():\n    pass\n'], 'bad.py', { type: 'text/x-python' });
+    const user = userEvent.setup();
+    await user.upload(screen.getByTestId('skill-file-input'), file);
+
+    await waitFor(() => expect(screen.getByRole('button')).toHaveTextContent('上传失败'));
+    expect(screen.queryByText('Failed')).not.toBeInTheDocument();
+  });
+
+  it('success upload resets to idle instead of sticking on the result label', async () => {
+    // P3 i18n：success 态此前永不回 idle，按钮永久停在 'Uploaded' 英文标签。
+    vi.useFakeTimers();
+    try {
+      render(<SkillsHub />);
+      // fetch mock 全走 microtask；fake timers 只接管 setTimeout。
+      const flush = async () => {
+        for (let i = 0; i < 25; i += 1) await Promise.resolve();
+      };
+      await act(async () => {
+        await flush();
+      });
+
+      const file = new File(['def run():\n    pass\n'], 'my_skill.py', { type: 'text/x-python' });
+      await act(async () => {
+        fireEvent.change(screen.getByTestId('skill-file-input'), { target: { files: [file] } });
+        await flush();
+      });
+
+      // 成功瞬间按钮就回到可复用的动作标签，不再出现 'Uploaded' 终态标签。
+      expect(screen.getByRole('button')).toHaveTextContent('上传自定义技能');
+      expect(screen.queryByText('Uploaded')).not.toBeInTheDocument();
+      expect(screen.getByText(/已上传并热加载：my_skill\.py/)).toBeInTheDocument();
+
+      // 5s 后 upload 状态回 idle，结果状态行消失。
+      await act(async () => {
+        vi.advanceTimersByTime(5000);
+      });
+      expect(screen.queryByText(/已上传并热加载：my_skill\.py/)).not.toBeInTheDocument();
+      expect(screen.getByRole('button')).toHaveTextContent('上传自定义技能');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

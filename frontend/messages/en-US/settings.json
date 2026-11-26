@@ -104,11 +104,13 @@
     "failed": "Failed"
   },
   "skills": {
+    "title": "Skills Hub",
     "uploaded": "Uploaded and hot-loaded: {name}",
     "subtitle": "Agent skill management",
     "uploading": "Uploading…",
     "uploadFailed": "Upload failed",
     "uploadForbidden": "Administrator permission is required to upload a skill",
+    "uploadCta": "Upload Custom Skill",
     "categories": {
       "dataAccess": "Data acquisition",
       "remoteSensing": "Remote sensing analysis",
