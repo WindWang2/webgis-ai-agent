@@ -43,6 +43,7 @@ cd frontend && pnpm lint && pnpm test               # lint 0 warnings；626 file
 ## 验证环境与结果
 
 - 后端本域 223 passed（含 R1 回归 5 项）；cartography 标记 2800 passed / **5 失败均为 master 既有基线**（`test_contracts.py` pin 一致性、`scale_portrayal_cases` corpus、`component_variants` v3/v4 ×3 —— 已在干净 master worktree `/tmp/wg-master-baseline2@8fe3d7663` 逐个复现，非本分支引入）
+- **全量 unit 基线对账（零回归证明）**：分支全量 `114 failed / 22056 passed`（52 min）；干净 master 全量 `123 failed / 21858 passed`（52 min，`/tmp/wg-master-baseline2@8fe3d7663`）。**ID 级 diff：分支新增失败 = 0**（`comm -23` 为空）；分支比 master 少 9 个失败（`test_runtime_validator.py` 的 9 个 browser fixture 在 master 运行中失败、分支运行中未失败 —— flaky 环境产物，方向相反也不构成回归）。失败文件子集（56 文件）同口径复跑：branch 104 failed == master 104 failed，**失败 ID 集合逐字节一致**。全量运行中仅在本分支全量出现的 11 个失败（terrain_tilejson ×8、review_core_low_boundaries ×2、temporal_media/test_faults ×1）经探针证明非本任务引入：本任务全部新测试 + 该 3 文件合跑 `338 passed / 0 failed`，且同 11 项在 master 全量中同样失败（属仓库既有全量排序全局状态污染，`QUALITY_ORDER_SEED` 机制即为该问题而设）
 - 前端 vitest 5604 passed / 19 failed（分支基线既有：pdf-dependency-security 15、geoai 2、postcss 1、chat.json 占位符 1 + 2 收集错误 —— 独立 HEAD worktree 复跑证明）；lint 0 warnings；typecheck 7 项（5 项与 master 逐签名一致 + 2 项为共享 node_modules 缺可选依赖的环境产物）
 - 资源：构建/测试 -j2 内串行；20 成员系列生产 0.2s / 66KB 产物（合成小文档、96dpi）
 
