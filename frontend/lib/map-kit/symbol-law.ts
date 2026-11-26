@@ -359,6 +359,10 @@ export type SymbolLawEventKind =
   // #1645（#1597 依赖）：styleSpecReady 的私有字段 style._loaded 缺席
   // 兜底披露（MapLibre 大版移除/改名 → 静默回退 isStyleLoaded 的可观测化）。
   | "style-spec-ready-fallback"
+  // GOAL-20261126-04：地理锚定统计图符证据面（挂载/不可用披露——
+  // oracle typed 拒绝与源要素缺席必须可观测，绝不静默不画）。
+  | "diagram-symbol-attached"
+  | "diagram-symbol-unavailable"
   // G40：符号资产绑定链证据面（缺席/类别降级/合同披露）。
   | "symbol-asset-unavailable"
   | "symbol-asset-category-degraded"

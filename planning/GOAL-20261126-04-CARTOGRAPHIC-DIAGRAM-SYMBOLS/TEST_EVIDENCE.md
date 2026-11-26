@@ -66,3 +66,10 @@
 | 5,000（帽 1000） | — | — | 134.7ms | placed=1000 budget=4000（精确） |
 - 结论：布局 O(n²·nudge) 在帽内规模线性可用；5k 候选预算门成本可忽略；
   大于帽的降级路径 = omitted_budget 会计（不静默丢）。
+
+## 全量前端回归（本线改动后）
+- pnpm run typecheck：仅剩 **2 项既有基线错误**（flow 测试 + live-spec tiles，L0 已取证）；本线 0 新增。
+- pnpm run test 全量：**5912 passed / 5 failed / 1 expected fail**：
+  - corpus.golden + version.test 漂移闸 2 项 → **本线原因**（版本 bump 后前端镜像未同步）→ 已修（contract-manifest.ts + version.test.ts → 2.2，caro-ir 175 passed）
+  - geoai-panel 2 项 + i18n chat.chart 占位符 1 项 → **干净 master（临时 worktree @59eb3f527）复现同样 3 failed** → 既有基线，非本线引入
+- 前端图符链性能基线（vitest 实测）：n=10 build+layout 5.2ms；n=100 16.1ms；n=1000 build+layout 119.8ms + 三角化(614 glyph) 11.1ms —— 后端 oracle（86ms@1k）+ 前端孪生同量级，预算帽降级路径已验证。

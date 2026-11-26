@@ -60,6 +60,7 @@ import {
   MAX_OBSTACLES_PER_SOLVE,
   solveExportLabels,
 } from "./label-solver";
+import { emitDiagramSymbolLayerSvg } from "@/lib/mapkit-diagram-symbols/svg-emit";
 
 /** 线标注 repeat 锚点上限（Python _LINE_REPEAT_MAX_ANCHORS 同值）。 */
 const LINE_REPEAT_MAX_ANCHORS = 4;
@@ -1627,6 +1628,32 @@ function compileMapSpecToSvgBody(
       }
     });
   });
+
+  // GOAL-20261126-04：地理锚定统计图符（diagram_symbol 2.2 additive）。
+  // 文档序 = 叠在所有层之上（与 live custom layer 渲染次序同语义）；
+  // oracle typed 拒绝/ref 未水合 → 既有 onDiagnostic 结构化披露，不静默。
+  for (const rawLayer of (mapspec?.layers || []) as Array<Record<string, unknown>>) {
+    const dgmBlock = rawLayer.diagram_symbol;
+    if (!dgmBlock || typeof dgmBlock !== "object") continue;
+    const dgmSource = (sources as Record<string, { inlineData?: unknown; data?: unknown }>)[String(rawLayer.source ?? "")];
+    const dgmPayload = (dgmSource?.inlineData ?? dgmSource?.data) as { features?: unknown[] } | undefined;
+    const dgmFeatures = Array.isArray(dgmPayload?.features) ? dgmPayload.features : [];
+    if (dgmFeatures.length === 0) {
+      options.onDiagnostic?.("diagram_symbol_ref_unavailable", String(rawLayer.id ?? ""));
+      continue;
+    }
+    const dgmResult = emitDiagramSymbolLayerSvg(
+      dgmBlock as Record<string, unknown>,
+      dgmFeatures as Array<Record<string, unknown>>,
+      (coord) => { const [x, y] = project(coord); return [Number(x), Number(y)]; },
+    );
+    if ("error" in dgmResult) {
+      options.onDiagnostic?.("diagram_symbol_oracle_error",
+        `layer=${String(rawLayer.id ?? "")} detail=${dgmResult.error}`);
+      continue;
+    }
+    elementsSvg += dgmResult.svg;
+  }
 
   const viewBoxW = fmtNum(scaledWidth);
   const viewBoxH = fmtNum(scaledHeight);

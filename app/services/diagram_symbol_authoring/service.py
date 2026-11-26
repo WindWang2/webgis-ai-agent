@@ -35,6 +35,7 @@ from app.lib.cartography.diagram_symbols import (
     qualify_features,
     solve_diagram_symbol_layout,
 )
+from app.lib.cartography.palettes import resolve_palette_colors
 from app.lib.cartography.mapspec_schema import MapSpecLayerDiagramSymbol
 
 logger = logging.getLogger(__name__)
@@ -151,6 +152,45 @@ def _resolve_source_fc(
             "源载荷不是 GeoJSON FeatureCollection",
             hint="图符需要要素集合（Point/Polygon/LineString + 数值属性）")])
     return (ref_id or f"inline:{src_id}"), fc
+
+
+#: 图例来源标记（unbind 只删自己写的 legend_spec，不动 user-wins 图例）。
+_LEGEND_SOURCE_MARKER = "diagram_symbol.v1"
+
+
+def _diagram_legend_spec(block: Dict[str, Any]) -> Dict[str, Any]:
+    """图符块 → 既有 legend_spec categorical 通道（live/出版图例同源）。
+
+    图例与几何同源：条目 = build_glyph_legend 的 category/color_slot，
+    hex 由 palettes 权威解析；notes 取语义披露前 3 条；标记 source 以便
+    解绑时只清自己写的（不碰既有 legend_spec）。
+    """
+    kind = block["kind"]
+    categories = block["categories"]
+    sp = dict(block.get("size_policy") or {})
+    legend = build_glyph_legend(
+        kind, categories,
+        compute_glyph_scale(kind, [[1.0] * len(categories)], sp),
+        sp,
+        palette_id=block.get("palette_id") or "Set1",
+        unit=block.get("unit"),
+        layout=block.get("layout"),
+    )
+    colors = resolve_palette_colors(block.get("palette_id"))
+    entries = []
+    for item in legend["categories"]:
+        entries.append({
+            "color": colors[item["color_slot"] % len(colors)],
+            "label": item["category"],
+        })
+    return {
+        "type": "categorical",
+        "title": "图符图例",
+        "entries": entries,
+        "unit": block.get("unit") or "",
+        "notes": legend["notes_zh"][:3],
+        "source": _LEGEND_SOURCE_MARKER,
+    }
 
 
 def _validate_block(block_spec: Mapping[str, Any]) -> Dict[str, Any]:
@@ -343,8 +383,13 @@ async def apply_diagram_symbol(
     new_layer = copy.deepcopy(hit)
     if block is None:
         new_layer.pop("diagram_symbol", None)
+        existing_spec = new_layer.get("legend_spec")
+        if isinstance(existing_spec, dict) \
+                and existing_spec.get("source") == _LEGEND_SOURCE_MARKER:
+            new_layer.pop("legend_spec", None)  # 只清自己写的图例
     else:
         new_layer["diagram_symbol"] = block
+        new_layer["legend_spec"] = _diagram_legend_spec(block)
 
     compact = {
         "layer_id": str(new_layer.get("id") or layer),

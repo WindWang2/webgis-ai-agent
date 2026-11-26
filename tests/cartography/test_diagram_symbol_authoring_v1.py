@@ -224,3 +224,47 @@ async def test_unbind_removes_block_only(stub_load, stub_mutation, monkeypatch):
     layer = stub_mutation["intent"].layer
     assert "diagram_symbol" not in layer
     assert layer["paint"] == {"circle-radius": 6}  # 既有表达不动
+
+
+@pytest.mark.asyncio
+async def test_apply_writes_legend_spec_same_source(stub_load, stub_mutation):
+    """图例与几何同源：apply 挂块时写 legend_spec（categorical 通道）。"""
+    out = await svc.apply_diagram_symbol(
+        "sess", "schools-layer", BLOCK, mode="commit", expected_revision=4)
+    assert out["status"] == "committed"
+    layer = stub_mutation["intent"].layer
+    spec = layer["legend_spec"]
+    assert spec["type"] == "categorical"
+    assert spec["source"] == "diagram_symbol.v1"
+    assert [e["label"] for e in spec["entries"]] == ["小学", "中学"]
+    assert spec["unit"] == "所"
+    assert spec["notes"]
+    # 色值来自 palettes 权威（Set1 前两槽）
+    from app.lib.cartography.palettes import resolve_palette_colors
+    colors = resolve_palette_colors("Set1")
+    assert spec["entries"][0]["color"] == colors[0]
+    # 既有 legend 派生通道可消费该形状（live/出版图例同源断言）
+    from app.lib.cartography.render_scene import derive_legend_items
+    model = derive_legend_items(spec)
+    assert model is not None and model["kind"] == "categorical"
+    assert len(model["entries"]) == 2
+    assert model["unit"] == "所"
+
+
+@pytest.mark.asyncio
+async def test_unbind_keeps_user_authored_legend(stub_load, stub_mutation, monkeypatch):
+    """解绑只清 diagram_symbol 自己写的图例；user-wins legend_spec 不动。"""
+    async def _load(session_id: str):
+        spec = copy.deepcopy(SPEC)
+        spec["layers"][0]["diagram_symbol"] = dict(BLOCK)
+        spec["layers"][0]["legend_spec"] = {
+            "type": "categorical", "title": "用户图例",
+            "entries": [{"color": "#123456", "label": "x"}],
+        }
+        return spec
+    monkeypatch.setattr(svc, "_load_spec", _load)
+    out = await svc.apply_diagram_symbol(
+        "sess", "schools-layer", None, mode="commit", expected_revision=5)
+    assert out["status"] == "committed"
+    layer = stub_mutation["intent"].layer
+    assert layer["legend_spec"]["title"] == "用户图例"  # user-wins 保留
