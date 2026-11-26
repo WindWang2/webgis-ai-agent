@@ -52,6 +52,8 @@ MAX_OTHER_DISCLOSED = FILTER_MAX_VALUES
 #: 本域目标（大规模联邦走 data_fabric federation）
 MAX_SOURCES = 4
 MAX_LINKS = 6
+#: 每计划指标数上限（联动范围下的口径数；超过应拆视图）
+MAX_METRICS = 8
 #: 传播键集上限（下游 in 约束可编译/可披露的有界规模；超限 typed 拒绝并
 #: 给出收窄指引，绝不静默截断——截断会让下游范围无声变小）
 MAX_PROPAGATED_KEYS = 256
@@ -60,6 +62,12 @@ _MAX_ID_LEN = 64
 
 _VALID_KINDS = ("category", "range")
 _VALID_AGGS = ("count", "sum", "mean", "min", "max")
+#: 指标算子词表（WP2 指标解释合同；median/distinct_count 有界帽内精确，
+#: 超帽 typed 拒绝并给精确路径指引，不声明近似）
+_VALID_METRIC_OPS = (
+    "count", "distinct_count", "sum", "mean", "weighted_mean", "rate",
+    "median",
+)
 #: 跨源关系：attribute = G38 JoinPlan 同款键连接；spatial = 空间谓词
 #: （词表与 G38 SpatialOptions.predicate 对齐）
 _VALID_LINK_KINDS = ("attribute", "spatial_within")
@@ -609,6 +617,121 @@ class LinkSpec(BaseModel):
         return self
 
 
+class MetricSpec(BaseModel):
+    """指标解释合同（WP2）：算子 + 分母治理 + 粒度/单位披露。
+
+    语义边界：
+    - 指标在**联动范围过滤后的行集**上求值（服务层先按 per-source where
+      + 传播键集过滤，再交给指标求值器）—— 指标永远回答"当前范围下"。
+    - 同源指标：``source_id`` 行集上直接聚合；``group_field`` 可选分
+      组（typed 组键，溢出并入 other 披露）。
+    - 跨源 rate（如每万人学校数）：``denominator_source_id`` 指向另一
+      源且必须给 ``link_id``；分组 = 关系键本身（每键一组），分子/分母
+      各自按键集合聚合 —— 只按键聚合、不物化行乘积（M:N 膨胀不可能）。
+    - 分母合计为零/空/全非数值 → 该组 ``unavailable`` + 原因码，绝不
+      返回 0 冒充率。
+    - ``weighted_mean``：``weight_field``（行内数值权重）或
+      ``weight_by_area``（几何面积权重，需显式开启并披露坐标系口径）。
+    - ``scale``：有限正数（如 10000 = 每万人）；结果乘以 scale。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    metric_id: str
+    op: str
+    #: 取值源（行集来源；None = primary）
+    source_id: Optional[str] = None
+    #: value 字段（sum/mean/weighted_mean/distinct_count/median/rate 分子
+    #: 聚合需要；rate 分子为 count 时不需要）
+    value_field: Optional[str] = None
+    weight_field: Optional[str] = None
+    weight_by_area: bool = False
+    #: rate 分母字段（None = 分母侧行计数）
+    denominator_field: Optional[str] = None
+    #: rate 分母源（跨源 rate 必须给并同时给 link_id；缺省 = source_id）
+    denominator_source_id: Optional[str] = None
+    #: 跨源 rate 使用的关系（须引用计划内 link）
+    link_id: Optional[str] = None
+    #: 同源分组字段（跨源 rate 不适用 —— 键即分组）
+    group_field: Optional[str] = None
+    #: 输出粒度源（缺省 = source_id；跨源 rate 固定为分母侧）
+    grain_source_id: Optional[str] = None
+    #: 结果缩放（有限正数；None = 1）
+    scale: Optional[float] = None
+    #: 单位披露（field_contracts 声明优先；此处是指标级显式声明）
+    unit: str = Field(default="", max_length=32)
+    title: str = Field(default="", max_length=200)
+
+    @field_validator("metric_id")
+    @classmethod
+    def _v_metric_id(cls, v: str) -> str:
+        return _check_id(v, "metric_id")
+
+    @field_validator("op")
+    @classmethod
+    def _v_op(cls, v: str) -> str:
+        if v not in _VALID_METRIC_OPS:
+            raise ValueError(f"op 必须是 {'/'.join(_VALID_METRIC_OPS)}")
+        return v
+
+    @field_validator(
+        "source_id", "weight_field",
+        "denominator_field", "denominator_source_id", "link_id",
+        "group_field", "grain_source_id",
+    )
+    @classmethod
+    def _v_optional_ids(cls, v: Optional[str], info: Any) -> Optional[str]:
+        if v is None:
+            return v
+        if info.field_name in ("weight_field", "denominator_field",
+                               "group_field"):
+            return _check_field(v)
+        return _check_id(v, info.field_name)
+
+    @field_validator("value_field")
+    @classmethod
+    def _v_value_field(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        return _check_field(v)
+
+    @field_validator("scale")
+    @classmethod
+    def _v_scale(cls, v: Optional[float]) -> Optional[float]:
+        if v is None:
+            return v
+        if not math.isfinite(v) or v <= 0:
+            raise ValueError("scale 必须是有限正数")
+        return v
+
+    @model_validator(mode="after")
+    def _v_semantics(self) -> "MetricSpec":
+        needs_value = self.op in (
+            "sum", "mean", "weighted_mean", "distinct_count", "median")
+        if needs_value and not self.value_field:
+            raise ValueError(f"{self.op} 需要 value_field")
+        # rate 的 value_field 可选：缺省 = 分子侧行计数（如"学校数"）
+        if self.op == "weighted_mean" and not self.weight_by_area \
+                and not self.weight_field:
+            raise ValueError(
+                "weighted_mean 需要 weight_field 或显式 weight_by_area=true")
+        if self.weight_field and self.weight_by_area:
+            raise ValueError("weight_field 与 weight_by_area 二选一")
+        if self.op != "weighted_mean":
+            if self.weight_field or self.weight_by_area:
+                raise ValueError("weight 仅 weighted_mean 使用")
+        if self.denominator_source_id is not None or self.link_id is not None:
+            if self.op != "rate":
+                raise ValueError("跨源分母仅 rate 指标使用")
+            if self.denominator_source_id is None or self.link_id is None:
+                raise ValueError(
+                    "跨源 rate 必须同时给 denominator_source_id 与 link_id")
+        if self.group_field is not None and self.link_id is not None:
+            raise ValueError(
+                "跨源 rate 以关系键分组：不支持额外 group_field")
+        return self
+
+
 class ExplorationPlan(BaseModel):
     """版本化探索计划。
 
@@ -616,7 +739,8 @@ class ExplorationPlan(BaseModel):
     v3（多源）：``sources`` 非空（恰好一个 primary），``anchor`` 可省
     （若给出必须等于 primary 锚）；``links`` 声明跨源关系（DAG）。
     图表/条件以 ``source_id``（缺省 primary）绑定源；条件必须与其图表
-    同源（facet 排除口径才无歧义）。
+    同源（facet 排除口径才无歧义）。``metrics`` 是指标解释合同（求值
+    仍在联动范围过滤后的行集上进行）。
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -625,6 +749,7 @@ class ExplorationPlan(BaseModel):
     anchor: Optional[SourceAnchorV2] = None
     sources: List[SourceBinding] = Field(default_factory=list)
     links: List[LinkSpec] = Field(default_factory=list)
+    metrics: List[MetricSpec] = Field(default_factory=list)
     charts: List[ChartSpec] = Field(default_factory=list)
     conditions: List[Dict[str, Any]] = Field(default_factory=list)
     #: 基准 scope 披露（保存时冻结的既有图层过滤/时间范围摘要；不覆盖）
@@ -668,6 +793,16 @@ class ExplorationPlan(BaseModel):
             raise ValueError("link_id 重复")
         return v
 
+    @field_validator("metrics")
+    @classmethod
+    def _v_metrics(cls, v: List[MetricSpec]) -> List[MetricSpec]:
+        if len(v) > MAX_METRICS:
+            raise ValueError(f"指标最多 {MAX_METRICS} 个")
+        ids = [m.metric_id for m in v]
+        if len(set(ids)) != len(ids):
+            raise ValueError("metric_id 重复")
+        return v
+
     @model_validator(mode="after")
     def _v_multi_source(self) -> "ExplorationPlan":
         source_ids = [s.source_id for s in self.sources]
@@ -703,6 +838,28 @@ class ExplorationPlan(BaseModel):
                     raise ValueError(
                         f"源 {binding.source_id} 层级 parent_source_id "
                         f"{h.parent_source_id!r} 不在 sources 中")
+            link_ids = {lk.link_id for lk in self.links}
+            primary_id = primary.source_id
+            for metric in self.metrics:
+                msid = metric.source_id or primary_id
+                if msid not in known:
+                    raise ValueError(
+                        f"指标 {metric.metric_id} 的 source_id "
+                        f"{metric.source_id!r} 不在 sources 中")
+                grain = metric.grain_source_id or msid
+                if grain not in known:
+                    raise ValueError(
+                        f"指标 {metric.metric_id} 的 grain_source_id "
+                        f"{metric.grain_source_id!r} 不在 sources 中")
+                if metric.link_id is not None and metric.link_id not in link_ids:
+                    raise ValueError(
+                        f"指标 {metric.metric_id} 的 link_id "
+                        f"{metric.link_id!r} 不在 links 中")
+                if metric.denominator_source_id is not None and \
+                        metric.denominator_source_id not in known:
+                    raise ValueError(
+                        f"指标 {metric.metric_id} 的 denominator_source_id "
+                        f"{metric.denominator_source_id!r} 不在 sources 中")
             self._check_propagation_dag()
         else:
             if self.anchor is None:
@@ -920,6 +1077,7 @@ def plan_digest_of_plan(plan: ExplorationPlan) -> str:
         "schema_version": PLAN_SCHEMA_VERSION,
         "sources": [s.model_dump() for s in plan.sources],
         "links": [lk.model_dump() for lk in plan.links],
+        "metrics": [m.model_dump() for m in plan.metrics],
         "charts": [c.model_dump() for c in plan.charts],
         "conditions": [c.model_dump() for c in conditions],
     }
@@ -949,10 +1107,10 @@ def chart_kind_label(kind: str) -> str:
 __all__ = [
     "PLAN_SCHEMA_VERSION", "MAX_CHARTS", "MAX_CONDITIONS", "MAX_BINS",
     "DEFAULT_BINS", "MAX_CATEGORY_GROUPS", "MAX_OTHER_DISCLOSED",
-    "MAX_SOURCES", "MAX_LINKS", "MAX_PROPAGATED_KEYS",
+    "MAX_SOURCES", "MAX_LINKS", "MAX_PROPAGATED_KEYS", "MAX_METRICS",
     "ChartSpec", "CategoryCondition", "RangeCondition", "ExplorationCondition",
     "ExplorationPlan", "SourceAnchorV2", "SourceBinding", "DrillHierarchy",
-    "LinkKeyPair", "LinkSpec",
+    "LinkKeyPair", "LinkSpec", "MetricSpec",
     "condition_to_where", "compile_combined_where", "where_to_maplibre",
     "parse_condition", "parse_conditions", "plan_digest", "conditions_digest",
     "chart_kind_label",
