@@ -80,6 +80,7 @@ class CoverageCandidate:
     attribution: str = ""
     nodata_fraction: Optional[float] = None  # 栅格质量证据（0..1）
     completeness_evidence: str = ""      # 显式完备性证据；空 = unknown
+    cost_hint: Optional[Dict[str, Any]] = None  # ADS 成本提示（rows/bytes/latency_ms）
     source: str = ""                     # 证据出处（catalog entry / registry id）
 
     def __post_init__(self) -> None:
@@ -137,6 +138,8 @@ class CoverageCandidate:
                 raise ValueError(
                     "COVERAGE_NODATA_FRACTION_INVALID: 需为 0..1")
         self.completeness_evidence = str(self.completeness_evidence or "")[:300]
+        if self.cost_hint is not None and not isinstance(self.cost_hint, dict):
+            raise ValueError("COVERAGE_COST_HINT_INVALID: 需为 dict")
         self.source = str(self.source or "")[:128]
 
 
