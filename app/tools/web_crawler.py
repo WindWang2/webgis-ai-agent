@@ -161,8 +161,9 @@ def _escape_untrusted(text: str) -> str:
     ``<UNTRUSTED_WEB_CONTENT>`` block. A snippet containing
     ``</UNTRUSTED_WEB_CONTENT>`` would close the fence early and let the
     trailing text be interpreted as agent instructions. HTML-escape the
-    content (consistent with app/services/chat/context/formatters.py) and
-    neutralize any literal fence markers.
+    content (consistent with app/services/chat/context/formatters.py); the
+    ``<``/``>`` escaping already turns any embedded fence marker into
+    ``&lt;UNTRUSTED_WEB_CONTENT&gt;``, so it cannot close the fence.
     """
     if not text:
         return ""
@@ -172,9 +173,6 @@ def _escape_untrusted(text: str) -> str:
         .replace("<", "&lt;")
         .replace(">", "&gt;")
     )
-    # Neutralize embedded fence markers so attacker content cannot break out.
-    escaped = escaped.replace(_UNTRUSTED_OPEN, "&lt;UNTRUSTED_WEB_CONTENT&gt;")
-    escaped = escaped.replace(_UNTRUSTED_CLOSE, "&lt;/UNTRUSTED_WEB_CONTENT&gt;")
     return escaped
 
 

@@ -835,6 +835,30 @@ class TestInductionCli:
         assert data["total"] == 1 and data["induced"] == 1  # 聚簇为 1 个产物
         assert not out.exists()  # dry-run 不落盘
 
+    def test_cli_cluster_error_source_is_json_array(self, tmp_path,
+                                                    monkeypatch):
+        # P3 data-integrity：聚簇失败的 source 必须与成功分支同构
+        # （JSON 数组），而非 Python 列表 repr 字符串。
+        root = tmp_path / "rec"
+        self._write_corpus(root)
+
+        class Boom(SkillInductionEngine):
+            def induce_many(self, traces):
+                raise RuntimeError("boom")
+
+        monkeypatch.setattr(skill_induction, "SkillInductionEngine", Boom)
+        report = tmp_path / "r.json"
+        rc = skill_induction.main([
+            "--recordings-dir", str(root), "--out-dir", str(tmp_path / "o"),
+            "--report", str(report), "--cluster-by-session"])
+        assert rc == 0
+        data = json.loads(report.read_text(encoding="utf-8"))
+        assert data["errors"] == 1
+        record = data["error_records"][0]
+        assert isinstance(record["source"], list)
+        assert record["source"] == [str(root / "sessA" / "t1.json"),
+                                    str(root / "sessA" / "t2.json")]
+
 
 # ── 独立审查（AGENT-07-REVIEW）要求的回归钉子 ────────────────────────────
 

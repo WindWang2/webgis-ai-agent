@@ -74,13 +74,13 @@ def run(records_dir: Path, out_dir: Path,
         by_session.setdefault(trace.session_id, []).append((path, trace))
 
     outcomes: List[Dict[str, Any]] = []
-    errors: List[Dict[str, str]] = []
+    errors: List[Dict[str, Any]] = []
     for session_id, entries in sorted(by_session.items()):
         if cluster_by_session and len(entries) >= 2:
             try:
                 outcome = engine.induce_many([t for _, t in entries])
             except Exception as exc:  # noqa: BLE001 - 单簇失败不中止批处理
-                errors.append({"source": str([str(p) for p, _ in entries]),
+                errors.append({"source": [str(p) for p, _ in entries],
                                "reason": repr(exc)[:200]})
                 continue
             outcomes.append({"source": [str(p) for p, _ in entries],
