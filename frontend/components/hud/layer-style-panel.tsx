@@ -20,6 +20,7 @@ import { t as tNow } from '@/lib/i18n/t';
 import { RasterAuthoringPanel } from '@/components/hud/raster-authoring-panel';
 // G27：按尺度表达（可解释控制 + 局部覆盖，仅在有 committed spec 层时挂载）
 import { ScalePortrayalPanel } from '@/components/hud/scale-portrayal-panel';
+import { PaperScalePanel } from '@/components/hud/paper-scale-panel';
 // G33：矢量专题表达作者工作台（局部挂载；对齐 G20 栅格工作台先例）
 import { ThematicAuthoringPanel } from '@/components/hud/thematic-authoring-panel';
 import SymbolAssetPanel from '@/components/hud/symbol-asset-panel';
@@ -322,7 +323,11 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
       <div className="flex-1 overflow-y-auto p-4 space-y-5">
         {/* G27：按尺度表达（可解释控制 + 局部覆盖），仅在 spec 层在场时挂载 */}
         {specBacked && specLayerKey && (
-          <ScalePortrayalPanel layerId={specLayerKey} />
+          <>
+            <ScalePortrayalPanel layerId={specLayerKey} />
+            {/* GOAL 04 WP5：纸面比例尺综合（出版审阅 + 冻结） */}
+            <PaperScalePanel layerId={specLayerKey} />
+          </>
         )}
         {/* G33：专题表达作者工作台（字段分布/断点/类表/比例符号 → 单笔提交） */}
         {thematicVectorLayer && (

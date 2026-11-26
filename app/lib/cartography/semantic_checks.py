@@ -2480,6 +2480,12 @@ def _check_layer_quantitative_rules(
     )
 
     check_scale_profile(report, mapspec, layer, lid, sid)
+    # GOAL 04（WP4b）：纸面出版冻结计划声明一致性（无声明 → no-op，零行为变化）
+    from app.lib.cartography.multiscale.semantic_checks_paper_plan import (
+        check_paper_scale_plan,
+    )
+
+    check_paper_scale_plan(report, mapspec, layer, lid, sid)
     _check_3d_extrusion_rules(report, mapspec, layer, lid, sid, profile)
     _check_isoline_contour_rules(report, mapspec, layer, lid, sid)
 

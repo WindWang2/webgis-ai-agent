@@ -655,5 +655,24 @@
     "disclosures": "显示策略披露（不改变数据/统计）",
     "buttonLabel": "按尺度表达：{p0}",
     "unknownReceipt": "未知回执"
+  },
+  "paperScale": {
+    "title": "纸面比例尺综合",
+    "displayOnly": "display-only",
+    "denominator": "目标比例尺",
+    "page": "页面",
+    "purpose": "用途",
+    "preview": "预览",
+    "freeze": "冻结出版工件",
+    "qaSummary": "QA 检查 {p0} 项（fail {p1}）",
+    "counts": "综合后 {p0}/原始 {p1}",
+    "qaFail": "QA 有 fail",
+    "previewOk": "预览完成（QA 全过，可冻结）",
+    "qaBlocked": "预览存在 {p0} 项 fail —— 冻结将被拒绝",
+    "qaRefused": "QA 存在 fail，后端拒绝冻结（fail-closed）",
+    "frozen": "已冻结出版工件（revision {p0}）",
+    "notApplied": "未生效（{p0}）",
+    "unknownReceipt": "未知回执",
+    "failed": "失败：{p0}"
   }
 }
