@@ -200,6 +200,45 @@ def test_r1_unaliased_count_with_field_is_independent_column():
     assert r["v_count_valid_count"] == 1
 
 
+async def test_r3_execute_wait_surfaces_inspect_error_not_stale_view(
+        seeded_sources, monkeypatch):
+    """R3（tools:239）：有界等待中 inspect_run 抛 typed 错误 → 上报该错误，
+    不拿 execute 初始 view（pending）冒充非终态结果。"""
+    seed = seeded_sources
+
+    async def noop_runner(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(service, "_run_execution_job", noop_runner)
+
+    async def boom(session_id, run_id):
+        raise DataJoinError("run_not_found", "运行不存在或不属于当前会话",
+                            run_id=run_id)
+
+    monkeypatch.setattr(service, "inspect_run", boom)
+
+    view = await service.create_plan(seed["session_id"], attr_plan(
+        left={"kind": "session_ref", "session_id": seed["session_id"],
+              "ref": seed["left_ref"]},
+        right={"kind": "table_rows", "session_id": seed["session_id"],
+               "ref": seed["right_ref"]},
+    ), actor=seed["actor"])
+
+    from app.tools.data_join_authoring_tools import (
+        register_data_join_authoring_tools,
+    )
+    from app.tools.registry import ToolRegistry
+
+    reg = ToolRegistry()
+    register_data_join_authoring_tools(reg)
+    execute = reg._tools["webgis_data_join_execute"]
+    res = await execute(plan_id=view["plan_id"],
+                        expected_revision=view["revision"],
+                        wait_max_s=1, session_id=seed["session_id"])
+    assert res["error"] == "run_not_found"
+    assert res.get("status") != "pending"      # 不虚报 execute 初始非终态
+
+
 def test_r2_generated_valid_count_names_in_conflict_scan():
     """R2：用户字段名撞生成分母列 <agg>_valid_count → typed 冲突。"""
     left = loaded_from_rows("left", {"rows": [{"code": "A"}]}, "fpL")

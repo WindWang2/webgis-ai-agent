@@ -99,6 +99,53 @@ async def test_run_promptable_tool_with_artifact(
     assert result["manifest"]["prompt_audit"]["artifact_id"] == result["prompt_artifact_id"]
 
 
+async def test_run_promptable_tool_with_points(
+    patched_service, geoai_registry, synthetic_raster
+):
+    """points/boxes 直传路径的 happy path（数值化不得破坏合法输入）。"""
+    run = geoai_registry._tools["geoai_run_promptable"]
+    result = await run(
+        model_id="tiny-promptable-seg",
+        source_uri=str(synthetic_raster),
+        points=[[25.0, 15.0], [5, 95]],
+        boxes=[[10.0, 10.0, 4.0, 4.0]],
+        session_id="tool-run-points",
+    )
+    assert result["status"] == "completed"
+    assert "prompt_mask_geojson" in result["outputs"]
+    assert "prompt_artifact_id" not in result
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"points": [["a", "b"]]},
+        {"points": [[1.0, 2.0, 3.0]]},
+        {"points": [None]},
+        {"points": "not-a-list"},
+        {"boxes": [[1.0, 2.0, 3.0]]},
+        {"boxes": [["x", 2.0, 3.0, 4.0]]},
+    ],
+)
+async def test_run_promptable_tool_rejects_malformed_prompts(
+    patched_service, geoai_registry, synthetic_raster, kwargs
+):
+    """畸形 points/boxes → typed ModelOpsError + correction_hint（非裸
+    ValueError/TypeError 绕过本模块契约）。"""
+    from app.lib.modelops.errors import ModelOpsError
+
+    run = geoai_registry._tools["geoai_run_promptable"]
+    with pytest.raises(ModelOpsError) as excinfo:
+        await run(
+            model_id="tiny-promptable-seg",
+            source_uri=str(synthetic_raster),
+            session_id="tool-run-malformed",
+            **kwargs,
+        )
+    assert excinfo.value.correction_hint
+    assert "exactly" in excinfo.value.correction_hint
+
+
 async def test_refine_tool_composes_candidate_prior(
     patched_service, geoai_registry, synthetic_raster
 ):

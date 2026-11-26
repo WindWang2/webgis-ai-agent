@@ -7,6 +7,7 @@ service calls in ``app/tools/georeferencing_tools.py``.
 """
 from __future__ import annotations
 
+import logging
 import threading
 from types import SimpleNamespace
 
@@ -75,3 +76,35 @@ async def test_georef_plan_update_offloads_revise_draft(monkeypatch):
     assert out["success"] is True
     assert seen["kwargs"]["plan_id"] == "gplan_probe"
     assert seen["thread"] != loop_thread
+
+
+async def test_georef_plan_schema_invalid_gcp_returns_invalid_gcp_coords(monkeypatch, caplog):
+    """Schema-invalid GCP payloads must surface INVALID_GCP_COORDS, not GEOREF_TOOL_FAILED.
+
+    GcpInputItem.model_validate used to raise pydantic ValidationError straight into
+    the broad ``except Exception``, which logged an "unexpected failure" WARNING stack
+    and returned GEOREF_TOOL_FAILED with a truncated message — the LLM received no
+    stable validation code to self-correct the GCP payload.
+    """
+    reg = ToolRegistry()
+    georef_tools.register_georeferencing_tools(reg)
+
+    def fail_create_plan(**kwargs):
+        raise AssertionError("service.create_plan must not run for schema-invalid GCPs")
+
+    monkeypatch.setattr(georef_tools.service, "create_plan", fail_create_plan)
+
+    with caplog.at_level(logging.WARNING, logger="app.tools.georeferencing_tools"):
+        out = await reg.dispatch(
+            "webgis_georef_plan",
+            {
+                "action": "create",
+                "source_id": "src_probe",
+                "gcps": [{"py": 1.0, "map_x": 500000.0, "map_y": 4000000.0}],
+            },
+            session_id="sess_probe",
+        )
+
+    assert out["success"] is False
+    assert out["code"] == "INVALID_GCP_COORDS"
+    assert "unexpected failure" not in caplog.text

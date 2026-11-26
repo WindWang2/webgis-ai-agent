@@ -187,6 +187,24 @@ async def test_feature_detail_native_and_positional_namespaces(registry):
 
 
 @pytest.mark.asyncio
+async def test_feature_detail_positional_non_dict_entry_errors(registry):
+    """P3：positional 命中非 dict 条目必须报数据损坏，不得伪造空 Feature。"""
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "geometry": {"type": "Point", "coordinates": [104, 30]},
+             "properties": {"n": "ok"}},
+            "corrupt-entry-not-a-dict",
+        ],
+    }
+    store = _FakeRefStore(fc)
+    out = await _run(registry, "webgis_layer_feature_detail",
+                     {"ref_id": "ref:schools", "feature_id": "2", "id_mode": "positional"}, store)
+    assert "feature" not in out
+    assert "数据损坏" in out["error"]
+
+
+@pytest.mark.asyncio
 async def test_feature_detail_native_scan_offloads_to_thread(registry, monkeypatch):
     """P2：全量 features 线性扫描须经 asyncio.to_thread 卸载，不阻塞事件循环。"""
     import threading

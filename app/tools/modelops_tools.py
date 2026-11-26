@@ -223,7 +223,10 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
                     correction_hint="pass exactly four numbers",
                 )
             roi = [float(v) for v in roi_bbox]
-            if not (roi[0] < roi[2] and roi[1] < roi[3]):
+            # 校验口径必须与交给引擎的 int 截断值一致：小数像素 ROI
+            # （如 10.0/10.9）按 float 校验会通过，但 int() 截断后 x0==x1，
+            # 形成零宽窗口。
+            if not (int(roi[0]) < int(roi[2]) and int(roi[1]) < int(roi[3])):
                 raise ModelOpsError(
                     f"invalid roi_bbox {roi}: x0<x1 and y0<y1 required",
                     correction_hint="pass [x0, y0, x1, y1] with x0<x1 and y0<y1",

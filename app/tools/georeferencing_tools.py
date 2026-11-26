@@ -5,10 +5,11 @@ import asyncio
 import logging
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ValidationError
 
 from app.schemas.georeferencing_schema import (
     GeorefDomainError,
+    GeorefErrorCode,
     GcpInputItem,
     validate_positive_finite_resolution,
 )
@@ -304,7 +305,16 @@ def register_georeferencing_tools(registry: ToolRegistry) -> None:
         try:
             parsed_gcps: Optional[List[GcpInputItem]] = None
             if gcps is not None:
-                parsed_gcps = [GcpInputItem.model_validate(item) for item in gcps]
+                parsed_gcps = []
+                for idx, item in enumerate(gcps):
+                    try:
+                        parsed_gcps.append(GcpInputItem.model_validate(item))
+                    except ValidationError as exc:
+                        raise GeorefDomainError(
+                            GeorefErrorCode.INVALID_GCP_COORDS,
+                            f"Malformed GCP payload item #{idx + 1}: {exc}",
+                            status_code=422,
+                        ) from exc
 
             if action == "create":
                 if not source_id:
