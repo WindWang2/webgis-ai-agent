@@ -13,3 +13,4 @@
 - 资源纪律：OMP/OPENBLAS/MKL=2；pytest 单进程默认；重测试后台跑避免阻塞
 - pytest.ini：默认 --cov=app（本地快速验证用 --no-cov -p no:cacheprovider）
 - scripts/quality_gate_local.sh 为本地总闸（本线用相关子集，不全量跑除非交付前）
+- R2 | WP1 TDR-v1 提交 dee62c437（20 tests）；WP2 覆盖矩阵（跨线帧修正：声明帧 [minx,minx+360] 而非 union bounds；环方向 orient）；WP3 供给计划（choices 封闭词表/预算确认/幂等指纹）；WP4 后端（5 工具+REST 归属校验+api-docs+快照刷新）+ 前端（面板/客户端/i18n/5 vitest）；WP5 5 旅程 + perf 基准 | task_data_supply 82 tests 全绿；ruff 清洁；工具 conformance 与 master 持平（零新增 fail）；OpenAPI 快照显式刷新（master 上本就漂移 +13434/-5339，已用干净 master 复现验证）；前端 typecheck 错误集与基线逐字节一致 | ✅ | R1 独立评审（A 科学 / B 安全 / C 旅程）→ 修复 → R2 → PR
