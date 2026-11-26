@@ -35,17 +35,18 @@ WINDOWS_WITH_SOURCE = [
 class TestVersionV18:
     def test_known_versions_and_latest(self):
         # G16：2.0 号位留给 G15（恒等上船），2.1 = label authoring。
+        # 2.2 = GOAL-20261126-04 diagram_symbol（纯 additive）。
         assert ms.KNOWN_VERSIONS == (
             "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8",
-            "1.9", "1.10", "2.0", "2.1")
-        assert ms.LATEST_VERSION == "2.1"
+            "1.9", "1.10", "2.0", "2.1", "2.2")
+        assert ms.LATEST_VERSION == "2.2"
 
     def test_v17_migrates_identity_to_latest(self):
         legacy = _spec(representation={"windows": WINDOWS_WITH_SOURCE},
                        scale_profile={"schema_version": 1})
         legacy["version"] = "1.7"
         r2 = ms.parse_mapspec(legacy)
-        assert r2.effective_version == "2.1" and r2.migrated is True
+        assert r2.effective_version == "2.2" and r2.migrated is True
         # identity：文档内容不被改写。
         assert r2.document["layers"][0]["representation"]["windows"] == (
             WINDOWS_WITH_SOURCE)
@@ -62,7 +63,7 @@ class TestVersionV18:
         # 在本分支不存在 —— extra=allow 全模型纪律，无字段也合法）。
         r = ms.parse_mapspec(
             {"version": "1.8", "view": {}, "sources": {}, "layers": []})
-        assert r.valid is True and r.effective_version == "2.1"
+        assert r.valid is True and r.effective_version == "2.2"
 
 
 class TestWindowSourceOverride:
