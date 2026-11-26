@@ -59,3 +59,12 @@ golden 文本不一致，master 上生成器与 golden 已漂移）。判定：�
 ### 快照/契约
 - OpenAPI 快照显式刷新：**master 提交面本就漂移**（干净 master 重新生成 = +13434/-5339，已用 detached master worktree 复现验证）；本线刷新 = master 漂移 + 本线新增 path（+89 行 api-docs 生成区）
 - api-docs drift 闸 + API compatibility 闸：15 passed
+
+### R1 修复后实测（2026-11-27）
+
+- `tests/unit/task_data_supply/`：**99 passed**（新增 test_r1_fixes.py 17 项回归）
+- perf 诚实化后（A-P1-3）：分区扫描 50k 候选 → p50 1.2ms（线性）；有界评估
+  24 候选/角色：bbox 声明路径 p50 17.0ms、footprint metric 投影路径
+  p50 113ms（成本差如实披露）；输出体积不随规模膨胀；真值集 0 误判
+- mypy（8 源文件含 execution.py）：Success
+- 面板 vitest 5 passed；i18n 闸（除 master 既有 figureTopValues 失败）通过
