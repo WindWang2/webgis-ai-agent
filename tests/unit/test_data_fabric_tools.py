@@ -152,6 +152,24 @@ async def test_connect_ssrf_blocking(registry):
         )
 
 
+@pytest.mark.asyncio
+async def test_inspect_refresh_unknown_profile_typed_error(registry):
+    """Unknown/unconnected profile_id must return the same typed error dict
+    contract as the rest of this module's tools (status/error_type/error),
+    never a bare RuntimeError escaping the tool boundary."""
+    insp_func = registry._tools["inspect_data_source"]
+    refresh_func = registry._tools["refresh_data_source"]
+
+    for res in (
+        await insp_func(profile_id="no_such_profile_contract"),
+        await refresh_func(profile_id="no_such_profile_contract"),
+    ):
+        assert res["status"] == "error"
+        assert res["error_type"] == "UNSUPPORTED_SOURCE"
+        assert res["profile_id"] == "no_such_profile_contract"
+        assert "no_such_profile_contract" in res["error"]
+
+
 # ─── #767 / #768: no fabricated descriptors, no synthetic masquerade ────────
 
 

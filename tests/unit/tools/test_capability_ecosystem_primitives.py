@@ -386,6 +386,57 @@ def test_p2_empty_coverage_evidence_is_not_consistent():
         f"零方案不得宣称一致：{env2['data']}")
 
 
+def test_r2_flat_linestring_coordinates_return_typed_error():
+    """LineString coordinates 传成扁平 [lng,lat]（常见 LLM 错误）不得裸崩。
+
+    必须是 typed INVALID_NETWORK_OR_FACILITIES 错误（带 correction_hint），
+    而不是 dispatch 兜底的泛化 TOOL_ERROR/TypeError。
+    """
+    assert not MISSING, RED
+    reg = _registry()
+    flat_network = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "properties": {"edge": "e1"},
+             "geometry": {"type": "LineString",
+                          "coordinates": [116.0, 39.0]}},
+        ],
+    }
+    result = asyncio.run(reg.dispatch(
+        "network_service_coverage_consistency", {
+            "network": flat_network,
+            "facilities": _O09_FACILITIES,
+            "cutoff": 2.0,
+            "cost_unit": "meters",
+        }))
+    d = _as_dict(result)
+    text = json.dumps(d, default=str).upper()
+    assert "INVALID_NETWORK_OR_FACILITIES" in text, (
+        f"扁平线坐标须以 typed INVALID_NETWORK_OR_FACILITIES 拒绝，实际 {text[:200]}")
+    assert "TOOL_ERROR" not in text, (
+        f"扁平线坐标不得落为泛化 TOOL_ERROR，实际 {text[:200]}")
+
+    # MultiLineString 扁平坐标同理（层级更浅，直接不可迭代）
+    flat_multi = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "properties": {"edge": "e1"},
+             "geometry": {"type": "MultiLineString",
+                          "coordinates": [116.0, 39.0]}},
+        ],
+    }
+    result2 = asyncio.run(reg.dispatch(
+        "network_service_coverage_consistency", {
+            "network": flat_multi,
+            "facilities": _O09_FACILITIES,
+            "cutoff": 2.0,
+            "cost_unit": "meters",
+        }))
+    text2 = json.dumps(_as_dict(result2), default=str).upper()
+    assert "INVALID_NETWORK_OR_FACILITIES" in text2, (
+        f"MultiLineString 扁平坐标同样须 typed 拒绝，实际 {text2[:200]}")
+
+
 def test_r2_n02_feature_time_is_apportioned_across_segments():
     """N-02（R2）：要素级 ``travel_time_s`` 按段长分摊，不得每段重复计总秒数。
 

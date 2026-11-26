@@ -11,6 +11,7 @@ from app.lib.cartography.chart_kinds import (
     CHART_KINDS,
     resolve_chart_kind as _resolve_chart_kind,
 )
+from app.lib.json_size import estimate_json_bytes
 from app.utils.best_effort import best_effort
 
 logger = logging.getLogger(__name__)
@@ -237,6 +238,12 @@ def generate_chart(chart_type: str = "", title: str = "", data: Any = "",
 
     # Accept pre-parsed list/dict (some LLM providers pass parsed args directly)
     if isinstance(data, (list, dict)):
+        # DoS protection: pre-parsed shapes (LLM providers passing parsed args;
+        # registry dereferencing ref: into the stored GeoJSON body) never flow
+        # through the raw-string check below — gate them here so the 100KB
+        # limit covers every input shape, not only JSON strings.
+        if estimate_json_bytes(data) > MAX_DATA_PAYLOAD_SIZE:
+            return {"error": f"Data payload too large (max {MAX_DATA_PAYLOAD_SIZE // 1024}KB)"}
         parsed_data = data
     elif isinstance(data, str) and data.strip().startswith("ref:"):
         return {"error": f"数据引用 {data.strip()[:40]} 未能解引用 —— 请确认是当前会话产出的 ref 后重试"}

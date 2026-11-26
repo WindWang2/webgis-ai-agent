@@ -392,7 +392,13 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
     mapspec = await mapspec_store.get_mapspec(session_id)
     if not mapspec:
       res = await mapspec_store.init_project(session_id)
-      mapspec = res["mapspec"]
+      mapspec = res.get("mapspec")
+      if not mapspec:
+        # init 失败（引擎拒绝 / 存储故障，或结果缺 mapspec 键）：不得硬编码
+        # success:True + mapspec:None 上报假成功，也不得 KeyError——经
+        # _forward_evidence 透传 message / correction_hint / is_compiled
+        # 等失败证据（与 webgis_project_init 同一模式），优雅失败。
+        return _forward_evidence(res, {"mapspec": None})
     return {
         "success": True,
         "mapspec": mapspec,

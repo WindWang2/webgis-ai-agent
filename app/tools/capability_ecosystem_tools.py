@@ -494,7 +494,18 @@ def _feature_segments(geom: Mapping[str, Any]) -> list[tuple[tuple, tuple, float
         lines = geom.get("coordinates") or []
     segments: list[tuple[tuple, tuple, float]] = []
     for line in lines:
-        coords = [(float(p[0]), float(p[1])) for p in line if len(p) >= 2]
+        if not isinstance(line, (list, tuple)):
+            raise ValueError(
+                "线坐标层级错误：期望 [[lng,lat],...] 坐标对列表，收到 "
+                f"{line!r}；coordinates 不是扁平 [lng,lat]")
+        coords: list[tuple[float, float]] = []
+        for p in line:
+            if not isinstance(p, (list, tuple)):
+                raise ValueError(
+                    "线坐标必须是 [[lng,lat],...] 嵌套坐标对，收到扁平坐标 "
+                    f"{p!r}；LineString 的 coordinates 不是 [lng,lat]")
+            if len(p) >= 2:
+                coords.append((float(p[0]), float(p[1])))
         for a, b in zip(coords, coords[1:]):
             if a == b:
                 continue
@@ -596,6 +607,10 @@ def _network_coverage_consistency_impl(
             "缺依赖 = not_evaluated，不能猜；秒≠米",
             "为每条边提供 travel_time_s（或 speed_mps + 米制长度），"
             "或改用 cost_unit=meters 走米制长度模式")
+    except ValueError as exc:
+        # 扁平/非法线坐标（常见 LLM 错误：LineString coordinates 传成
+        # [lng,lat]）→ typed 无效线网错误，绝不裸 TypeError 冒泡成 TOOL_ERROR。
+        return _error("INVALID_NETWORK_OR_FACILITIES", str(exc))
     if graph.number_of_edges() == 0:
         return _error("DISCONNECTED_NETWORK", "线网无有效边，无法计算覆盖")
 

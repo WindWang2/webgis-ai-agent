@@ -432,13 +432,11 @@ def register_cartogram_tools(registry: ToolRegistry) -> None:
         if not session_id:
             return {"success": False, "code": "SOURCE_UNAVAILABLE",
                     "message": "Missing session_id context"}
-        try:
-            data, media, filename = await export_layout(
-                session_id, layout_ref, format, dpi=int(dpi))
-        except AuthoringError as exc:
-            payload = error_payload(exc)
-            payload["success"] = False
-            return payload
+        result = await _guard(export_layout(
+            session_id, layout_ref, format, dpi=int(dpi)))
+        if isinstance(result, dict):
+            return result
+        data, media, filename = result
         return {
             "success": True,
             "layout_ref": layout_ref,

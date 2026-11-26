@@ -104,6 +104,49 @@ async def test_cartogram_export_binding_preserves_service_result(monkeypatch):
     assert result["download_path"].startswith("/api/v1/cartogram/sessions/export-owner/")
 
 
+@pytest.mark.asyncio
+async def test_cartogram_export_renderer_failure_returns_bounded_receipt(monkeypatch):
+    """渲染/IO 等非 AuthoringError 必须落到 G47_TOOL_FAILED 回执，不许逃逸成未处理异常。"""
+    from app.services import cartogram_authoring
+    from app.tools.cartogram_tools import register_cartogram_tools
+    from app.tools.registry import ToolRegistry
+
+    async def boom(session_id, layout_ref, format, *, dpi):
+        raise RuntimeError("rasterizer unavailable")
+
+    monkeypatch.setattr(cartogram_authoring, "export_layout", boom)
+    registry = ToolRegistry()
+    register_cartogram_tools(registry)
+    result = await registry.dispatch("webgis_dorling_cartogram_export", {
+        "layout_ref": "ref:layout-one", "format": "png", "dpi": 96,
+    }, session_id="export-owner")
+    assert result["success"] is False
+    assert result["code"] == "G47_TOOL_FAILED"
+    assert result["correction_hint"]
+
+
+@pytest.mark.asyncio
+async def test_cartogram_export_authoring_error_keeps_export_unavailable(monkeypatch):
+    """AuthoringError 仍原样映射为 export_unavailable 回执（走 _guard 不丢语义）。"""
+    from app.services import cartogram_authoring
+    from app.services.cartogram_authoring import AuthoringError
+    from app.tools.cartogram_tools import register_cartogram_tools
+    from app.tools.registry import ToolRegistry
+
+    async def boom(session_id, layout_ref, format, *, dpi):
+        raise AuthoringError("EXPORT_UNAVAILABLE", "布局尚未冻结")
+
+    monkeypatch.setattr(cartogram_authoring, "export_layout", boom)
+    registry = ToolRegistry()
+    register_cartogram_tools(registry)
+    result = await registry.dispatch("webgis_dorling_cartogram_export", {
+        "layout_ref": "ref:layout-one", "format": "svg", "dpi": 96,
+    }, session_id="export-owner")
+    assert result["success"] is False
+    assert result["code"] == "EXPORT_UNAVAILABLE"
+    assert result["status_code"] == 503
+
+
 def test_exploration_component_abi_accepts_real_category_and_range_options():
     from app.lib.cartography.component_abi import COMPONENT_ABI_META, validate_props
     from app.services.gis_harness.components import _FACTORY_BY_TYPE

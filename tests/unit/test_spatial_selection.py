@@ -114,6 +114,19 @@ async def test_scope_explicit_ids_bypass_session_selection(source, selection_ser
     selection_services.validate.assert_not_awaited()
 
 
+@pytest.mark.parametrize("bad_ids", ["a", "ab", {"a": 1}, 7, True])
+async def test_scope_rejects_non_list_feature_ids_as_parameter_error(source, selection_services, bad_ids):
+    result = await advanced_spatial._scope_source_points(source, bad_ids, "session-a")
+    assert result == {
+        "success": False,
+        "code": "invalid_feature_ids",
+        "error": "feature_ids 必须是要素 id 列表，收到的不是列表",
+    }
+    selection_services.snapshot.assert_not_awaited()
+    selection_services.map_state.assert_not_awaited()
+    selection_services.validate.assert_not_awaited()
+
+
 async def test_scope_no_live_selection_preserves_source(source, selection_services):
     assert await advanced_spatial._scope_source_points(source, None, "session-a") is source
     selection_services.snapshot.assert_awaited_once_with(selection_services.store, "session-a")
