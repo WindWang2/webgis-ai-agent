@@ -195,6 +195,14 @@ export const JOURNEYS: JourneyEntry[] = [
     owner: 'g45-coordinate-operations',
   },
   {
+    id: 'j26',
+    file: 'journeys/j26-design-series.journey.ts',
+    title: '制图规范与系列工作台：面板打开→规范列表→选规范→系列成员→一致性→传播preview',
+    smoke: false,
+    modes: ['mock'],
+    owner: 'carto-design-series',
+  },
+  {
     id: 'j24',
     file: 'journeys/j24-g44-field-contracts.journey.ts',
     title: '业务字段合同：作者激活→面板绑定→结构化表单→刷新持久',

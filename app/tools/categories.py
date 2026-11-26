@@ -154,6 +154,12 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.raster_sampling_tools": "analysis",
     # 图幅/帧产品（plan/bind/update/unbind 写地图产品状态；status 只读覆盖）
     "app.tools.frame_product_tools": "map_mutation",
+    # 制图设计规范（goal-carto-design-series）：默认 map_mutation，只读面用细分
+    "app.tools.design_spec_tools": "map_mutation",
+    # 地图系列作者计划（同一 goal WP3）
+    "app.tools.map_series_tools": "map_mutation",
+    # 系列出版生产（同一 goal WP5；durable job 提交 → 产物）
+    "app.tools.series_production_tools": "export",
     # 字段语义契约（draft/assess/result 语义分析；inspect 只读覆盖）
     "app.tools.field_contracts_tools": "analysis",
     # 矢量变更提案（create 提案编制 → 数据变换域；list/diff/rebase 只读覆盖）
@@ -354,6 +360,18 @@ _NAME_OVERRIDES: Dict[str, str] = {
     "inspect_edit_constraints": "inspection",
     "get_impact": "inspection",
     "revalidate": "inspection",
+    # design_spec_tools：规范权威只读面（create/version/apply 写状态走模块默认）
+    "webgis_design_spec_list": "inspection",
+    "webgis_design_spec_inspect": "inspection",
+    "webgis_design_spec_preview": "inspection",
+    "webgis_map_design_extract": "inspection",
+    "webgis_map_design_recommend": "inspection",
+    "webgis_map_design_check_bindings": "inspection",
+    # map_series_tools：只读面（create/add_member/propagation_apply 走模块默认）
+    "webgis_map_series_list": "inspection",
+    "webgis_map_series_inspect": "inspection",
+    "webgis_map_series_consistency": "inspection",
+    "webgis_map_series_propagation_preview": "inspection",
 }
 
 #: 分类有限集合（审计与披露依赖）

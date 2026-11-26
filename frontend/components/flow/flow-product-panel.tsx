@@ -157,7 +157,7 @@ export function FlowProductPanel() {
         setInspect({ status: 'error', message: describeApiError(err, String(err)) });
       }
     },
-    [beginRequest, t],
+    [beginRequest],
   );
 
   useEffect(() => {
@@ -209,7 +209,7 @@ export function FlowProductPanel() {
         message: detail ? `${detail.code}: ${detail.message}` : describeApiError(err, String(err)),
       });
     }
-  }, [beginRequest, config, t]);
+  }, [beginRequest, config]);
 
   const runApply = useCallback(async () => {
     if (preview.status !== 'done' || preview.stale || !preview.data.can_apply) return;

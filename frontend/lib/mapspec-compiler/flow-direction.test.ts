@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { compileMapSpecToSvg } from './mapspec-to-svg';
 
-function spec(coordinates: unknown, angleDpi = 96): any {
+function spec(coordinates: unknown, _angleDpi = 96): any {
   const edgeSource = 'flow-odf_demo-edges-source';
   return {
     version: '1.10',

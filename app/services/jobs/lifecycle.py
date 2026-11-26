@@ -68,6 +68,8 @@ class JobKind(str, Enum):
     georeference = "georeference"
     # G47（Dorling 圆面积 cartogram）：示意布局求解（进程内 durable runner）
     cartogram_layout = "cartogram_layout"
+    # goal-carto-design-series（WP5）：系列出版生产（Celery；逐成员 checkpoint/取消）
+    series_production = "series_production"
 
 
 #: 终态集合：执行已结束，不再有 worker 在推进它。
