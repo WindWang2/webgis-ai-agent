@@ -135,52 +135,95 @@ def test_execute_missing_tool_name_rejects():
 
 # ── WP3 schema 严格模式卫生（上游 #12049/#12067）───────────────────────────
 #
-# 事实（上游 v1.6.0 行为）：OpenAI strict mode 下，tool schema 里**无 type
-# 且非组合器**的裸节点（典型：`"items": {}`、`"properties": {"geojson": {}}`）
-# 会让整个工具降级为非 strict 发送（#12049）；Anthropic 非 strict 模式则对
-# 非 strict schema 明示禁止额外参数（#12067）。Host 侧生成 dump 时无法逐
-# 工具补救 —— 这是 registry 参数注解的存量债。本车道做两件事：
-#   1. front-door（native 7 + execute proxy，常驻声明面）硬闸 —— 当前
-#      query_local_poi 的 bbox/polygon 两参数无注解 → 裸节点，故 xfail
-#      **strict** 标注：修好注解后 XPASS 会翻红，强制摘除标记；
-#   2. 长尾计数披露 —— 全量扫描 v4 spawn dump，输出违规工具清单与裸节点
-#      计数（不锁死精确数字，任何 schema 改动不误伤；披露可见即可）。
+# 事实（上游源码核实，vendor/pi v1.6.0 packages/ai/src/api/constrained-sampling.ts
+# 的 makeJsonSchemaNodeStrict）：
+#   * **#12049 增量谓词（v1.6.0 新增）**：节点无 `type` 且无 `anyOf` 且无
+#     `enum` → 抛错 → 该工具静默降级为非 strict 发送。上游注释明示：裸
+#     `enum` 算 typed，裸 `const` **不算**。
+#   * **v1.5.2 既有谓词（非本轮增量）**：节点含 `$ref`/`$defs`/`definitions`/
+#     `allOf`/`oneOf`/`patternProperties`/`dependentSchemas`/`dependencies`/
+#     `unevaluatedProperties`/`propertyNames`/`contains`/`prefixItems`/`not`/
+#     `if`/`then`/`else` 任一 keyword → 同样降级。这些工具在 v1.5.2 就已经
+#     是非 strict，与迁移无关，但同样是「将来接入 strict 时的存量债」。
+#   * **#12067**：Anthropic 非 strict schema 现在显式执行额外参数禁令
+#     （dump 已投影 additionalProperties:false，本面满足）。
+#
+# **接入条件（review 收紧口径，关键事实）**：vendor `registerTool` 的
+# `constrainedSampling` 字段可选，未设 = 线上 `strict:false`
+# （resolveJsonSchemaStrictSampling 对无 config 的工具返回 undefined →
+# `strict: strict ?? false`）。本仓扩展 app/extensions/webgis-tools/index.mjs
+# **未设**该字段 → GIS 工具当前全部非 strict 发送，#12049 的降级路径
+# **尚未被触发**。本车道是「预接入卫生」+ 存量债披露，不是现存缺陷的
+# 修复声称；一旦某工具 opt-in `strict:"prefer"`，两桶披露即变为真实门禁
+# 清单。
+#
+# 车道做两件事：
+#   1. front-door（native 7，常驻声明面）硬闸 —— 当前 query_local_poi 的
+#      bbox/polygon 两参数无注解 → #12049 裸节点，故 xfail **strict** 标注：
+#      修好注解后 XPASS 会翻红，强制摘除标记；
+#   2. 长尾两桶计数披露 —— 全量扫描 v4 spawn dump，分别输出 #12049 裸节点
+#      与 v1.5.2 既有 keyword 节点的工具清单与计数（不锁死精确数字，任何
+#      schema 改动不误伤；披露可见即可）。
 
-_STRICT_COMBINATORS = frozenset({"$ref", "enum", "const", "oneOf", "anyOf", "allOf"})
+#: v1.6.0 #12049 增量谓词的「自愈键」：有任一即不算裸节点（const 不在内 ——
+#: 上游注释明示裸 const 不算 typed）。
+_STRICT_DELTA_TYPED_KEYS = ("type", "anyOf", "enum")
+
+#: v1.5.2 既有的 strict 不支持 keyword（UNSUPPORTED_STRICT_SCHEMA_KEYS 全集，
+#: 上游 constrained-sampling.ts）。
+_STRICT_LEGACY_KEYWORDS = (
+    "$ref", "$defs", "definitions", "allOf", "oneOf", "patternProperties",
+    "dependentSchemas", "dependencies", "unevaluatedProperties", "propertyNames",
+    "contains", "prefixItems", "not", "if", "then", "else",
+)
 
 
-def _strict_hostile_nodes(schema: object, path: str = "") -> list[str]:
-    """递归收集「无 type 且非 $ref/enum/const/oneOf/anyOf/allOf」的裸节点路径。
+def _strict_reject_nodes(schema: object, path: str = "") -> dict[str, list[str]]:
+    """递归收集 strict 拒绝节点，返回 ``{"bare": [...], "keyword": [...]}``。
 
-    JSON Schema 布尔节点（true/false）与组合器分支自描述，不算裸节点。
+    - ``bare``：#12049 增量谓词 —— 无 type/anyOf/enum 的节点（裸 const 在内）。
+    - ``keyword``：v1.5.2 既有谓词 —— 含 UNSUPPORTED_STRICT_SCHEMA_KEYS 的节点。
+
+    同一节点可同时命中两桶（如 `{"$ref": ...}` 也无 type）——两桶分别记录，
+    披露时各归其位，不合并计数。JSON Schema 布尔节点（true/false）上游同样
+    拒绝（"boolean schemas are unsupported"），计入 bare。
     """
-    findings: list[str] = []
-    if isinstance(schema, bool) or not isinstance(schema, dict):
+    findings: dict[str, list[str]] = {"bare": [], "keyword": []}
+    if isinstance(schema, bool):
+        findings["bare"].append(path or "<root>")
         return findings
-    has_type = isinstance(schema.get("type"), str)
-    has_combinator = any(key in schema for key in _STRICT_COMBINATORS)
-    if not has_type and not has_combinator:
-        findings.append(path or "<root>")
+    if not isinstance(schema, dict):
+        return findings
+    if not any(key in schema for key in _STRICT_DELTA_TYPED_KEYS):
+        findings["bare"].append(path or "<root>")
+    for key in _STRICT_LEGACY_KEYWORDS:
+        if key in schema:
+            findings["keyword"].append(f"{path or '<root>'}[{key}]")
     properties = schema.get("properties")
     if isinstance(properties, dict):
         for name, sub in properties.items():
-            findings.extend(_strict_hostile_nodes(sub, f"{path}.properties.{name}"))
+            for bucket, nodes in _strict_reject_nodes(sub, f"{path}.properties.{name}").items():
+                findings[bucket].extend(nodes)
     items = schema.get("items")
     if items is not None:
-        findings.extend(_strict_hostile_nodes(items, f"{path}.items"))
+        for bucket, nodes in _strict_reject_nodes(items, f"{path}.items").items():
+            findings[bucket].extend(nodes)
     for key in ("oneOf", "anyOf", "allOf", "prefixItems"):
         branches = schema.get(key)
         if isinstance(branches, list):
             for i, sub in enumerate(branches):
-                findings.extend(_strict_hostile_nodes(sub, f"{path}.{key}[{i}]"))
+                for bucket, nodes in _strict_reject_nodes(sub, f"{path}.{key}[{i}]").items():
+                    findings[bucket].extend(nodes)
     additional = schema.get("additionalProperties")
     if isinstance(additional, dict):
-        findings.extend(_strict_hostile_nodes(additional, f"{path}.additionalProperties"))
+        for bucket, nodes in _strict_reject_nodes(additional, f"{path}.additionalProperties").items():
+            findings[bucket].extend(nodes)
     for key in ("$defs", "definitions"):
         defs = schema.get(key)
         if isinstance(defs, dict):
             for name, sub in defs.items():
-                findings.extend(_strict_hostile_nodes(sub, f"{path}.{key}.{name}"))
+                for bucket, nodes in _strict_reject_nodes(sub, f"{path}.{key}.{name}").items():
+                    findings[bucket].extend(nodes)
     return findings
 
 
@@ -208,8 +251,10 @@ def _spawn_dump() -> tuple[dict, dict]:
 )
 def test_native_frontdoor_schemas_are_openai_strict_clean():
     """front-door（native 7，每个会话常驻声明面）schema 必须 OpenAI strict
-    干净：无「无 type 且非组合器」的裸节点 —— 否则常驻前门全部以非 strict
-    发送（#12049），Anthropic 侧还叠加 #12067 的额外参数禁令。
+    干净（两桶皆空：#12049 裸节点 + v1.5.2 既有 keyword 节点）—— 否则这些
+    工具一旦 opt-in strict 即静默降级（#12049），Anthropic 侧还叠加 #12067
+    的额外参数禁令。当前接入条件下（扩展未设 constrainedSampling → 线上
+    strict:false）本闸是预接入卫生，非现存缺陷。
 
     webgis_execute（proxy）不在 dump tools[]（扩展自注册，schema 静态且已
     全 type 化）——其声明面契约由 vendor contract 车道钉住；这里核对
@@ -219,39 +264,46 @@ def test_native_frontdoor_schemas_are_openai_strict_clean():
     assert surface.get("execute_proxy") == EXECUTE_PROXY_NAME
     missing = set(NATIVE_TOOL_NAMES) - set(dumped)
     assert not missing, f"front-door tools absent from spawn dump: {sorted(missing)}"
-    findings: dict[str, list[str]] = {}
+    findings: dict[str, dict[str, list[str]]] = {}
     for name in sorted(NATIVE_TOOL_NAMES):
-        nodes = _strict_hostile_nodes(dumped[name].get("parameters"))
-        if nodes:
-            findings[name] = nodes
+        rejects = _strict_reject_nodes(dumped[name].get("parameters"))
+        if rejects["bare"] or rejects["keyword"]:
+            findings[name] = rejects
     assert not findings, (
-        f"strict-hostile bare nodes on the front-door surface: {findings}"
+        f"strict-hostile nodes on the front-door surface: {findings}"
     )
 
 
 def test_strict_hygiene_longtail_disclosure(capsys):
-    """全量 v4 dump 扫描：披露 strict-hostile 裸节点的工具清单与计数。
+    """全量 v4 dump 扫描：两桶披露（#12049 裸节点 / v1.5.2 既有 keyword 节点）
+    的工具清单与计数。
 
-    长尾（当前 ~134 工具 / ~176 节点，多为 geojson/bbox 类无注解参数）是
-    registry 存量债 —— 本测试不锁精确数字（schema 任何改动都不该误伤），
-    只锁扫描器行为与披露可见性；修复进展看 front-door xfail 的 XPASS。
+    长尾（当前 ~136 工具，多为 geojson/bbox 类无注解参数与 $ref/prefixItems
+    结构）是 registry 存量债 —— 本测试不锁精确数字（schema 任何改动都不该
+    误伤），只锁扫描器行为与披露可见性；修复进展看 front-door xfail 的 XPASS。
     """
     dumped, _surface = _spawn_dump()
-    per_tool: dict[str, list[str]] = {}
+    per_tool: dict[str, dict[str, list[str]]] = {}
     for name, tool in dumped.items():
-        nodes = _strict_hostile_nodes(tool.get("parameters"))
-        if nodes:
-            per_tool[name] = nodes
-    total_nodes = sum(len(v) for v in per_tool.values())
+        rejects = _strict_reject_nodes(tool.get("parameters"))
+        if rejects["bare"] or rejects["keyword"]:
+            per_tool[name] = rejects
+    total_bare = sum(len(v["bare"]) for v in per_tool.values())
+    total_keyword = sum(len(v["keyword"]) for v in per_tool.values())
     # 扫描器自证：确实扫了全量面，且披露可读（stdout 有工具清单头）。
     assert len(dumped) > 400, f"spawn dump unexpectedly small: {len(dumped)}"
     assert "query_local_poi" in per_tool, (
         "known native-set violation (bbox/polygon) vanished — if the annotation "
         "was fixed, remove the front-door xfail marker too"
     )
+    assert any(rejects["bare"] for rejects in per_tool.values()), (
+        "no #12049-delta bare nodes anywhere — the scanner lost its delta "
+        "predicate (type/anyOf/enum) or every schema was annotated at once"
+    )
     print(f"\n[strict-hygiene] violating tools: {len(per_tool)}/{len(dumped)}; "
-          f"bare nodes: {total_nodes}")
+          f"#12049 bare nodes: {total_bare}; legacy keyword nodes: {total_keyword}")
     print("[strict-hygiene] tools:", ", ".join(sorted(per_tool)[:40]),
           "..." if len(per_tool) > 40 else "")
     captured = capsys.readouterr().out
     assert "violating tools" in captured
+    assert "#12049 bare nodes" in captured

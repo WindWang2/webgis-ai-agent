@@ -18,8 +18,10 @@
    修复 commit 把 gitlink 原样恢复到 v1.5.2，再在其上做升级——回退路径因此
    始终存在。
 2. **上游 v1.6.0（`faac58588`，2026-11-20 stable）交付了 host 消费面的行为
-   修复**。RPC wire 文档（rpc/rpc-commands/json/rpc-extension-ui）与 v1.5.2
-   逐字节一致（本机 diff 核实），但 agent-loop 与 rpc-mode 的行为变化直接
+   修复**。RPC wire 文档与 v1.5.2 **基本一致**（`rpc.md`/`json.md`/
+   `rpc-extension-ui.md` 逐字节一致；`rpc-commands.md` 差 1 行纯文档——
+   未消费命令 `get_last_assistant_text` 补记「跳过 abort/失败后无文本消息」，
+   即 #12119，本机 diff 核实），agent-loop 与 rpc-mode 的行为变化直接
    落在本仓消费的契约上（C2/C6/C10 邻接）：
    - **#9986（agent 包）**：abort 时批量中未执行的工具不再静默缺结果——
      sequential/parallel 两路都移除了 abort break，`prepareToolCall` 在
@@ -69,11 +71,22 @@
    - `new_session` 后工具面存活（#10470 的可观测面）；
    - mapper 对「无 start 无 cache 的 end」产出诚实 step_error（#9986 引入
      的新事件形状）。
-6. **schema 严格模式卫生先披露后收敛**：native 前门 7 工具中
-   `query_local_poi` 违规（`bbox`/`polygon` 无注解）→ xfail(strict=True)
-   钉住（修复注解会改变冻结 native 工具的参数校验面，超本轮授权；修好时
-   XPASS 翻红强制摘标）；长尾 134/529 工具 176 裸节点 → 计数披露测试。
-   修复注解是后续独立 pass，不是本轮 silent-green。
+6. **schema 严格模式卫生先披露后收敛**（口径经 review 收紧，见
+   `tests/unit/test_pi_native_surface.py` 车道 docstring）：
+   - 上游 #12049 的**增量谓词**（v1.6.0 `constrained-sampling.ts`
+     `makeJsonSchemaNodeStrict`）是「节点无 `type` 且无 `anyOf` 且无
+     `enum`」→ strict 静默降级；注释明示裸 `const` **不算** typed。
+     `$ref`/`$defs`/`oneOf` 等 keyword 拒绝在 v1.5.2 已存在（非本轮增量），
+     车道单独分桶披露。
+   - **接入条件**：本仓扩展 `registerTool` 未设 `constrainedSampling`
+     （vendor 该字段可选，未设 = 线上 `strict:false`）→ GIS 工具当前全部
+     以非 strict 发送，#12049 降级路径**尚未被触发**；本车道是「预接入
+     卫生」+ 存量债披露，不是现存缺陷的修复声称。
+   - native 前门 7 工具中 `query_local_poi` 违规（`bbox`/`polygon` 无
+     注解）→ xfail(strict=True) 钉住（修复注解会改变冻结 native 工具的
+     参数校验面，超本轮授权；修好时 XPASS 翻红强制摘标）；长尾
+     ~136/529 工具（#12049 裸节点 + v1.5.2 既有 keyword 节点两桶）→
+     计数披露测试。修复注解是后续独立 pass，不是本轮 silent-green。
 
 ## Consequences
 
@@ -100,7 +113,9 @@
 
 ## 升级核查清单执行记录（对照矩阵 §3）
 
-- rpc*.md diff：逐字节一致 → wire 兼容成立。
+- rpc*.md diff：`rpc.md`/`json.md`/`rpc-extension-ui.md` 逐字节一致；
+  `rpc-commands.md` 差 1 行纯文档（未消费的 `get_last_assistant_text`
+  行为描述，#12119）→ wire 兼容成立。
 - 事件词表：既有 10 类不变；`extension_error` 在 RPC 模式新可达（见缺口 1）。
 - 扩展 API：本仓消费的 4 hook 名 + `registerTool`/`setActiveTools`/
   `ctx.ui`/`ctx.sessionManager.getEntries()` 在 v1.6.0 types.ts 全部存在

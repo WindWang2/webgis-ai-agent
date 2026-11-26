@@ -34,7 +34,7 @@
 | C17 | v1.6.0 abort 批量终态（#9986）：abort 时批量中未执行的工具也拿到 "Operation aborted" error tool result（两路批次循环不再 abort break；`runToolCall` 先查 aborted 再跑 hooks）→ transcript 每个 toolCallId 都有终态；`emitToolExecutionEnd` 对未 start 的调用只发 end 不补 start | `PiBridge.abort`（CONC-F1 快照不变）、`pi_event_mapper._handle_tool_execution_end`（无 start 无 cache → 诚实 step_error） | 契约车道 abort-batch 用例（v1.5.2 红/v1.6.0 绿）+ mapper 单测 |
 | C18 | v1.6.0 RPC 会话替换（#10470）：`new_session`/`switch_session`/`fork`/`clone` 的扩展 `session_start`/`resources_discover` 单次触发；订阅先于 `bindExtensions`（session_start handler 发出的事件可达 RPC 客户端）；rebind 后运行时诊断写 **stderr**（`takeUnreportedDiagnostics()` 为 SDK-host API，不经 RPC 可达） | `_isolate_vendor_session`（new_session 消费点）、`index.mjs session_start`（幂等激活）、`pi_rpc_client._read_stderr`（当前 DEBUG 级） | 契约车道 new_session 工具面存活用例 |
 | C19 | v1.6.0 扩展错误事件化（#11264）：`pi.events` handler 异常在 RPC 模式发 `extension_error` 事件（`{type, extensionPath, event, error}`）；`enabledModels` 类告警不再逐命令重复刷 stderr | `pi_event_mapper`（当前无 handler → 丢弃；缺口已记录待最小增量） | 事件词表复核（§3 清单第 5 步） |
-| C20 | v1.6.0 provider 容错：OpenAI strict 对无 type 裸节点 schema 静默降级 non-strict（#12049）、Anthropic non-strict 显式拒绝额外参数（#12067）；socket 错误（ECONNRESET/EPIPE/ETIMEDOUT）与 "Connection closed." 触发自动重试 | dump schema 卫生（`test_pi_native_surface.py` 扫描车道：native 前门 xfail 钉 `query_local_poi`，长尾 134/529 披露）；provider 断路语义 | schema 卫生车道 + chaos provider failure 用例 |
+| C20 | v1.6.0 provider 容错：#12049 增量谓词（`constrained-sampling.ts makeJsonSchemaNodeStrict`）——节点无 `type` 且无 `anyOf` 且无 `enum`（裸 `const` 不算 typed）→ strict 静默降级 non-strict；`$ref`/`oneOf` 等 keyword 拒绝 v1.5.2 已存在（非增量）。#12067 Anthropic non-strict 显式执行额外参数禁令。socket 错误（ECONNRESET/EPIPE/ETIMEDOUT）与 "Connection closed." 触发自动重试 | dump schema 卫生（`test_pi_native_surface.py` 扫描车道两桶披露：#12049 裸节点 + 既有 keyword 节点；native 前门 xfail(strict) 钉 `query_local_poi`）。**接入条件**：扩展 `registerTool` 未设 `constrainedSampling` → 线上 `strict:false`，#12049 降级路径尚未触发，车道为预接入卫生 | schema 卫生车道 + chaos provider failure 用例 |
 
 ## 2. 引擎/环境下限
 
@@ -61,11 +61,12 @@
 
 四栏口径：
 
-- **已消费协议**：`rpc.md`/`rpc-commands.md`/`json.md`/`rpc-extension-ui.md`
-  与 v1.5.2 **逐字节一致**（本机 diff 核实）→ wire 兼容；变化全部是行为修复：
-  C17（abort 批量终态）、C18（会话替换单次 session_start + 订阅先于
-  bindExtensions + 诊断走 stderr）、C19（`extension_error` 事件化）、C20
-  （strict 降级/schema 卫生、socket 重试）。
+- **已消费协议**：`rpc.md`/`json.md`/`rpc-extension-ui.md` 与 v1.5.2
+  **逐字节一致**（本机 diff 核实）；`rpc-commands.md` 差 1 行纯文档
+  （未消费命令 `get_last_assistant_text` 补记 #12119 行为）→ wire 兼容；
+  变化全部是行为修复：C17（abort 批量终态）、C18（会话替换单次
+  session_start + 订阅先于 bindExtensions + 诊断走 stderr）、C19
+  （`extension_error` 事件化）、C20（strict 降级/schema 卫生、socket 重试）。
 - **新能力（本仓消费）**：C17/C18/C19/C20；`get_last_assistant_text` 跳过
   abort 后无文本消息（#12119，本仓未消费，记录在案）；
   `AgentSessionRuntime.takeUnreportedDiagnostics()`（SDK-host API，不经
