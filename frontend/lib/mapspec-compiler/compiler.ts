@@ -1087,7 +1087,12 @@ export function compileMapSpec(
           "heatmap-opacity",
         ] as const) {
           const rawValue = (layer.paint as Record<string, unknown>)[rawKey];
-          if (rawValue !== undefined && maplibreLayer.paint[rawKey] === undefined) {
+          if (rawValue !== undefined && (
+            maplibreLayer.paint[rawKey] === undefined || rewrittenFromCircle
+          )) {
+            // circle→heatmap 改写时，显式原生热力键表达的是热力语义，优先于
+            // 由 circle color/opacity 派生的同目标键；普通 heatmap 层仍保持
+            // 上方“规范键优先”的既有契约。
             maplibreLayer.paint[rawKey] = isStyleMethodObject(rawValue)
               ? (compileStyleMethod(rawValue) ?? null)
               : asPaintValue(rawValue);
@@ -1339,7 +1344,8 @@ export function compileMapSpec(
           // 的层在导出里掉回 MapLibre 默认蓝色色带（导出降级）。
           // circle 主层的原生 heatmap paint 收纳在 heatmapNativePaint
           // （主层自身不能带 heatmap-* 键 —— MapLibre 会拒绝整层），此处
-          // 与主层 paint 合并后过 heatmapOnlyPaint。
+          // 与主层 paint 合并后过 heatmapOnlyPaint；live 侧对应地通过
+          // paint-bridge 的 includeHeatmapKeys 热力改写通道透出同组键。
           const heatSub: CompiledLayer & { layout: MapLibrePaint } = {
             id: representationSublayerId(layer.id, w.index),
             type: "heatmap",

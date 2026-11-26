@@ -54,7 +54,11 @@ class _RoutingCursor:
             self._result = [(self._count,)]
         elif "group by" in sql_l or "count(" in sql_l or "sum(" in sql_l or "avg(" in sql_l:
             self.description = [("district",), ("count",)]
-            self._result = self._agg_rows if self._agg_rows is not None else [("金牛区", 12), ("武侯区", 8)]
+            rows = self._agg_rows if self._agg_rows is not None else [("金牛区", 12), ("武侯区", 8)]
+            has_offset = "offset %s" in sql_l
+            limit = params[-2] if has_offset else params[-1]
+            offset = params[-1] if has_offset else 0
+            self._result = rows[offset : offset + limit]
         elif "set local statement_timeout" in sql_l:
             self._result = None
         else:
@@ -268,6 +272,32 @@ def test_aggregation_group_by_pushdown():
     assert "ST_AsGeoJSON" not in agg_sql[0], "aggregation must not fetch geometry"
     assert res.result_mode == "statistics"
     assert res.data and res.data[0]["district"] == "金牛区"
+
+
+@pytest.mark.parametrize("group_count, expected_complete", [(10_000, True), (10_001, False)])
+def test_aggregation_group_window_completeness_uses_sentinel(group_count, expected_complete):
+    """Adapter must distinguish an exact 10k group page from a truncated one."""
+    executed: list = []
+    agg_rows = [(f"district_{i}", i) for i in range(group_count)]
+    a = _adapter(executed, agg_rows=agg_rows)
+
+    # normalize_query_spec clamps the public request to 10k. The adapter must
+    # fetch one sentinel row internally instead of guessing from len(data).
+    res = a.query(
+        "public.schools",
+        QuerySpec(
+            aggregate=[{"func": "count"}],
+            group_by=["district"],
+            limit=20_000,
+        ),
+    )
+
+    agg_sql = [(sql, params) for sql, params in executed if "GROUP BY" in sql]
+    assert agg_sql and agg_sql[0][1][-1] == 10_001, "group query must fetch limit+1"
+    assert len(res.data) == 10_000
+    assert res.group_window_complete is expected_complete
+    assert res.truncated is (not expected_complete)
+    assert res.has_more is (not expected_complete)
 
 
 def test_count_only_no_geometry():

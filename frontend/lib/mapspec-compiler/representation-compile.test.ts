@@ -397,10 +397,10 @@ describe("compileMapSpec：显式计划优先于密度推断", () => {
 
 // ── #1747 项 1：heatmap 表达窗子层 paint 与 live 路径对齐 ─────────────────
 // live runtime（addRepresentationSublayersSafe）对 heatmap 子层用
-// heatmapOnlyPaint(toMapLibrePaint(layer)) —— 原生 heatmap-* paint 全量
-// 穿透；headless 编译器此前只发 heatmap-radius，带原生密度色带的层导出
-// 即掉回 MapLibre 默认蓝色色带（导出降级）。现已收口为单一实现
-// （mapspec-compiler/heatmap-paint.ts），此处锁定导出侧契约。
+// heatmapOnlyPaint(toMapLibrePaint(layer, { includeHeatmapKeys: true })) ——
+// 原生 heatmap-* paint 全量穿透；headless 编译器此前只发 heatmap-radius，
+// 带原生密度色带的层导出即掉回 MapLibre 默认蓝色色带（导出降级）。现已
+// 收口为单一实现（mapspec-compiler/heatmap-paint.ts），此处锁定导出侧契约。
 describe("compileMapSpec：g) heatmap 表达窗子层 paint 与 live 对齐（#1747）", () => {
   const windows: MapSpecRepresentationWindow[] = [
     { min_zoom: 0, max_zoom: 11, mode: "raw" },

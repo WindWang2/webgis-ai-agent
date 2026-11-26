@@ -26,10 +26,12 @@ from app.services.gis_harness.intent import (
 )
 from app.services.gis_harness.requirement_ir import normalize as norm
 from app.services.gis_harness.requirement_ir.contracts import (
+    MAX_AMBIGUITIES,
     MAX_LOCKS,
     MAX_MEASURES,
     MAX_TEXT,
     EMPTY_PROVENANCE,
+    Ambiguity,
     GISIntentSpec,
     MeasureSpec,
     PatchRecord,
@@ -39,6 +41,7 @@ from app.services.gis_harness.requirement_ir.contracts import (
 )
 from app.services.gis_harness.requirement_ir.lifecycle import (
     can_accept,
+    effective_document_lifecycle,
     transition_document,
 )
 from app.services.gis_harness.workflow_instance import canonical_fingerprint
@@ -574,6 +577,31 @@ def apply_patch(
         if not spec.measures:
             spec.core.measure = ""
 
+    elif patch.op == "record_ambiguity":
+        # 澄清入档是 lifecycle 记账，但仍是持久事实：必须走 journal，
+        # 否则 genesis + journal 恢复会丢 open/answered 与 asked_turn。
+        # 专用 op 而非裸 ``set ambiguities``，防止通用 setter 覆盖答案状态。
+        if patch.actor != "system":
+            raise PatchConflict("ambiguities", patch.actor)
+        try:
+            ambiguity = Ambiguity.model_validate(patch.value)
+        except ValueError as exc:
+            raise PatchValueInvalid("ambiguities", f"invalid ambiguity: {exc}") from exc
+        if ambiguity.state != "open" or ambiguity.answer or ambiguity.answered_turn is not None:
+            raise PatchValueInvalid("ambiguities", "record_ambiguity 只接受未答 open 歧义")
+        current = next(
+            (a for a in spec.ambiguities if a.context_key == ambiguity.context_key),
+            None,
+        )
+        if current is None:
+            if len(spec.ambiguities) >= MAX_AMBIGUITIES:
+                raise PatchValueInvalid("ambiguities", "ambiguity 数超上限")
+            spec.ambiguities.append(ambiguity.model_copy(update={"asked_turn": patch.turn}))
+        elif current.asked_turn is None:
+            current.asked_turn = patch.turn
+        else:
+            return (doc, False)
+
     elif patch.op == "answer_ambiguity":
         fields = _measure_fields_strict(patch, ("context_key", "answer"))
         target = next(
@@ -725,6 +753,10 @@ def apply_patch(
         lifecycle = transition_document(lifecycle, "accepted")
     elif patch.op == "supersede":
         lifecycle = "superseded"
+    elif patch.op == "record_ambiguity":
+        target = effective_document_lifecycle(doc.model_copy(update={"intent": spec}))
+        if target != lifecycle:
+            lifecycle = transition_document(lifecycle, target)
     elif lifecycle == "accepted" and patch.actor == "user" and patch.op != "accept":
         lifecycle = "draft"   # 用户修订重新打开
     if lifecycle != doc.lifecycle:

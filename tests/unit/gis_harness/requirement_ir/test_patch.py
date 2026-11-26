@@ -234,6 +234,52 @@ class TestMeasureOps:
 
 
 class TestAmbiguityOps:
+    def test_record_ambiguity_is_system_journal_bookkeeping(self):
+        from app.services.gis_harness.requirement_ir.contracts import Ambiguity
+        from app.services.gis_harness.requirement_ir.digest import requirement_digest
+
+        doc = _doc("成都的小学分布情况，做一张图")
+        ambiguity = Ambiguity(
+            code="aoi_unresolved", path="aoi.name", context_key="recorded-ctx",
+            blocking=True, question_zh="分析范围是哪个城市/区域？")
+        record = _patch(
+            op="record_ambiguity", value=ambiguity.model_dump(),
+            actor="system", op_id="record-1", turn=4)
+        new, applied = apply_patch(doc, record)
+        assert applied and new.revision == doc.revision + 1
+        assert new.lifecycle == "clarifying"
+        assert new.intent.ambiguities[0].asked_turn == 4
+        assert new.intent.ambiguities[0].state == "open"
+        assert requirement_digest(new) == requirement_digest(doc)
+        assert replay(doc, [record]) == new
+
+    def test_record_ambiguity_rejects_user_and_cannot_reopen_answer(self):
+        from app.services.gis_harness.requirement_ir.contracts import Ambiguity
+
+        doc = _doc("成都的小学分布情况，做一张图")
+        ambiguity = Ambiguity(
+            code="aoi_unresolved", path="aoi.name", context_key="recorded-ctx",
+            blocking=True, question_zh="分析范围是哪个城市/区域？")
+        payload = ambiguity.model_dump()
+        with pytest.raises(PatchConflict):
+            apply_patch(doc, _patch(
+                op="record_ambiguity", value=payload,
+                actor="user", op_id="record-user"))
+        doc, applied = apply_patch(doc, _patch(
+            op="record_ambiguity", value=payload,
+            actor="system", op_id="record-system", turn=2))
+        assert applied
+        doc, applied = apply_patch(doc, _patch(
+            op="answer_ambiguity",
+            value={"context_key": ambiguity.context_key, "answer": "成都"},
+            op_id="answer-recorded", turn=3))
+        assert applied and doc.intent.ambiguities[0].state == "answered"
+        snapshot = doc.model_dump()
+        unchanged, applied = apply_patch(doc, _patch(
+            op="record_ambiguity", value=payload,
+            actor="system", op_id="record-again", turn=4))
+        assert not applied and unchanged.model_dump() == snapshot
+
     def test_answer_and_waive(self):
         from app.services.gis_harness.requirement_ir import (
             plan_clarifications, record_ambiguities)

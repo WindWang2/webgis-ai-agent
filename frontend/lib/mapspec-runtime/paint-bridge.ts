@@ -154,16 +154,19 @@ function isNativePaintKey(layerType: string, key: string): boolean {
  * 把 MapSpecLayer 的 paint 规范成 MapLibre 可接受的 paint dict。纯函数:
  * 不触 MapLibre、不改入参;缺失/空 paint 返回 `{}`。paint 存在时按符号律补
  * 缺省符号维度（`featureCount` 未知按出厂锚点兜底，与 headless 编译器同款）。
+ * `includeHeatmapKeys` 仅供 circle→heatmap 改写调用：普通 circle 主层仍不得
+ * 携带 MapLibre 会拒绝的 heatmap-* 键。
  */
 export function toMapLibrePaint(
   layer: MapSpecLayer,
-  opts: { featureCount?: number } = {},
+  opts: { featureCount?: number; includeHeatmapKeys?: boolean } = {},
 ): Record<string, unknown> {
   const source = layer.paint;
   if (!source || typeof source !== "object") return {};
 
   const canonical = CANONICAL_PAINT_KEYS[layer.type] || {};
   const out: Record<string, unknown> = {};
+  const includeHeatmapKeys = opts.includeHeatmapKeys === true && layer.type === "circle";
 
   // 规范键先行降级 —— 与编译器优先级一致:规范键压过同目标的原生键。
   for (const [key, nativeKey] of Object.entries(canonical)) {
@@ -194,7 +197,8 @@ export function toMapLibrePaint(
   for (const [key, value] of Object.entries(source)) {
     if (key in canonical) continue;
     if (layer.type === "heatmap" && key === "color") continue;
-    if (!isNativePaintKey(layer.type, key)) {
+    if (!isNativePaintKey(layer.type, key)
+        && !(includeHeatmapKeys && key.startsWith("heatmap-"))) {
       recordSymbolLawEvidence("unmapped-paint-key", {
         key,
         layerType: layer.type,

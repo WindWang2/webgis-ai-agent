@@ -353,11 +353,28 @@ class PhysicalExecutor:
             result = adapter.query(node.dataset_id, QuerySpec(**extras))
             self.trace.pages_fetched += 1
             rows = list(result.data or []) if isinstance(result.data, list) else []
-            if (getattr(result, "truncated", False) or getattr(result, "has_more", False)
-                    or len(rows) >= min(fetch_window, 10_000)):
+            # R1-P1-9：组窗口完整性以 adapter 上报的权威事实为准 —— 旧的
+            # ``len(rows) >= min(fetch_window, 10_000)`` 启发式无法区分
+            # 「恰好 10k 组（完整）」与「>10k 组（被页上限截断）」：前者被
+            # 误报为不完整而响亮失败，后者若组数恰等于上限又被静默放行。
+            # adapter 未提供该事实时（None）才回退到显式截断标记。
+            group_window_complete = getattr(result, "group_window_complete", None)
+            incomplete = (
+                group_window_complete is False
+                if group_window_complete is not None
+                else bool(getattr(result, "truncated", False)
+                          or getattr(result, "has_more", False))
+            )
+            if incomplete:
                 from app.services.data_fabric.errors import QueryBudgetExceededError
 
-                raise QueryBudgetExceededError("aggregate pushdown returned an incomplete group window")
+                raise QueryBudgetExceededError(
+                    "aggregate pushdown returned an incomplete group window",
+                    details={
+                        "hint": "narrow the group_by or raise the source page limit",
+                        "group_window_complete": group_window_complete,
+                    },
+                )
             if self._streaming is not None:
                 for row in rows:
                     self._streaming.add_feature(row)

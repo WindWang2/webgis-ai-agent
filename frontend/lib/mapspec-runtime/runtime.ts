@@ -1358,14 +1358,21 @@ export class MapSpecRuntime {
     const planMainMode = planEffective
       ? (rawWindowsOf(repPlan!)[0] ?? repPlan!.windows[0]).mode
       : null;
+    const featureCount = this.sourceFeatureCounts.get(layer.source);
+    const rewriteCircleAsHeatmap = planEffective
+      && planMainMode === "visual_heatmap"
+      && layer.type === "circle";
     const nativePaint = toMapLibrePaint(layer, {
-      featureCount: this.sourceFeatureCounts.get(layer.source),
+      featureCount,
+      // circle 主层默认不能带 heatmap-*；仅在确定改写为 heatmap 时透出，
+      // 与 headless compiler 的 heatmapNativePaint 收纳口径一致。
+      includeHeatmapKeys: rewriteCircleAsHeatmap,
     });
     let baseType: string = layer.type;
     let basePaint: Record<string, unknown> = nativePaint;
-    if (planEffective && planMainMode === "visual_heatmap" && layer.type === "circle") {
+    if (rewriteCircleAsHeatmap) {
       baseType = "heatmap";
-      basePaint = heatmapOnlyPaint(nativePaint, this.sourceFeatureCounts.get(layer.source));
+      basePaint = heatmapOnlyPaint(nativePaint, featureCount);
     }
     // G40：符号资产绑定投影（点符号 → symbol/icon-*；面纹理 →
     // fill-pattern）。资产缺席/注册失败 → 跳层 + evidence（不画默认圆）。
@@ -1646,7 +1653,7 @@ export class MapSpecRuntime {
             maxzoom: wMax,
             layout: visibilityNone ? { visibility: "none" } : {},
             paint: heatmapOnlyPaint(
-              toMapLibrePaint(layer, { featureCount }),
+              toMapLibrePaint(layer, { featureCount, includeHeatmapKeys: true }),
               featureCount,
             ),
           } as never);

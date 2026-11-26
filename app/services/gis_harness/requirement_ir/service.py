@@ -208,6 +208,44 @@ def _doc_from(dump: Dict[str, Any]) -> RequirementDocument:
         return RequirementDocument.model_validate(repaired)
 
 
+def _record_ambiguities_with_journal(
+    doc: RequirementDocument,
+    turn: int,
+) -> RequirementDocument:
+    """将澄清入档接为 ``record_ambiguity`` patch，保证恢复可重放。
+
+    ``record_ambiguities`` 仍是纯 lifecycle 记账；这里只把新增/补
+    ``asked_turn`` 的差异转成专用 system patch。不在 ``replay_document``
+    重跑检测器，避免从语义反推并伪造历史澄清状态。
+    """
+    recorded = record_ambiguities(doc, plan_clarifications(doc), turn)
+    before = {a.context_key: a for a in doc.intent.ambiguities}
+    result = doc
+    for ambiguity in recorded.intent.ambiguities:
+        current = before.get(ambiguity.context_key)
+        if current is not None and current.asked_turn is not None:
+            continue
+        op_id = "amb-" + canonical_fingerprint({
+            "document_id": doc.document_id,
+            "context_key": ambiguity.context_key,
+            "turn": turn,
+        })[:24]
+        record = PatchRecord(
+            op_id=op_id,
+            turn=turn,
+            actor="system",
+            op="record_ambiguity",
+            path=f"ambiguities.{ambiguity.context_key}",
+            value=ambiguity.model_dump(),
+            reason="clarification recorded",
+            expected_revision=result.revision,
+        )
+        result, applied = apply_patch(result, record)
+        if not applied:  # 内部确定性 patch 不得静默丢账
+            raise RuntimeError("record_ambiguity patch was not applied")
+    return result
+
+
 def summarize(doc: RequirementDocument) -> Dict[str, Any]:
     """有界 summary（工具 payload 出口；含 digest/澄清/锁/归因面）。"""
     questions = pending_questions(doc)
@@ -329,7 +367,7 @@ async def _ensure_document_unlocked(
                         if p.expected_revision is not None else None)})
                     for p in pending
                 ]
-        doc = record_ambiguities(doc, plan_clarifications(doc), turn)
+        doc = _record_ambiguities_with_journal(doc, turn)
         state, doc = _fold_if_needed(state, doc)
         new_dump = doc.model_dump()
         if new_dump != state.document:
@@ -491,7 +529,7 @@ async def _apply_user_patches_unlocked(
         # 文档零变更——不写 store（同 revision 重写必被单调 seq 栅栏拒绝，
         # 此前把这种良性重放误报为 requirement_persist_fenced）。
         return {"applied": 0, "errors": [], "summary": summarize(doc)}
-    doc = record_ambiguities(doc, plan_clarifications(doc), doc.updated_turn)
+    doc = _record_ambiguities_with_journal(doc, doc.updated_turn)
     state, doc = _fold_if_needed(state, doc)
     state.document = doc.model_dump()
     if not await save_state(session_store, session_id, state):

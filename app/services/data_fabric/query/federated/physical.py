@@ -154,6 +154,19 @@ def iter_scan_pages(
                 pass
         rows = result.features or []
         more = bool(getattr(result, "has_more", False) or getattr(result, "truncated", False))
+        # R1-P1-9：adapter 已证明组窗口不完整时，权威事实优先于任何
+        # len/fetch_window 启发式 —— 分组聚合被页上限截断必须响亮失败，
+        # 不得把静默截断的组窗口当成完整结果Join。
+        group_window_complete = getattr(result, "group_window_complete", None)
+        if group_window_complete is False:
+            raise QueryBudgetExceededError(
+                "source returned an incomplete group window; "
+                "narrow the group_by or raise the page limit",
+                details={
+                    "hint": "grouped aggregation exceeded the source page limit",
+                    "group_window_complete": False,
+                },
+            )
         incoming = fetched + len(rows)
         if incoming > budget.max_rows and incoming <= fetch_limit:
             raise QueryBudgetExceededError(
