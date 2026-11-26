@@ -30,11 +30,13 @@ def spatial_operator(
                         val = bound_args.arguments["features"]
                         if isinstance(val, (dict, list)):
                             bound_args.arguments["features"] = to_feature_collection(val)
-                    elif len(keys) > 1 and keys[1] not in ("cls", "self"):
-                        first_arg_key = keys[1]
-                        val = bound_args.arguments[first_arg_key]
-                        if val is not None and isinstance(val, (dict, list)):
-                            bound_args.arguments[first_arg_key] = to_feature_collection(val)
+                    elif keys:
+                        data_keys = keys[1:] if keys[0] in ("cls", "self") else keys
+                        if data_keys:
+                            first_arg_key = data_keys[0]
+                            val = bound_args.arguments[first_arg_key]
+                            if val is not None and isinstance(val, (dict, list)):
+                                bound_args.arguments[first_arg_key] = to_feature_collection(val)
 
             try:
                 result = func(*bound_args.args, **bound_args.kwargs)

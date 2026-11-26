@@ -84,7 +84,5 @@ def resolve_png_path(session_dir: Path, image_ref: str) -> Optional[Path]:
   raster_id = image_ref[len("ref:raster/"):]
   if not _RASTER_ID_RE.fullmatch(raster_id):
     return None
-  if not re.fullmatch(r"[A-Za-z0-9_-]+", raster_id):
-    raise ValueError("raster_id contains unsupported characters")
   path = raster_dir(session_dir) / f"{raster_id}.png"
   return path if path.exists() else None

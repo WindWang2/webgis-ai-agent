@@ -69,6 +69,11 @@ def build_raster_stretch_payload(
         clip_lo, clip_hi = 0.0, 0.0
     else:
         lo_pct, hi_pct = clip_percentiles
+        if lo_pct > hi_pct:
+            # 顺序倒置 → span 为负 → norm 反向、拉伸静默倒置（评审 finding）：
+            # 生产决策面显式报错，不静默产出倒置图像。
+            raise ValueError(
+                f"clip_percentiles 必须有序（lo <= hi）：收到 ({lo_pct}, {hi_pct})")
         clip_lo = float(np.percentile(finite, lo_pct))
         clip_hi = float(np.percentile(finite, hi_pct))
     span = (clip_hi - clip_lo) or 1.0

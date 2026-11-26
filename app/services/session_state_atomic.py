@@ -49,8 +49,14 @@ async def atomic_update_state(
                 async with store._r.pipeline() as pipe:
                     await pipe.watch(state_key)
                     values = await pipe.hmget(state_key, list(keys))
-                    snapshot = {key: json.loads(value) if value is not None else None
-                                for key, value in zip(keys, values)}
+                    try:
+                        snapshot = {key: json.loads(value) if value is not None else None
+                                    for key, value in zip(keys, values)}
+                    except (ValueError, TypeError, UnicodeError):
+                        # Corrupt state field is a storage failure, not a race:
+                        # report None per contract instead of leaking
+                        # JSONDecodeError (same tolerance as decode_json_objects).
+                        return None
                     updated = dict(mutate(snapshot))
                     payloads = {key: json.dumps(value, ensure_ascii=False) for key, value in updated.items()}
                     pipe.multi()
