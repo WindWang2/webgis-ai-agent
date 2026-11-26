@@ -121,6 +121,9 @@ export function BriefPanel(props: BriefPanelProps): React.ReactElement {
     } catch (err) {
       if (!(await handleConflict(err))) {
         useToastStore.getState().addToast(describeApiError(err, t('briefUpdateFailed')), 'error');
+        // 多步写（moveBlock 交换 order）首个 patch 可能已生效：非 409 失败也
+        // 重拉服务端真相，避免本地旧序 / 重复 order 不一致拖到下次 409 才自愈。
+        await reload({ silent: true });
       }
     } finally {
       setBusy(false);

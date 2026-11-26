@@ -383,6 +383,50 @@ describe('WidgetHost 挂载与双向绑定', () => {
     // 裁决后工具自动退出
     expect(useHudStore.getState().copilotTool).toBeNull();
   });
+
+  it('sketch-box：Escape 取消框选后解除待决，后续无关高亮不回传几何', () => {
+    const onReply = vi.fn();
+    render(
+      <SketchBoxWidget
+        spec={{
+          widget_id: 'w-sketch-esc-1',
+          kind: 'sketch_box',
+          payload: { prompt: '在图上框选目标水域' },
+        }}
+        onReply={onReply}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('sketch-box-start'));
+    expect(useHudStore.getState().copilotTool).toBe('box_select');
+    // Escape 取消：清高亮 + 关工具（spatial-sketch-tool Escape 处理器同效果）。
+    act(() => {
+      useHudStore.getState().setCopilotHighlight(null);
+      useHudStore.getState().setCopilotTool(null);
+    });
+    // 下一次任意 copilot 高亮完成（别的手势/别的卡片）不得替本卡片回传。
+    act(() => {
+      useHudStore.getState().setCopilotHighlight({
+        ring: [[100, 100], [300, 100], [300, 260], [100, 260]],
+        kind: 'freehand_lasso',
+        lnglatRing: [[116.3, 39.8], [116.36, 39.8], [116.36, 39.86], [116.3, 39.86]],
+      });
+    });
+    expect(onReply).not.toHaveBeenCalled();
+    expect(vi.mocked(globalThis.fetch)).not.toHaveBeenCalled();
+    // 重新点 CTA：工具态复位不得顺带消费上一条残留高亮环……
+    fireEvent.click(screen.getByTestId('sketch-box-start'));
+    expect(useHudStore.getState().copilotTool).toBe('box_select');
+    expect(onReply).not.toHaveBeenCalled();
+    // ……只有本次激活后真正新完成的框选才回传一次。
+    act(() => {
+      useHudStore.getState().setCopilotHighlight({
+        ring: [[100, 100], [300, 100], [300, 260], [100, 260]],
+        kind: 'box_select',
+        lnglatRing: [[116.4, 39.9], [116.46, 39.9], [116.46, 39.96], [116.4, 39.96]],
+      });
+    });
+    expect(onReply).toHaveBeenCalledTimes(1);
+  });
 });
 
 /* ─── 安全校验 ─── */

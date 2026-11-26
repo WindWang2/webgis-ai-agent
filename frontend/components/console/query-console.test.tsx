@@ -172,4 +172,28 @@ describe('QueryConsole', () => {
       ),
     );
   });
+
+  it('limit 未失焦直接执行：按输入框当前值钳制下发，而非旧 spec.limit', async () => {
+    const { dataFabricApi } = await import('@/lib/api/data-fabric');
+    render(<QueryConsole sessionId="sess-1" ownerToken={null} />);
+    act(() => useQueryConsoleStore.getState().openWith());
+    fireEvent.click(await screen.findByRole('button', { name: /全国水系/ }));
+    await screen.findByTestId('console-target');
+
+    // 输入 5000（超出 max=2000）后不触发 blur，直接点执行
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '5000' } });
+    fireEvent.click(screen.getByTestId('console-run'));
+
+    await screen.findByTestId('console-disclosure');
+    expect(dataFabricApi.queryCatalogItem).toHaveBeenCalledWith(
+      'cat-1',
+      expect.objectContaining({ limit: 2000 }),
+    );
+    await waitFor(() =>
+      expect(localStorage.setItem).toHaveBeenCalledWith(
+        expect.stringMatching(/^geoagent-query-console-history-v1:/),
+        expect.stringContaining('"limit":2000'),
+      ),
+    );
+  });
 });

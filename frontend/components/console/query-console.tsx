@@ -47,6 +47,12 @@ function readQueryPlan(result: QueryResult | null): QueryPlanInfo | null {
   return plan && typeof plan === 'object' ? (plan as QueryPlanInfo) : null;
 }
 
+/** limit 输入框钳制规则（onBlur 与执行时共用）：[1, 2000]，空串/非法回落 100。 */
+function clampLimit(text: string): number {
+  const n = Math.trunc(Number(text) || 100);
+  return Math.max(1, Math.min(2000, n));
+}
+
 export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): React.ReactElement | null {
   const t = useT('console');
   // #1436 lineage: 时间戳随应用语言格式化（zh-CN 用户输出不变），不再硬编码 'zh-CN'。
@@ -65,6 +71,12 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
   const [spec, setSpec] = useState<ConsoleSpec>(DEFAULT_SPEC);
   const [limitText, setLimitText] = useState(String(DEFAULT_SPEC.limit));
   useEffect(() => setLimitText(String(spec.limit)), [spec.limit]);
+  // 输入框未失焦就直接执行/explain 时，按 limitText 当前值钳制后下发，
+  // 避免 spec.limit（仅 onBlur 更新）与输入框显示不一致。
+  const effectiveSpec = useMemo<ConsoleSpec>(
+    () => ({ ...spec, limit: clampLimit(limitText) }),
+    [spec, limitText],
+  );
   const [searchParams, setSearchParams] = useState<{ text: string; nonce: number }>({
     text: '',
     nonce: 0,
@@ -159,7 +171,7 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
     setExplaining(true);
     setExplainError(null);
     try {
-      const res = await dataFabricApi.explainCatalogItem(target.id, toQuerySpec(spec));
+      const res = await dataFabricApi.explainCatalogItem(target.id, toQuerySpec(effectiveSpec));
       if (!current()) return;
       setExplainLines(Array.isArray(res.explain) ? res.explain : [String(res.explain ?? '')]);
     } catch (err) {
@@ -169,7 +181,7 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
     } finally {
       if (current()) setExplaining(false);
     }
-  }, [target, spec, guard.ok, t]);
+  }, [target, effectiveSpec, guard.ok, t]);
 
   const handleRun = useCallback(async () => {
     if (!target) return;
@@ -180,9 +192,9 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
     setRunError(null);
     const entryId = `qh-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     try {
-      const res = await dataFabricApi.queryCatalogItem(target.id, toQuerySpec(spec));
+      const res = await dataFabricApi.queryCatalogItem(target.id, toQuerySpec(effectiveSpec));
       if (!current()) return;
-      setResultSpec(spec);
+      setResultSpec(effectiveSpec);
       setResult(res);
       setHistory(
         appendHistory({
@@ -190,7 +202,7 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
           ts: Date.now(),
           targetId: target.id,
           targetTitle: target.title || target.name,
-          spec,
+          spec: effectiveSpec,
           status: 'ok',
           summary: res.truncated
             ? t('historySummaryTruncated', { count: res.returned_count ?? res.features?.length ?? 0 })
@@ -208,7 +220,7 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
           ts: Date.now(),
           targetId: target.id,
           targetTitle: target.title || target.name,
-          spec,
+          spec: effectiveSpec,
           status: 'error',
           summary: msg.slice(0, 80),
         }),
@@ -216,7 +228,7 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
     } finally {
       if (current()) setRunning(false);
     }
-  }, [target, spec, guard, t]);
+  }, [target, effectiveSpec, guard, t]);
 
   /** 结果上图：以当前 QuerySpec materialize → ref 承载层 → 按需水合。 */
   // F03 同款跨会话守卫：materialize/水合的 await 期间用户切换会话时，
@@ -510,7 +522,7 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
                     value={limitText}
                     onChange={(e) => setLimitText(e.target.value)}
                     onBlur={() => {
-                      const limit = Math.max(1, Math.min(2000, Math.trunc(Number(limitText) || 100)));
+                      const limit = clampLimit(limitText);
                       setLimitText(String(limit));
                       setSpec((s) => ({ ...s, limit }));
                     }}

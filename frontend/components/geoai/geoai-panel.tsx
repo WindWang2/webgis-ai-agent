@@ -465,8 +465,9 @@ export function GeoAiPanel() {
     let rendered = 0;
     for (const f of candidateFeatures) {
       if (rendered >= 500) break; // 渲染上限（超大 run 不拖死 DOM）
-      rendered += 1;
       const cand = Number(f.properties?.candidate ?? 0);
+      // 预算只对真正进入 DOM 的候选计数：非 Polygon 直接 continue，
+      // 不能先自增再判断（否则前 500 个 MultiPolygon 会吃掉全部预算）。
       if (f.geometry?.type !== 'Polygon') continue;
       const rings = f.geometry.coordinates as Ring[];
       const ring = rings?.[0] ?? [];
@@ -477,6 +478,7 @@ export function GeoAiPanel() {
         })
         .join(' ');
       if (pts) {
+        rendered += 1;
         out.push({
           candidate: cand,
           points: pts,

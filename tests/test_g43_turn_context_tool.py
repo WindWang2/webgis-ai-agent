@@ -136,7 +136,13 @@ class TestToolBehavior:
         assert result["coverage"] == "limited"
 
     async def test_no_session_error(self):
+        """缺 session 时返回 registry 错误契约信封（非裸 {"error": str}）。"""
+        from app.lib.tool_result_errors import is_error_like_result
         from app.tools.turn_context_tools import query_turn_context_receipt
 
         result = await query_turn_context_receipt("", "")
-        assert result == {"error": "session context unavailable"}
+        assert result["success"] is False
+        assert result["code"] == "SESSION_CONTEXT_UNAVAILABLE"
+        assert result["message"] == "session context unavailable"
+        # dispatch/registry 的错误族判定：信封必须被稳定识别为失败
+        assert is_error_like_result(result)
