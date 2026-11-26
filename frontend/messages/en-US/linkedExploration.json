@@ -71,13 +71,16 @@
   "commands": {
     "openPanel": "Open linked exploration workbench"
   },
-  "multiSource.primary": "primary",
-  "multiSource.propKeys": "propagated keys",
-  "multiSource.propNone": "upstream unfiltered: no restriction",
-  "multiSource.propagation": "propagation",
-  "multiSource.keys": "keys",
-  "multiSource.unprojected": "composite-key propagation: map filter not exactly projectable (stats exact)",
-  "multiSource.handleSkipped": "scope handle not expressible: results table withheld (no over-broad impersonation)",
-  "multiSource.unavailable": "unavailable",
-  "multiSource.empty": "Run a multi-source plan preview to see per-source scope and metrics"
+  "multiSource": {
+    "primary": "primary",
+    "propKeys": "propagated keys",
+    "propNone": "upstream unfiltered: no restriction",
+    "propUnfiltered": "upstream has no active conditions: no propagation restriction",
+    "propagation": "propagation",
+    "keys": "keys",
+    "unprojected": "composite-key propagation: map filter not exactly projectable (stats exact)",
+    "handleSkipped": "scope handle not expressible: results table withheld (no over-broad impersonation)",
+    "unavailable": "unavailable",
+    "empty": "Run a multi-source plan preview to see per-source scope and metrics"
+  }
 }

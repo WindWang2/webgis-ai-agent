@@ -245,6 +245,15 @@ def _final_map_filter(
         expr = prop.get("map_filter")
         if prop.get("key_count", 0) == 0 and prop.get("from_unfiltered"):
             continue  # 未过滤上游 → 无限制
+        if prop.get("key_count", 0) == 0 and not prop.get("from_unfiltered"):
+            # review A-P3-7：上游选择为空 → 下游范围是空集。空 in-叶
+            # （literal []）对 MapLibre 精确恒假 —— 空集是**可精确投影**
+            # 的（无论单键还是复合键），复合键"不可投影"文案在此误导
+            fields = prop.get("target_fields") or []
+            if fields:
+                parts.append(["all", *[
+                    ["in", ["get", f], ["literal", []]] for f in fields]])
+            continue
         if expr is None:
             projected = False
             note_parts.append(
@@ -300,12 +309,13 @@ def _combine_scope_where_ast(
 
 async def preview_plan(
     session_id: str,
-    plan_raw: Dict[str, Any],
+    plan_raw: Optional[Dict[str, Any]],
     actor: Dict[str, Any],
     *,
     create_handle: bool = True,
     selection_ref: Optional[str] = None,
     selection_source_id: Optional[str] = None,
+    _validated_plan: Optional[contract.ExplorationPlan] = None,
 ) -> Dict[str, Any]:
     """多源联动预览权威面（v3 主面；v2 单源计划同面兼容）。
 
@@ -315,6 +325,10 @@ async def preview_plan(
     ``SELECTION_REF_UNRESOLVED`` typed 拒绝 + 最小澄清提示（绝不随机挑
     一代冒充）。ids 摄入上限 50（MAX_HISTORY_IDS）+ 截断权威披露
     ``ids_truncated``/``matched_count`` —— 真实命中数以后者为准。
+
+    ``_validated_plan``：服务层内部通道（drill 注入保留前缀 id 后的已验
+    证计划对象）—— 跳过用户面校验（保留前缀 id 会被外部入口的
+    ``_check_id`` 拒绝；该命名空间仅服务层可写）。外部调用方不得使用。
 
     语义：
     1. 逐源冻结并核对计划锚（任一漂移 → STALE_SOURCE，逐源列明）——
@@ -328,7 +342,10 @@ async def preview_plan(
     5. where-scope handle 逐源创建（scope 可表达为 AST 时；否则跳过
        并披露原因 —— 结果表不得拿过宽范围冒充最终 scope）。
     """
-    plan = _validate_plan_payload(plan_raw)
+    if _validated_plan is not None:
+        plan = _validated_plan
+    else:
+        plan = _validate_plan_payload(plan_raw)  # type: ignore[arg-type]
     conditions = _parse_plan_conditions(plan)
     bindings = contract.plan_source_bindings(plan)
     owner = _actor_owner_token(actor)
@@ -395,14 +412,18 @@ async def preview_plan(
                 status_code=422,
                 correction_hint="改用显式条件（如按键字段筛选）替代选择史指代。")
         ids = list(selection_claimed.get("feature_ids") or [])
-        conditions.append(contract.parse_condition({
-            "kind": "category",
-            "condition_id": f"sel-ref-{selection_claimed.get('claimed_at_seq')}",
-            "chart_id": f"sel-ref-chart-{selection_target_sid}",
-            "field": id_field,
-            "values": ids,
-            "source_id": selection_target_sid,
-        }))
+        # 服务层注入（保留前缀 id，同 drill：model_construct 绕过用户面
+        # 校验，字段内部受控恒合法）
+        conditions.append(contract.CategoryCondition.model_construct(
+            kind="category",
+            condition_id=f"sel-ref-{selection_claimed.get('claimed_at_seq')}",
+            chart_id=f"sel-ref-chart-{selection_target_sid}",
+            field=id_field,
+            values=ids,
+            include_null=False,
+            labels={},
+            source_id=selection_target_sid,
+        ))
         selection_disclosure = {
             "selection_ref": selection_ref,
             "source_id": selection_target_sid,
@@ -420,11 +441,6 @@ async def preview_plan(
 
     # 2. 传播：拓扑序单遍；上游最终匹配行的键集 → 下游谓词
     order = relations.propagation_order(plan)
-    matching: Dict[str, List[Any]] = {}
-    prop_disclosures: Dict[str, List[Dict[str, Any]]] = {
-        b.source_id: [] for b in bindings
-    }
-    incoming_preds: Dict[str, List[Any]] = {b.source_id: [] for b in bindings}
     # 出边表：上游源 → [(link, 目标源, 目标侧)]
     outgoing: Dict[str, List[Any]] = {}
     for link in plan.links:
@@ -439,58 +455,73 @@ async def preview_plan(
         return [p.left_field if target_side == "left" else p.right_field
                 for p in link.keys]
 
-    for sid in order:
-        own = own_wheres.get(sid)
-        preds = incoming_preds.get(sid, [])
-        rows = []
-        for feat in features_by_source[sid]:
-            if own is not None and not evaluate_where(own, feat):
-                continue
-            if not all(p(feat) for p in preds):
-                continue
-            rows.append(feat)
-        matching[sid] = rows
+    # review B-P2：逐行过滤 + 键集收集是 O(总行数) 纯 CPU 循环 —— 打包为
+    # 同步函数走 to_thread（250k 行内联会拖住事件循环，多租户面排队）。
+    def _evaluate_propagation():
+        matching: Dict[str, List[Any]] = {}
+        prop_disclosures: Dict[str, List[Dict[str, Any]]] = {
+            b.source_id: [] for b in bindings
+        }
+        incoming_preds: Dict[str, List[Any]] = {b.source_id: [] for b in bindings}
+        for sid in order:
+            own = own_wheres.get(sid)
+            preds = incoming_preds.get(sid, [])
+            rows = []
+            for feat in features_by_source[sid]:
+                if own is not None and not evaluate_where(own, feat):
+                    continue
+                if not all(p(feat) for p in preds):
+                    continue
+                rows.append(feat)
+            matching[sid] = rows
 
-        # 为下游目标源收集本源最终匹配行的传播键集（拓扑序保证已定稿）
-        for link, target_sid, target_side in outgoing.get(sid, ()):
-            upstream_unfiltered = (
-                own is None and not _source_has_incoming(plan, sid))
-            target_fields = _prop_target_fields(link, target_side)
-            if upstream_unfiltered:
-                # 未过滤上游 → 无限制（键集全量无意义且易超帽）
+            # 为下游目标源收集本源最终匹配行的传播键集（拓扑序保证已定稿）
+            for link, target_sid, target_side in outgoing.get(sid, ()):
+                # review A-P2-1：执行态判定（非声明边）—— B 上无 own 条件
+                # 且无生效入边谓词 = B 实际未被过滤 → 它的出边也不得产生
+                # 限制（否则惰性链 A→B→C 会静默收窄 C，与"未过滤上游不
+                # 产生限制"的披露语义矛盾）
+                upstream_unfiltered = (
+                    own is None and not incoming_preds.get(sid))
+                target_fields = _prop_target_fields(link, target_side)
+                if upstream_unfiltered:
+                    # 未过滤上游 → 无限制（键集全量无意义且易超帽）
+                    prop_disclosures[target_sid].append({
+                        "link_id": link.link_id,
+                        "from_source": sid,
+                        "target_fields": target_fields,
+                        "key_count": 0,
+                        "from_unfiltered": True,
+                        "note": "上游无任何生效条件：本关系不产生传播限制",
+                    })
+                    continue
+                upstream_side = "left" if target_side == "right" else "right"
+                keyset = relations.collect_propagated_composite_keys(
+                    rows, None, link=link, side=upstream_side)
+                relations.require_composite_within_cap(keyset)
+                target_specs = relations.composite_key_specs(link, target_side)
+                pred = relations.composite_predicate(
+                    keyset.target_fields, target_specs, keyset.keys)
+                incoming_preds[target_sid].append(pred)
+                single_pair = len(link.keys) == 1
                 prop_disclosures[target_sid].append({
                     "link_id": link.link_id,
                     "from_source": sid,
-                    "target_fields": target_fields,
-                    "key_count": 0,
-                    "from_unfiltered": True,
-                    "note": "上游无任何生效条件：本关系不产生传播限制",
+                    "target_fields": keyset.target_fields,
+                    "key_count": len(keyset.keys),
+                    "from_unfiltered": False,
+                    "skipped_missing": keyset.skipped_missing,
+                    "skipped_invalid": keyset.skipped_invalid,
+                    "map_filter": relations.composite_single_pair_projection(keyset),
+                    # 单键对时给出投影就绪的 typed 值（[族, 值] 列表）
+                    "keys": (
+                        [list(kt[0]) for kt in sorted(
+                            keyset.keys, key=lambda parts: str(parts))]
+                        if single_pair else []),
                 })
-                continue
-            upstream_side = "left" if target_side == "right" else "right"
-            keyset = relations.collect_propagated_composite_keys(
-                rows, None, link=link, side=upstream_side)
-            relations.require_composite_within_cap(keyset)
-            target_specs = relations.composite_key_specs(link, target_side)
-            pred = relations.composite_predicate(
-                keyset.target_fields, target_specs, keyset.keys)
-            incoming_preds[target_sid].append(pred)
-            single_pair = len(link.keys) == 1
-            prop_disclosures[target_sid].append({
-                "link_id": link.link_id,
-                "from_source": sid,
-                "target_fields": keyset.target_fields,
-                "key_count": len(keyset.keys),
-                "from_unfiltered": False,
-                "skipped_missing": keyset.skipped_missing,
-                "skipped_invalid": keyset.skipped_invalid,
-                "map_filter": relations.composite_single_pair_projection(keyset),
-                # 单键对时给出投影就绪的 typed 值（[族, 值] 列表）
-                "keys": (
-                    [list(kt[0]) for kt in sorted(
-                        keyset.keys, key=lambda parts: str(parts))]
-                    if single_pair else []),
-            })
+        return matching, prop_disclosures
+
+    matching, prop_disclosures = await asyncio.to_thread(_evaluate_propagation)
 
     # 3. per-source 权威面
     per_source: Dict[str, Dict[str, Any]] = {}
@@ -617,15 +648,21 @@ def _source_has_incoming(plan: contract.ExplorationPlan, sid: str) -> bool:
 
 async def _resolve_selection_ref(session_id: str, selection_ref: str) -> Dict[str, Any]:
     """选择史句柄解析（gis_situation selection_history；不可解析 →
-    typed 拒绝 + 最小澄清，绝不随机挑一代）。"""
+    typed 拒绝 + 最小澄清，绝不随机挑一代）。基础设施读失败 ≠ 史空：
+    区分为 5xx（review B-P3：误报"史空"会引导用户无谓重选）。"""
     from app.services.gis_situation.selection_history import resolve_selection_ref
     from app.services.session_data import session_data_manager
 
     try:
         ledger = await session_data_manager.get_state_field(
             session_id, "_interaction_ir_ledger")
-    except Exception:  # noqa: BLE001 — 史面读失败 = 句柄不可解析
-        ledger = []
+    except LinkedExplorationError:
+        raise
+    except Exception as e:  # noqa: BLE001 — 存储故障 → 5xx（非"史空"）
+        raise LinkedExplorationError(
+            "SELECTION_LEDGER_UNAVAILABLE",
+            f"选择史账本读取失败：{e}", status_code=503,
+            correction_hint="稍后重试；或改用显式条件替代选择史指代。") from e
     claimed = resolve_selection_ref(
         ledger if isinstance(ledger, list) else [], selection_ref)
     if claimed is None:
@@ -639,7 +676,8 @@ async def _resolve_selection_ref(session_id: str, selection_ref: str) -> Dict[st
 
 
 def _resolve_id_field(features: Sequence[Any]) -> Optional[str]:
-    """要素 id 字段链解析（与 feature_pages.FEATURE_ID_KEYS 同源）。"""
+    """要素 id 字段链解析（与 feature_pages.FEATURE_ID_KEYS 同源；
+    前 50 行抽样 —— review B-P3：抽样口径在错误 detail 披露）。"""
     from app.services.feature_pages import FEATURE_ID_KEYS
 
     for feat in list(features)[:50]:
@@ -700,6 +738,16 @@ async def drill_plan(
             status_code=422,
             correction_hint="在计划中为该源声明 hierarchy.parent_field "
                             "（子粒度行持有父级键的字段）后再钻取。")
+    # review B-P3：跨源父表（parent_source_id）需要键对齐的上卷语义，本域
+    # 尚未实现 —— 诚实拒绝，不静默按本源字段过滤（会得到全 null 组）。
+    if hierarchy.parent_source_id and hierarchy.parent_source_id != source_id:
+        raise LinkedExplorationError(
+            "CROSS_SOURCE_HIERARCHY_UNSUPPORTED",
+            f"源 {source_id} 声明了跨源父表（parent_source_id="
+            f"{hierarchy.parent_source_id}）—— 跨源上卷尚未支持",
+            status_code=422,
+            correction_hint="把父级键冗余进本源字段后声明同源 hierarchy，"
+                            "或用键关系 + 指标（grain=父表）表达上卷口径。")
     if direction == "down":
         if parent_value is None or not isinstance(
                 parent_value, (str, int, float, bool)):
@@ -712,10 +760,11 @@ async def drill_plan(
     chart_id = f"{_DRILL_CHART_PREFIX}{source_id}"
     cond_id = f"{_DRILL_COND_PREFIX}{source_id}"
 
-    # 1. 移除本源旧钻取条件/图（幂等重入），再按方向追加
+    # 1. 移除本源旧钻取条件/图（幂等重入；**精确 id 匹配** —— review
+    #    B-P3：按前缀删会吞掉用户同前缀条目；drill 返回的计划可安全回喂）
     conditions = [c for c in plan.conditions
                   if not (isinstance(c, dict)
-                          and str(c.get("condition_id", "")).startswith(cond_id))]
+                          and c.get("condition_id") == cond_id)]
     if direction == "down":
         conditions.append({
             "kind": "category", "condition_id": cond_id,
@@ -729,16 +778,22 @@ async def drill_plan(
             f"计划图表已满（{contract.MAX_CHARTS}），无法注入钻取摘要图",
             status_code=422,
             correction_hint="移除次要图表后再钻取。")
-    charts.append(contract.ChartSpec(
+    # 服务层注入固定 id（与清理精确对应；model_construct 绕过用户面
+    # id 校验，其余字段内部受控恒合法）
+    charts.append(contract.ChartSpec.model_construct(
         chart_id=chart_id, kind="category", field=parent_field,
-        source_id=source_id,
-        title=f"钻取摘要 · {parent_field}"))
+        aggregation="count", value_field=None,
+        source_id=source_id, title=f"钻取摘要 · {parent_field}",
+        bins=contract.DEFAULT_BINS, layer_id=None))
     new_plan = plan.model_copy(update={"charts": charts,
                                        "conditions": conditions})
 
     # 2. 权威重放（同代 + 传播 + 指标全口径）
-    preview = await preview_plan(session_id, new_plan.model_dump(mode="json"),
-                                 actor, create_handle=create_handle)
+    # 内部通道：new_plan 含服务层注入的保留前缀 id（已验证对象，model_copy
+    # 构造）—— 外部入口的 plan_raw 校验面不适用
+    preview = await preview_plan(
+        session_id, None, actor,
+        create_handle=create_handle, _validated_plan=new_plan)
     drill_chart = next((c for c in preview.get("charts", [])
                         if c.get("chart_id") == chart_id), None)
     stats = (drill_chart or {}).get("full", {}).get("statistics", {})
@@ -1136,8 +1191,21 @@ async def open_view(
             "sources": drift,
         }
         return out
-    # 锚匹配：同代重放（预览统计 + handle 都基于当前冻结）
-    preview = await preview_plan(session_id, row.plan, actor)
+    # 锚匹配：同代重放（预览统计 + handle 都基于当前冻结）。
+    # review B-P3：open 自身冻结与 preview_plan 二次冻结之间源可能推进 ——
+    # 把 STALE_SOURCE 折算为 state=stale（与锚漂移同一响应形，不抛 409）。
+    try:
+        preview = await preview_plan(session_id, row.plan, actor)
+    except LinkedExplorationError as e:
+        if e.code == "STALE_SOURCE":
+            out["state"] = "stale"
+            out["stale_reason"] = {
+                "code": "SOURCE_ADVANCED",
+                "message": e.message,
+                "sources": (e.detail or {}).get("sources", []),
+            }
+            return out
+        raise
     out["state"] = "ready"
     out["preview"] = _bounded_preview(preview)
 

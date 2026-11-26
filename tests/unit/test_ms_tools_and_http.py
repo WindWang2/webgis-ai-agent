@@ -20,7 +20,6 @@ from app.tools.linked_exploration_tools import (
 )
 from app.tools.registry import ToolRegistry
 
-pytestmark = pytest.mark.asyncio
 
 
 def _schools_fc():
@@ -96,6 +95,7 @@ def _plan(school_anchor, pop_anchor):
     }
 
 
+@pytest.mark.asyncio
 class TestPlanPreviewTool:
     async def test_dispatch_full_journey(self, tools):
         session_id = "ms4-preview-" + uuid.uuid4().hex
@@ -156,6 +156,7 @@ class TestPlanPreviewTool:
             await session_data_manager.clear_session(session_id)
 
 
+@pytest.mark.asyncio
 class TestDrillTool:
     async def test_drill_down_and_up(self, tools):
         session_id = "ms4-drill-" + uuid.uuid4().hex

@@ -473,8 +473,11 @@ class TestSelectionRef:
         actor = {**ACTOR, "trusted_session_id": sid}
         school_ref = await session_data_manager.store(
             sid, _schools_fc(), prefix="mssel2")
+        pop_ref = await session_data_manager.store(
+            sid, _population_fc(), prefix="mssel2p")
         a_school = (await service.inspect_source(sid, school_ref, actor))["anchor"]
-        plan = _v3_plan(a_school, a_school)
+        a_pop = (await service.inspect_source(sid, pop_ref, actor))["anchor"]
+        plan = _v3_plan(a_school, a_pop)
         with pytest.raises(LinkedExplorationError) as ei:
             await service.preview_plan(sid, plan, actor,
                                        selection_ref="previous")

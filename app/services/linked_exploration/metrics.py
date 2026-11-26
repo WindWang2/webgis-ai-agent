@@ -257,17 +257,57 @@ def _aggregate_within(
         group["value"] = float(len(rows))
         group["available"] = True
         return group
-    if op == "sum":
-        group["value"] = _apply_scale(math.fsum(numerics), metric.scale)
-        group["available"] = True
-        return group
-    if op == "mean":
-        if not numerics:
-            group["unavailable_reason"] = _UNAVAILABLE_NO_NUMERIC
+    try:
+        if op == "sum":
+            group["value"] = _apply_scale(math.fsum(numerics), metric.scale)
+            group["available"] = True
             return group
-        group["value"] = _apply_scale(
-            math.fsum(numerics) / len(numerics), metric.scale)
-        group["available"] = True
+        if op == "mean":
+            if not numerics:
+                group["unavailable_reason"] = _UNAVAILABLE_NO_NUMERIC
+                return group
+            group["value"] = _apply_scale(
+                math.fsum(numerics) / len(numerics), metric.scale)
+            group["available"] = True
+            return group
+        if op == "weighted_mean":
+            pairs: List[Tuple[float, float]] = []
+            invalid_weight = 0
+            if metric.weight_by_area:
+                for feat in rows:
+                    if not isinstance(feat, dict):
+                        invalid_weight += 1
+                        continue
+                    w = _polygon_area(feat.get("geometry"))
+                    v = _numeric(_props(feat).get(metric.value_field))
+                    if w is None or v is None:
+                        invalid_weight += 1
+                        continue
+                    pairs.append((v, w))
+            else:
+                for feat in rows:
+                    w = _numeric(_props(feat).get(metric.weight_field))
+                    v = _numeric(_props(feat).get(metric.value_field))
+                    if w is None or v is None or w < 0:
+                        invalid_weight += 1
+                        continue
+                    pairs.append((v, w))
+            group["invalid_weight_count"] = invalid_weight
+            if not pairs:
+                group["unavailable_reason"] = _UNAVAILABLE_NO_NUMERIC
+                return group
+            total_w = math.fsum(w for _v, w in pairs)
+            if total_w == 0:
+                group["unavailable_reason"] = _UNAVAILABLE_WEIGHT
+                return group
+            group["value"] = _apply_scale(
+                math.fsum(w * v for v, w in pairs) / total_w, metric.scale)
+            group["available"] = True
+            return group
+    except OverflowError:
+        # review A-P3-5：大而有限的输入（如 1e308 双行 fsum）中间溢出 ——
+        # 该组 unavailable（超帽不近似纪律），绝不 500 整个 preview
+        group["unavailable_reason"] = _UNAVAILABLE_SCALE
         return group
     if op == "median":
         if not numerics:
@@ -303,43 +343,11 @@ def _aggregate_within(
         group["available"] = True
         group["invalid_weight_count"] = invalid  # 不可比键值计数披露
         return group
-    if op == "weighted_mean":
-        pairs: List[Tuple[float, float]] = []
-        invalid_weight = 0
-        if metric.weight_by_area:
-            for feat in rows:
-                if not isinstance(feat, dict):
-                    invalid_weight += 1
-                    continue
-                w = _polygon_area(feat.get("geometry"))
-                v = _numeric(_props(feat).get(metric.value_field))
-                if w is None or v is None:
-                    invalid_weight += 1
-                    continue
-                pairs.append((v, w))
-        else:
-            for feat in rows:
-                w = _numeric(_props(feat).get(metric.weight_field))
-                v = _numeric(_props(feat).get(metric.value_field))
-                if w is None or v is None or w < 0:
-                    invalid_weight += 1
-                    continue
-                pairs.append((v, w))
-        group["invalid_weight_count"] = invalid_weight
-        if not pairs:
-            group["unavailable_reason"] = _UNAVAILABLE_NO_NUMERIC
-            return group
-        total_w = math.fsum(w for _v, w in pairs)
-        if total_w == 0:
-            group["unavailable_reason"] = _UNAVAILABLE_WEIGHT
-            return group
-        group["value"] = _apply_scale(
-            math.fsum(w * v for v, w in pairs) / total_w, metric.scale)
-        group["available"] = True
-        return group
     if op == "rate":
+        # 内部不变量违约（路由错误），非用户输入错误 → 5xx
         raise _err("METRIC_WITHIN_RATE_ROUTE",
-                   "同源 rate 走 _rate_rows 路径（内部路由错误）")
+                   "同源 rate 走 _rate_rows 路径（内部路由错误）",
+                   status_code=500)
     raise _err("INVALID_METRIC_OP", f"未知指标算子 {op!r}")
 
 
@@ -369,7 +377,11 @@ def _rate_group(
         if not dens_valid:
             group["unavailable_reason"] = _UNAVAILABLE_MISSING
             return group
-        denominator = math.fsum(dens_valid)
+        try:
+            denominator = math.fsum(dens_valid)
+        except OverflowError:
+            group["unavailable_reason"] = _UNAVAILABLE_SCALE
+            return group
     else:
         denominator = float(len(denominator_rows))
 
@@ -378,7 +390,16 @@ def _rate_group(
     if denominator == 0:
         group["unavailable_reason"] = _UNAVAILABLE_ZERO
         return group
-    group["value"] = _apply_scale(numerator / denominator, metric.scale)
+    if denominator < 0:
+        # review A-P3-6：负分母（如人口 -100）是脏数据 —— 与 weighted_mean
+        # 负权重同纪律：unavailable + 原因码，不返回 available 负率
+        group["unavailable_reason"] = "denominator_non_positive"
+        return group
+    try:
+        group["value"] = _apply_scale(numerator / denominator, metric.scale)
+    except OverflowError:
+        group["unavailable_reason"] = _UNAVAILABLE_SCALE
+        return group
     group["available"] = True
     return group
 
@@ -448,25 +469,31 @@ def compute_metric(
 ) -> Dict[str, Any]:
     """指标求值（联动范围过滤后的行集；本模块不再过滤）。
 
-    ``features_by_source``：source_id → 行集（缺源 = 空集，各组按分母
-    治理诚实 unavailable —— 不静默跳过指标）。
+    ``features_by_source``：source_id → 行集（缺源/空行集 = 无组 ——
+    诚实空集，不造 unavailable 假组；review A-P3-8 docstring 对齐行为）。
     """
-    if sum(len(v) for v in features_by_source.values()) > METRIC_SCAN_LIMIT:
+    if any(len(v) > METRIC_SCAN_LIMIT for v in features_by_source.values()):
+        # review B-P3：per-source 口径（与冻结帽同界）——跨源合计帽会
+        # 让 2×13 万行的合法多源计划全指标不可用
         raise _err(
             "METRIC_OVER_LIMIT",
-            f"指标求值扫描行数超帽 {METRIC_SCAN_LIMIT}")
+            f"单源指标求值扫描行数超帽 {METRIC_SCAN_LIMIT}")
     links_by_id = links_by_id or {}
     # 缺省源解析（primary）由调用方传入显式 source_id；本模块只按显式
-    # source_id 取行集，缺行集 = 空集 → 各组按分母治理诚实 unavailable
+    # source_id 取行集；空行集 = 无组（诚实空，不造 unavailable 假组）
     source_id = metric.source_id
     numerator_rows = list(features_by_source.get(source_id) or [])
+    # review A-P3-11：跨源 rate 的输出粒度 = 分母侧（键即分组）
+    grain_id = metric.grain_source_id or (
+        metric.denominator_source_id if metric.link_id is not None
+        else source_id)
 
     disclosure: Dict[str, Any] = {"precision": "exact"}
     out: Dict[str, Any] = {
         "metric_id": metric.metric_id,
         "op": metric.op,
         "source_id": source_id,
-        "grain_source_id": metric.grain_source_id or source_id,
+        "grain_source_id": grain_id,
         "unit": metric.unit,
         "scale": metric.scale,
         "title": metric.title,

@@ -362,12 +362,25 @@ export interface MetricResult {
   disclosure: Record<string, unknown>;
 }
 
+export interface SelectionRefDisclosure {
+  selection_ref: string;
+  source_id: string;
+  id_field: string;
+  claimed_epoch_seq?: number | null;
+  id_count: number;
+  matched_count?: number | null;
+  ids_truncated: boolean;
+  layer_id?: string | null;
+  note: string;
+}
+
 export interface PlanPreviewResponse {
   schema_version: number;
   primary_source_id: string;
   anchors: Record<string, SourceAnchor>;
   conditions_digest: string;
   plan_digest: string;
+  selection_ref_resolved?: SelectionRefDisclosure;
   per_source: Record<string, SourceScopeEntry>;
   charts: Array<ChartPreview & { source_id?: string | null }>;
   metrics: MetricResult[];

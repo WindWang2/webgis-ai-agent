@@ -212,6 +212,21 @@ async def _render_and_persist(
     }
 
 
+def _build_frozen_fc(features: List[Any]) -> Dict[str, Any]:
+    """冻结要素 → inlineData FC（纯 CPU 循环；调用方走 to_thread）。"""
+    return {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": f.get("geometry"),
+                "properties": (f.get("properties") or {}),
+            }
+            for f in features if isinstance(f, dict)
+        ],
+    }
+
+
 async def _export_multi_source(
     session_id: str,
     actor: Dict[str, Any],
@@ -280,19 +295,15 @@ async def _export_multi_source(
         entry = per_source.get(sid) or {}
         expr = entry.get("map_filter")
         projected = entry.get("map_filter_projected", True)
-        frozen = frozen_by_ref[ref_id]
-        frozen_fc = {
-            "type": "FeatureCollection",
-            "features": [
-                {"type": "Feature",
-                 "geometry": f.get("geometry"),
-                 "properties": (f.get("properties") or {})}
-                for f in frozen.features if isinstance(f, dict)
-            ],
-        }
-        if expr is not None and not projected:
+        # review B-P1：不可投影判定必须独立于 expr —— _final_map_filter
+        # 在 projected=False 时恒返回 map_filter=None，以 expr 判会漏掉
+        # 全部不可投影源（复合键传播被无声丢弃 → 图面过宽 fail-open）
+        if not projected:
             unprojected.append(sid)
             continue
+        frozen = frozen_by_ref[ref_id]
+        # review B-P2：250k 逐要素 dict 构造是纯 CPU 循环 → to_thread
+        frozen_fc = await asyncio.to_thread(_build_frozen_fc, frozen.features)
         hits = _apply_layer_filters(doc, ref_id, expr, frozen_fc)
         if expr is not None and not hits:
             raise LinkedExplorationError(
@@ -387,7 +398,11 @@ def _layer_source_ref(layer: Dict[str, Any], doc: Dict[str, Any]) -> Optional[st
     src = layer.get("source")
     if isinstance(src, str):
         if src.startswith("ref:"):
-            return src
+            # 本域导出会把层改写到 "ref:x#g46-frozen" inlineData key ——
+            # 剥掉冻结后缀回原文 ref（review B-P2：同 ref 双源绑定时，
+            # 第二个 binding 按改写后的 key 解析 → 与 ref_id 不等 → 误报
+            # EXPORT_NO_TARGET_LAYER / 误标 not_on_map）
+            return src.split("#", 1)[0]
         # source key → 顶层 sources 表反查（生产主路径）
         entry = (doc.get("sources") or {}).get(src) if isinstance(doc.get("sources"), dict) else None
         if isinstance(entry, dict):

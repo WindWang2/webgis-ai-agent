@@ -86,6 +86,7 @@ describe('MultiSourceScope', () => {
     expect(screen.getByTestId('ms-source-count-pop').textContent).toBe('3 / 4');
     const prop = screen.getByTestId('ms-prop-pop-l1');
     expect(prop.textContent).toContain('3');
+    expect(prop.textContent).toContain('键');   // 嵌套 i18n 真实解析（非键路径回落）
   });
 
   it('renders unavailable metric groups with reason, never fake zero', () => {
@@ -95,8 +96,12 @@ describe('MultiSourceScope', () => {
     const bad = screen.getByTestId('ms-metric-value-m1-零人口区');
     expect(bad.getAttribute('data-available')).toBe('false');
     expect(bad.getAttribute('data-reason')).toBe('denominator_zero');
+    expect(bad.textContent).toContain('不可用');
     expect(bad.textContent).toContain('denominator_zero');
     expect(bad.textContent).not.toMatch(/0$/);
+    // 嵌套 i18n 断言：回落键路径会包含 "multiSource."，此处必须没有
+    expect(bad.textContent).not.toContain('multiSource.');
+    expect(screen.getByTestId('ms-metric-value-m1-武侯区').textContent).toBe('0.03');
   });
 
   it('renders unprojected and handle-skipped disclosures', () => {
@@ -113,7 +118,7 @@ describe('MultiSourceScope', () => {
 
   it('marks primary source role', () => {
     render(<MultiSourceScope preview={previewFixture()} />);
-    expect(screen.getByTestId('ms-source-role-school').textContent).toContain('primary');
+    expect(screen.getByTestId('ms-source-role-school').textContent).toContain('主源');
   });
 
   it('shows loading, empty and error states', () => {

@@ -590,11 +590,16 @@ def register_linked_exploration_tools(registry: ToolRegistry) -> None:
             for g in (m.get("groups") or [])[:_MAX_ROWS]:
                 groups.append({
                     "key": g.get("key"),
+                    "key_label": g.get("key_label"),
+                    "count": g.get("count"),
                     "value": g.get("value") if g.get("available") else None,
                     "available": g.get("available"),
                     "unavailable_reason": g.get("unavailable_reason"),
                     "numerator": g.get("numerator"),
                     "denominator": g.get("denominator"),
+                    # review C-P2-3：权重不可比行数是 weighted_mean 口径
+                    # 解释的一部分（数值偏少的诚实披露）
+                    "invalid_weight_count": g.get("invalid_weight_count"),
                 })
             metrics_out.append({
                 "metric_id": m.get("metric_id"),

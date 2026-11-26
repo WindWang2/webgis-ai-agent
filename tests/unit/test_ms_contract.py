@@ -70,11 +70,24 @@ class TestV2Compat:
         assert contract.plan_primary_binding(plan).source_id == "primary"
 
     def test_v2_digest_matches_legacy_formula(self):
-        """v2 digest 与旧公式逐字节一致（历史 normalized_digest 兼容）。"""
+        """v2 digest 与基线（master 59eb3f527, 常量=2 时代）公式手构对拍。
+
+        review A-P3-4：不再用生产函数自证 —— 手构 v2 时代 payload（常量
+        2 + anchor/charts/conditions）独立重算 sha256 前 16 位。"""
+        import hashlib
+        import json as _json
         plan = contract.ExplorationPlan.model_validate(_v2_plan())
         conds = contract.parse_conditions(plan.conditions)
-        legacy = contract.plan_digest(plan.anchor, plan.charts, conds)
-        assert contract.plan_digest_of_plan(plan) == legacy
+        payload = {
+            "schema_version": 2,  # v2 时代常量
+            "anchor": plan.anchor.model_dump(),
+            "charts": [c.model_dump() for c in plan.charts],
+            "conditions": [c.model_dump() for c in conds],
+        }
+        raw = _json.dumps(payload, sort_keys=True, ensure_ascii=False,
+                          separators=(",", ":"), default=str)
+        expected = "g46-" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+        assert contract.plan_digest_of_plan(plan) == expected
 
     def test_v2_rejects_source_id_on_chart(self):
         raw = _v2_plan()
@@ -559,3 +572,31 @@ class TestPropagatedKeySet:
         assert expr[0] == "in"
         assert expr[1] == ["get", "district"]
         assert expr[2] == ["literal", ["武侯区", 2, True]]
+
+
+class TestSpatialPropagationGuard:
+    def test_spatial_link_propagation_rejected(self):
+        """spatial 关系 + propagate → typed 拒绝（空键谓词口径错配防御）。"""
+        raw = _v3_plan(
+            sources=[_src("a", "ref:a", role="primary"), _src("b", "ref:b")],
+            links=[{
+                "link_id": "l1", "kind": "spatial_within",
+                "left_source_id": "a", "right_source_id": "b",
+                "predicate": "within", "cardinality": "one_to_many",
+                "propagate": "left_to_right",
+            }],
+        )
+        with pytest.raises(ValueError, match="不支持 propagate"):
+            contract.ExplorationPlan.model_validate(raw)
+
+    def test_spatial_link_without_propagation_ok(self):
+        raw = _v3_plan(
+            sources=[_src("a", "ref:a", role="primary"), _src("b", "ref:b")],
+            links=[{
+                "link_id": "l1", "kind": "spatial_within",
+                "left_source_id": "a", "right_source_id": "b",
+                "predicate": "within", "cardinality": "one_to_many",
+            }],
+        )
+        plan = contract.ExplorationPlan.model_validate(raw)
+        assert plan.links[0].propagate == "none"

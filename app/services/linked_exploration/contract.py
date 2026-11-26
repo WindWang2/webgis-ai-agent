@@ -614,6 +614,14 @@ class LinkSpec(BaseModel):
                 raise ValueError("spatial_within 关系必须声明 predicate")
             if self.keys:
                 raise ValueError("spatial_within 关系不使用键对")
+            if self.propagate != "none":
+                # 传播 = 键集半连接语义（relations.py），空间关系没有键集
+                # —— 允许声明会退化成空键谓词（全行通过但宣称不可投影），
+                # 范围口径错配。空间联动先物化（G38 spatial join）再用键关系。
+                raise ValueError(
+                    "spatial_within 关系不支持 propagate（键集半连接语义不适用"
+                    "空间谓词）：请先物化空间连接为属性 ref 后用 attribute "
+                    "关系声明传播")
         return self
 
 
@@ -840,6 +848,17 @@ class ExplorationPlan(BaseModel):
                         f"{h.parent_source_id!r} 不在 sources 中")
             link_ids = {lk.link_id for lk in self.links}
             primary_id = primary.source_id
+            seen_refs: Dict[str, str] = {}
+            for binding in self.sources:
+                # review A-P3-9：同一 ref 双 source_id 绑定 → 导出按 ref
+                # 改写图层 source 键后第二源必然失配（误报 NO_TARGET_LAYER）
+                ref = binding.anchor.ref_id
+                if ref in seen_refs:
+                    raise ValueError(
+                        f"anchor.ref_id {ref!r} 被 {seen_refs[ref]} 与 "
+                        f"{binding.source_id} 同时绑定：一个 ref 一个源绑定"
+                        "（同数据多视角请拆分条件而非拆源）")
+                seen_refs[ref] = binding.source_id
             for metric in self.metrics:
                 msid = metric.source_id or primary_id
                 if msid not in known:
@@ -860,6 +879,19 @@ class ExplorationPlan(BaseModel):
                     raise ValueError(
                         f"指标 {metric.metric_id} 的 denominator_source_id "
                         f"{metric.denominator_source_id!r} 不在 sources 中")
+                # review A-P2-3：跨源 rate 的两端必须就是 link 的两端 ——
+                # 端点错配会在无关源上静默产出 available 的假 0 率
+                if metric.link_id is not None:
+                    link = next(lk for lk in self.links
+                                if lk.link_id == metric.link_id)
+                    endpoints = {link.left_source_id, link.right_source_id}
+                    if {msid, metric.denominator_source_id} != endpoints:
+                        raise ValueError(
+                            f"指标 {metric.metric_id} 的源对 "
+                            f"({msid}, {metric.denominator_source_id}) 与关系 "
+                            f"{metric.link_id} 的两端 "
+                            f"({link.left_source_id}, {link.right_source_id}) "
+                            "不一致：跨源 rate 的取值源与分母源必须是关系两端")
             self._check_propagation_dag()
         else:
             if self.anchor is None:
@@ -956,9 +988,15 @@ def parse_conditions(raw_list: Sequence[Dict[str, Any]]) -> List[ExplorationCond
 
 def plan_digest(anchor: SourceAnchorV2, charts: Sequence[ChartSpec],
                 conditions: Sequence[BaseModel]) -> str:
-    """计划规范化 digest（保存/预览/应用幂等锚点）。"""
+    """v2 计划规范化 digest（保存/预览/应用幂等锚点）。
+
+    review A-P3-4：历史 v2 视图的 normalized_digest 是 **常量 2** 参与
+    哈希的 —— 这里锁定字面量 2（不随 PLAN_SCHEMA_VERSION 漂移），保证
+    历史视图 digest 可复算（当前仓内无等值比较消费者，但契约文本不得
+    说谎）。
+    """
     payload = {
-        "schema_version": PLAN_SCHEMA_VERSION,
+        "schema_version": 2,  # v2 历史公式锁定（见 docstring）
         "anchor": anchor.model_dump(),
         "charts": [c.model_dump() for c in charts],
         "conditions": [c.model_dump() for c in conditions],
