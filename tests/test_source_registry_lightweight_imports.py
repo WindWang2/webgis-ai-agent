@@ -48,7 +48,7 @@ def test_full_source_registry_lint_does_not_load_raster_runtime():
     assert "[lint] OK" in result.stdout
 
 
-@pytest.mark.parametrize("claim", ["bbox", "cql", "pagination"])
+@pytest.mark.parametrize("claim", ["bbox", "cql", "pagination", "aggregation"])
 def test_lightweight_lint_still_checks_real_cog_capabilities(tmp_path, claim):
     directory = tmp_path / "config/sources"
     directory.mkdir(parents=True)
@@ -59,6 +59,21 @@ def test_lightweight_lint_still_checks_real_cog_capabilities(tmp_path, claim):
     result = _lint(tmp_path)
     assert result.returncode == 1, result.stdout + result.stderr
     assert f"claims pushdown '{claim}' but adapter 'cog' does not support it" in result.stdout
+    assert "Source lint imported raster runtime" not in result.stderr
+
+
+def test_lightweight_lint_accepts_declared_local_file_aggregation(tmp_path):
+    """aggregation 声明与 adapter 事实相符时不得误报（local_file sqlite 的
+    ``capabilities()`` 声明 "aggregation"，local_yearbook 依赖此声明）。"""
+    directory = tmp_path / "config/sources"
+    directory.mkdir(parents=True)
+    (directory / "ok.yaml").write_text(yaml.safe_dump({
+        "source_id": "ok_local", "name": "Local sqlite aggregation", "protocol": "local_file",
+        "endpoint": "${LOCAL_GEODATA_DIR}", "pushdown": {"aggregation": True},
+    }))
+    result = _lint(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "[lint] OK" in result.stdout
     assert "Source lint imported raster runtime" not in result.stderr
 
 

@@ -18,10 +18,12 @@ import {
 import {
   getDisplayedTemporalFrame,
   getLiveTemporalFrame,
+  getLiveTemporalGeneration,
   getLiveTemporalRequest,
   markLiveApplied,
   requestLiveFrame,
   resetTemporalLiveState,
+  resolveEffectiveFrame,
   setActiveController,
 } from './live-frame';
 
@@ -88,6 +90,38 @@ describe('seq 顺序与 displayed_at 门控', () => {
     const a = c.requestFrame(frame('f-2021', 2021));
     c.destroy();
     expect(c.markApplied(a.seq, a.frame)).toBe(false);
+  });
+});
+
+describe('活动控制器更替（会话/面板切换）', () => {
+  it('替换控制器作废上一会话 live 帧（帧 id 复用不锁旧时间窗）', () => {
+    const first = new TemporalPlaybackController();
+    setActiveController(first);
+    const stale = frame('f-2023', 2023);
+    requestLiveFrame(stale);
+    const req = getLiveTemporalRequest()!;
+    expect(markLiveApplied(req.seq, req.frame)).toBe(true);
+    expect(getDisplayedTemporalFrame()?.id).toBe('f-2023');
+
+    const genBefore = getLiveTemporalGeneration();
+    setActiveController(new TemporalPlaybackController());
+
+    // 陈旧 live 帧 + displayed 必须作废：reconcile 回落到 spec cursor
+    // （f-2021），否则图表/表格被沿用旧会话的时间窗。
+    expect(getLiveTemporalFrame()).toBeNull();
+    expect(getLiveTemporalRequest()).toBeNull();
+    expect(getDisplayedTemporalFrame()).toBeNull();
+    expect(resolveEffectiveFrame(cfg())?.id).toBe('f-2021');
+    // 订阅方（时间标签/统计）靠代信号重渲染 —— 无 bump 则 UI 不刷新。
+    expect(getLiveTemporalGeneration()).toBeGreaterThan(genBefore);
+  });
+
+  it('同控制器重复注册不清态（live 帧刷新不打断播放）', () => {
+    const c = new TemporalPlaybackController();
+    setActiveController(c);
+    requestLiveFrame(frame('f-2022', 2022));
+    setActiveController(c);
+    expect(getLiveTemporalFrame()?.id).toBe('f-2022');
   });
 });
 

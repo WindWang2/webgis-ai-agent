@@ -382,6 +382,35 @@ def test_allocate_migration_cli_rejects_bad_slug():
     assert proc.returncode == 2
 
 
+def test_allocate_migration_cli_rejects_when_base_sha_unavailable(capsys, monkeypatch):
+    """git rev-parse HEAD 失败（非 git 目录 / 无提交仓库）→ 拒绝并带走 stderr。
+
+    不得把空 SHA 当成功基继续打印"分配成功"（静默失败会让分配结果
+    指向不存在的 base）。
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "allocate_migration_under_test", REPO / "scripts/allocate_migration.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    def fake_run(cmd, *args, **kwargs):
+        assert cmd[:3] == ["git", "rev-parse", "HEAD"]
+        return subprocess.CompletedProcess(
+            cmd, 128, "", "fatal: not a git repository")
+
+    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["allocate_migration.py", "quality_v3_probe", "--dry-run"])
+    rc = mod.main()
+    assert rc == 2
+    out = capsys.readouterr().out
+    assert "分配成功" not in out
+    assert "not a git repository" in out
+
+
 def test_allocate_adr_cli_dry_run():
     import subprocess
 
