@@ -3,6 +3,13 @@ import { render, screen, fireEvent, act } from '@testing-library/react'
 import '@testing-library/jest-dom'
 import { MapToolbarHUD } from './map-toolbar-hud'
 import { useHudStore } from '@/lib/store/useHudStore'
+import type { LayoutMode } from '@/lib/hooks/use-layout-mode'
+
+let mockLayoutMode: LayoutMode = 'desktop'
+vi.mock('@/lib/hooks/use-layout-mode', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/hooks/use-layout-mode')>(),
+  useLayoutMode: () => mockLayoutMode,
+}))
 
 const mockZoomIn = vi.fn()
 const mockZoomOut = vi.fn()
@@ -29,9 +36,11 @@ const mapRef = {
 describe('MapToolbarHUD — Floating GIS Navigation & Measurement Toolbar', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockLayoutMode = 'desktop'
     useHudStore.setState({
       is3D: false,
       annotations: [],
+      activeMapTool: null,
     } as any)
   })
 
@@ -214,17 +223,53 @@ describe('MapToolbarHUD — Floating GIS Navigation & Measurement Toolbar', () =
     expect(screen.queryByTestId('measurement-active-hud')).not.toBeInTheDocument()
   })
 
-  it('toggles collapse state on compact mobile viewports', () => {
+  it('keeps the desktop rail narrow until the user opens the drawing and layer tools', () => {
     render(<MapToolbarHUD mapRef={mapRef} />)
+    expect(screen.queryByRole('combobox')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '绘制与编辑' }))
+    expect(screen.getByRole('combobox')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '绘制点（草图）' }))
+    expect(useHudStore.getState().activeMapTool).toBe('draw_point')
+    fireEvent.click(screen.getByRole('button', { name: '绘制与编辑' }))
+    expect(screen.queryByRole('combobox')).toBeNull()
+    expect(useHudStore.getState().activeMapTool).toBe('draw_point')
+  })
 
-    const collapseBtn = screen.getByRole('button', { name: '折叠工具栏' })
-    fireEvent.click(collapseBtn)
+  it('returns focus to the editing toggle when Escape closes its tools', () => {
+    render(<MapToolbarHUD mapRef={mapRef} />)
+    const toggle = screen.getByRole('button', { name: '绘制与编辑' })
+    fireEvent.click(toggle)
+    fireEvent.keyDown(screen.getByRole('button', { name: '绘制点（草图）' }), { key: 'Escape' })
+    expect(toggle).toHaveFocus()
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  })
 
-    expect(screen.queryByRole('button', { name: '放大' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '展开工具栏' })).toBeInTheDocument()
-
+  it('opens measurement and editing from a compact mobile rail and preserves wide controls after resize', () => {
+    mockLayoutMode = 'mobile'
+    const { rerender } = render(<MapToolbarHUD mapRef={mapRef} />)
+    expect(screen.getAllByRole('button')).toHaveLength(3)
+    fireEvent.click(screen.getByRole('button', { name: '放大' }))
+    expect(mockZoomIn).toHaveBeenCalledOnce()
     fireEvent.click(screen.getByRole('button', { name: '展开工具栏' }))
+    fireEvent.click(screen.getByRole('button', { name: '面积测量' }))
+    expect(screen.getByText('面积测量模式')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '退出测量' }))
+    fireEvent.click(screen.getByRole('button', { name: '绘制与编辑' }))
+    expect(screen.getByRole('combobox')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '绘制线（草图）' }))
+    expect(useHudStore.getState().activeMapTool).toBe('draw_line')
+    expect(screen.queryByRole('combobox')).toBeNull()
+    expect(screen.getByRole('button', { name: '绘制与编辑' })).toHaveFocus()
+    fireEvent.click(screen.getByRole('button', { name: '折叠工具栏' }))
+    expect(screen.queryByRole('combobox')).toBeNull()
     expect(screen.getByRole('button', { name: '放大' })).toBeInTheDocument()
+
+    mockLayoutMode = 'thin'
+    rerender(<MapToolbarHUD mapRef={mapRef} />)
+    expect(screen.getByRole('button', { name: '距离测量' })).toBeVisible()
+    mockLayoutMode = 'mobile'
+    rerender(<MapToolbarHUD mapRef={mapRef} />)
+    expect(screen.getAllByRole('button')).toHaveLength(3)
   })
 })
 
@@ -235,6 +280,7 @@ describe('MapToolbarHUD — Floating GIS Navigation & Measurement Toolbar', () =
  */
 describe('MapToolbarHUD toast 串行（#1746-9）', () => {
   beforeEach(() => {
+    mockLayoutMode = 'desktop'
     vi.useFakeTimers()
     vi.clearAllMocks()
     useHudStore.setState({

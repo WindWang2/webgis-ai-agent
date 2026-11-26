@@ -2,7 +2,10 @@
 
 import { memo, useState, useRef, useEffect, useCallback, useMemo, type KeyboardEvent } from 'react';
 import dynamic from 'next/dynamic';
-import { Send, Sparkles, CheckCircle2, Square, RotateCcw, ImagePlus } from 'lucide-react';
+import {
+  ArrowUpRight, Blend, CheckCircle2, CircleDot, Grid2X2, ImagePlus, MapPin,
+  RotateCcw, Send, Sparkles, Square,
+} from 'lucide-react';
 import type { AiStatus } from '@/lib/store/hud-types';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { ToolCallChain } from '@/components/chat/tool-call-card';
@@ -70,39 +73,42 @@ function ThinkingDots({ text }: { text: string }) {
 
 /* ─── Suggested prompts ─── */
 const SUGGESTED_PROMPTS = [
-  'prompts.poi',
-  'prompts.buffer',
-  'prompts.heatmap',
-  'prompts.overlay',
+  { key: 'prompts.poi', icon: MapPin },
+  { key: 'prompts.buffer', icon: CircleDot },
+  { key: 'prompts.heatmap', icon: Grid2X2 },
+  { key: 'prompts.overlay', icon: Blend },
 ];
 
-function SuggestedPromptButtons({ onSend }: { onSend: (text: string) => void }) {
+function SuggestedPromptButtons({ onSend, isNewSession }: { onSend: (text: string) => void; isNewSession: boolean }) {
   const t = useT();
   return (
-    <div className="px-3 pt-3 pb-2">
-      {/* A: 快捷指令头是 14px uppercase 标签 —— 走 V4 的 title 档 + ink-muted，
-          不再用裸 text-[14px] 与 --theme-* 双轨。 */}
-      <p className="text-title uppercase tracking-wider text-ink-muted mb-2">{t('sidebar.chat.quickCommands')}</p>
-      <div className="flex flex-wrap gap-1.5">
-        {SUGGESTED_PROMPTS.map((prompt) => {
+    <section className="px-4 py-4" aria-label={t('sidebar.chat.quickCommands')}>
+      <h3 className="text-heading font-semibold leading-tight text-ink">
+        {t(isNewSession ? 'sidebar.chat.startAnalysis' : 'sidebar.chat.quickCommands')}
+      </h3>
+      {isNewSession && <p className="mt-1 text-meta leading-normal text-ink-secondary">{t('sidebar.chat.composerPlaceholder')}</p>}
+      <div className="mt-3 divide-y divide-edge-subtle rounded-lg border border-edge-subtle bg-surface-raised shadow-raised">
+        {SUGGESTED_PROMPTS.map(({ key, icon: Icon }) => {
           // 发送给后端的必须是译后文本（i18n key 只是渲染标识），否则
           // 快捷指令会把 "prompts.poi" 原样当成 prompt 发给 agent。
-          const label = t(`sidebar.chat.${prompt}`);
+          const label = t(`sidebar.chat.${key}`);
           return (
             <button
-              key={prompt}
+              type="button"
+              key={key}
               onClick={() => onSend(label)}
-              className="cursor-pointer rounded-md border bg-surface-raised px-2.5 py-1.5 text-body text-ink transition-colors"
-              style={{ borderColor: 'var(--accent-border)' }}
-              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--surface-hover)'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--surface-raised)'; }}
+              className="group relative flex min-h-11 w-full cursor-pointer items-center gap-2.5 px-3 py-2 text-left text-body text-ink transition-colors first:rounded-t-lg last:rounded-b-lg hover:bg-surface-hover focus-visible:z-10"
             >
-              {label}
+              <span aria-hidden className="grid size-7 shrink-0 place-items-center rounded-md bg-status-accent-soft text-status-accent">
+                <Icon size={15} strokeWidth={1.75} />
+              </span>
+              <span className="min-w-0 flex-1">{label}</span>
+              <ArrowUpRight size={14} aria-hidden className="shrink-0 text-ink-muted group-hover:text-status-accent" />
             </button>
           );
         })}
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -503,7 +509,7 @@ const t = useT();
   }, []);
 
   useEffect(() => {
-    if (isNearBottom()) {
+    if (messages.length > 0 && isNearBottom()) {
       scrollToBottom();
     }
   }, [messages, aiStatus, scrollToBottom, isNearBottom]);
@@ -619,16 +625,7 @@ const t = useT();
           约定），技术 id 只进 title 诊断属性。 */}
       <RecoveryBanner sessionId={sessionId} ownerToken={ownerToken} />
       {/* Messages scroll area */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto">
-        {messages.length === 0 && !isBusy && (
-          <div className="flex h-full flex-col items-center justify-center px-6 text-center">
-            <span aria-hidden className="mb-3 flex h-control-lg w-control-lg items-center justify-center rounded-md bg-status-accent-soft">
-              <Sparkles size={16} className="text-status-accent" />
-            </span>
-            <h3 className="mb-1 text-title font-semibold text-ink">GeoAgent</h3>
-            <p className="text-meta text-ink-muted">{t('sidebar.chat.composerPlaceholder')}</p>
-          </div>
-        )}
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
 
         {/*
           a11y：流式回复此前完全没有播报 —— 助手 token、工具调用状态、
@@ -637,7 +634,7 @@ const t = useT();
           消息列表上会在每个 token 批次重读整段回答（MiniMd 每批重新解析、整个
           气泡子树被替换，aria-atomic=false 只有在追加叶子节点时才是增量）。
         */}
-        <div className="space-y-2 px-panel py-2">
+        <div className="space-y-2 px-panel py-2 empty:hidden">
           {messages.map((msg, idx) => (
             <div
               key={msg.id ?? `msg-${idx}`}
@@ -680,7 +677,7 @@ const t = useT();
 
         {/* Suggested prompts when not busy and few messages */}
         {!isBusy && messages.length <= 1 && (
-          <SuggestedPromptButtons onSend={onSend} />
+          <SuggestedPromptButtons onSend={onSend} isNewSession={messages.length === 0} />
         )}
       </div>
 
@@ -729,12 +726,7 @@ const t = useT();
             </InlineNotice>
           </div>
         )}
-        {/* G36（ADR-0291）：视觉附图条 —— 当前图/框选局部/参考图草稿与上传。 */}
-        <div className="px-panel">
-          <VisualAttachBar sessionId={sessionId} ownerToken={ownerToken} />
-        </div>
-        <div className="flex items-end gap-2 px-panel pb-1 pt-2">
-          {/* Textarea */}
+        <div className="mx-panel my-2 rounded-lg border border-edge bg-surface-raised p-2 shadow-raised focus-within:border-status-accent">
           <textarea
             ref={textareaRef}
             value={input}
@@ -743,74 +735,75 @@ const t = useT();
             aria-label={t('sidebar.chat.inputAria')}
             placeholder={t('sidebar.chat.inputPlaceholder')}
             rows={1}
-            /* a11y 修复：这里原本是内联 `outline: 'none'`。内联样式压过
-               globals.css 里那条 unlayered 的 *:focus-visible 规则，于是产品最
-               核心的输入框是全站唯一没有键盘焦点环的控件。改成 focus-visible
-               时用 ring 表达，鼠标点击不显示。 */
-            className="max-h-20 flex-1 resize-none bg-transparent py-1 text-body leading-normal text-ink placeholder:text-ink-disabled focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-status-accent-border"
+            className="block max-h-20 min-h-9 w-full resize-none rounded-sm bg-transparent px-1.5 py-1 text-body leading-normal text-ink placeholder:text-ink-muted focus-visible:ring-1 focus-visible:ring-status-accent"
           />
 
-          {/* Send / Stop button —— #988：isBusy 时发送键切换为『停止』形态，
-              中止进行中的 Agent 回合（后端把 SSE 断开归一为 task_cancelled），
-              而不是禁用干等或整页刷新丢工作台上下文。 */}
-          {turnActive && isBusy && onTurnMessage && (
-            <div className="flex shrink-0 items-center gap-1 pr-1" data-testid="turn-message-modes">
-              <button
-                type="button"
-                onClick={() => setInRunMode(inRunMode === 'adjust' ? 'normal' : 'adjust')}
-                aria-pressed={inRunMode === 'adjust'}
-                title={t('chat.interaction.adjustHint')}
-                className={`cursor-pointer rounded-pill px-2 py-0.5 text-meta ${
-                  inRunMode === 'adjust'
-                    ? 'bg-status-accent-soft text-status-accent'
-                    : 'bg-surface-sunken text-ink-muted'
-                }`}
-              >
-                {t('chat.interaction.adjust')}
-              </button>
-              <button
-                type="button"
-                onClick={() => setInRunMode(inRunMode === 'queue' ? 'normal' : 'queue')}
-                aria-pressed={inRunMode === 'queue'}
-                title={t('chat.interaction.queueHint')}
-                className={`cursor-pointer rounded-pill px-2 py-0.5 text-meta ${
-                  inRunMode === 'queue'
-                    ? 'bg-status-accent-soft text-status-accent'
-                    : 'bg-surface-sunken text-ink-muted'
-                }`}
-              >
-                {t('chat.interaction.queue')}
-              </button>
+          <div className="mt-1 flex flex-wrap items-end gap-1.5">
+            <div className="min-w-0 flex-1 self-center">
+              <VisualAttachBar sessionId={sessionId} ownerToken={ownerToken} />
             </div>
-          )}
-          {isBusy ? (
-            <button
-              onClick={onCancel}
-              disabled={!onCancel}
-              aria-label={t('sidebar.chat.stopAria')}
-              title={t('sidebar.chat.stopAria')}
-              className="flex h-control-md w-control-md shrink-0 cursor-pointer items-center justify-center rounded-sm border border-status-critical-border bg-status-critical-soft text-status-critical transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <Square size={10} fill="currentColor" aria-hidden />
-            </button>
-          ) : (
-            <button
-              onClick={handleSend}
-              disabled={!input.trim()}
-              aria-label={t('sidebar.chat.sendAria')}
-              className={`flex h-control-md w-control-md shrink-0 items-center justify-center rounded-sm transition-colors ${
-                input.trim()
-                  ? 'cursor-pointer bg-status-accent text-ink-on-accent'
-                  : 'cursor-not-allowed bg-surface-sunken text-ink-disabled'
-              }`}
-            >
-              <Send size={13} aria-hidden />
-            </button>
-          )}
+            {/* Send / Stop button —— #988：isBusy 时发送键切换为『停止』形态，
+                中止进行中的 Agent 回合（后端把 SSE 断开归一为 task_cancelled），
+                而不是禁用干等或整页刷新丢工作台上下文。 */}
+            {turnActive && isBusy && onTurnMessage && (
+              <div className="flex shrink-0 items-center gap-1 pr-1" data-testid="turn-message-modes">
+                <button
+                  type="button"
+                  onClick={() => setInRunMode(inRunMode === 'adjust' ? 'normal' : 'adjust')}
+                  aria-pressed={inRunMode === 'adjust'}
+                  title={t('chat.interaction.adjustHint')}
+                  className={`cursor-pointer rounded-pill px-2 py-0.5 text-meta ${
+                    inRunMode === 'adjust'
+                      ? 'bg-status-accent-soft text-status-accent'
+                      : 'bg-surface-sunken text-ink-muted'
+                  }`}
+                >
+                  {t('chat.interaction.adjust')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setInRunMode(inRunMode === 'queue' ? 'normal' : 'queue')}
+                  aria-pressed={inRunMode === 'queue'}
+                  title={t('chat.interaction.queueHint')}
+                  className={`cursor-pointer rounded-pill px-2 py-0.5 text-meta ${
+                    inRunMode === 'queue'
+                      ? 'bg-status-accent-soft text-status-accent'
+                      : 'bg-surface-sunken text-ink-muted'
+                  }`}
+                >
+                  {t('chat.interaction.queue')}
+                </button>
+              </div>
+            )}
+            {isBusy ? (
+              <button
+                onClick={onCancel}
+                disabled={!onCancel}
+                aria-label={t('sidebar.chat.stopAria')}
+                title={t('sidebar.chat.stopAria')}
+                className="touch-target flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md border border-status-critical-border bg-status-critical-soft text-status-critical transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Square size={10} fill="currentColor" aria-hidden />
+              </button>
+            ) : (
+              <button
+                onClick={handleSend}
+                disabled={!input.trim()}
+                aria-label={t('sidebar.chat.sendAria')}
+                className={`touch-target flex size-8 shrink-0 items-center justify-center rounded-md transition-colors ${
+                  input.trim()
+                    ? 'cursor-pointer bg-status-accent text-ink-on-accent'
+                    : 'cursor-not-allowed bg-surface-sunken text-ink-disabled'
+                }`}
+              >
+                <Send size={15} aria-hidden />
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Hint */}
-        <div className="px-panel pb-1.5">
+        <div className="hidden px-panel pb-2 text-right [@media(pointer:fine)]:block">
           <span className="text-micro text-ink-muted">{t('sidebar.chat.enterHint')}</span>
         </div>
       </div>

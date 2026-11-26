@@ -223,12 +223,12 @@ export function VisualAttachBar({ sessionId, ownerToken }: {
           data-testid="visual-attach-button"
           disabled={busy || !sessionReady || drafts.length >= 4}
           onClick={() => setMenuOpen((v) => !v)}
-          className="cursor-pointer rounded-sm p-1 text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+          className="touch-target grid size-8 shrink-0 cursor-pointer place-items-center rounded-md text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
         >
           {busy ? <Loader2 size={14} className="animate-spin" aria-hidden /> : <ImagePlus size={14} aria-hidden />}
         </button>
         {!sessionReady && (
-          <span className="pl-1 text-meta text-ink-disabled">{t('sidebar.chat.visualAttach.mapUnavailable')}</span>
+          <span className="pl-1 text-caption text-ink-muted">{t('sidebar.chat.visualAttach.needsSession')}</span>
         )}
         {sessionReady && drafts.length >= 4 && (
           <span className="pl-1 text-meta text-ink-disabled">{t('sidebar.chat.visualAttach.draftFull')}</span>

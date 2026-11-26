@@ -117,6 +117,34 @@ describe('NavRail', () => {
     expect(setActiveLeftTab).toHaveBeenCalledWith('analysis'); // modeActiveTab.analyze
   });
 
+  it.each([
+    ['vertical', 'ArrowDown', 'ArrowUp', true],
+    ['bottom', 'ArrowRight', 'ArrowLeft', false],
+  ] as const)('keeps keyboard selection and focus together in the %s mode group', (variant, next, previous, openPanel) => {
+    store.leftPanelOpen = openPanel;
+    const { rerender } = render(<NavRail variant={variant} />);
+    const explore = screen.getByTestId('mode-explore');
+    const analyze = screen.getByTestId('mode-analyze');
+    const compose = screen.getByTestId('mode-compose');
+
+    explore.focus();
+    fireEvent.keyDown(explore, { key: next });
+    rerender(<NavRail variant={variant} />);
+    expect(store.setWorkbenchMode).toHaveBeenCalledWith('analyze', 'user', openPanel);
+    expect(analyze).toHaveFocus();
+    expect(analyze).toHaveAttribute('aria-checked', 'true');
+    expect(analyze).toHaveAttribute('tabindex', '0');
+    expect(explore).toHaveAttribute('tabindex', '-1');
+
+    fireEvent.keyDown(analyze, { key: 'Home' });
+    rerender(<NavRail variant={variant} />);
+    expect(explore).toHaveFocus();
+    fireEvent.keyDown(explore, { key: previous });
+    rerender(<NavRail variant={variant} />);
+    expect(compose).toHaveFocus();
+    expect(compose).toHaveAttribute('aria-checked', 'true');
+  });
+
   it('agent mode switch shows the revert control; click reverts to explore', () => {
     store.mode = 'compose';
     store.modeOrigin = 'agent';

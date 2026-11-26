@@ -26,7 +26,7 @@ export const DEFAULT_POSITION: Record<string, string> = DEFAULT_COMPONENT_ANCHOR
 export const BOTTOM_OFFSET_STYLE: Record<string, React.CSSProperties> = {
   'bottom-left': { bottom: 'calc(var(--map-chrome-bottom, 10px) + 6px)' },
   'bottom-center': { bottom: 'calc(var(--map-chrome-bottom, 10px) + 6px)' },
-  'bottom-right': { bottom: 'calc(var(--map-chrome-bottom, 10px) + 30px)' },
+  'bottom-right': { bottom: 'calc(var(--map-chrome-bottom, 10px) + var(--map-readout-height, 22px) + 8px)' },
 };
 
 /**
@@ -59,7 +59,7 @@ export function positionStyle(component: MapSpecComponent): React.CSSProperties 
 const BOTTOM_STACK_BASE: Record<string, number> = {
   'bottom-left': 6,
   'bottom-center': 6,
-  'bottom-right': 30,
+  'bottom-right': 8,
 };
 const BOTTOM_STACK_STEP_PX = 36;
 
@@ -101,7 +101,8 @@ export function stackedBottomStyle(
   const base = BOTTOM_STACK_BASE[pos];
   if (base === undefined) return BOTTOM_OFFSET_STYLE[pos];
   const idx = slotIndexes?.get(component) ?? 0;
-  return { bottom: `calc(var(--map-chrome-bottom, 10px) + ${base + idx * BOTTOM_STACK_STEP_PX}px)` };
+  const readout = pos === 'bottom-right' ? ' + var(--map-readout-height, 22px)' : '';
+  return { bottom: `calc(var(--map-chrome-bottom, 10px)${readout} + ${base + idx * BOTTOM_STACK_STEP_PX}px)` };
 }
 
 // ── D1/D4：placement 自由布局原语 ────────────────────────────────────────

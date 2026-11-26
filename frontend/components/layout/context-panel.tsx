@@ -38,6 +38,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { sidebarWidthLimit } from '@/lib/store/slices/uiSlice';
+import { useSidebarWidthLimit } from '@/lib/hooks/use-sidebar-width-limit';
 import { useT } from '@/lib/i18n/useT';
 import type { AiStatus } from '@/lib/store/hud-types';
 import type { AgentRuntime } from '@/lib/agent-runtime';
@@ -185,6 +186,7 @@ export function ContextPanel({
   const leftPanelOpen = useHudStore((s) => s.leftPanelOpen);
   const toggleLeftPanel = useHudStore((s) => s.toggleLeftPanel);
   const sidebarWidth = useHudStore((s) => s.sidebarWidth);
+  const widthLimit = useSidebarWidthLimit();
   const setSidebarWidth = useHudStore((s) => s.setSidebarWidth);
   // 宽视图（数据密集页签：运维表格、驾驶舱、数据湖、结果对比）。只在
   // desktop 档提供 —— thin/mobile 本就是覆盖/全宽 sheet。
@@ -197,7 +199,6 @@ export function ContextPanel({
   const resultCount = useHudStore((s) => s.results.length);
   // HUD 展开时面板整体上移避让（与 nav rail / floating legend 一致），
   // 否则 composer 与 tab 底部内容被 210px HUD 遮住。
-  const hudOpen = useHudStore((s) => s.hudOpen);
 
   const metaKey = activeTab === 'exports' ? 'export_layout' : activeTab;
   const meta = PANEL_META[metaKey] ?? PANEL_META.chat;
@@ -518,7 +519,7 @@ export function ContextPanel({
       aria-hidden={!leftPanelOpen}
       className="fixed left-rail top-topbar z-40 flex flex-col border-r border-edge-subtle bg-surface-panel shadow-overlay"
       style={{
-        bottom: hudOpen ? 234 : 24,
+        bottom: 'var(--workspace-hud-edge, var(--stH))',
         // 拖拽中读命令式草稿变量（pointermove 不产生重渲染）；平时读 store。
         width: dragging
           ? 'var(--panel-draft-w)'
@@ -670,8 +671,8 @@ export function ContextPanel({
         aria-orientation="vertical"
         aria-label={t('panel.resizeAria')}
         aria-valuenow={sidebarWidth}
-        aria-valuemin={sidebarWidthLimit().min}
-        aria-valuemax={sidebarWidthLimit().max}
+        aria-valuemin={widthLimit.min}
+        aria-valuemax={widthLimit.max}
         title={t('panel.resizeTitle')}
         tabIndex={0}
         onPointerDown={onHandlePointerDown}

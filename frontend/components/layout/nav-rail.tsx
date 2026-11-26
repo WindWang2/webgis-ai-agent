@@ -113,8 +113,6 @@ export function NavRail({ variant = 'vertical' }: { variant?: 'vertical' | 'bott
   const layerCount = useHudStore((s) => s.layers.length);
   const exportCount = useHudStore((s) => s.exports.length);
   const resultCount = useHudStore((s) => s.results.length);
-  // Review P2 修复：HUD 展开（210px,z-50）会盖住 rail 底部工具区，整体上移避让。
-  const hudOpen = useHudStore((s) => s.hudOpen);
   // Workbench V4：模式词表 + agent 切换回执。
   const mode = useHudStore((s) => s.mode);
   const modeOrigin = useHudStore((s) => s.modeOrigin);
@@ -173,9 +171,36 @@ export function NavRail({ variant = 'vertical' }: { variant?: 'vertical' | 'bott
   useEffect(() => {
     if (prevModeRef.current !== mode) {
       prevModeRef.current = mode;
-      tabRefs.current.get(activeTab)?.focus();
+      if (document.activeElement === document.body) tabRefs.current.get(activeTab)?.focus();
     }
   }, [mode, activeTab]);
+
+  function onModeKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    const index = WORKBENCH_MODES.indexOf(mode);
+    let next: WorkbenchMode;
+    switch (e.key) {
+      case 'ArrowRight':
+      case 'ArrowDown':
+        next = WORKBENCH_MODES[(index + 1) % WORKBENCH_MODES.length];
+        break;
+      case 'ArrowLeft':
+      case 'ArrowUp':
+        next = WORKBENCH_MODES[(index + WORKBENCH_MODES.length - 1) % WORKBENCH_MODES.length];
+        break;
+      case 'Home':
+        next = WORKBENCH_MODES[0];
+        break;
+      case 'End':
+        next = WORKBENCH_MODES[WORKBENCH_MODES.length - 1];
+        break;
+      default:
+        return;
+    }
+    e.preventDefault();
+    e.currentTarget.querySelector<HTMLButtonElement>('button[value="' + next + '"]')?.focus();
+    // Arrowing between modes must not open a modal sheet and trap keyboard focus.
+    if (next !== mode) setWorkbenchMode(next, 'user', variant !== 'bottom' || leftPanelOpen);
+  }
 
   const onTablistKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -214,28 +239,23 @@ export function NavRail({ variant = 'vertical' }: { variant?: 'vertical' | 'bott
           ? 'fixed inset-x-0 bottom-0 z-40 flex h-rail flex-row items-center gap-1 overflow-x-auto border-t border-edge-subtle bg-surface-panel px-1'
           : 'fixed left-0 top-topbar z-40 flex w-rail flex-col items-center border-r border-edge-subtle bg-surface-panel'
       }
-      style={
-        variant === 'bottom'
-          ? {
-              // #1666：底部档必须坐在 HUD 状态条上方 —— EmbodiedHud 是 z-50 的
-              // fixed bottom-0 条（收起态 24px / 展开 210px），rail z-40 若贴
-              // bottom-0，下半（含 44px tab 的命中中心）被 HUD 盖住，chat tab
-              // 依旧点不着。避让规则与竖排档同源（bottom: hudOpen ? 234 : 24）。
-              bottom: hudOpen ? 234 : 24,
-              transition: 'bottom 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-              paddingBottom: 'env(safe-area-inset-bottom, 0px)',
-            }
-          : { bottom: hudOpen ? 234 : 24, transition: 'bottom 0.3s cubic-bezier(0.4, 0, 0.2, 1)' }
-      }
+      style={{
+        bottom: 'var(--workspace-hud-edge, var(--stH))',
+        transition: 'bottom 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+        ...(variant === 'bottom' && {
+          paddingLeft: 'max(4px, env(safe-area-inset-left, 0px))',
+          paddingRight: 'max(4px, env(safe-area-inset-right, 0px))',
+        }),
+      }}
     >
       {/* Workbench V4：模式切换（只改面板组合，不复制地图状态） */}
       {/* Review R1（a11y MINOR-7）：radiogroup 的必需子元素只能是 radio ——
           agent 回执按钮移出分组容器；roving tabindex + 方向键按 APG radio。 */}
-      <div className={variant === 'bottom' ? "flex flex-row items-center gap-1 border-b-0 px-1" : "flex w-full flex-col items-center gap-1 border-b border-edge-subtle py-2"}>
+      <div className={variant === 'bottom' ? "flex shrink-0 flex-row items-center gap-1 border-b-0 px-1" : "flex w-full flex-col items-center gap-1 border-b border-edge-subtle py-2"}>
         {/* #1666：模式 radiogroup 方向随 variant 切换 —— 底部档 horizontal
             横向排布（修复前恒 flex-col，3 个模式按钮在 48px 底栏内纵向堆叠
             被裁剪）。竖排档维持 w-full 纵列。 */}
-        <div role="radiogroup" aria-label={t('nav.workbenchMode')} className={variant === 'bottom' ? "flex flex-row items-center gap-1" : "flex w-full flex-col items-center gap-1"}>
+        <div role="radiogroup" onKeyDown={onModeKeyDown} aria-orientation={variant === 'bottom' ? 'horizontal' : 'vertical'} aria-label={t('nav.workbenchMode')} className={variant === 'bottom' ? "flex flex-row items-center gap-1" : "flex w-full flex-col items-center gap-1"}>
         {WORKBENCH_MODES.map((m) => {
           const ModeIcon = MODE_META[m].icon;
           const modeLabel = t(`modes.${m}`);
@@ -244,18 +264,16 @@ export function NavRail({ variant = 'vertical' }: { variant?: 'vertical' | 'bott
             <button
               key={m}
               role="radio"
+              type="button"
+              value={m}
               aria-checked={active}
               tabIndex={active ? 0 : -1}
               aria-label={t('nav.modeSuffix', { name: modeLabel })}
               title={t('nav.modeSuffix', { name: modeLabel })}
               data-testid={`mode-${m}`}
               onClick={() => switchMode(m)}
-              // 竖排档给模式按钮加可见短标签：模式决定 rail 上出现哪些页签
-              // （分析/结果只在「分析」、制图只在「制图」），纯图标时用户找不到
-              // 这些入口。底部档空间不足，维持纯图标 + title/aria-label。
               className={clsx(
-                'touch-target relative flex items-center justify-center rounded-md transition-colors',
-                variant === 'bottom' ? 'h-9 w-9' : 'h-11 w-11 flex-col gap-0.5 px-0.5',
+                'touch-target relative flex h-11 w-11 shrink-0 flex-col items-center justify-center gap-0.5 rounded-md px-0.5 transition-colors',
                 active
                   ? 'bg-status-accent-soft text-status-accent'
                   : 'text-ink-secondary hover:bg-surface-hover hover:text-ink'
@@ -264,15 +282,15 @@ export function NavRail({ variant = 'vertical' }: { variant?: 'vertical' | 'bott
               {active && (
                 <span
                   aria-hidden
-                  className="absolute left-[-4px] top-1/2 h-5 w-[2.5px] -translate-y-1/2 rounded-pill bg-status-accent-vivid"
+                  className={clsx('absolute rounded-pill bg-status-accent-vivid', variant === 'bottom'
+                    ? 'bottom-0 left-1/2 h-0.5 w-4 -translate-x-1/2'
+                    : 'left-0 top-1/2 h-5 w-0.5 -translate-y-1/2')}
                 />
               )}
               <ModeIcon size={variant === 'bottom' ? 16 : 15} strokeWidth={active ? 2.1 : 1.6} aria-hidden />
-              {variant !== 'bottom' && (
-                <span aria-hidden className={clsx('max-w-full truncate text-micro leading-none', active && 'font-semibold')}>
-                  {modeLabel}
-                </span>
-              )}
+              <span aria-hidden className={clsx('max-w-full truncate text-micro leading-none', active && 'font-semibold')}>
+                {modeLabel}
+              </span>
             </button>
           );
         })}
@@ -284,7 +302,7 @@ export function NavRail({ variant = 'vertical' }: { variant?: 'vertical' | 'bott
             aria-label={t('nav.agentRevertAria')}
             title={t('nav.agentRevertTitle')}
             onClick={revertAgentMode}
-            className="touch-target flex h-9 w-9 items-center justify-center rounded-md text-status-warning transition-colors hover:bg-surface-hover"
+            className="touch-target flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-status-warning transition-colors hover:bg-surface-hover"
           >
             <Undo2 size={15} aria-hidden />
           </button>
@@ -304,7 +322,7 @@ export function NavRail({ variant = 'vertical' }: { variant?: 'vertical' | 'bott
         // —— 触屏 .touch-target 已把 tab 提到 44px，48px 底栏内不留余量。
         className={
           variant === 'bottom'
-            ? 'flex flex-1 min-w-0 flex-row items-center gap-1 overflow-x-auto'
+            ? 'flex flex-1 min-w-11 flex-row items-center gap-1 overflow-x-auto'
             : 'flex w-full flex-1 flex-col items-center gap-1 overflow-y-auto py-2'
         }
       >
@@ -334,7 +352,7 @@ export function NavRail({ variant = 'vertical' }: { variant?: 'vertical' | 'bott
               // 现在 selected = accent 软底 + accent 图标 + 左侧指示条，
               // hover 只是中性底色，两者不再混淆。
               className={clsx(
-                'touch-target relative flex h-9 w-9 items-center justify-center rounded-md transition-colors',
+                'touch-target relative flex h-9 w-9 shrink-0 items-center justify-center rounded-md transition-colors',
                 active
                   ? 'bg-status-accent-soft text-status-accent'
                   : 'text-ink-secondary hover:bg-surface-hover hover:text-ink'
@@ -343,7 +361,9 @@ export function NavRail({ variant = 'vertical' }: { variant?: 'vertical' | 'bott
               {active && leftPanelOpen && (
                 <span
                   aria-hidden
-                  className="absolute left-[-5px] top-1/2 h-5 w-[2.5px] -translate-y-1/2 rounded-pill bg-status-accent-vivid"
+                  className={clsx('absolute rounded-pill bg-status-accent-vivid', variant === 'bottom'
+                    ? 'bottom-0 left-1/2 h-0.5 w-4 -translate-x-1/2'
+                    : 'left-0 top-1/2 h-5 w-0.5 -translate-y-1/2')}
                 />
               )}
               <Icon size={17} strokeWidth={active ? 2.1 : 1.6} aria-hidden />
@@ -363,13 +383,13 @@ export function NavRail({ variant = 'vertical' }: { variant?: 'vertical' | 'bott
       </div>
 
       {/* 工具区：模板库（drawer）+ 面板折叠 */}
-      <div className={variant === 'bottom' ? "flex flex-row items-center gap-1 border-t-0 px-1" : "flex w-full flex-col items-center gap-1 border-t border-edge-subtle py-2"}>
+      <div className={variant === 'bottom' ? "flex shrink-0 flex-row items-center gap-1 border-t-0 px-1" : "flex w-full flex-col items-center gap-1 border-t border-edge-subtle py-2"}>
         <button
           type="button"
           aria-label={t('nav.templates')}
           title={t('nav.templates')}
           onClick={() => setTemplatesOpen(true)}
-          className="touch-target flex h-9 w-9 items-center justify-center rounded-md text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+          className="touch-target flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
         >
           <LayoutTemplate size={17} strokeWidth={1.6} aria-hidden />
         </button>
@@ -380,7 +400,7 @@ export function NavRail({ variant = 'vertical' }: { variant?: 'vertical' | 'bott
           aria-controls="workspace-panel"
           title={leftPanelOpen ? t('nav.collapsePanel') : t('nav.expandPanel')}
           onClick={toggleLeftPanel}
-          className="touch-target flex h-9 w-9 items-center justify-center rounded-md text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+          className="touch-target flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
         >
           {leftPanelOpen ? (
             <PanelLeftClose size={17} strokeWidth={1.6} aria-hidden />

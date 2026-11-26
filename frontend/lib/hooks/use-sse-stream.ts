@@ -125,20 +125,6 @@ function truncateFeatureId(v: string): string {
 }
 
 /**
- * FE-P3-2: 消息总量上界已随 reducer 下沉（lib/chat/message-reducer.ts，
- * MAX_CHAT_MESSAGES=200）。此处仅保留欢迎语 seeding。
- */
-const WELCOME_MESSAGE: ChatStreamMessage = {
-  id: '1',
-  role: 'assistant',
-  // #1436 lineage: 文案在 i18n message catalog（chat.welcomeExtended, zh+en）。
-  // content 在挂载时点经 t() 解析（见下方 seeding effect）—— 命令式 t()
-  // 不能在此模块级调用，否则 locale 冻结在 import 时刻。
-  content: '',
-  timestamp: null,
-};
-
-/**
  * Resolve the parent project-layer id from a possibly-sublayer id via
  * longest-prefix match against the project's layer ids (`__`-boundary aware,
  * so `poi_schools__fill` attributes to `poi_schools`, never `poi`). Falls back
@@ -366,15 +352,6 @@ export function useSSEStream(options: UseSSEStreamOptions) {
     },
     [],
   );
-
-  // 欢迎语 seeding：store 为空时补欢迎消息（保持旧 useState 初始化的 UI
-  // 行为；幂等 —— StrictMode 双挂载/多实例不重复插）。
-  useEffect(() => {
-    if (useChatStore.getState().messages.length === 0) {
-      // #1436：挂载时点读当前 locale（zh-CN 文案与旧硬编码逐字一致）。
-      setMessages([{ ...WELCOME_MESSAGE, content: t('chat.welcomeExtended') }]);
-    }
-  }, [setMessages]);
 
   const [agentRuntime, setAgentRuntime] = useState<AgentRuntime | null>(null);
   // G29：当前在飞 turn 的 id（task_start 载荷；done/终态清除）—— 追加指令

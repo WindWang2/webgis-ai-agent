@@ -28,6 +28,14 @@ describe('workbenchSlice · mode', () => {
     expect(store.getState().modeOrigin).toBe('user');
   });
 
+  it('changes the active tab without opening a modal when navigating mobile modes by keyboard', () => {
+    const store = makeStore();
+    store.getState().setWorkbenchMode('analyze', 'user', false);
+    expect(store.getState()).toMatchObject({ activeLeftTab: 'analysis', leftPanelOpen: false });
+    store.getState().setWorkbenchMode('compose', 'user');
+    expect(store.getState()).toMatchObject({ activeLeftTab: 'components', leftPanelOpen: true });
+  });
+
   it('同模式重复切换不产生新状态对象（no-op 门）', () => {
     const store = makeStore();
     store.getState().setWorkbenchMode('explore');

@@ -32,6 +32,9 @@ interface TopBarProps {
   locationError?: GeolocationError | null;
 }
 
+const iconButton = 'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink sm:h-9 sm:w-9';
+const menuItem = 'flex min-h-9 w-full items-center gap-2 px-3 text-left text-body text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink';
+
 /** 2D/3D 视角 glyph（内联集群与「更多」收纳菜单共用同一图形）。 */
 function ViewToggleGlyph({ is3D }: { is3D: boolean }) {
   return (
@@ -61,19 +64,20 @@ export default function TopBar({ sessionName, onNewSession, onRequestLocation, l
   const setIs3D = useHudStore((s) => s.setIs3D);
   const layoutMode = useLayoutMode();
 
-  // #1667：右侧集群（新建/历史/底图/3D/UI 调整/设置）固有宽度 ~530px，390px
-  // 视口整体溢出屏外、「设置」按钮不可达。mobile 档（≤768px）只保留 新建 +
-  // 设置 两个高频内联按钮（连同「更多」触发器共 ~86px），其余收进收纳菜单；
-  // 宽档（desktop/thin）维持原内联布局不变。
+  // Keep New session and Settings directly reachable in the mobile shell.
   const compactActions = layoutMode === 'mobile';
   const [moreOpen, setMoreOpen] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
+  const moreTriggerRef = useRef<HTMLButtonElement>(null);
 
   // 「更多」收纳菜单：Escape 关闭 + 点击外部关闭（与 BaselayerSwitcher 同模式）。
   useEffect(() => {
     if (!moreOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setMoreOpen(false);
+      if (e.key === 'Escape') {
+        setMoreOpen(false);
+        moreTriggerRef.current?.focus();
+      }
     };
     const onMouseDown = (e: MouseEvent) => {
       if (moreRef.current && !moreRef.current.contains(e.target as Node)) {
@@ -127,9 +131,9 @@ export default function TopBar({ sessionName, onNewSession, onRequestLocation, l
     // V4：壳层度量改用 token（h-topbar），背景改为不透明 surface-panel 并
     // 移除 backdrop-blur —— 顶栏压在持续重绘的地图画布上，blur 是最贵的
     // 那一类滤镜，半透明又会让地图细节透进密集文本。
-    <div
+    <header
       data-testid="topbar"
-      className="fixed inset-x-0 top-0 z-50 flex h-topbar items-center gap-2.5 bg-surface-panel px-3"
+      className="fixed inset-x-0 top-0 z-50 flex h-topbar items-center gap-1 bg-surface-panel px-1.5 sm:gap-2 sm:px-3"
       style={{
         borderBottomWidth: isActive ? 2 : 1,
         borderBottomStyle: 'solid',
@@ -153,47 +157,43 @@ export default function TopBar({ sessionName, onNewSession, onRequestLocation, l
 
       {/* sidebar toggle */}
       <button
+        type="button"
         onClick={toggleLeftPanel}
+        aria-expanded={leftPanelOpen}
         aria-label={leftPanelOpen ? t('collapseSidebar') : t('expandSidebar')}
         title={leftPanelOpen ? t('collapseSidebar') : t('expandSidebar')}
-        className="flex h-control-md w-control-md items-center justify-center rounded-sm text-ink transition-colors hover:bg-surface-hover"
+        className={iconButton}
       >
-        {leftPanelOpen ? <PanelLeftClose size={14} aria-hidden /> : <Menu size={14} aria-hidden />}
+        {leftPanelOpen ? <PanelLeftClose size={16} aria-hidden /> : <Menu size={16} aria-hidden />}
       </button>
 
-      {/* logo */}
-      <div className="flex select-none items-center gap-1.5 shrink-0">
-        <span
-          aria-hidden
-          className="flex h-6 w-6 items-center justify-center rounded-sm"
-          style={{
-            background: 'linear-gradient(135deg, var(--agent-accent), color-mix(in srgb, var(--agent-accent) 87%, transparent))'
-          }}
-        >
-          <Compass size={13} className="text-ink-on-accent" />
-        </span>
-        <div className="leading-tight">
-          <span className="text-heading font-semibold text-ink">
-            GeoAgent
+      <div className="grid min-w-0 flex-1 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-1.5 min-[769px]:flex min-[769px]:gap-3">
+        <span className="flex shrink-0 items-center gap-2 text-heading font-semibold leading-tight text-ink">
+          <span aria-hidden className="hidden h-6 w-6 items-center justify-center rounded-md bg-agent-accent text-ink-on-accent min-[480px]:flex">
+            <Compass size={16} />
           </span>
-          <span className="ml-1 hidden min-[480px]:inline text-caption text-ink-muted">All is Agent</span>
-        </div>
+          GeoAgent
+        </span>
+        <span className="col-span-2 row-start-2 min-w-0 truncate text-caption text-ink-secondary min-[769px]:border-l min-[769px]:border-edge-subtle min-[769px]:pl-3 min-[769px]:text-body" title={t('sessionPrefix', { name })}>
+          <span className="sr-only">{t('sessionPrefix', { name })}</span>
+          <span aria-hidden>{name}</span>
+        </span>
+        <span
+          title={status.label}
+          className="col-start-2 row-start-1 inline-flex min-w-0 max-w-full items-center justify-self-start gap-1 rounded-pill px-1.5 text-caption font-medium min-[769px]:ml-auto min-[769px]:shrink-0 min-[769px]:px-2 min-[769px]:py-0.5"
+          style={{ backgroundColor: status.bg }}
+        >
+          <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-pill" style={{ backgroundColor: status.color }} />
+          <span className="truncate text-ink">{status.label}</span>
+        </span>
       </div>
-
-      {/* session name pill */}
-      <span className="ml-1 hidden sm:inline-block max-w-[140px] md:max-w-[180px] truncate rounded-pill border border-edge-subtle bg-surface-sunken px-2 py-0.5 text-meta text-ink-secondary">
-        {t('sessionPrefix', { name })}
-      </span>
-
-      {/* spacer */}
-      <div className="flex-1 min-w-[4px]" />
 
       {onRequestLocation && <>
         <button type="button" onClick={onRequestLocation} disabled={locationLoading}
           title={t(locationLoading ? 'locationLoading' : locationError ? 'locationRetry' : 'requestLocation')}
           aria-label={t(locationLoading ? 'locationLoading' : locationError ? 'locationRetry' : 'requestLocation')}
           aria-busy={locationLoading} aria-describedby={locationError ? 'location-error' : undefined}
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-ink-secondary hover:bg-surface-hover disabled:opacity-60">
+          className={`${iconButton} disabled:opacity-60`}>
           {locationLoading ? <LoaderCircle size={14} className="animate-spin" aria-hidden /> : <LocateFixed size={14} aria-hidden />}
         </button>
         <span role="status" className="sr-only">{locationLoading ? t('locationLoading') : ''}</span>
@@ -203,28 +203,17 @@ export default function TopBar({ sessionName, onNewSession, onRequestLocation, l
           <button type="button" onClick={onRequestLocation} className="mt-2 whitespace-nowrap rounded border border-edge-subtle px-3 py-1 text-ink-secondary">{t('locationRetry')}</button>
         </div>}
       </>}
-      {/* agent status badge */}
-      <span
-        className="flex shrink-0 items-center gap-1 rounded-pill px-2 py-0.5 text-meta font-medium"
-        style={{ backgroundColor: status.bg }}
-      >
-        <span
-          aria-hidden
-          className="h-1.5 w-1.5 rounded-pill"
-          style={{ backgroundColor: status.color }}
-        />
-        <span className="text-ink">{status.label}</span>
-      </span>
-
       {/* right actions */}
-      <div data-testid="topbar-actions" className="flex shrink-0 items-center gap-0.5">
+      <div data-testid="topbar-actions" className="flex shrink-0 items-center gap-0.5 sm:gap-1">
         <button
+          type="button"
           onClick={onNewSession}
           aria-label={t('newSession')}
           title={t('newSession')}
-          className="flex h-control-md w-control-md items-center justify-center rounded-sm text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+          className="inline-flex h-8 min-w-8 shrink-0 items-center justify-center gap-1.5 rounded-md border border-edge-subtle bg-surface-sunken text-body font-medium text-ink transition-colors hover:bg-surface-hover sm:h-9 sm:min-w-9 lg:px-2.5"
         >
-          <Plus size={14} aria-hidden />
+          <Plus size={16} aria-hidden />
+          <span className="hidden lg:inline">{t('newSession')}</span>
         </button>
 
         {/* #1667：窄档折叠 —— 历史/底图/3D/UI 调整收进「更多」收纳菜单，
@@ -232,12 +221,14 @@ export default function TopBar({ sessionName, onNewSession, onRequestLocation, l
         {compactActions ? (
           <div ref={moreRef} className="relative">
             <button
+              type="button"
+              ref={moreTriggerRef}
               onClick={() => setMoreOpen((v) => !v)}
               aria-label={t('moreActions')}
               title={t('moreActions')}
               aria-haspopup="menu"
               aria-expanded={moreOpen}
-              className="flex h-control-md w-control-md items-center justify-center rounded-sm text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+              className={iconButton}
             >
               <MoreHorizontal size={14} aria-hidden />
             </button>
@@ -253,7 +244,7 @@ export default function TopBar({ sessionName, onNewSession, onRequestLocation, l
                     setHistoryOpen(true);
                     setMoreOpen(false);
                   }}
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-body text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+                  className={menuItem}
                 >
                   <History size={14} aria-hidden />
                   {t('history')}
@@ -273,7 +264,7 @@ export default function TopBar({ sessionName, onNewSession, onRequestLocation, l
                     setMoreOpen(false);
                   }}
                   aria-label={is3D ? t('switchTo2D') : t('switchTo3D')}
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-body text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+                  className={menuItem}
                 >
                   <ViewToggleGlyph is3D={is3D} />
                   <span
@@ -289,7 +280,7 @@ export default function TopBar({ sessionName, onNewSession, onRequestLocation, l
                     setTweaksOpen(true);
                     setMoreOpen(false);
                   }}
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-body text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+                  className={menuItem}
                 >
                   <Sliders size={14} aria-hidden />
                   {t('uiTweaks')}
@@ -303,7 +294,7 @@ export default function TopBar({ sessionName, onNewSession, onRequestLocation, l
               onClick={() => setHistoryOpen(true)}
               aria-label={t('history')}
               title={t('history')}
-              className="flex h-control-md w-control-md items-center justify-center rounded-sm text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+              className={iconButton}
             >
               <History size={14} aria-hidden />
             </button>
@@ -317,7 +308,7 @@ export default function TopBar({ sessionName, onNewSession, onRequestLocation, l
               onClick={() => setIs3D(!is3D)}
               aria-label={is3D ? t('switchTo2D') : t('switchTo3D')}
               title={is3D ? t('view3DTitle') : t('view2DTitle')}
-              className="flex items-center gap-1 rounded-md border border-edge-subtle bg-surface-overlay px-2.5 py-1 font-mono text-body text-ink-secondary shadow-overlay transition-colors hover:bg-surface-hover"
+              className="flex h-8 items-center gap-1 rounded-md px-2 font-mono text-body text-ink-secondary transition-colors hover:bg-surface-hover"
             >
               <ViewToggleGlyph is3D={is3D} />
               <span
@@ -336,7 +327,7 @@ export default function TopBar({ sessionName, onNewSession, onRequestLocation, l
               onClick={() => setTweaksOpen(true)}
               aria-label={t('uiTweaks')}
               title={t('uiTweaks')}
-              className="flex h-control-md w-control-md items-center justify-center rounded-sm text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+              className={iconButton}
             >
               <Sliders size={14} aria-hidden />
             </button>
@@ -347,11 +338,11 @@ export default function TopBar({ sessionName, onNewSession, onRequestLocation, l
           onClick={() => setSettingsOpen(true)}
           aria-label={t('settings')}
           title={t('settings')}
-          className="flex h-control-md w-control-md items-center justify-center rounded-sm text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+          className={iconButton}
         >
           <Settings size={14} aria-hidden />
         </button>
       </div>
-    </div>
+    </header>
   );
 }

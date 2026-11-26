@@ -12,7 +12,7 @@
  * 保持不变；跨会话待审候选在此排队审阅。
  */
 import React, { useCallback, useMemo, useState } from 'react';
-import { ClipboardList } from 'lucide-react';
+import { ClipboardList, Plus, Scissors, X } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { createEditDataset } from '@/lib/api/feature-edit';
 import { getSessionIdentity } from '@/lib/store/session-identity';
@@ -71,37 +71,39 @@ export function FeatureEditToolGroup() {
   }, [busy, t]);
 
   return (
-    <div className="flex items-center gap-1" data-testid="feature-edit-toolbar">
+    <div className="mt-2 flex flex-wrap items-center gap-1 border-t border-edge-subtle pt-2" data-testid="feature-edit-toolbar">
       {editTarget ? (
         <>
-          <span className="max-w-24 truncate rounded-xs bg-surface-raised px-1.5 py-0.5 text-micro" data-testid="feature-edit-active-name">
+          <span className="min-w-0 flex-1 truncate px-1 text-meta font-medium text-ink" data-testid="feature-edit-active-name">
             {(layers ?? []).find((l) => l.id === editTarget.layerId)?.name ?? editTarget.layerId}
           </span>
           <button
             type="button"
             aria-pressed={activeTool === 'split_feature'}
-            className={`rounded-xs border border-edge-subtle px-1.5 py-1 hover:bg-surface-hover ${
+            className={`inline-flex h-8 w-8 items-center justify-center rounded-sm hover:bg-surface-hover ${
               activeTool === 'split_feature' ? 'bg-surface-selected' : ''
             }`}
             title={t('map.toolbar.splitFeatureTitle')}
+            aria-label={t('map.toolbar.splitFeatureTitle')}
             onClick={toggleSplit}
             data-testid="feature-edit-split-tool"
           >
-            ✂
+            <Scissors size={16} aria-hidden />
           </button>
           <button
             type="button"
-            className="rounded-xs border border-edge-subtle px-1.5 py-1 hover:bg-surface-hover"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-sm hover:bg-surface-hover"
             title={t('map.edit.stop')}
+            aria-label={t('map.edit.stop')}
             onClick={() => setEditTarget(null)}
             data-testid="feature-edit-stop"
           >
-            ✕
+            <X size={16} aria-hidden />
           </button>
         </>
       ) : (
         <select
-          className="max-w-32 rounded-xs border border-edge-subtle bg-surface-raised px-1.5 py-1 text-micro"
+          className="h-8 min-w-0 flex-1 rounded-sm border border-edge-subtle bg-surface-raised px-1.5 text-meta text-ink"
           value=""
           data-testid="feature-edit-target-select"
           onChange={(e) => {
@@ -109,6 +111,7 @@ export function FeatureEditToolGroup() {
             if (row?._refId) setEditTarget({ layerId: row.id, refId: row._refId });
           }}
           title={t('map.edit.pickTarget')}
+          aria-label={t('map.edit.pickTarget')}
         >
           <option value="">{t('map.edit.pickTarget')}</option>
           {refLayers.map((l) => (
@@ -118,26 +121,28 @@ export function FeatureEditToolGroup() {
       )}
       <button
         type="button"
-        className="rounded-xs border border-edge-subtle px-1.5 py-1 hover:bg-surface-hover"
+        className="inline-flex h-8 w-8 items-center justify-center rounded-sm hover:bg-surface-hover"
         title={t('map.edit.createEmptyTitle')}
+        aria-label={t('map.edit.createEmptyTitle')}
         onClick={() => { void createEmpty(); }}
         disabled={busy}
         data-testid="feature-edit-create-empty"
       >
-        +
+        <Plus size={16} aria-hidden />
       </button>
       <button
         type="button"
         aria-haspopup="dialog"
         aria-expanded={proposalsOpen}
-        className="rounded-xs border border-edge-subtle px-1.5 py-1 hover:bg-surface-hover"
+        className="inline-flex h-8 w-8 items-center justify-center rounded-sm hover:bg-surface-hover"
         title={t('featureProposals.openQueueTitle')}
+        aria-label={t('featureProposals.openQueueTitle')}
         onClick={() => setProposalsOpen(true)}
         data-testid="feature-proposal-open-queue"
       >
         <ClipboardList size={14} aria-hidden />
       </button>
-      {error && <span className="text-micro text-status-error">{error}</span>}
+      {error && <span role="alert" className="w-full text-meta text-status-critical">{error}</span>}
       <FeatureProposalDrawer open={proposalsOpen} onClose={() => setProposalsOpen(false)} />
     </div>
   );

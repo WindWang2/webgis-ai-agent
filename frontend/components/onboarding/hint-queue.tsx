@@ -46,7 +46,12 @@ export function HintQueue(): React.ReactElement | null {
 
   return (
     <div
-      className="fixed bottom-4 left-4 z-[70] w-[320px] rounded-lg border border-edge-subtle bg-surface-raised p-3 shadow-xl"
+      className="absolute z-20 w-72 rounded-lg border border-edge-subtle bg-surface-raised p-3 shadow-overlay"
+      style={{
+        left: 'var(--map-chrome-left, 12px)',
+        bottom: 'calc(var(--map-chrome-bottom, 10px) + var(--map-readout-height, 22px) + 44px)',
+        maxWidth: 'calc(100% - var(--map-chrome-left, 12px) - 12px)',
+      }}
       role="status"
       data-testid="onboarding-hint"
     >

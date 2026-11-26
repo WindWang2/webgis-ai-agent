@@ -103,7 +103,7 @@ describe('Wave 12 · 组件布局几何语料', () => {
     const bottomIndexes = buildBottomSlotIndexes(resolved.map((c) => c.component));
     const barStyle = stackedBottomStyle(resolved[0].component, bottomIndexes);
     const legStyle = stackedBottomStyle(resolved[1].component, bottomIndexes);
-    expect(String(barStyle?.bottom)).toContain('+ 30px');
+    expect(String(barStyle?.bottom)).toContain('var(--map-readout-height, 22px) + 8px');
     // legend 落 bottom-left 缺省 → 独立槽无堆叠 → 走基本偏移。
     expect(String(legStyle?.bottom)).toContain('+ 6px');
   });

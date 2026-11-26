@@ -67,15 +67,16 @@ describe('U-2 (#884) colorbar 与 scale_bar 同槽堆叠', () => {
     const sbStyle = mod.stackedBottomStyle(sb as never, idx);
     const cbStyle = mod.stackedBottomStyle(cb as never, idx);
     expect(sbStyle?.bottom).not.toEqual(cbStyle?.bottom);
-    expect(String(cbStyle?.bottom)).toMatch(/66px/);
+    expect(sbStyle?.bottom).toContain('var(--map-readout-height, 22px) + 8px');
+    expect(cbStyle?.bottom).toContain('var(--map-readout-height, 22px) + 44px');
   });
 
-  it('单组件槽不产生偏移变化（保持既有 +30 行为）', async () => {
+  it('单组件槽紧贴读数条上方的 8px 间距', async () => {
     const mod = await import('@/components/map/map-spec-chrome');
     const sb = { id: 'sb', type: 'scale_bar', enabled: true } as never;
     const idx = mod.buildBottomSlotIndexes([sb]);
     expect(idx.size).toBe(0);
-    expect(mod.stackedBottomStyle(sb as never, idx)?.bottom).toContain('30px');
+    expect(mod.stackedBottomStyle(sb as never, idx)?.bottom).toContain('var(--map-readout-height, 22px) + 8px');
   });
 });
 
