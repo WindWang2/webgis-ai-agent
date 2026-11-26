@@ -56,3 +56,13 @@
   - 干净 master（临时 worktree @59eb3f527 复核）：同样 2 failed → **既有基线故障**（extensions_platform 示例文件断言），非本线引入，不扩线修复。
 - tests/test_import_boundaries.py 全过；scripts/check_import_boundaries.py OK；import app.main OK。
 - 干净 master 复核同时再证 scale_portrayal corpus KeyError 为既有。
+
+## WP5 后端性能基线（实测，本机，snake 网格确定性数据）
+| n | 资格+尺度+几何 | 布局 | 全链 | 会计 |
+|---|---|---|---|---|
+| 10 | 0.2ms | 0.2ms | 0.3ms | placed=10 |
+| 100 | 0.9ms | 1.4ms | 2.3ms | placed=100 |
+| 1,000 | 8.5ms | 77.6ms | 86.1ms | placed=1000 collision=0 |
+| 5,000（帽 1000） | — | — | 134.7ms | placed=1000 budget=4000（精确） |
+- 结论：布局 O(n²·nudge) 在帽内规模线性可用；5k 候选预算门成本可忽略；
+  大于帽的降级路径 = omitted_budget 会计（不静默丢）。
