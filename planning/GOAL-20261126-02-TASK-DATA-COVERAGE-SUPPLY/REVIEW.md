@@ -37,6 +37,13 @@
 - P2-5 快照拆分披露 → PR 正文披露（数字可复现 + 干净 master 验证；git 拆分列为可选打磨）
 - P3-1/2/3/7 → 修复（execution 服务层、disclosures 上屏、状态本地化、会话重置）；P3-4/6 → 修复/披露（not_serving 计数）
 
-## R2（final review-fix-review）
+## R2（final review-fix-review，进行中→A 已回）
 
-（待 R1 修复后执行：完整 diff 复核 + 反向验证 + 关键用例重跑）
+### A（科学）R2 结论：P0-1 修复科学有效（9 组独立 oracle 全对齐，含拆分/
+连续/全正/普通/bbox 回归）；P1-1/P1-2 端到端验证通过；8×P2 全部到位；
+99/99 → 修复其新发现后 101/101。新发现 1×P1（acquire 步骤 search_more
+记录不遵守→静默执行被拒候选）→ **已修复 + 2 项回归**（commit fix R2）。
+其"perf 测试文件未改"为误读（50093eb4f 已诚实化，当前文件无 250k 声明，
+partition-scan/bounded-24 双段口径已提交）——已核实。
+
+（待 B/C 回报后收尾）
