@@ -40,12 +40,6 @@ def _sanitize_overpass_value(value: str) -> str:
 # waterways) unless tags explicitly set area=yes. Graph builders only ingest
 # LineString, so promoting them to Polygon drops them from the network.
 _LINEAR_WAY_KEYS = frozenset({"highway", "railway", "waterway"})
-# Closed ways with these keys are areal (building footprints, landuse, …).
-_AREA_WAY_KEYS = frozenset({
-    "building", "landuse", "natural", "amenity", "leisure", "landcover",
-    "place", "boundary", "man_made", "shop", "tourism", "historic",
-    "office", "aeroway", "power", "wetland",
-})
 
 
 def _closed_way_is_area(tags: dict) -> bool:
@@ -63,8 +57,6 @@ def _closed_way_is_area(tags: dict) -> bool:
         return True
     if any(k in tags for k in _LINEAR_WAY_KEYS):
         return False
-    if any(k in tags for k in _AREA_WAY_KEYS):
-        return True
     return True
 
 
@@ -236,7 +228,7 @@ async def _query_overpass(query: str, limit: Optional[int] = None) -> dict:
         return {"type": "FeatureCollection", "features": [], "error": result["error"]}
 
     data = result
-    logger.info(f"[OSM] Overpass query successful, data size: {len(json.dumps(data))} bytes")
+    logger.info("[OSM] Overpass query successful, elements: %s", len(data.get("elements", [])))
     return _overpass_to_geojson(data)
 
 

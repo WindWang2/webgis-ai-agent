@@ -523,7 +523,7 @@ def register_point_pattern_tools(registry: ToolRegistry):
         import pandas as pd
 
         field = str(params["time_field"]) if "time_field" in params else ""
-        if field and field not in gdf.columns:
+        if field not in gdf.columns:
             fallback = [f for f in _TIME_FIELD_FALLBACKS if f in gdf.columns]
             if not fallback:
                 raise MissingRequiredField(
@@ -598,6 +598,11 @@ def register_point_pattern_tools(registry: ToolRegistry):
             permutations=int(params["permutations"]),
         )
         result["time_field"] = field
+        if n_dropped:
+            result["n_time_dropped"] = n_dropped
+            result["time_dropped_note"] = (
+                f"时间字段 '{field}' 有 {n_dropped} 行不可解析（NaT），已剔除后检验"
+            )
         payload = {"success": True, "summary": result["summary"], "data": result}
         uncertainty: list = []
         seed = None
@@ -684,6 +689,11 @@ def register_point_pattern_tools(registry: ToolRegistry):
             alternative=str(params["alternative"]),
         )
         result["time_field"] = field
+        if n_dropped:
+            result["n_time_dropped"] = n_dropped
+            result["time_dropped_note"] = (
+                f"时间字段 '{field}' 有 {n_dropped} 行不可解析（NaT），已剔除后检验"
+            )
         payload = {"success": True, "summary": result["summary"], "data": result}
         uncertainty: list = []
         seed = None

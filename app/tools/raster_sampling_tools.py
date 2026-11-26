@@ -443,7 +443,7 @@ def register_raster_sampling_tools(registry: ToolRegistry) -> None:
             ], "thinning": curves.get("thinning", {})}
                 if curves else None),
             "station_layer_ref": out.get("station_layer_ref", ""),
-            "sample_table_ref": (out["receipt"]["outputs"]
+            "sample_table_ref": ((out["receipt"].get("outputs") or {})
                                  .get("sample_table_ref", "")),
         }
 
@@ -453,7 +453,7 @@ def _bounded_row(row: Dict[str, Any]) -> Dict[str, Any]:
     out = dict(row)
     out.pop("support_pixels", None)
     if out.get("raw_exact"):
-        out["raw_exact"] = str(out["raw_exact"])[:32]
+        out["raw_exact"] = str(out["raw_exact"])
     return out
 
 

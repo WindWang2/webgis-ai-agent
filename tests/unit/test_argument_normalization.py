@@ -107,6 +107,22 @@ def test_kebab_case_repair_recorded():
     assert any(r.kind == "key_style" and r.source == "radius-px" for r in repairs)
 
 
+@pytest.mark.parametrize("raw", [
+    {"map-title": "kebab", "map_title": "snake"},
+    {"map_title": "snake", "map-title": "kebab"},
+])
+def test_kebab_case_never_overwrites_existing_snake_key(raw):
+    """无论入参顺序，schema 正名优先；冲突的 kebab 值丢弃但必须留痕。"""
+    args, repairs = normalize_tool_arguments("heatmap_data", raw, MockHeatmapModel)
+    assert args["map_title"] == "snake"
+    assert "map-title" not in args
+    conflicts = [r for r in repairs if r.source == "map-title"]
+    assert len(conflicts) == 1
+    assert conflicts[0].kind == "key_style"
+    assert conflicts[0].target == "map_title"
+    assert conflicts[0].detail == "dropped conflicting kebab-case value; kept snake_case"
+
+
 def test_spatial_tools_data_ref_normalization():
     for tool_name in ["buffer_analysis", "spatial_stats", "kde_surface", "h3_binning"]:
         args, _ = normalize_tool_arguments(tool_name, {"data_ref": "ref:geojson-12345"})
@@ -193,6 +209,20 @@ def test_regression_json_string_list_coercion_with_evidence():
     )
     assert args["layer_ids"] == ["a", "b"]
     assert any(r.kind == "json_string_list" and r.target == "layer_ids" for r in repairs)
+
+
+def test_pep604_optional_list_json_strings_coerced():
+    from app.tools.cartography import ExportBatchMapsArgs, ExportMapArgs
+
+    frames = [{"title": "north"}]
+    views = [{"center": [116.0, 39.0], "zoom": 10}]
+    for model, field, value, expected in (
+        (ExportMapArgs, "frames", '[{"title": "north"}]', frames),
+        (ExportBatchMapsArgs, "views", '[{"center": [116.0, 39.0], "zoom": 10}]', views),
+    ):
+        args, repairs = coerce_json_string_lists({field: value}, model)
+        assert args[field] == expected
+        assert any(r.kind == "json_string_list" and r.target == field for r in repairs)
 
 
 def test_regression_json_string_invalid_json_untouched():

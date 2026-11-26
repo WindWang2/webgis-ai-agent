@@ -189,3 +189,39 @@ def test_execute_timeout_without_registered_job_reports_not_submitted(
     assert out["success"] is False
     assert out["code"] == "EXECUTION_NOT_SUBMITTED"
     assert "next" not in out
+
+
+def test_results_allows_receipt_without_outputs(monkeypatch):
+    """空 outputs 收据仍可返回成果页，sample_table_ref 为空。"""
+    import asyncio
+
+    from app.services.raster_sampling import service as rs_service
+    from app.tools import raster_sampling_tools as mod
+    from app.tools.registry import ToolRegistry
+
+    registry = ToolRegistry()
+    mod.register_raster_sampling_tools(registry)
+    fn = registry.get("webgis_raster_sampling_results")
+    assert fn is not None
+    monkeypatch.setattr(mod, "_sid", lambda _provided: "sess-1")
+
+    async def _results(**_kwargs):
+        return {
+            "execution_id": "exec-1", "plan_id": "plan-1",
+            "receipt": {"outputs": None}, "pagination": {"page": 1}, "rows": [],
+        }
+
+    monkeypatch.setattr(rs_service, "results", _results)
+    out = asyncio.run(fn(plan_id="plan-1", session_id="sess-1"))
+    assert out["success"] is True
+    assert out["sample_table_ref"] == ""
+
+
+def test_bounded_row_preserves_full_raw_exact():
+    """长整数精确值不得被静默截断成另一个数字。"""
+    from app.tools.raster_sampling_tools import _bounded_row
+
+    raw_exact = 1234567890123456789012345678901234567890
+    out = _bounded_row({"raw_exact": raw_exact, "support_pixels": [1]})
+    assert out["raw_exact"] == str(raw_exact)
+    assert "support_pixels" not in out

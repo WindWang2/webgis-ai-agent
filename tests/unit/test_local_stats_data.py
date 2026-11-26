@@ -548,6 +548,20 @@ async def test_local_stats_tools_registered(stats_env):
 
 
 @pytest.mark.asyncio
+async def test_query_local_yearbook_rejects_unknown_dataset(stats_env, monkeypatch):
+    from app.tools import local_stats
+    from app.tools.registry import ToolRegistry
+
+    monkeypatch.setattr(local_stats, "query_township", lambda *args, **kwargs: {"count": 1})
+    reg = ToolRegistry()
+    local_stats.register_local_stats_tools(reg)
+
+    res = await reg.dispatch("query_local_yearbook", {"dataset": "invalid", "name": "云合镇"})
+    assert res["code"] == "VALIDATION_ERROR"
+    assert "dataset" in res["message"]
+
+
+@pytest.mark.asyncio
 async def test_tool_params_accept_numeric_adcode_and_year(stats_env):
     """LLM 常把 adcode/year/limit 传成数字（复现线上 'adcode 校验失败'）。"""
     _ingest_all()
@@ -624,6 +638,48 @@ async def test_query_local_poi_accepts_bare_comma_bbox(stats_env):
     })
     assert res["count"] == 1
     assert res["features"][0]["properties"]["name"].startswith("海底捞")
+
+
+@pytest.mark.asyncio
+async def test_poi_online_fallback_preserves_string_bbox(stats_env, monkeypatch):
+    from app.tools import local_stats
+    from app.tools.registry import ToolRegistry
+
+    monkeypatch.setattr(local_stats, "query_gd_poi", lambda *args, **kwargs: {
+        "error": "本地 POI 库未生成（gd_pois.gpkg 缺失）",
+    })
+    monkeypatch.setattr(settings, "AMAP_API_KEY", "test-key")
+    monkeypatch.setattr("app.core.egress.assert_egress_allowed", lambda *args, **kwargs: None)
+    captured = {}
+
+    class Response:
+        status_code = 200
+
+        def json(self):
+            return {"pois": [{
+                "name": "窗口内学校",
+                "location": _gcj_loc(104.05, 30.65),
+                "type": "科教文化服务;学校;小学",
+                "adname": "锦江区",
+                "cityname": "成都市",
+            }]}
+
+    def fake_get(endpoint, params, timeout):
+        captured.update(endpoint=endpoint, params=params)
+        return Response()
+
+    monkeypatch.setattr("httpx.get", fake_get)
+    reg = ToolRegistry()
+    local_stats.register_local_stats_tools(reg)
+
+    res = await reg.dispatch("query_local_poi", {
+        "bbox": "104.0,30.60,104.10,30.70", "name_like": "小学",
+    })
+    assert captured["endpoint"].endswith("/place/polygon")
+    assert "polygon" in captured["params"]
+    assert "city" not in captured["params"]
+    assert res["source"] == "amap_online_fallback"
+    assert res["count"] == 1
 
 
 @pytest.mark.asyncio

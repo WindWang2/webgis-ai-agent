@@ -228,6 +228,31 @@ async def test_space_time_k_analysis_behavioral(registry):
 
 
 @pytest.mark.asyncio
+async def test_space_time_tools_empty_time_field_returns_missing_required(registry):
+    for tool_name in ("space_time_k_analysis", "mantel_test_analysis"):
+        out = await registry.dispatch(
+            tool_name, {"geojson": _space_time_fc(), "time_field": "", "permutations": "0"})
+        _assert_error_readable(out)
+        assert out.get("code") == "MISSING_REQUIRED_FIELD", (tool_name, out)
+        assert out.get("error_type") == "MissingRequiredField", (tool_name, out)
+
+
+@pytest.mark.asyncio
+async def test_space_time_tools_disclose_nat_rows_dropped(registry):
+    fc = _space_time_fc()
+    fc["features"][0]["properties"]["ts"] = "not-a-timestamp"
+
+    for tool_name in ("space_time_k_analysis", "mantel_test_analysis"):
+        out = await registry.dispatch(
+            tool_name, {"geojson": fc, "time_field": "ts", "permutations": "0"})
+        assert out.get("success") is True, (tool_name, out)
+        data = out["data"]
+        assert data["n"] == 29, (tool_name, data)
+        assert data["n_time_dropped"] == 1, (tool_name, data)
+        assert "1 行" in data["time_dropped_note"] and "剔除" in data["time_dropped_note"]
+
+
+@pytest.mark.asyncio
 async def test_space_time_k_epoch_seconds_span(registry):
     """Epoch 数值时间戳按秒解析（与 ST-DBSCAN 同契约）。
 
