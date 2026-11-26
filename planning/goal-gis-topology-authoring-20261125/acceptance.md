@@ -1,6 +1,6 @@
 # Acceptance — goal-gis-topology-authoring-20261125
 
-对照任务书「最低验收」逐条自证（R1 冷审将独立复核）。
+对照任务书「最低验收」逐条自证（R1–R4 独立冷审已收敛，R4 approve）。
 
 ## 1. 面共享边编辑后两面无重叠/缺口（基线违规披露）；邻面同步原子提交；拒绝零写入；undo 恢复真实字节
 - 双侧精确一致：test_shared_topology.py::TestMoveSharedVertex::test_moves_both_sides_of_shared_edge_node
@@ -56,13 +56,22 @@
   Pi 提交必经 CONFIRMATION_REQUIRED 或用户卡。
 
 ## 5. 测试证据（本机实测命令与结果）
-- pytest tests/unit/feature_edit/ → 187 passed（含 42+14+8 新例）— venv
+- pytest tests/unit/feature_edit/ → 203 passed — venv
   python3.12, shapely 2.2.0, pyproj 3.8.0。
+- pytest tests/unit/feature_edit/ tests/unit/feature_proposals/ → 249 passed。
+- field_contracts + tools → 112 passed；registry rationalization + feature_edit
+  → 208 passed（较早期提交态；最终两轮后端修复后的本域/提案域 249 全绿）。
 - ruff check（改动域文件）→ All checks passed。
 - pnpm vitest run（前端触碰测试）→ 29 passed；全套件 5743 passed / 3 failed
   （既有，stash 复核）；typecheck 触碰文件零错误；lint 零错误。
 - pnpm exec playwright test j50 → 2 passed（mock 档，E2E_PORT=3331）。
 - tests/unit/feature_proposals + topology_workbench/ → 56 passed / 2 failed
   （既有 event-loop 污染，基线复现确认）。
-- 邻域回归：feature_edit 全套、topology_workbench 97 passed、feature_proposals
-  56 passed（独立运行）。
+- 邻域回归：feature_edit 全套、topology_workbench 独立 97 passed（含
+  feature_proposals 的早期组合）；feature_proposals 独立 45 passed（最终 46
+  含共享提案重放回归）。G31 repair 组合运行的两项失败已在干净基线复现，
+  属既有 event-loop 污染，不掩盖为本分支通过。
+- 全量 tests/unit 扫描尝试：日志运行到 97% 时因同机其它任务重型 pytest
+  争用导致进程中断（未完成，未作为通过证据）；改用本域+全部直接消费方
+  定向验证（feature_edit/feature_proposals/field_contracts/tools/registry
+  rationalization）作为交付门禁。

@@ -55,5 +55,17 @@
   （两 part 同步移动 + undo 原字节恢复）。
 - 修复后验证：feature_edit **203 passed**；ruff 干净。
 - 其余 P3 follow-up：feature_proposals.candidate 重放缺 shared_level_field
-  （当前无共享 op/level_field 提案入口，未达路径）；提交期存量违规不重复
-  投影（preview.topology_context 已是披露面）。
+  （随后在 `1e9373c80` 修复：create 预检/diff/conflict 三处均透传，新增
+  守卫/无守卫判别回归）；提交期存量违规不重复投影（preview.topology_context
+  已是披露面）。
+
+## R4 最终聚焦复审（7fb7ace33 + 1e9373c80）
+- 结论：**approve**。多 path 同步 FIXED-VERIFIED（MultiLineString 双 part、
+  MultiPolygon 触点、壳+洞非法接触 typed 拒绝；Point/MultiPoint 扁平结构
+  保持；insert/reshape 单路径回归正常；Z 第二 path 拒绝时 all-or-nothing
+  零 delta）；提案层级守卫重放 FIXED-VERIFIED（create/diff/conflict 三处
+  与 plan/commit 同源）。
+- 验证：feature_edit + feature_proposals **249 passed**；ruff 零违规；
+  两个 commit `git show --check` 通过。
+- **未发现新的 P0–P3 问题。** 至此 R1→修复→R2→修复→R3→修复→R4 收敛，
+  可提交 PR。

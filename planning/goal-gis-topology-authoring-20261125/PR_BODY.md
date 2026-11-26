@@ -8,7 +8,7 @@
 
 ## 基线
 - origin/master `8fe3d76634bfb7052f438325c7db3e0ef3dad040`（2026-11-26 fetch 核查，含 #2266）
-- 分支 `zcode/goal-gis-topology-authoring-20261125`，独立 worktree；开放 PR 避让矩阵见 `planning/goal-gis-topology-authoring-20261125/baseline.md`（4 个功能 PR 与本域零文件交集；共享接线策略见下）
+- 分支 `zcode/goal-gis-topology-authoring-20261125`，独立 worktree；开放 PR 避让矩阵见 `planning/goal-gis-topology-authoring-20261125/baseline.md`（#2272–#2278 共 7 个功能 PR 与最终 diff 零文件交集；共享接线策略见下）
 - Pi pin：**未改动**。master 的 `vendor/pi` 为指向已删除路径的符号链接（blob `dd645f50`），本机 `entry_built=False`，既有 Pi journey 测试按设计显式 skip（`PI_JOURNEY_E2E=1` 门）→ **Pi live 旅程：blocked（基线打包问题，归 G12/方向 01 所有）**。同链证据以真实 ToolRegistry.dispatch + 真实 session store 的工具链测试与 REST 事务链测试替代。
 
 ## 新增用户能力（全部经真实服务执行）
@@ -48,16 +48,20 @@
 ## 复现步骤（本地验证）
 ```bash
 # 后端（venv: python3.12 / shapely 2.2.0 / pyproj 3.8.0）
-pytest tests/unit/feature_edit/ --no-cov -q          # 187 passed
-ruff check app/services/feature_edit/ app/schemas/feature_edit_schema.py \
-  app/schemas/feature_proposal_schema.py app/tools/feature_edit_tools.py \
-  app/tools/categories.py app/api/routes/feature_edits.py tests/unit/feature_edit/
-pytest tests/unit/feature_proposals/ tests/topology_workbench/ --no-cov -q
+pytest tests/unit/feature_edit/ --no-cov -q          # 203 passed
+pytest tests/unit/feature_edit/ tests/unit/feature_proposals/ --no-cov -q  # 249 passed
+ruff check app/services/feature_edit/ app/services/feature_proposals/ \
+  app/schemas/feature_edit_schema.py app/schemas/feature_proposal_schema.py \
+  app/tools/feature_edit_tools.py app/tools/categories.py \
+  app/api/routes/feature_edits.py tests/unit/feature_edit/ tests/unit/feature_proposals/
+pytest tests/unit/field_contracts/ tests/unit/tools/ --no-cov -q  # 112 passed
 # 前端
 cd frontend && pnpm vitest run components/chat/edit-proposal-card.test.tsx \
-  components/map/feature-layer-editor.test.tsx lib/api/feature-edit.constraints.test.ts
-pnpm typecheck && pnpm lint
-E2E_PORT=3331 pnpm exec playwright test j50          # 2 passed（mock 档）
+  components/map/feature-layer-editor.test.tsx lib/api/feature-edit.constraints.test.ts \
+  lib/api/feature-edit.encoding.test.ts tests/e2e-lanes          # 47 passed
+pnpm exec eslint <changed files> --max-warnings 0                # 0 errors
+pnpm typecheck                                                  # 仅 5 个既有错误，触碰文件 0
+E2E_PORT=3331 pnpm exec playwright test j50                     # 2 passed（mock 档）
 ```
 
 ## 资源与性能测量
@@ -65,13 +69,21 @@ E2E_PORT=3331 pnpm exec playwright test j50          # 2 passed（mock 档）
 - 无 PostGIS/Redis 依赖（每 worker 隔离 SQLite/内存 store）；未触发线上 CI。
 
 ## 独立评审
-- R1 冷审（未参与实现的独立 agent，从 diff+验收逐项+对抗探测）：结论见 `planning/goal-gis-topology-authoring-20261125/review.md`（含 P0–P3 清单与修复轮）。
-- R2 复审：R1 修复后由另一 reviewer 从 diff 与证据独立复核。
+- R1 独立冷审（未参与实现）：发现 P1×5/P2×2，全部在 `43e857477` 修复。
+- R2 另一独立 reviewer：R1 修复全部 FIXED-VERIFIED；发现 N1–N5，在
+  `54ab9a2bc` 修复。
+- R3 聚焦复审：N1–N5 验证通过；发现多 path 同步回归，在 `7fb7ace33`
+  修复；提案重放层级守卫 follow-up 在 `1e9373c80` 对齐。
+- **R4 最终聚焦复审：approve，未发现新的 P0–P3**；独立探针验证
+  MultiLineString/MultiPolygon 多 part 同步、Point/MultiPoint 归一、
+  all-or-nothing、提案层级重放；249 passed、ruff 零违规。逐项记录见
+  `planning/goal-gis-topology-authoring-20261125/review.md`。
 
 ## 未完成 / 明示 blocked
 - **Pi live 旅程 blocked**（见基线节；替代证据为 ToolRegistry/REST 真实链路测试）。若 G12 修复 vendor 打包，`tests/integration/test_pi_g31_topology_journey.py` 同款旅程可直接复用本分支工具面。
 - real 档 Playwright journey 未新增（本地无 Redis/Celery；mock 档 j50 + 组件/事务测试覆盖同等断言面；j24 模式的 real 旅程可作为后续补充）。
-- 容差匹配不跨反经线（exact 模式可用）；Z 路径的 insert/delete/reshape typed 拒绝（move/connect 保留 Z）。
+- 全量 `tests/unit` 扫描尝试运行到 97% 时因同机其它任务重型 pytest 争用导致进程中断，未作为通过证据；交付门禁采用本域及全部直接消费方定向验证（249 + 112 + registry 套件）。
+- 容差匹配不跨反经线（exact 模式可用）；Z 路径的 insert/delete/reshape typed 拒绝（move/connect 保留 Z）；MultiLineString 的 `end` 语义定位首条线 path、`vertex_index` 定位首个含该下标的 path（已文档化限制）。
 
 ## 共享接线与合并顺序建议
 本分支触碰的共享文件（均 additive、最小行数）：
@@ -80,6 +92,7 @@ E2E_PORT=3331 pnpm exec playwright test j50          # 2 passed（mock 档）
 - `app/api/routes/feature_edits.py`（3 端点 + import）
 - `app/tools/categories.py`（3 分类覆写）
 - `app/services/feature_edit/{contracts,plan,topology,identity,geometry_ops,journal,wire_types}.py`
+- `app/services/feature_proposals/{candidate,service,conflicts}.py`（共享 op 候选重放与层级守卫对齐）
 - 前端：`lib/types/feature-edit.ts`、`lib/api/feature-edit.ts`、`lib/chat/adapters.ts`、`lib/i18n/messages.ts`、`components/map/feature-layer-editor.tsx`、`components/chat/edit-proposal-card.tsx`、`e2e/helpers/registry.ts`
-- **未触碰**：`app/tools/__init__.py`、`app/main.py`、`app/models/__init__.py`、共享 i18n message 文件 —— 与 #2272–2275 的公共接线面（main.py / tools/__init__ / page.tsx / 各自 i18n 命名空间）零交集，合并顺序无约束。
+- **未触碰**：`app/tools/__init__.py`、`app/main.py`、`app/models/__init__.py`、共享 i18n message 文件 —— 与 #2272–#2278 的公共接线面（main.py / tools/__init__ / page.tsx / 各自 i18n 命名空间）零交集，合并顺序无约束。
 - journal/geometry_ops 两处基线修复若与并行分支冲突，以本分支语义为准（逆序回放 / 全数组 fwd），建议后合并本分支。

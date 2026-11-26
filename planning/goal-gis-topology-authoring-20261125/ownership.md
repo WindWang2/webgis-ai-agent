@@ -27,7 +27,7 @@
 - Pi vendor/bridge（`vendor/`、`app/agent_pi_bridge.py`）
 - 方法实验/数据融合/多尺度/情境 harness 的域目录（开放 PR 所有）
 - 制图引擎、workflow builder、跨工程包
-- 原始 checkout `/home/kevin/projects/webgis/webgis-ai-agent`（只读；.venv 可复用运行测试）
+- 原始 checkout `webgis-ai-agent`（只读；共享 `.venv` 可复用运行测试）
 - 其他任务的 worktree/分支/worktree 数据
 
 ## Subagent 分工

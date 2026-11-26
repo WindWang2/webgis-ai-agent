@@ -3,7 +3,7 @@
 ## 基线版本
 - origin/master SHA: `8fe3d76634bfb7052f438325c7db3e0ef3dad040`（2026-11-25/26 fetch 确认）
 - HEAD 合并：#2266（G21 有向 OD）
-- 本任务分支：`zcode/goal-gis-topology-authoring-20261125`，worktree `/home/kevin/projects/webgis/webgis-wt-gis-topology-authoring-20261125`
+- 本任务分支：`zcode/goal-gis-topology-authoring-20261125`，相邻独立 worktree `../webgis-wt-gis-topology-authoring-20261125`
 
 ## 开放 PR 避让矩阵（2026-11-26 核查）
 | PR | 分支 | 主题 | 与本域交集 |
@@ -12,9 +12,12 @@
 | #2273 | feat/gis-trusted-data-fusion-20261124 | 多源实体匹配/融合（03方向） | 无域文件交集；共享 app/main.py、app/models/__init__.py、app/tools/__init__.py、i18n dataFusion.json |
 | #2274 | feat/carto-multiscale-generalization-20261124 | 多尺度综合（04方向） | 无域文件交集；共享 app/tools/__init__.py、i18n map.json |
 | #2275 | feat/contextual-gis-scenario-harness-20261124 | 情境多方案推演（05方向） | 无域文件交集；共享 app/main.py、app/tools/__init__.py、i18n workbench.json |
+| #2276 | zcode/goal-pi-native-gis-host-20261125 | 原生 Pi host/GIS runtime | 无文件交集（本分支不改 Pi vendor/bridge） |
+| #2277 | zcode/goal-gis-model-workflow-authoring-20261125 | 可视化模型作者工作流 | 无文件交集；共享 main.py/models/tools 接线，本分支未触碰 |
+| #2278 | zcode/goal-carto-design-series-20261125 | 可复用设计规范/地图系列 | 无文件交集；共享 main.py/tools 接线，本分支未触碰 |
 | #2267–2271 | dependabot | 依赖升级 | 无域交集 |
 
-**结论**：4 个功能 PR 均不实现拓扑约束编辑/共享边编辑/线网辅助数字化。本任务方向无重叠。
+**结论**：7 个开放功能 PR（#2272–#2278）均不实现拓扑约束编辑/共享边编辑/线网辅助数字化，且与本分支最终 diff 无文件交集。origin/master 最终 fetch 仍为 `8fe3d7663`，无漂移。
 **共享接线策略**：
 - 工具尽量留在既有 `feature_edit_tools.py` / `topology_workbench_tools.py`（不新增模块文件 → 免改 `app/tools/__init__.py`）
 - 若必须新增 route 文件 → app/main.py 仅加一行 include
