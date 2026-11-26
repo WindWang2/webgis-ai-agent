@@ -33,7 +33,7 @@ dependencies = [
     "rasterio>=1.4.0",
     "rasterstats>=0.21.0",
     "pyogrio>=0.13.0",
-    "pandas>=2.2.2,<3.0",
+    "pandas>=2.2.2,<4.0",
     # pandas 2.x 与 dateutil >=3 的 tzfile 不兼容（pandas #71459）；
     # 与 requirements.txt 的 DST 兼容上界同步。
     "python-dateutil>=2.8.2,<5",
