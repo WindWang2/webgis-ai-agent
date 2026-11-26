@@ -44,7 +44,11 @@ def _caller_identity() -> Tuple[Optional[str], Optional[str]]:
 
         ctx = get_tool_execution_context()
         if ctx is not None:
-            return ctx.user_id, ctx.org_id
+            # 归一 str（DataSourceModel.owner_id 为 str；ctx 侧可能为 int）
+            uid = ctx.user_id
+            oid = ctx.org_id
+            return (str(uid) if uid is not None else None,
+                    str(oid) if oid is not None else None)
     return None, None
 
 
@@ -112,8 +116,8 @@ def _query_spec_from_ads(ads_request: Dict[str, Any]):
         columns=[str(c) for c in (ads_request.get("columns") or [])][:16]
         or None,
         datetime_range=(
-            [str(t) for t in ads_request.get("time_range")]
-            if ads_request.get("time_range") else None),
+            [str(t) for t in tr] if (tr := ads_request.get("time_range"))
+            else None),
         limit=_EXECUTE_MAX_ROWS,
     )
 
