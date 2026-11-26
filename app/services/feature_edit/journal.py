@@ -286,11 +286,17 @@ def invert_schema_ops(schema_ops: List[RenameField]) -> List[RenameField]:
 
 
 def invert_deltas(deltas: List[FeatureDelta]) -> List[FeatureDelta]:
-    """per-feature deltas 的逆：before/after 互换。
+    """per-feature deltas 的逆：before/after 互换，**顺序反转**。
 
     G14 结构性语义：created ↔ removed 互换（快照原样搬移，wfid 不变 ——
     undo/redo 复用同一身份，绝不重新生成）。快照缺失的 malformed entry
     按 update 逆处理（防御面：entry 由本服务构造，不应出现）。
+
+    顺序反转（multi-op 修正）：derive_changes 的 deltas 是顺序累积态
+    （op1 的 after 即 op2 的 before），undo 必须逆序回放 —— 同要素多
+    几何 op 的正序逆回放会把要素停在中间态而非原态（update 按 apply
+    时的当前态累积）。跨要素/单 delta 场景顺序无感；created 原位重插
+    按 index 升序（apply 内排序），removed 移除与序无关 —— 逆序安全。
     """
     out: List[FeatureDelta] = []
     for delta in deltas or []:
@@ -331,6 +337,7 @@ def invert_deltas(deltas: List[FeatureDelta]) -> List[FeatureDelta]:
             inv["geometry_before"] = delta.get("geometry_after")
             inv["geometry_after"] = delta.get("geometry_before")
         out.append(inv)
+    out.reverse()  # 逆序回放（docstring：multi-op 同要素 update 的累积语义）
     return out
 
 

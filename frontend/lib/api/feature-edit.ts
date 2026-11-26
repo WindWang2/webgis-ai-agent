@@ -4,12 +4,15 @@
  */
 import { apiFetch } from '@/lib/api/transport';
 import type {
+  FeatureEditConstraintsInspectResult,
   FeatureEditDecisionResult,
   FeatureEditHistoryEntry,
+  FeatureEditImpactResult,
   FeatureEditOpPayload,
   FeatureEditPreviewSummary,
   FeatureEditProvisionResult,
   FeatureEditQualification,
+  FeatureEditRevalidateResult,
   FeatureEditLineageEvent,
   FeatureEditUndoResult,
 } from '@/lib/types/feature-edit';
@@ -182,4 +185,64 @@ export function getFeatureLineage(
     ownerToken,
     label: 'FeatureEdit',
   });
+}
+
+// ── ADR-0304 共享拓扑约束面（只读；与 preview/commit 互补，不落 plan store） ──
+
+/** 约束面检查：匹配模式/共享结构摘要/邻接视图/声明规则/基线违规（有界）。 */
+export function inspectFeatureEditConstraints(
+  sessionId: string,
+  refId: string,
+  opts?: { toleranceM?: number; levelField?: string; wfids?: string[] },
+  ownerToken?: string | null,
+): Promise<FeatureEditConstraintsInspectResult> {
+  const req = opts ?? {};
+  return apiFetch<FeatureEditConstraintsInspectResult>(
+    `${BASE(sessionId)}/${encodeURIComponent(refId)}/constraints/inspect`,
+    {
+      method: 'POST',
+      body: {
+        ...(req.toleranceM !== undefined ? { tolerance_m: req.toleranceM } : {}),
+        ...(req.levelField ? { level_field: req.levelField } : {}),
+        ...(req.wfids?.length ? { wfids: req.wfids } : {}),
+      },
+      ownerToken,
+      label: 'FeatureEdit',
+    },
+  );
+}
+
+/** 候选 op 的有界影响投影（committable/邻接/测地量变化/基线分离，纯读）。 */
+export function getFeatureEditImpact(
+  sessionId: string,
+  refId: string,
+  body: { ops: FeatureEditOpPayload[]; featureIds?: string[]; toleranceM?: number; levelField?: string },
+  ownerToken?: string | null,
+): Promise<FeatureEditImpactResult> {
+  return apiFetch<FeatureEditImpactResult>(
+    `${BASE(sessionId)}/${encodeURIComponent(refId)}/impact`,
+    {
+      method: 'POST',
+      body: {
+        ops: body.ops,
+        ...(body.featureIds?.length ? { feature_ids: body.featureIds } : {}),
+        ...(body.toleranceM !== undefined ? { tolerance_m: body.toleranceM } : {}),
+        ...(body.levelField ? { level_field: body.levelField } : {}),
+      },
+      ownerToken,
+      label: 'FeatureEdit',
+    },
+  );
+}
+
+/** 声明规则在当前修订版上的复检（编辑后质量闭环；只读）。 */
+export function revalidateFeatureEditConstraints(
+  sessionId: string,
+  refId: string,
+  ownerToken?: string | null,
+): Promise<FeatureEditRevalidateResult> {
+  return apiFetch<FeatureEditRevalidateResult>(
+    `${BASE(sessionId)}/${encodeURIComponent(refId)}/revalidate`,
+    { method: 'POST', body: {}, ownerToken, label: 'FeatureEdit' },
+  );
 }

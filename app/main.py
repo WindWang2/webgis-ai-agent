@@ -33,7 +33,7 @@ from app.core.idempotency import IdempotencyMiddleware
 from prometheus_client import Counter
 from app.api.v2 import V1_SUNSET_DATE, build_v2_router
 from app.core.rate_limiter import get_rate_limiter
-from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer, auth as auth_routes, static as static_routes, pi_tools, templates, raster as raster_routes, metrics, project as project_routes, data_fabric, jobs as jobs_routes, local_data, mapspec_mutations, interaction_events as interaction_events_routes, analysis_graph as analysis_graph_routes, geocompute as geocompute_routes, workflow_resume as workflow_resume_routes, lakehouse as lakehouse_routes, workflow_runtime as workflow_runtime_routes, feature_edits as feature_edits_routes
+from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer, auth as auth_routes, static as static_routes, pi_tools, templates, raster as raster_routes, metrics, project as project_routes, data_fabric, jobs as jobs_routes, local_data, mapspec_mutations, interaction_events as interaction_events_routes, analysis_graph as analysis_graph_routes, geocompute as geocompute_routes, workflow_resume as workflow_resume_routes, lakehouse as lakehouse_routes, workflow_runtime as workflow_runtime_routes, feature_edits as feature_edits_routes, model_authoring as model_authoring_routes
 from app.api.routes import atlas_jobs as atlas_jobs_routes  # noqa: E402  # 批量图册发布
 from app.api.routes import skill_jobs as skill_job_routes  # noqa: E402  # G30 技能作业工作台
 from app.api.routes import mission_runtime as mission_runtime_routes  # noqa: E402  # ADR-0197
@@ -309,6 +309,17 @@ async def lifespan(app: FastAPI):
             )
     except Exception as e:
         logger.warning(f"[lifespan] coord-ops recovery skipped: {e}")
+    # 多源实体融合：孤儿 run 收敛（pending/running 且 job 已不在活跃
+    # 集合 → typed 失败；best-effort，绝不阻断启动）。
+    try:
+        from app.services.data_fusion_authoring import service as fusion_service
+
+        converged = await asyncio.to_thread(fusion_service.recover_pending_runs)
+        if converged:
+            logger.info("[lifespan] data-fusion recovery: %s runs converged",
+                        converged)
+    except Exception as e:
+        logger.warning(f"[lifespan] data-fusion recovery skipped: {e}")
     # G48：控制点影像配准孤儿任务与 staging 清理（重启收敛，绝不阻断启动）。
     try:
         from app.services.georeferencing import recovery as georef_recovery
@@ -1185,6 +1196,9 @@ from app.api.routes import thematic_authoring as thematic_authoring_routes  # no
 app.include_router(thematic_authoring_routes.router, prefix="/api/v1", tags=["专题表达工作台"])
 from app.api.routes import data_join_authoring as data_join_authoring_routes  # noqa: E402
 app.include_router(data_join_authoring_routes.router, prefix="/api/v1", tags=["数据关联工作台 G38"])
+# 多源实体融合工作台（独立 router；UI 与 Pi 共用 data_fusion_authoring.service）
+from app.api.routes import data_fusion_authoring as data_fusion_authoring_routes  # noqa: E402
+app.include_router(data_fusion_authoring_routes.router, prefix="/api/v1", tags=["多源实体融合工作台"])
 from app.api.routes import coordinate_operations as coordinate_operations_routes  # noqa: E402
 app.include_router(coordinate_operations_routes.router, prefix="/api/v1", tags=["坐标操作工作台 G45"])
 from app.api.routes import cartographic_assets as cartographic_assets_routes  # noqa: E402
@@ -1204,6 +1218,19 @@ app.include_router(linked_exploration_routes.router, prefix="/api/v1", tags=["�
 # G47：Dorling 圆面积 cartogram 作者工作台（独立 router；UI 与 Pi 共用同一 service）
 from app.api.routes import cartogram_authoring as g47_routes  # noqa: E402
 app.include_router(g47_routes.router, prefix="/api/v1", tags=["Dorling 圆面积 cartogram 工作台"])
+# 02 任务：方法实验工作台（独立 router；UI 与 Pi 工具共用同一 service——
+# compile/run/evaluate/adopt 全链零分叉）
+from app.api.routes import method_experiment as method_experiment_routes  # noqa: E402
+app.include_router(method_experiment_routes.router, prefix="/api/v1", tags=["方法实验工作台"])
+# 制图设计规范（goal-carto-design-series WP1；UI 与 Pi 共用同一 service/存储权威）
+from app.api.routes import design_specs as design_specs_routes  # noqa: E402
+app.include_router(design_specs_routes.router, prefix="/api/v1", tags=["制图设计规范"])
+# 系列地图作者计划与一致性（goal-carto-design-series WP3；同一权威）
+from app.api.routes import map_series as map_series_routes  # noqa: E402
+app.include_router(map_series_routes.router, prefix="/api/v1", tags=["系列地图计划"])
+# 系列出版生产（同一 goal WP5；durable job 提交/查询 —— UI 与 Pi 共用 service）
+from app.api.routes import series_production as series_production_routes  # noqa: E402
+app.include_router(series_production_routes.router, prefix="/api/v1", tags=["系列出版生产"])
 app.include_router(report.router, prefix="/api/v1", tags=["报告生成"])
 app.include_router(chat.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(mapspec_mutations.router, prefix="/api/v1", tags=["AI对话"])
@@ -1211,6 +1238,9 @@ from app.api.routes import flow_product as flow_product_routes  # noqa: E402
 app.include_router(flow_product_routes.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(interaction_events_routes.router, prefix="/api/v1", tags=["AI对话"])  # ADR-0227 Interaction IR V1
 app.include_router(situation_views_routes.router, prefix="/api/v1", tags=["AI对话"])  # ADR-0285 situation/turn-chain 只读视图
+# G05：情境化多方案候选工作台（scenario_harness 只读/采纳面 —— 与 Pi 工具同链）
+from app.api.routes import scenario_harness as scenario_harness_routes  # noqa: E402
+app.include_router(scenario_harness_routes.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(feature_edits_routes.router, prefix="/api/v1", tags=["AI对话"])  # /goal 03 feature editing
 # G32：持久要素变更提案与冲突审阅（agent 起草 / owner 审阅批准 / 真实提交桥）。
 from app.api.routes import feature_proposals as feature_proposals_routes  # noqa: E402
@@ -1265,6 +1295,7 @@ app.include_router(lakehouse_datasets_routes.router, prefix="/api/v1", tags=["La
 app.include_router(extensions_marketplace_routes.router, prefix="/api/v1", tags=["Extension Marketplace / 扩展市场（只读）"])
 app.include_router(geocompute_routes.router, prefix="/api/v1", tags=["GeoCompute / 执行平面"])
 app.include_router(workflow_runtime_routes.router, prefix="/api/v1", tags=["Workflow Runtime V5"])
+app.include_router(model_authoring_routes.router, prefix="/api/v1", tags=["Model Authoring / 模型构建器"])
 app.include_router(mission_runtime_routes.router, prefix="/api/v1", tags=["Mission Runtime"])
 app.include_router(project_runtime_routes.router, prefix="/api/v1", tags=["Project Runtime"])  # ADR-0226
 app.include_router(project_data_refresh_routes.router, prefix="/api/v1", tags=["Project Data Refresh (G10)"])

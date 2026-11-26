@@ -62,8 +62,19 @@ WORKDIR /app
 COPY vendor/pi/package.json vendor/pi/package-lock.json ./vendor/pi/
 RUN cd vendor/pi && npm ci --no-audit --no-fund && rm -rf node_modules
 COPY vendor/pi/ ./vendor/pi/
+# ADR-0301 D3：镜像侧构建清单（与 Dockerfile pi-builder 同构；node:slim 无 git，
+# pin 经 build-arg 传入，未传如实记录 unknown）。
+ARG PI_VENDOR_PIN=unknown
 RUN cd vendor/pi && npm ci --no-audit --no-fund && npm run build \
-    && test -f packages/coding-agent/dist/bundle/rpc-entry.js
+    && test -f packages/coding-agent/dist/bundle/rpc-entry.js \
+    && printf '{\n  "pin": "%s",\n  "describe": "docker-image-build",\n  "node_version": "%s",\n  "lockfile_sha256_16": "%s",\n  "entry": "packages/coding-agent/dist/bundle/rpc-entry.js",\n  "entry_sha256_16": "%s",\n  "built_at": "%s",\n  "builder": "Dockerfile.prod pi-builder (ADR-0301)"\n}\n' \
+      "${PI_VENDOR_PIN}" \
+      "$(node --version)" \
+      "$(sha256sum package-lock.json | cut -c1-16)" \
+      "$(sha256sum packages/coding-agent/dist/bundle/rpc-entry.js | cut -c1-16)" \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      > .build-manifest.json \
+    && cat .build-manifest.json
 
 # Stage 3: Backend Python Dependencies
 # 与 .python-version / requirements.lock 及下方 site-packages COPY 保持 3.12；

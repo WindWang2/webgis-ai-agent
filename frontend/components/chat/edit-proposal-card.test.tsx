@@ -73,3 +73,55 @@ describe('EditProposalCard', () => {
     expect(screen.getByText(/其余 3 个要素/)).toBeTruthy();
   });
 });
+
+// ── ADR-0304 共享拓扑影响段（additive：仅共享 op 的 plan 带这些字段） ──
+
+describe('EditProposalCard 影响段（ADR-0304）', () => {
+  it('impact_summary + topology_context 渲染影响/违规/跨数据集披露', () => {
+    render(
+      <EditProposalCard
+        proposal={proposal({
+          ops: [{ op: 'move_shared_vertex' }],
+          impact_summary: {
+            touched_features: 3,
+            affected_neighbors: 2,
+            neighbors_truncated: true,
+            area_delta_m2: 12.345,
+            length_delta_m: -0.5,
+            atomicity: { scope: 'ref:data-test0001', cross_dataset: 'blocked', note: 'dataset-scoped' },
+          },
+          topology_context: { new_violations: 1, existing_violations: 4 },
+        })}
+      />,
+    );
+    const section = screen.getByTestId('edit-proposal-impact');
+    expect(section.textContent).toContain('影响要素 3');
+    expect(section.textContent).toContain('邻接 2');
+    expect(section.textContent).toContain('邻接清单已截断');
+    expect(section.textContent).toContain('面积变化 +12.35');
+    expect(section.textContent).toContain('长度变化 -0.5');
+    expect(section.textContent).toContain('新增违规 1（阻断）');
+    expect(section.textContent).toContain('基线存量 4（披露）');
+    expect(screen.getByText(/跨数据集不支持原子提交/)).toBeTruthy();
+  });
+
+  it('无新增违规 → 视觉状态为绿色；共享 op 标签来自新 namespace', () => {
+    render(
+      <EditProposalCard
+        proposal={proposal({
+          ops: [{ op: 'move_shared_vertex' }],
+          topology_context: { new_violations: 0, existing_violations: 2 },
+        })}
+      />,
+    );
+    expect(screen.getByText(/移动共享顶点/)).toBeTruthy();
+    expect(screen.getByText(/新增违规 0（阻断）/)).toBeTruthy();
+    expect(screen.getByText(/基线存量 2（披露）/)).toBeTruthy();
+    expect(screen.queryByText(/跨数据集不支持原子提交/)).toBeNull();
+  });
+
+  it('普通单要素 plan 不渲染影响段', () => {
+    render(<EditProposalCard proposal={proposal()} />);
+    expect(screen.queryByTestId('edit-proposal-impact')).toBeNull();
+  });
+});

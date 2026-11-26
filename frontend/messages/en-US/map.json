@@ -655,5 +655,24 @@
     "disclosures": "Policy disclosures (data/statistics unchanged)",
     "buttonLabel": "Scale portrayal: {p0}",
     "unknownReceipt": "Unknown receipt"
+  },
+  "paperScale": {
+    "title": "Paper-scale generalization",
+    "displayOnly": "display-only",
+    "denominator": "Target scale",
+    "page": "Page",
+    "purpose": "Purpose",
+    "preview": "Preview",
+    "freeze": "Freeze publication artifact",
+    "qaSummary": "QA checks {p0} (fail {p1})",
+    "counts": "after {p0}/original {p1}",
+    "qaFail": "QA has failures",
+    "previewOk": "Preview complete (QA clean, ready to freeze)",
+    "qaBlocked": "Preview has {p0} failures — freeze will be refused",
+    "qaRefused": "QA failures — backend refused to freeze (fail-closed)",
+    "frozen": "Publication artifact frozen (revision {p0})",
+    "notApplied": "Not applied ({p0})",
+    "unknownReceipt": "Unknown receipt",
+    "failed": "Failed: {p0}"
   }
 }

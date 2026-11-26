@@ -45,15 +45,21 @@ import zhFieldCompute from '@/messages/zh-CN/fieldCompute.json'
 import zhRasterSampling from '@/messages/zh-CN/rasterSampling.json'
 import zhGeoreferencing from '@/messages/zh-CN/georeferencing.json'
 import zhTopology from '@/messages/zh-CN/topology.json'
+import zhTopologyEditing from '@/messages/zh-CN/topologyEditing.json'
 import zhMarket from '@/messages/zh-CN/market.json'
 import zhFlow from '@/messages/zh-CN/flow.json'
 import zhDataDelivery from '@/messages/zh-CN/dataDelivery.json'
 import zhDataJoin from '@/messages/zh-CN/dataJoin.json'
+import zhDataFusion from '@/messages/zh-CN/dataFusion.json'
 import zhLinkedExploration from '@/messages/zh-CN/linkedExploration.json'
 import zhCoordinateOperations from '@/messages/zh-CN/coordinateOperations.json'
+import zhMethodExperiment from '@/messages/zh-CN/methodExperiment.json'
 import enCoordinateOperations from '@/messages/en-US/coordinateOperations.json'
+import enMethodExperiment from '@/messages/en-US/methodExperiment.json'
 import zhFieldContracts from '@/messages/zh-CN/fieldContracts.json'
 import zhCartogram from '@/messages/zh-CN/cartogram.json'
+import zhModelBuilder from '@/messages/zh-CN/modelBuilder.json'
+import zhDesignSeries from '@/messages/zh-CN/designSeries.json'
 import enCommon from '@/messages/en-US/common.json'
 import enSettings from '@/messages/en-US/settings.json'
 import enErrors from '@/messages/en-US/errors.json'
@@ -91,13 +97,17 @@ import enFieldCompute from '@/messages/en-US/fieldCompute.json'
 import enRasterSampling from '@/messages/en-US/rasterSampling.json'
 import enGeoreferencing from '@/messages/en-US/georeferencing.json'
 import enTopology from '@/messages/en-US/topology.json'
+import enTopologyEditing from '@/messages/en-US/topologyEditing.json'
 import enMarket from '@/messages/en-US/market.json'
 import enFlow from '@/messages/en-US/flow.json'
 import enDataDelivery from '@/messages/en-US/dataDelivery.json'
 import enDataJoin from '@/messages/en-US/dataJoin.json'
+import enDataFusion from '@/messages/en-US/dataFusion.json'
 import enLinkedExploration from '@/messages/en-US/linkedExploration.json'
 import enFieldContracts from '@/messages/en-US/fieldContracts.json'
 import enCartogram from '@/messages/en-US/cartogram.json'
+import enModelBuilder from '@/messages/en-US/modelBuilder.json'
+import enDesignSeries from '@/messages/en-US/designSeries.json'
 import type { AppLocale } from './config'
 
 export interface AppMessages {
@@ -137,15 +147,20 @@ export interface AppMessages {
   flow: typeof zhFlow
   dataDelivery: typeof zhDataDelivery
   dataJoin: typeof zhDataJoin
+  dataFusion: typeof zhDataFusion
   linkedExploration: typeof zhLinkedExploration
   coordinateOperations: typeof zhCoordinateOperations
+  methodExperiment: typeof zhMethodExperiment
   fieldContracts: typeof zhFieldContracts
   dataImport: typeof zhDataImport
   fieldCompute: typeof zhFieldCompute
   rasterSampling: typeof zhRasterSampling
   georeferencing: typeof zhGeoreferencing
   topology: typeof zhTopology
+  topologyEditing: typeof zhTopologyEditing
   cartogram: typeof zhCartogram
+  modelBuilder: typeof zhModelBuilder
+  designSeries: typeof zhDesignSeries
 }
 
 export const messages: Record<AppLocale, AppMessages> = {
@@ -165,15 +180,19 @@ export const messages: Record<AppLocale, AppMessages> = {
     dataPreparation: zhDataPreparation,
     dataDelivery: zhDataDelivery,
     dataJoin: zhDataJoin,
+    dataFusion: zhDataFusion,
     linkedExploration: zhLinkedExploration,
     coordinateOperations: zhCoordinateOperations,
+    methodExperiment: zhMethodExperiment,
     fieldContracts: zhFieldContracts,
     cartogram: zhCartogram,
+    designSeries: zhDesignSeries,
     dataImport: zhDataImport,
     fieldCompute: zhFieldCompute,
     rasterSampling: zhRasterSampling,
     georeferencing: zhGeoreferencing,
     topology: zhTopology,
+    topologyEditing: zhTopologyEditing,
     story: zhStory,
     geoai: zhGeoai,
     commands: zhCommands,
@@ -195,6 +214,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     modelops: zhModelops,
     market: zhMarket,
     flow: zhFlow,
+    modelBuilder: zhModelBuilder,
   },
   'en-US': {
     // en 与 zh 的 catalog 结构由 test/i18n/key-completeness.test.ts 强制一致。
@@ -213,15 +233,19 @@ export const messages: Record<AppLocale, AppMessages> = {
     dataPreparation: enDataPreparation as unknown as AppMessages['dataPreparation'],
     dataDelivery: enDataDelivery as unknown as AppMessages['dataDelivery'],
     dataJoin: enDataJoin as unknown as AppMessages['dataJoin'],
+    dataFusion: enDataFusion as unknown as AppMessages['dataFusion'],
     linkedExploration: enLinkedExploration as unknown as AppMessages['linkedExploration'],
     coordinateOperations: enCoordinateOperations as unknown as AppMessages['coordinateOperations'],
+    methodExperiment: enMethodExperiment as unknown as AppMessages['methodExperiment'],
     fieldContracts: enFieldContracts as unknown as AppMessages['fieldContracts'],
     cartogram: enCartogram as unknown as AppMessages['cartogram'],
+    designSeries: enDesignSeries as unknown as AppMessages['designSeries'],
     dataImport: enDataImport as unknown as AppMessages['dataImport'],
     fieldCompute: enFieldCompute as unknown as AppMessages['fieldCompute'],
     rasterSampling: enRasterSampling as unknown as AppMessages['rasterSampling'],
     georeferencing: enGeoreferencing as unknown as AppMessages['georeferencing'],
     topology: enTopology as unknown as AppMessages['topology'],
+    topologyEditing: enTopologyEditing as unknown as AppMessages['topologyEditing'],
     story: enStory as unknown as AppMessages['story'],
     geoai: enGeoai as unknown as AppMessages['geoai'],
     commands: enCommands as unknown as AppMessages['commands'],
@@ -243,5 +267,6 @@ export const messages: Record<AppLocale, AppMessages> = {
     modelops: enModelops as unknown as AppMessages['modelops'],
     market: enMarket as unknown as AppMessages['market'],
     flow: enFlow as unknown as AppMessages['flow'],
+    modelBuilder: enModelBuilder as unknown as AppMessages['modelBuilder'],
   },
 }

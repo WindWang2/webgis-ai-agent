@@ -55,7 +55,8 @@
     "market": "市场",
     "modelops": "ModelOps",
     "ops": "运维",
-    "cockpit": "控制台"
+    "cockpit": "控制台",
+    "model": "建模"
   },
   "modes": {
     "explore": "探索",
@@ -87,7 +88,8 @@
       "export_layout": "制图工坊",
       "market": "市场",
       "modelops": "ModelOps",
-      "ops": "运维控制台"
+      "ops": "运维控制台",
+      "model": "模型构建器"
     },
     "desc": {
       "chat": "AI 地理智能体",
@@ -102,7 +104,8 @@
       "export_layout": "排版与导出",
       "market": "扩展市场 · 包浏览 · 下载",
       "modelops": "模型注册表 · 本会话运行",
-      "ops": "集群 · 计划 · 运行时 · 断路器 · 健康"
+      "ops": "集群 · 计划 · 运行时 · 断路器 · 健康",
+      "model": "可视化 GIS 模型 · 验证 · 发布 · 运行"
     },
     "boundary": {
       "chat": "对话",
@@ -117,7 +120,8 @@
       "results": "结果",
       "ops": "运维",
       "cockpit": "Agent 控制台",
-      "market": "市场"
+      "market": "市场",
+      "model": "模型构建器"
     },
     "resizeAria": "调整面板宽度",
     "resizeTitle": "拖拽调整面板宽度（双击复位）",

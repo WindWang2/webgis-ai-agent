@@ -229,6 +229,11 @@ async def create_proposal(
             mat_fc, ops, ordered, op_seed="fpr-precheck",
             target_payloads=dep_payloads,
             geometry_type=extract_geometry_type_declaration(payload),
+            shared_level_field=(
+                payload.get("level_field")
+                if isinstance(payload, dict) and isinstance(payload.get("level_field"), str)
+                else None
+            ),
         )
         if eval_findings:
             raise FeatureProposalBlocked(
@@ -408,6 +413,11 @@ async def get_diff(
         base_mat, p.ops, ordered, op_seed=p.op_seed,
         target_payloads=dep_payloads,
         geometry_type=extract_geometry_type_declaration(base_payload),
+        shared_level_field=(
+            base_payload.get("level_field")
+            if isinstance(base_payload, dict) and isinstance(base_payload.get("level_field"), str)
+            else None
+        ),
     )
     page_size = max(1, min(page_size, 100))
     page = max(1, page)

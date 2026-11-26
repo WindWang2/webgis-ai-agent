@@ -10,6 +10,8 @@ from typing import Iterable, List
 
 from app.lib.gis.algorithm_registry import AlgorithmDescriptor
 from app.lib.gis.algorithms import aggregation as _aggregation_mod
+# method-experiment WP1：普通空间聚类描述符补缺（既有 cluster_narrated 实现）。
+from app.lib.gis.algorithms import clustering as _clustering_mod
 from app.lib.gis.algorithms import data_access as _data_access_mod
 from app.lib.gis.algorithms import decision as _decision_mod
 from app.lib.gis.algorithms import ecology as _ecology_mod
@@ -32,6 +34,7 @@ from app.lib.gis.algorithms import capability_ecosystem as _capability_ecosystem
 
 _ALL_MODULES = (
     _data_access_mod, _geometry_mod, _aggregation_mod, _density_mod,
+    _clustering_mod,
     _statistics_mod, _point_pattern_mod, _interpolation_mod, _network_mod,
     _terrain_mod, _raster_mod, _remote_mod, _temporal_mod, _decision_mod,
     _platform_mod, _sampling_mod, _ecology_mod, _modelops_mod, _multiscale_mod,

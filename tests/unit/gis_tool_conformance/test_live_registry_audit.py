@@ -38,7 +38,10 @@ DISCLOSED_REF_OFFLOAD = {
 _CEILINGS = {
     "metadata_incomplete": 158,
     "result_size_unknown": 76,
-    "binding_unbacked": 64,
+    # 融合工作台（data_fusion_authoring）：10 个编排工具入册，均为
+    # 声明型能力（无算法链）→ binding_unbacked 披露进位 64→74
+    #（G04 先例：新域编排面按新增工具数推进上限）。
+    "binding_unbacked": 74,
 }
 
 

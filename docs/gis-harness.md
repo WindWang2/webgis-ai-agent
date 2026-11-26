@@ -496,3 +496,38 @@ MethodUseContract、偏移帧数学在 utils/coord_transform —— 本契约组
 发现面：`analysis_workflows.discovery.family_catalog()`（awf.discovery.v1）
 机读族目录——步骤/科学前置/单位合同/可制图性/资源画像/角色需求，零 IO
 纯投影（不把 200 个工具 schema 灌入 Pi）。
+
+## GIS 科学方法实验引擎（method-experiment，ADR-0300，2026-11-25）
+
+> 代码：`app/services/gis_harness/method_experiment/`（cards/metrics/
+> protocol/plan/runner/state/evaluate/service）+ `app/tools/science_eval_primitives.py`
+> + `app/tools/method_experiment_tools.py` + `app/api/routes/method_experiment.py`。
+> 测试：`tests/unit/gis_harness/method_experiment/`。
+
+回答「同一空间问题的多个合理科学方法/参数组合，如何被公平、可复现地
+执行、评价、解释与采纳」：
+
+- **科学方法卡（WP1）**：五族（插值/密度/聚类/网络可达/空间自相关）的
+  候选空间——参数角色（strong/tunable/recommended/model_choice/derived）、
+  有界网格、样本下限、局限、协议建议；全部引用既有
+  Algorithm/Metric/Tool registry id（`validate_cards` 悬空 fatal）。
+  顺带补缺：`spatial.cluster.kmeans/.dbscan` 描述符 + `spatial_clustering`
+  能力（既有 cluster_narrated 实现首次入注册表）。
+- **确定性计划（WP2）**：`MethodExperimentPlan` 候选×参数网格展开
+  （声明序、每候选 ≤8 变体、全计划 ≤24 试验硬门、预算服务端钳制），
+  typed 预检拒绝（MEXP_* 码）；协议 kind（cv/stability/conservation/
+  scenario）决定指标语义——没有真值的族不产生 RMSE。
+- **真实执行（WP3）**：每试验经共享 ToolDispatchService 调用候选声明的
+  评价工具（三个新原语：`interpolation_block_cv` 全候选共享同一空间
+  分块折分配、`density_edge_diagnostic` 守恒/边界外溢诊断、
+  `cluster_stability` 多 seed/bootstrap ARI+轮廓+噪声）；试验内容 hash
+  （输入+算法/参数+seed+协议）寻址复用；取消保留已完成前缀、pending
+  可续跑；运行态单键 `method_experiment.v1:<id>` + 实验级分布式锁。
+- **评价与采纳（WP4）**：可比组（同协议指纹+同指标）确定性排名；
+  Pareto 非支配前沿（同 comparable_group 才联合，绝不跨组归一化）；
+  证据推荐（指标+样本量+敏感性+局限）或诚实弃权；采纳 = 用户 decision
+  receipt（记录不自动改图）。
+- **同链工作台（WP5）**：`service.py` 是唯一服务实现——六工具
+  `webgis_method_experiment_{inspect,plan,run,status,compare,adopt}` 与
+  REST `/api/v1/method-experiment/sessions/{sid}/…` 共用（授权/契约/
+  审计零分叉）；前端 `frontend/components/method-experiment/` 面板。

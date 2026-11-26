@@ -2589,6 +2589,14 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
     def isochrone_network(network_layer: Any, facilities: Any, travel_time: float = 15, mode: str = "walking", exclude_unreachable: bool = False) -> dict:
         net = safe_parse_geojson(network_layer)
         facs = safe_parse_geojson(facilities)
+        # method-experiment（02 任务，additive）：输入设施总数进 stats——
+        # 覆盖率分母的权威口径（unsnappable 设施不产 feature，只看产物
+        # 会高估可达）。零行为变更：键 additive，既有消费方不受影响。
+        fac_total = 0
+        if isinstance(facs, dict):
+            fac_feats = facs.get("features")
+            if isinstance(fac_feats, list):
+                fac_total = len(fac_feats)
         # #765: forward the parsed FeatureCollections so declared `crs`
         # members reach to_utm_gdf (calculate_isochrones).
         res = SpatialAnalyzer.isochrone_network(net, facs, travel_time, mode)
@@ -2611,6 +2619,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             stats = dict(stats) if isinstance(stats, dict) else {}
             stats["facility_polygons"] = len(kept)
             stats["excluded_unreachable"] = excluded
+            stats["facilities_total"] = fac_total
             response["stats"] = stats
             if excluded:
                 response["warnings"] = [
@@ -2619,6 +2628,13 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                     " exclude_unreachable 剔除，计数保留于 stats."
                     "excluded_unreachable",
                 ]
+        elif isinstance(response.get("data"), dict):
+            # exclude_unreachable=False 路径同样披露总数（覆盖率口径一致；
+            # method-experiment 覆盖指标的分母权威）。
+            stats = response.get("stats")
+            stats = dict(stats) if isinstance(stats, dict) else {}
+            stats["facilities_total"] = fac_total
+            response["stats"] = stats
         return response
 
     @tool(registry, tier=2, domains=["statistics"], name="fishnet_grid",

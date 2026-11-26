@@ -88,12 +88,20 @@ from app.models.data_join_authoring import (  # noqa: F401 — 模型注册 + �
     DataJoinPlan,
     DataJoinRun,
 )
+from app.models.data_fusion_authoring import (  # noqa: F401 — 模型注册 + 再导出（融合工作台）
+    DataFusionDecision,
+    DataFusionPlan,
+    DataFusionRun,
+)
 from app.models.linked_exploration import (  # noqa: F401 — 模型注册 + 再导出（G46）
     ExplorationView,
 )
 from app.models.field_contracts import (  # noqa: F401 — 模型注册 + 再导出（G44）
     FieldContract,
     FieldContractAssessment,
+)
+from app.models.model_authoring import (  # noqa: F401 — 模型注册 + 再导出（模型构建器域）
+    ModelDraft,
 )
 from app.models.data_lifecycle import (  # noqa: F401 — 模型注册 + 再导出（V9）
     LifecycleObject,

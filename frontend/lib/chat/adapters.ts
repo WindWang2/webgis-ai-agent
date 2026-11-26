@@ -327,6 +327,9 @@ export function stepResultDecision(
       schema_ops?: Array<{ from?: string; to?: string }>;
       preview?: import('@/lib/types/feature-edit').FeatureEditPreviewItem[];
       expected_content_revision?: number; expires_in_s?: number;
+      // ADR-0304 共享拓扑编辑：plan summary 的 additive 投影（仅共享 op 出现）。
+      impact_summary?: import('@/lib/types/feature-edit').FeatureEditImpactSummary;
+      topology_context?: import('@/lib/types/feature-edit').FeatureEditTopologyContext;
     };
     featureEditProposal = {
       plan_id: r.plan_id,
@@ -340,6 +343,8 @@ export function stepResultDecision(
       validation: [],
       expected_content_revision: r.expected_content_revision ?? 0,
       expires_in_s: r.expires_in_s,
+      ...(r.impact_summary ? { impact_summary: r.impact_summary } : {}),
+      ...(r.topology_context ? { topology_context: r.topology_context } : {}),
     };
   }
 

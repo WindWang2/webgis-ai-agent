@@ -108,7 +108,8 @@ export interface CausalEntry {
 // （ADR-0141），与二者并集共存。
 // ADR-0142：'ops' 为运维控制台追加的 rail tab（append-only，居词表尾）。
 // 'cockpit' 为 Agent 运行控制台追加的 rail tab（append-only，居词表尾）。
-export type LeftTab = 'chat' | 'project' | 'layers' | 'components' | 'analysis' | 'exports' | 'export_layout' | 'data_sources' | 'tasks' | 'results' | 'lakehouse' | 'market' | 'modelops' | 'ops' | 'cockpit';
+// 'model' 为可视化 GIS 模型构建器追加的 rail tab（append-only，居词表尾）。
+export type LeftTab = 'chat' | 'project' | 'layers' | 'components' | 'analysis' | 'exports' | 'export_layout' | 'data_sources' | 'tasks' | 'results' | 'lakehouse' | 'market' | 'modelops' | 'ops' | 'cockpit' | 'model';
 export type SettingsTab = 'llm' | 'skills' | 'rag' | 'map' | 'system' | 'account';
 
 // Workspace V2（Goal C5）：dock 基座 —— 工作区 UI 状态，与语义组件状态分离。

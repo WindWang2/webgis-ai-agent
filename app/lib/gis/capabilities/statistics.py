@@ -94,6 +94,18 @@ CAPABILITIES: List[CapabilityDescriptor] = [
             purpose_template="时空聚类",
         ),
 
+        # method-experiment WP1：普通空间聚类能力（K-Means / DBSCAN；
+        # 与 ST-DBSCAN 是不同检验——纯空间维度，无时间维）。
+        CapabilityDescriptor(
+            id="spatial_clustering", name="空间聚类", category="statistics",
+            description="纯空间维聚类（K-Means / DBSCAN；spatial_cluster 工具），"
+                        "返回逐要素簇标签；稳定性/轮廓系数评价走方法实验引擎。",
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_types=["point_feature_set"],
+            geometry_requirements=["point"],
+            purpose_template="空间聚类分簇",
+        ),
+
         # ── Foundation V2（A1）：局部 Geary / Join Count / 双变量 Moran /
         #    地理探测器 / 空间回归 / 权重敏感性 / GWR ──────────────────
         CapabilityDescriptor(

@@ -129,6 +129,17 @@ const srv = http.createServer((req, res) => {
   // child connects — answer any non-completions path with a plain 200 and do
   // NOT count it (request indexing drives the scripted turns).
   if (!req.url.includes('/chat/completions')) {
+    // #9986 abort-batch lane: stand-in for the WebGIS bridge execute endpoint.
+    // STUB_BRIDGE_DELAY_SECOND_S > 0 holds the response so the probe's abort
+    // lands MID-BATCH (after the first tool_execution_start, before any end).
+    if (req.url.includes('/pi-tools/execute')) {
+      const delayMs = Number(process.env.STUB_BRIDGE_DELAY_SECOND_S || 0) * 1000;
+      setTimeout(() => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ content: [{ type: 'text', text: 'bridge ok' }], isError: false }));
+      }, delayMs);
+      return;
+    }
     res.writeHead(200, { 'content-type': 'text/plain' });
     res.end('ok');
     return;
@@ -143,16 +154,46 @@ const srv = http.createServer((req, res) => {
     // model actually saw. Appended as JSON lines to STUB_LOG when set.
     if (process.env.STUB_LOG) {
       const toolNames = (parsed.tools || []).map((t) => t.function?.name || t.name);
+      const msgs = parsed.messages || [];
+      const lastUser = [...msgs].reverse().find((m) => m.role === 'user');
+      const rawContent = lastUser?.content;
+      const lastUserText = (typeof rawContent === 'string' ? rawContent
+        : Array.isArray(rawContent) ? rawContent.map((c) => c?.text || c?.type || '').join(' ')
+        : JSON.stringify(rawContent ?? '')).slice(-120);
       fs.appendFileSync(process.env.STUB_LOG,
-        JSON.stringify({ req: requests.length, tools: toolNames }) + '\n');
+        JSON.stringify({ req: requests.length, tools: toolNames,
+          lastUser: lastUserText }) + '\n');
     }
     const reqIdx = requests.length;
+    // ADR-0301 WP5 / C24：429×2 → 第三次成功（vendor auto-retry 观测面）。
+    // always-429：重试耗尽的诚实失败分支（auto_retry_end success=false）。
+    if (mode === 'always-429') {
+      res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '0' });
+      res.end(JSON.stringify({ error: { message: 'rate limited (stub)', type: 'rate_limit_error' } }));
+      return;
+    }
+    if (mode === 'provider-fail-then-succeed' && reqIdx <= 2) {
+      res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '0' });
+      res.end(JSON.stringify({ error: { message: 'rate limited (stub)', type: 'rate_limit_error' } }));
+      return;
+    }
     let toolCall = null;
+    let toolCalls = null; // #9986 abort-batch lane: 2 tool_calls in ONE completion
     if (mode === 'tool-then-text') {
       const wantsTool = !(last && last.role === 'tool');
       if (wantsTool) {
         toolCall = { name: process.env.STUB_TOOL || 'webgis_map_intent',
                      arguments: process.env.STUB_TOOL_ARGS || '{"query":"成都小学分布"}' };
+      }
+    } else if (mode === 'multi-tool') {
+      const wantsTool = !(last && last.role === 'tool');
+      if (wantsTool) {
+        toolCalls = [
+          { name: process.env.STUB_TOOL || 'webgis_map_intent',
+            arguments: process.env.STUB_TOOL_ARGS || '{"query":"成都小学分布"}' },
+          { name: process.env.STUB_TOOL_2 || 'webgis_cartography_status',
+            arguments: '{}' },
+        ];
       }
     } else if (mode === 'discovery') {
       // req1: tool_search(query) -> req2: the discovered tool directly -> req3: text.
@@ -173,11 +214,19 @@ const srv = http.createServer((req, res) => {
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     const sse = (o) => res.write(`data: ${JSON.stringify(o)}\n\n`);
     const id = 'c' + reqIdx;
-    if (toolCall) {
-      sse({ id, object: 'chat.completion.chunk', created: 1, model: 'stub',
-        choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_' + reqIdx,
-          type: 'function',
-          function: { name: toolCall.name, arguments: toolCall.arguments } }] } }] });
+    const firstDelayS = Number(process.env.STUB_DELAY_FIRST_S || 0);
+    if (firstDelayS > 0 && reqIdx === 1) { await new Promise((r) => setTimeout(r, firstDelayS * 1000)); }
+    if (toolCall || toolCalls) {
+      const calls = toolCalls || [toolCall];
+      // Real OpenAI-completions shape: one delta per tool_call, each carrying
+      // its streaming `index` (0-based position within the completion).
+      calls.forEach((tc, i) => {
+        sse({ id, object: 'chat.completion.chunk', created: 1, model: 'stub',
+          choices: [{ index: 0, delta: { tool_calls: [{ index: i,
+            id: toolCalls ? 'call_' + reqIdx + '_' + i : 'call_' + reqIdx,
+            type: 'function',
+            function: { name: tc.name, arguments: tc.arguments } }] } }] });
+      });
       sse({ id, object: 'chat.completion.chunk', created: 1, model: 'stub',
         choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] });
     } else {
@@ -211,6 +260,12 @@ import { join } from 'node:path';
 const [entry, ext, dump, stubPort, promptFile] = process.argv.slice(2);
 const abortAfterTool = process.argv.includes('--abort-after-tool-start');
 const slowTool = process.argv.includes('--slow-tool');
+// #10470 lane: exercise the new_session RPC (session runtime rebuild +
+// extension rebind) BEFORE the scripted prompt — the surface must survive.
+const withNewSession = process.argv.includes('--with-new-session');
+const compactAfterSettled = process.argv.includes('--compact-after-settled');
+const steerMidTurn = process.argv.includes('--steer-mid-turn');
+const continuityCheck = process.argv.includes('--continuity-check');
 
 const agentDir = mkdtempSync(join(tmpdir(), 'pi-contract-'));
 writeFileSync(join(agentDir, 'models.json'), JSON.stringify({
@@ -246,8 +301,22 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 await sleep(1200);
 send({ id: '1', type: 'get_state' });
 await sleep(250);
+if (withNewSession) {
+  send({ id: '1b', type: 'new_session' });
+  await sleep(600);
+}
 const prompt = readFileSync(promptFile, 'utf8');
 send({ id: '2', type: 'prompt', sessionId: 'contract-session', message: prompt });
+
+// ADR-0301 WP6 gate：运行中 steer —— 首 LLM 响应被 STUB_DELAY_FIRST_S 拖慢，
+// steer 在 agent 运行中到达（vendor 语义：当前 assistant turn 的工具跑完后、
+// 下一次 LLM 调用前注入）。
+let steerSent = false;
+if (steerMidTurn) {
+  await sleep(700);
+  send({ id: 'st', type: 'steer', message: 'STEER-MARKER change course' });
+  steerSent = true;
+}
 
 let aborted = false;
 if (abortAfterTool) {
@@ -261,10 +330,59 @@ if (abortAfterTool) {
   aborted = true;
 }
 
-const deadline = Date.now() + 30000;
+const countHits = (hay, needle) => hay.split(needle).length - 1;
+const settleTarget = 1; // steer 注入当前 run（vendor 语义），不新起 run
+const deadline = Date.now() + 45000;
 while (Date.now() < deadline) {
   await sleep(120);
-  if (out.includes('agent_settled')) break;
+  if (countHits(out, 'agent_settled') >= settleTarget) break;
+}
+if (continuityCheck) {
+  // ADR-0301 WP6 gate S6：同 worker 进程内 turn journal 连续性 ——
+  // 第二 turn 的 messageCount 必须单调增长（历史保持）。
+  send({ id: 'c1', type: 'get_state' });
+  await sleep(300);
+  send({ id: 'c2', type: 'prompt', sessionId: 'contract-session', message: 'continuity turn 2' });
+  const dl = Date.now() + 30000;
+  while (Date.now() < dl) {
+    await sleep(120);
+    if (countHits(out, 'agent_settled') >= 2) break;
+  }
+  send({ id: 'c3', type: 'get_state' });
+  await sleep(400);
+}
+if (compactAfterSettled) {
+  // ADR-0301 WP4 / C23：手动 compact 契约。vendor keepRecentTokens(20k)
+  // 从尾部保留；**单条超限消息会整条进保留区**（切点前无可摘要内容 →
+  // 诚实拒绝 "session too small"），因此用 N 个中等 turn 累积可摘要历史。
+  const compactTurns = Number(process.env.STUB_COMPACT_TURNS || 10);
+  const fillerUnit = 'compaction filler sentence with deterministic tokens. '
+    .repeat(700); // ≈ 35k chars/turn
+  let settledWanted = 1;
+  for (let i = 1; i <= compactTurns; i++) {
+    settledWanted += 1;
+    send({ id: '3b' + i, type: 'prompt', sessionId: 'contract-session',
+           message: `bulk history turn ${i}\n\n` + fillerUnit });
+    const dl = Date.now() + 60000;
+    while (Date.now() < dl) {
+      await sleep(100);
+      if (countHits(out, 'agent_settled') >= settledWanted) break;
+    }
+  }
+  send({ id: '4', type: 'compact' });
+  const dl2 = Date.now() + 30000;
+  while (Date.now() < dl2) {
+    await sleep(120);
+    if (out.includes('"command":"compact"')) break;
+  }
+  send({ id: '5', type: 'prompt', sessionId: 'contract-session', message: 'post-compaction follow-up turn' });
+  const dl3 = Date.now() + 30000;
+  while (Date.now() < dl3) {
+    await sleep(120);
+    if (countHits(out, 'agent_settled') >= settledWanted + 1) break;
+  }
+  send({ id: '6', type: 'get_state' });
+  await sleep(400);
 }
 await sleep(400);
 child.kill('SIGKILL');
@@ -272,8 +390,10 @@ child.kill('SIGKILL');
 const lines = out.split('\n').filter(Boolean);
 const parsed = [];
 for (const line of lines) { try { parsed.push(JSON.parse(line)); } catch { parsed.push({ unparseable: line.slice(0, 120) }); } }
+const providerEvents = err.split('\n').filter((l) => l.includes('provider_response')).slice(-8);
 process.stderr.write('RESULT=' + JSON.stringify({
   lines: parsed, stderrHead: err.split('\n').slice(0, 5).join(' | ').slice(0, 400), aborted,
+  providerEvents, steerSent,
 }) + '\n');
 """
 
@@ -308,7 +428,8 @@ class _VendorHarness:
                  tool: str | None = None, tool_args: str | None = None,
                  stub_text: str | None = None, delay_second_s: float = 0,
                  dump: dict | None = None, search_query: str | None = None,
-                 code: str | None = None):
+                 code: str | None = None,
+                 bridge_delay_second_s: float = 0):
         self.stub_port = stub_port
         self.tmp = tmp
         self.stub_js = tmp / f"stub_{time.monotonic_ns()}.mjs"
@@ -326,6 +447,8 @@ class _VendorHarness:
             env["STUB_TEXT"] = stub_text
         if delay_second_s:
             env["STUB_DELAY_SECOND_S"] = str(delay_second_s)
+        if bridge_delay_second_s:
+            env["STUB_BRIDGE_DELAY_SECOND_S"] = str(bridge_delay_second_s)
         if search_query:
             env["STUB_SEARCH_QUERY"] = search_query
         if code:
@@ -359,6 +482,9 @@ class _VendorHarness:
                 proc.kill()
 
     def run_turn(self, prompt: str, *, abort_after_tool: bool = False,
+                 with_new_session: bool = False,
+                 compact_after: bool = False, steer: bool = False,
+                 continuity: bool = False,
                  api_base: str = "http://127.0.0.1:9") -> dict:
         prompt_file = self.tmp / f"prompt_{time.monotonic_ns()}.txt"
         prompt_file.write_text(prompt, encoding="utf-8")
@@ -368,6 +494,14 @@ class _VendorHarness:
         ]
         if abort_after_tool:
             args.append("--abort-after-tool-start")
+        if with_new_session:
+            args.append("--with-new-session")
+        if compact_after:
+            args.append("--compact-after-settled")
+        if steer:
+            args.append("--steer-mid-turn")
+        if continuity:
+            args.append("--continuity-check")
         env = {**self.stub_env, "WEBGIS_API_BASE": api_base}
         res = subprocess.run(
             args, capture_output=True, text=True, timeout=90, env=env,
@@ -459,6 +593,18 @@ def _responses(result: dict) -> list[dict]:
 TURN_PROMPT = (
     "成都小学分布\n\n"
     "[WEBGIS_TURN_CONTEXT:contract-session.turn-0001]\n"
+    "(Internal routing context; do not quote or modify this marker.)"
+)
+
+# 生产形状的 turn 上下文标记（pi_turn_context.attach_turn_context 用
+# "\n\n".join(parts) —— marker 与解释行之间是**两个**换行）。TURN_PROMPT 是
+# 单换行的历史形状：扩展的 routingSuffix 正则（\]\n\n\(Internal）匹配不上，
+# token 提取为空 → 工具在 postToBridge 前被 "missing turn context" 同步拒绝。
+# 既有测试只断言 settle/framing，不受影响；abort-batch 车道要真实打到桥
+# fetch（慢端点持住批次），必须用生产形状。
+BRIDGE_PROMPT = (
+    "成都小学分布\n\n"
+    "[WEBGIS_TURN_CONTEXT:contract-session.turn-0001]\n\n"
     "(Internal routing context; do not quote or modify this marker.)"
 )
 
@@ -556,6 +702,94 @@ async def test_abort_mid_tool_settles_aborted(make_harness):
     settled = next(e for e in events if e["type"] == "agent_settled")
     assert settled.get("aborted") is True
     assert [e["type"] for e in events].count("agent_settled") == 1
+
+
+async def test_abort_batch_gives_every_toolcall_a_terminal_end(make_harness):
+    """#9986（v1.6.0）abort 批量终态完整 —— 有意钉 v1.6.0 行为。
+
+    单次 completion 返回 2 个 tool_calls（multi-tool stub 模式），桥端点故意
+    慢 3s（stub 内置 /pi-tools/execute 延迟），probe 在第一个
+    tool_execution_start 后 300ms 发 abort —— abort 落在批次执行中途。
+    v1.6.0 契约（agent-loop.ts）：批次中**未执行**的工具也拿到
+    "Operation aborted" error tool result（sequential/parallel 两路都删了
+    abort break；prepare 阶段先查 aborted）。客户端可观测断言：
+
+    - agent_settled 恰一次且 aborted:true；
+    - **每个** toolcall_end 的 toolCallId 都有对应 tool_execution_end。
+
+    v1.5.2 下未执行的工具没有 end 事件，本测试会失败 —— 这是刻意的版本
+    钉扎（升级 pin 时同步此车道）。
+    """
+    harness = make_harness(mode="multi-tool", bridge_delay_second_s=3)
+    result = harness.run_turn(
+        # BRIDGE_PROMPT（生产形状标记）→ 扩展真实发出 /pi-tools/execute fetch，
+        # 慢端点把批次持住 3s；TURN_PROMPT 的历史单换行标记会在 pre-fetch 被
+        # "missing turn context" 同步拒绝（批次瞬间结束，abort 打不到批次）。
+        BRIDGE_PROMPT, abort_after_tool=True,
+        api_base=f"http://127.0.0.1:{harness.stub_port}",
+    )
+    events = _events(result)
+
+    settled = [e for e in events if e["type"] == "agent_settled"]
+    assert len(settled) == 1, "abort turn must settle exactly once"
+    assert settled[0].get("aborted") is True
+
+    # 模型侧看到的 tool_call 全集（stub 发了 2 个）
+    call_ids = {
+        u["assistantMessageEvent"]["toolCall"]["id"]
+        for u in events
+        if u["type"] == "message_update"
+        and u.get("assistantMessageEvent", {}).get("type") == "toolcall_end"
+    }
+    assert len(call_ids) == 2, (
+        f"stub emitted 2 tool_calls but the model side saw {len(call_ids)}: {call_ids}"
+    )
+
+    # #9986 核心断言：每个 toolCallId 都有终态 end（执行过的拿真实结果，
+    # 未执行的拿 "Operation aborted" error 结果 —— 不许任何 call 悬空）。
+    ends = {e["toolCallId"]: e for e in events if e["type"] == "tool_execution_end"}
+    missing = call_ids - set(ends)
+    assert not missing, (
+        f"#9986: every tool_call needs a terminal tool_execution_end; "
+        f"missing={sorted(missing)} (v1.5.2 behavior — batched-but-unexecuted "
+        f"tools were dropped without an end event)"
+    )
+    # abort 批次的终态必须是 error 面（真实执行结果不可能在 300ms 内返回，
+    # 慢桥 3s 未及回包；未执行工具是合成的 "Operation aborted"）。
+    assert any(ends[cid].get("isError") for cid in call_ids)
+
+
+async def test_new_session_keeps_tool_surface_alive(make_harness):
+    """#10470（v1.6.0）：new_session 后订阅先于 bindExtensions —— 扩展工具
+    注册不丢、session_start 单次触发。
+
+    客户端可观测的钉法：new_session RPC 成功 + 下一 prompt 的工具面完整
+    （前门/proxy 声明在场）且 tool_execution_start 出现。--no-session 模式
+    下 new_session 合法性已核对（rpc-mode.ts ``new_session`` →
+    ``AgentSessionRuntime.newSession`` → 未持久化走 ``SessionManager.inMemory``，
+    无持久化依赖）。session_start「单次」本身不达 RPC 客户端（属扩展侧
+    事件），其可观测面就是本测试的工具面存活断言。
+    """
+    harness = make_harness()
+    result = harness.run_turn(TURN_PROMPT, with_new_session=True)
+    responses = _responses(result)
+    new_sess = next((r for r in responses if r.get("command") == "new_session"), None)
+    assert new_sess is not None, "probe sent new_session but got no response"
+    assert new_sess.get("success") is True, f"new_session rejected: {new_sess}"
+
+    events = _events(result)
+    assert any(
+        e.get("type") == "tool_execution_start" and e.get("toolName") == "webgis_map_intent"
+        for e in events
+    ), "#10470: tool surface must survive the new_session rebind"
+    assert [e["type"] for e in events].count("agent_settled") == 1
+
+    # LLM 实际收到的声明面：前门 + execute proxy 必须在场（session 重建后
+    # 扩展注册与默认投影未丢）。
+    rows = _read_stub_log(harness)
+    declared = rows[0]["tools"]
+    assert "webgis_map_intent" in declared
+    assert "webgis_execute" in declared
 
 
 async def test_unicode_line_separators_do_not_break_framing(harness):
@@ -808,6 +1042,114 @@ async def test_codemode_nested_calls_carry_parent_tool_call_id(make_harness):
     assert codemode_end is not None
     settled = [e for e in events if e.get("type") == "agent_settled"]
     assert len(settled) == 1
+
+
+async def test_manual_compaction_contract_and_post_compaction_usability(make_harness):
+    """C23（ADR-0301 WP4）：手动 compact 的 v1.6.1 wire 契约。
+
+    锁定：`compact` 命令 → `compaction_start`（reason="manual"）→
+    `compaction_end`（result 含 summary/tokensBefore/estimatedTokensAfter，
+    aborted 不得为 true）→ response(success=true, data=result 形状) →
+    **压缩后回话仍可用**（第二次 prompt 正常 settle）→ `get_state` 一致。
+    这是 GIS 会话上下文可恢复性的 vendor 侧前提（宿主 compaction 投影在
+    turn_journal 域，有自己的车道）。
+
+    尺寸前提：vendor `keepRecentTokens` 默认 20000 —— 最近 ~20k token 的
+    内容保留不摘要，会话必须超过该窗口才有可压缩内容（"session too small"
+    是 vendor 的诚实拒绝，本测试以确定性 filler 越过窗口）。
+    """
+    # 未脚本化的 stub 模式：对一切请求（含 vendor 摘要请求）回纯文本 ——
+    # 摘要 LLM 调用因此真实成功，而不是被 stub 的工具调用倾向打回。
+    # 首 prompt 为中等 filler；其余 bulk turn 由 probe 按 STUB_COMPACT_TURNS 自建。
+    filler = "compaction filler sentence with deterministic tokens. " * 700
+    harness = make_harness(mode="warmup-text")
+    result = harness.run_turn(
+        "compaction contract warmup turn\n\n" + filler, compact_after=True)
+    lines = result["lines"]
+
+    compaction_start = next(
+        (r for r in lines if r.get("type") == "compaction_start"), None)
+    assert compaction_start is not None, "compaction_start missing"
+    assert compaction_start.get("reason") == "manual", compaction_start
+
+    compaction_end = next(
+        (r for r in lines if r.get("type") == "compaction_end"), None)
+    assert compaction_end is not None, "compaction_end missing"
+    assert compaction_end.get("aborted") is not True, compaction_end
+    assert not compaction_end.get("errorMessage"), compaction_end
+    compaction_result = compaction_end.get("result") or {}
+    assert isinstance(compaction_result.get("summary"), str), compaction_result
+    assert compaction_result["summary"], "summary must be non-empty"
+    assert isinstance(compaction_result.get("tokensBefore"), int), compaction_result
+    assert isinstance(compaction_result.get("estimatedTokensAfter"), int), compaction_result
+
+    compact_resp = next(
+        (r for r in lines
+         if r.get("type") == "response" and r.get("command") == "compact"
+         and r.get("id") == "4"), None)
+    assert compact_resp is not None and compact_resp.get("success") is True, compact_resp
+
+    # 压缩后回话：bulk turns + 首轮 + 压缩后轮全部收敛。
+    settled_count = sum(1 for r in lines if r.get("type") == "agent_settled")
+    assert settled_count >= 12, f"post-compaction turn did not settle: {settled_count}"
+    state = next(
+        (r for r in lines
+         if r.get("type") == "response" and r.get("command") == "get_state"
+         and r.get("id") == "6"), None)
+    assert state is not None and state.get("success") is True, state
+    state_data = state.get("data") or {}
+    assert isinstance(state_data.get("messageCount"), int), state_data
+
+
+async def test_provider_429_retry_observability(make_harness):
+    """C24（ADR-0301 WP5）：provider 429 → vendor auto-retry → 分层可观测。
+
+    事件面（真实 v1.6.1 wire）：auto_retry_start ×2（attempt 1,2）→
+    auto_retry_end(success) → agent_settled 恰一次且非 aborted。
+    扩展面：after_provider_response（v1.6.1 起覆盖 4xx/5xx 与每次重试）
+    → 扩展有界 stderr 行 `provider_response status=429`（宿主
+    PiStderrDiagnostics 有界环消费——provider 失败证据进诊断面，不含
+    任何 header 原文/请求全文）。
+    """
+    harness = make_harness(mode="provider-fail-then-succeed")
+    result = harness.run_turn("429 retry observability turn")
+    events = _events(result)
+    starts = [e for e in events if e.get("type") == "auto_retry_start"]
+    assert len(starts) == 2, [e.get("type") for e in events]
+    assert [s.get("attempt") for s in starts] == [1, 2], starts
+    ends = [e for e in events if e.get("type") == "auto_retry_end"]
+    assert len(ends) == 1 and ends[0].get("success") is True, ends
+    settled = [e for e in events if e.get("type") == "agent_settled"]
+    assert len(settled) == 1 and settled[0].get("aborted") is not True, settled
+    provider_lines = [
+        line for line in result.get("providerEvents", [])
+        if "status=429" in line
+    ]
+    assert provider_lines, result.get("providerEvents")
+
+
+async def test_provider_429_exhaustion_fails_honestly(make_harness):
+    """C24 负分支：持续 429 → vendor 重试预算耗尽 → 诚实失败终态。
+
+    锁定：auto_retry_start ×3（attempts 1..3）→ auto_retry_end(success=false)
+    携带非空 finalError → agent_settled 恰一次（不挂死、不伪成功）→
+    扩展 stderr 观测到 ≥3 次 status=429。治理侧（retry budget/no-progress）
+    以这些权威证据推进——本测试钉住证据源本身。"""
+    harness = make_harness(mode="always-429")
+    result = harness.run_turn("429 exhaustion honest failure turn")
+    events = _events(result)
+    starts = [e for e in events if e.get("type") == "auto_retry_start"]
+    assert len(starts) >= 3, [e.get("type") for e in events]
+    ends = [e for e in events if e.get("type") == "auto_retry_end"]
+    assert ends and ends[-1].get("success") is False, ends
+    assert str(ends[-1].get("finalError") or ""), ends[-1]
+    settled = [e for e in events if e.get("type") == "agent_settled"]
+    assert len(settled) == 1, settled
+    provider_lines = [
+        line for line in result.get("providerEvents", [])
+        if "status=429" in line
+    ]
+    assert len(provider_lines) >= 3, provider_lines
 
 
 async def test_graceful_stdin_eof_shutdown_and_adjacent_sigterm(harness):

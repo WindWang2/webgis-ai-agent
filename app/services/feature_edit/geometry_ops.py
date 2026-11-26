@@ -258,7 +258,14 @@ def move_by(
     def shift(x: float | tuple[float, ...], y: float | tuple[float, ...]) -> tuple[float | tuple[float, ...], float | tuple[float, ...]]:
         # shapely.ops.transform 的 (x, y) 坐标数组签名；Geod.fwd 原生支持
         # 数组/标量 —— 等方位/等距离的测地平移（形状保持）。
-        lon2, lat2, _ = geod.fwd(x, y, azimuth, magnitude)
+        # pyproj ≥3.8 对数组 lon/lat 不再广播标量 az/dist（本机 3.8.0 实证
+        # GeodError: Array lengths are not the same）—— 显式全数组，标量
+        # 路径保持不变（版本鲁棒）。
+        if hasattr(x, "__len__") and not isinstance(x, (str, bytes)):
+            n = len(x)  # type: ignore[arg-type]
+            lon2, lat2, _ = geod.fwd(x, y, [azimuth] * n, [magnitude] * n)  # type: ignore[arg-type]
+        else:
+            lon2, lat2, _ = geod.fwd(x, y, azimuth, magnitude)
         return lon2, lat2
 
     for wfid, feature, _positions in targets:

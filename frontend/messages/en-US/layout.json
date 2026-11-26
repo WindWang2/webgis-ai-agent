@@ -55,7 +55,8 @@
     "market": "Market",
     "modelops": "ModelOps",
     "ops": "Ops",
-    "cockpit": "Cockpit"
+    "cockpit": "Cockpit",
+    "model": "Models"
   },
   "modes": {
     "explore": "Explore",
@@ -87,7 +88,8 @@
       "export_layout": "Cartography studio",
       "market": "Market",
       "modelops": "ModelOps",
-      "ops": "Ops console"
+      "ops": "Ops console",
+      "model": "Model Builder"
     },
     "desc": {
       "chat": "AI geospatial agent",
@@ -102,7 +104,8 @@
       "export_layout": "Layout & export",
       "market": "Extension market · browse · download",
       "modelops": "Model registry · in-session runs",
-      "ops": "Cluster · Plans · Runtime · Breakers · Health"
+      "ops": "Cluster · Plans · Runtime · Breakers · Health",
+      "model": "Visual GIS models · validate · publish · run"
     },
     "boundary": {
       "chat": "Chat",
@@ -117,7 +120,8 @@
       "results": "Results",
       "ops": "Ops",
       "cockpit": "Agent Cockpit",
-      "market": "Market"
+      "market": "Market",
+      "model": "Model Builder"
     },
     "resizeAria": "Resize panel",
     "resizeTitle": "Drag to resize panel (double-click to reset)",

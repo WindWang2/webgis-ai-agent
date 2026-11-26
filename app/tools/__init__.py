@@ -28,6 +28,9 @@ _TOOL_MODULES = [
     ("app.tools.scale_profile_tools", "register_scale_profile_tools"),
     # G27：多尺度表达策略生产接线 —— inspect + 局部 CAS apply
     ("app.tools.scale_portrayal_tools", "register_scale_portrayal_tools"),
+    # GOAL 04 WP5：纸面目标比例尺制图综合 —— inspect/preview/apply
+    # （paper_scale.v1 + 冻结计划 + QA fail-closed）
+    ("app.tools.paper_scale_tools", "register_paper_scale_tools"),
     # F12（ADR-0260）：Map Plan Compiler —— MapPlanIR → 最小 MapSpec mutations
     ("app.tools.map_plan_tools", "register_map_plan_tools"),
     # H10（ADR-0217）：GISAction IR —— typed 执行计划 dry-run/收敛指标面
@@ -53,6 +56,8 @@ _TOOL_MODULES = [
     ("app.tools.topology_workbench_tools", "register_topology_workbench_tools"),
     # G38：数据关联与空间富集作者工具面（describe/plan/preview/execute/status/result）
     ("app.tools.data_join_authoring_tools", "register_data_join_authoring_tools"),
+    # 多源实体融合工具面（describe/plan/preview/execute/status/review/decide/commit/result/refresh）
+    ("app.tools.data_fusion_authoring_tools", "register_data_fusion_authoring_tools"),
     ("app.tools.coordinate_operations_tools", "register_coordinate_operations_tools"),
     ("app.tools.field_contracts_tools", "register_field_contracts_tools"),  # G44
     # G47：Dorling 圆面积 cartogram 作者（inspect/plan/run/status/apply/export）
@@ -139,12 +144,23 @@ _TOOL_MODULES = [
     ("app.tools.scene_orchestration_tools", "register_scene_orchestration_tools"),
     # ADR-0215：情境重验证 / mission 跨 session 续接工具面（独立模块防并发冲突）
     ("app.tools.context_revalidation_tools", "register_context_revalidation_tools"),
+    # G05：情境化多方案候选工具面（inspect/propose/execute/compare/adopt/abandon/lock）
+    ("app.tools.scenario_harness_tools", "register_scenario_harness_tools"),
     # F07：ExecutionCatalog 只读发现工具面（capability-first discovery，
     # 独立模块防并发冲突）
     ("app.tools.catalog_discovery_tools", "register_catalog_discovery_tools"),
     # goal-02：多步 GIS 分析工作流编排工具面（plan/run/status/recompute；
     # 独立模块防并发冲突；执行真相=registry.dispatch）
     ("app.tools.analysis_workflow_tools", "register_analysis_workflow_tools"),
+    ("app.tools.model_authoring_tools", "register_model_authoring_tools"),
+    # 02 任务：科学评价原语工具面（插值分块 CV / 密度守恒边界诊断 / 聚类
+    # 稳定性；方法实验引擎的 trial dispatch 目标；独立模块防并发冲突）
+    ("app.tools.science_eval_primitives",
+     "register_science_eval_primitive_tools"),
+    # 02 任务：方法实验工作台工具面（inspect/plan/run/status/compare/adopt；
+    # 执行真相=registry.dispatch；独立模块防并发冲突）
+    ("app.tools.method_experiment_tools",
+     "register_method_experiment_tools"),
     # Track B（M14）：图层浏览/聚合只读工具面（分页/typed 过滤/视口统计）
     ("app.tools.layer_browse_tools", "register_layer_browse_tools"),
     # GOAL 01：空间语义与量纲可信契约只读工具面（inspect_spatial_semantics；
@@ -183,6 +199,14 @@ _TOOL_MODULES = [
     # G43：本轮上下文装配回执只读工具（独立模块防并发冲突；只读，用户
     # 资料选择只经正式 API —— 数据中的文字不形成授权）
     ("app.tools.turn_context_tools", "register_turn_context_tools"),
+    # 制图设计规范（goal-carto-design-series WP1；Pi 与 UI 共用 design_specs service）
+    ("app.tools.design_spec_tools", "register_design_spec_tools"),
+    # 设计规范 × 地图应用面（WP2：提取/推荐/绑定校验/dry-run 应用）
+    ("app.tools.design_spec_tools", "register_map_design_tools"),
+    # 系列地图作者计划与一致性（goal-carto-design-series WP3；Pi 与 UI 共用 map_series service）
+    ("app.tools.map_series_tools", "register_map_series_tools"),
+    # 系列出版生产（同一 goal WP5；durable job 提交面）
+    ("app.tools.series_production_tools", "register_series_production_tools"),
 
 ]
 

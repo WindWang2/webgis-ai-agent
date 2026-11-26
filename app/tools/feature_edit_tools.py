@@ -305,3 +305,131 @@ def register_feature_edit_tools(registry: ToolRegistry) -> None:
             if len(events) >= max(1, min(int(limit), 50)):
                 break
         return {"success": True, "ref_id": ref_id, "events": events[: max(1, min(int(limit), 50))]}
+
+    # ── 共享拓扑约束面（goal-gis-topology-authoring / ADR-0304；全部纯读） ──
+
+    @tool(
+        registry,
+        tier=2,
+        domains=["dataset"],
+        name="inspect_edit_constraints",
+        side_effect="cacheable_read",
+        network=False,
+        deterministic=False,
+        tags=["共享拓扑", "约束", "拓扑规则", "共边", "线网"],
+        latency_class="fast",
+        memory_class="medium",
+        description=(
+            "检查数据集（ref:…）的编辑约束面（只读）：声明的拓扑规则（no_overlap 等）、"
+            "共享结构摘要（共享边数/多面交汇节点/线网悬挂端点）、基线违规、目标要素的邻接关系。"
+            "共享编辑（move_shared_vertex 等五个共享 op）前先调用本工具了解可编辑性与 "
+            "匹配规则（exact/容差/层级守卫）。只读，不改数据。"
+        ),
+        param_descriptions={
+            "ref_id": "数据集 ref（ref:…）",
+            "tolerance_m": "可选：容差匹配（米，≤100）；缺省 exact",
+            "level_field": "可选：层级守卫字段名（桥/隧/匝道分层）",
+            "wfids": "可选：要查看邻接关系的目标要素（≤8）",
+        },
+    )
+    async def webgis_inspect_edit_constraints(
+        ref_id: str,
+        tolerance_m: Optional[float] = None,
+        level_field: Optional[str] = None,
+        wfids: Optional[List[str]] = None,
+        session_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if not session_id:
+            return {"success": False, "code": "MISSING_SESSION", "message": "Missing session_id"}
+        capped = [w for w in (wfids or []) if isinstance(w, str)][:8]
+        result = await fe_service.inspect_edit_constraints(
+            session_id, ref_id, tolerance_m=tolerance_m, level_field=level_field, neighbor_wfids=capped
+        )
+        if not result.get("success"):
+            return {
+                "success": False,
+                "code": str(result.get("code") or "INSPECT_FAILED").upper(),
+                "message": str(result.get("message") or "constraint inspection failed"),
+                "correction_hint": "确认 ref 可解析且为 ref-backed geojson 数据集。",
+            }
+        return result
+
+    @tool(
+        registry,
+        tier=2,
+        domains=["dataset"],
+        name="get_impact",
+        side_effect="cacheable_read",
+        network=False,
+        deterministic=False,
+        tags=["共享拓扑", "影响预览", "邻接", "面积变化", "违规"],
+        latency_class="medium",
+        memory_class="medium",
+        description=(
+            "候选共享编辑 op 的有界影响投影（只读，不生成 plan）：受影响邻接对象"
+            "（shares_edge/incident_node）、逐要素测地面积/长度变化、声明规则的新增违规"
+            "（阻断）与基线存量违规（披露）、原子性范围（dataset 域；跨数据集不支持）。"
+            "用于提交前向用户解释『这次编辑会影响谁』。"
+        ),
+        param_descriptions={
+            "ref_id": "数据集 ref（ref:…）",
+            "ops": "候选编辑操作（≤8；共享 op 如 {\"op\":\"move_shared_vertex\",\"at\":[lon,lat],\"dx_m\":5,\"dy_m\":0}）",
+            "feature_ids": "可选：plan 目标要素（共享 op 自带定位时建议传被编辑要素）",
+            "tolerance_m": "可选：容差匹配（米）；缺省 exact",
+            "level_field": "可选：层级守卫字段名",
+        },
+    )
+    async def webgis_get_impact(
+        ref_id: str,
+        ops: List[Dict[str, Any]],
+        feature_ids: Optional[List[str]] = None,
+        tolerance_m: Optional[float] = None,
+        level_field: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if not session_id:
+            return {"success": False, "code": "MISSING_SESSION", "message": "Missing session_id"}
+        if not isinstance(ops, list) or not ops or len(ops) > _MAX_OPS:
+            return {"success": False, "code": "INVALID_ARGS",
+                    "message": f"ops must be a non-empty list of at most {_MAX_OPS} edit ops"}
+        result = await fe_service.impact_preview(
+            session_id, ref_id, ops,
+            feature_ids=feature_ids, tolerance_m=tolerance_m, level_field=level_field,
+        )
+        if not result.get("success"):
+            return {
+                "success": False,
+                "code": str(result.get("code") or "IMPACT_FAILED").upper(),
+                "message": str(result.get("message") or "impact projection failed"),
+            }
+        return result
+
+    @tool(
+        registry,
+        tier=2,
+        domains=["dataset"],
+        name="revalidate",
+        side_effect="cacheable_read",
+        network=False,
+        deterministic=False,
+        tags=["共享拓扑", "复检", "质量闭环", "拓扑规则"],
+        latency_class="fast",
+        memory_class="medium",
+        description=(
+            "对数据集当前修订版重跑声明的拓扑规则检查（只读复检）：编辑提交后确认"
+            "『两面无重叠/无缺口』或列出剩余违规。未声明规则的数据集明确说明无规则"
+            "（declared-rules-only 纪律，绝不套用隐式规则）。"
+        ),
+        param_descriptions={"ref_id": "数据集 ref（ref:…）"},
+    )
+    async def webgis_revalidate(ref_id: str, session_id: Optional[str] = None) -> Dict[str, Any]:
+        if not session_id:
+            return {"success": False, "code": "MISSING_SESSION", "message": "Missing session_id"}
+        result = await fe_service.revalidate_edit_constraints(session_id, ref_id)
+        if not result.get("success"):
+            return {
+                "success": False,
+                "code": str(result.get("code") or "REVALIDATE_FAILED").upper(),
+                "message": str(result.get("message") or "revalidate failed"),
+            }
+        return result

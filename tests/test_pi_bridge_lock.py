@@ -23,6 +23,7 @@ import pytest
 
 import app.agent_pi_bridge as bridge_mod
 from app.agent_pi_bridge import PiBridge, PiRpcError, PiToolRequest, dispatch_tool
+from app.services.chat.pi_rpc_client import IssuedRequest
 
 # stream_prompt lazily imports app.api.routes.chat inside the turn path; on a
 # cold process that module-level import costs seconds INSIDE the generator, so
@@ -34,16 +35,42 @@ import app.api.routes.chat  # noqa: F401
 
 
 def _make_rpc() -> MagicMock:
+    """Mock 掉 PiRpcClient 的**完整接缝**（含 G22-P1 控制面）。
+
+    产品 abort 路径已从 ``await rpc.request("abort")`` 演进为
+    ``await rpc.issue(...)`` + ``await rpc.collect(...)`` +
+    ``pending_request_ids()`` / ``fail_pending_ids(...)``（见
+    app/agent_pi_bridge.py abort 与 app/services/chat/pi_rpc_client.py
+    IssuedRequest）。mock 必须逐一给出行为等价实现，否则 abort 在
+    ``object MagicMock can't be used in 'await' expression`` 处静默失败，
+    测试对「abort 必须发出」的断言形同虚设。
+    """
     rpc = MagicMock()
     rpc.events = asyncio.Queue()
     rpc.start = AsyncMock()
     rpc.stop = AsyncMock()
     rpc.request = AsyncMock()
+
+    async def _fake_issue(command, data=None):
+        # 真实 issue 返回 IssuedRequest；future 需是**已完成** Future——
+        # abort 路径会对它 add_done_callback 登记 inflight 并在 collect 中读结果。
+        future: asyncio.Future = asyncio.get_running_loop().create_future()
+        future.set_result({})
+        return IssuedRequest(id="mock-issued", command=command, future=future)
+
+    rpc.issue = AsyncMock(side_effect=_fake_issue)
+    rpc.collect = AsyncMock(return_value={})
+    rpc.pending_request_ids = MagicMock(return_value=set())
+    rpc.fail_pending_ids = MagicMock(return_value=0)
     return rpc
 
 
 def _rpc_commands(rpc: MagicMock) -> list[str]:
-    return [c.args[0] for c in rpc.request.call_args_list if c.args]
+    # 控制命令（clear_queue/abort）走 issue() 写相位，其余走 request()——
+    # 两个通道的命令都要进入断言视野。
+    commands = [c.args[0] for c in rpc.request.call_args_list if c.args]
+    commands += [c.args[0] for c in rpc.issue.call_args_list if c.args]
+    return commands
 
 
 @pytest.fixture(autouse=True)
@@ -318,7 +345,14 @@ async def test_dispatch_reuses_service_and_marks_completed(monkeypatch):
     stub.dispatch = _gated_dispatch
 
     first = asyncio.ensure_future(dispatch_tool(_tool_request("tc-1")))
-    await asyncio.wait_for(started.wait(), timeout=2.0)  # first is in flight
+    # 预算证据链（g13 可用性复核闸）：首次 dispatch 在到达 registry.dispatch
+    # 之前要过 ToolDispatchService 的 pre-dispatch 可用性复核 —— 冷缓存时是
+    # 全量对账（模块注释自述「秒级」，经 asyncio.to_thread 执行；commit
+    # 99e5cd3ab 引入闸、810f33edc 移入 to_thread，均晚于本测试 2.0s 预算的
+    # 标定）。实测冷启动 ~1.4s（无覆盖率）/ >2.0s（coverage 追踪下），故
+    # 预算放宽到 10s；dedup 语义断言本身不变（tc-2 的 dedup 拦截位于该闸
+    # 之前，不受影响，仍 2s 内返回）。
+    await asyncio.wait_for(started.wait(), timeout=10.0)  # first is in flight
 
     second = asyncio.ensure_future(dispatch_tool(_tool_request("tc-2")))
     r2 = await asyncio.wait_for(second, timeout=2.0)

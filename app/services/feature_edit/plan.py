@@ -37,6 +37,7 @@ from app.services.feature_edit.contracts import (
     PLAN_STATUSES,
     PLAN_TTL_S,
     RESERVED_FIELD_NAMES,
+    SHARED_GEOMETRY_OPS,
     WFID_PROP,
     finding,
 )
@@ -48,6 +49,16 @@ from app.services.feature_edit.geometry_ops import (
     snap_to_ref,
     split_feature,
 )
+from app.services.feature_edit.shared_topology import (
+    SharedTopologyIndex,
+    build_shared_index,
+    connect_endpoint,
+    delete_shared_vertex,
+    insert_shared_vertex,
+    move_shared_vertex,
+    reshape_shared_edge,
+    vertex_delta_summary,
+)
 from app.services.feature_edit.identity import (
     find_ambiguous_ids,
     has_wfids,
@@ -55,7 +66,11 @@ from app.services.feature_edit.identity import (
     resolve_feature_ids,
 )
 from app.services.feature_edit.journal import apply_deltas_to_features, apply_schema_ops_to_features
-from app.services.feature_edit.topology import check_topology, extract_topology_declaration
+from app.services.feature_edit.topology import (
+    check_topology,
+    extract_topology_declaration,
+    split_topology_findings,
+)
 
 
 def _declared_geometry_type(payload: Any) -> Optional[str]:
@@ -199,6 +214,46 @@ def _validate_op_shapes(ops: List[Any]) -> List[EditFinding]:
                     findings.append(finding("invalid_op", "field_policy.mode must be first|require_identical"))
                 elif not isinstance(policy.get("overrides", {}), dict):
                     findings.append(finding("invalid_op", "field_policy.overrides must be an object"))
+        # ── 共享拓扑编辑形状校验（goal-gis-topology-authoring） ──
+        elif kind == "move_shared_vertex":
+            at_ok = isinstance(op.get("at"), (list, dict))
+            to_ok = op.get("to") is not None
+            d_ok = isinstance(op.get("dx_m"), (int, float)) and isinstance(op.get("dy_m"), (int, float))
+            if not at_ok:
+                findings.append(finding("invalid_op", "move_shared_vertex requires at: [lon,lat] or vertex ref"))
+            elif not (to_ok or d_ok):
+                findings.append(
+                    finding("unit_required", "move_shared_vertex requires to: [lon,lat] or numeric dx_m/dy_m (meters)")
+                )
+        elif kind == "insert_shared_vertex":
+            edge = op.get("edge")
+            if not isinstance(edge, dict) or not (
+                (isinstance(edge.get("between"), list) and len(edge.get("between")) == 2) or edge.get("near") is not None
+            ):
+                findings.append(finding("invalid_op", "insert_shared_vertex requires edge: {between} or {near, tolerance_m}"))
+            elif op.get("at") is None:
+                findings.append(finding("invalid_op", "insert_shared_vertex requires at: [lon,lat]"))
+        elif kind == "delete_shared_vertex":
+            if op.get("at") is None:
+                findings.append(finding("invalid_op", "delete_shared_vertex requires at: [lon,lat] or vertex ref"))
+        elif kind == "reshape_shared_edge":
+            between = op.get("between")
+            path = op.get("path")
+            if not (isinstance(between, list) and len(between) == 2) or not isinstance(path, list) or not path:
+                findings.append(finding("invalid_op", "reshape_shared_edge requires between: [a, b] and non-empty path"))
+        elif kind == "connect_endpoint":
+            endpoint = op.get("endpoint")
+            endpoint_ok = (
+                isinstance(endpoint, dict)
+                and isinstance(endpoint.get("wfid"), str)
+                and (endpoint.get("end") in ("start", "end") or isinstance(endpoint.get("vertex_index"), int))
+            )
+            if not endpoint_ok:
+                findings.append(finding("invalid_op", "connect_endpoint requires endpoint: {wfid, end|vertex_index}"))
+            elif not isinstance(op.get("tolerance_m"), (int, float)):
+                findings.append(finding("unit_required", "connect_endpoint requires numeric tolerance_m (meters)"))
+            elif op.get("to") is None:
+                findings.append(finding("invalid_op", "connect_endpoint requires to: [lon,lat] or endpoint ref"))
     return findings
 
 
@@ -211,6 +266,7 @@ def derive_changes(
     plan_seed: str = "",
     geometry_type: Optional[str] = None,
     contract_fields: Optional[frozenset] = None,
+    shared_level_field: Optional[str] = None,
 ) -> Tuple[List[FeatureDelta], List[RenameField], List[EditFinding], List[OperationSummary], List[Dict[str, Any]]]:
     """对已物化 fc 顺序求 ops 的完整 diff（preview 与 commit 同一路径）。
 
@@ -233,6 +289,27 @@ def derive_changes(
     target_set = set(target_wfids)
     field_profiles = profile_fields(working)
     seed = plan_seed or "unseeded"
+    # 共享拓扑索引（goal-gis-topology-authoring）：首个共享 op 时对 working
+    # 惰性构建；任何 delta 后失效重建（R1-F2）—— 索引永远镜像当前态。
+    # 匹配参数（tolerance_m/level_field）按 op 声明，参数对为缓存键（R1-F6）；
+    # 未声明时回落数据集信封的 level_field 默认（R1-F7）。
+    shared_indexes: Dict[Tuple[Optional[float], Optional[str]], Tuple[Optional[SharedTopologyIndex], bool]] = {}
+
+    def _shared_index_for(
+        fc_current: GeoJSONFeatureCollection,
+        tolerance_m: Any = None,
+        level_field: Any = None,
+    ) -> Tuple[Optional[SharedTopologyIndex], List[EditFinding]]:
+        key = (
+            float(tolerance_m) if isinstance(tolerance_m, (int, float)) and not isinstance(tolerance_m, bool) else None,
+            str(level_field) if isinstance(level_field, str) and level_field else None,
+        )
+        cached = shared_indexes.get(key)
+        if cached is not None and cached[1]:
+            return cached[0], []
+        idx, idx_findings = build_shared_index(fc_current, tolerance_m=tolerance_m, level_field=level_field)
+        shared_indexes[key] = (idx, idx is not None)
+        return idx, idx_findings
     for op_index, op in enumerate(ops):
         if not isinstance(op, dict) or op.get("op") not in EDIT_OPS:
             continue
@@ -412,11 +489,41 @@ def derive_changes(
                     op_summaries.append(summary)
                 else:
                     op_summaries.append({"op": kind, "parents": len(merge_targets)})
+        elif kind in ("move_shared_vertex", "insert_shared_vertex", "delete_shared_vertex", "reshape_shared_edge", "connect_endpoint"):
+            # 共享拓扑编辑：目标无关（op 自带定位）；匹配参数按 op 声明，
+            # 未声明回落数据集信封默认（level_field 可在数据集级声明桥/隧
+            # 分层 —— R1-F7；容差无数据集级默认，显式声明才启用）。
+            envelope_level_field = shared_level_field
+            idx, idx_findings = _shared_index_for(
+                working,
+                tolerance_m=op.get("tolerance_m"),
+                level_field=op.get("level_field") or envelope_level_field,
+            )
+            findings.extend(idx_findings)
+            if idx is not None and not idx_findings:
+                applier = {
+                    "move_shared_vertex": move_shared_vertex,
+                    "insert_shared_vertex": insert_shared_vertex,
+                    "delete_shared_vertex": delete_shared_vertex,
+                    "reshape_shared_edge": reshape_shared_edge,
+                    "connect_endpoint": connect_endpoint,
+                }[kind]
+                op_deltas, op_findings, op_summary = applier(working, idx, op)
+                findings.extend(op_findings)
+                deltas.extend(op_deltas)
+                op_summaries.append(op_summary)
+            else:
+                op_summaries.append({"op": kind})
         # 顺序语义：把已产生的 delta 应用到工作视图，后续 op 在最新态上求值。
         if deltas or schema_ops:
             feats, _ = apply_deltas_to_features(working.get("features") or [], deltas)
             feats, _ = apply_schema_ops_to_features(feats, schema_ops)
             working = {**working, "features": feats}
+            # 共享索引镜像**坐标级**当前态（R1-F2）：任何 delta（含 update 的
+            # 顶点位移）都会让既有索引的成员定位/边关系失真 —— 多 op plan 里
+            # 陈旧 member_nid 会改到错误顶点并逃逸拓扑检查。一律全缓存失效
+            # 重建（预算由 MAX_SHARED_INDEX_NODES 闸住，op 数 ≤8 有界）。
+            shared_indexes.clear()
             if schema_ops:
                 # R1 P2-5：rename 改变字段面 —— 校验证据必须随工作视图重算
                 # （否则 rename 后按旧 profile 误拒/静默重建旧列）。
@@ -621,6 +728,11 @@ def build_plan(
         plan_seed=plan_id,
         geometry_type=_declared_geometry_type(payload),
         contract_fields=contract_fields,
+        shared_level_field=(
+            payload.get("level_field")
+            if isinstance(payload, dict) and isinstance(payload.get("level_field"), str)
+            else None
+        ),
     )
     findings.extend(derive_findings)
     # ── G44：active 合同的候选态门禁（与完整评估同一 validator 内核）────
@@ -692,18 +804,91 @@ def build_plan(
             )
 
     # G14/WP06：声明拓扑规则的局部检查（未声明的层零规则 —— V10）。
-    # 检查在「操作后」形态上做：受影响 = 目标 + 新生身份；邻域经空间索引
-    # 限定。发现即 findings（定位 + 受影响对），修复必须走显式操作重新预览。
+    # 检查在「操作后」形态上做：受影响 = 目标 + 全部 delta 身份（共享编辑的
+    # 邻接传播对象必须进入检查范围 —— 完整约束不因局部目标而漏检邻面）。
+    # 发现即 findings（定位 + 受影响对），修复必须走显式操作重新预览。
     topology_declaration = extract_topology_declaration(payload)
+    shared_op_kinds = {
+        op.get("op") for op in derive_ops if isinstance(op, dict)
+    } & SHARED_GEOMETRY_OPS
+    has_shared_ops = bool(shared_op_kinds)
+    topology_context: Optional[Dict[str, Any]] = None
     if topology_declaration.get("rules") and deltas and not findings:
         after_feats, _ = apply_deltas_to_features(preview_fc.get("features") or [], deltas)
         after_feats, _ = apply_schema_ops_to_features(after_feats, schema_ops)
         after_fc = {**preview_fc, "features": after_feats}
         affected = list(
             set(wfids)
-            | {d.get("wfid") for d in deltas if isinstance(d, dict) and d.get("presence") == "created"}
+            | {
+                d.get("wfid")
+                for d in deltas
+                if isinstance(d, dict) and d.get("wfid")
+            }
         )
-        findings.extend(check_topology(after_fc, [w for w in affected if w], topology_declaration))
+        affected = [w for w in affected if w]
+        post = check_topology(after_fc, affected, topology_declaration)
+        if has_shared_ops:
+            # 共享拓扑编辑：基线/新增分离（任务书 WP2 —— 新增违规阻断，
+            # 基线存量违规披露不阻断；无身份键的否定性信号恒按新增保守处理）。
+            baseline = check_topology(preview_fc, affected, topology_declaration)
+            new_violations, existing_violations = split_topology_findings(baseline, post)
+            findings.extend(new_violations)
+            topology_context = {
+                "new_violations": len(new_violations),
+                "existing_violations": len(existing_violations),
+                "existing": existing_violations[:24],
+                "baseline_total": len(baseline),
+                "post_total": len(post),
+                "rules": list(topology_declaration.get("rules") or []),
+                "tolerance_m": topology_declaration.get("tolerance_m"),
+            }
+        else:
+            findings.extend(post)
+
+    # 共享拓扑编辑的 impact 投影（任务书 WP1 typed impact plan）：选中对象、
+    # 邻接受影响对象（索引成员关系判定）、测地量变化、原子性范围披露。
+    impact: Optional[Dict[str, Any]] = None
+    if has_shared_ops and deltas:
+        from app.services.feature_edit.contracts import MAX_IMPACT_NEIGHBORS
+
+        # R2-N5：邻接投影与 op 求值同匹配参数（首个共享 op 的声明 + 信封
+        # 默认）—— 否则容差/层级模式下 affected_neighbors 会漏报。
+        first_shared = next(
+            (op for op in derive_ops if isinstance(op, dict) and op.get("op") in SHARED_GEOMETRY_OPS),
+            {},
+        )
+        idx, idx_findings = build_shared_index(
+            preview_fc,
+            tolerance_m=first_shared.get("tolerance_m"),
+            level_field=first_shared.get("level_field") or (
+                payload.get("level_field")
+                if isinstance(payload, dict) and isinstance(payload.get("level_field"), str)
+                else None
+            ),
+        )
+        delta_wfids = {str(d.get("wfid")) for d in deltas if isinstance(d, dict) and d.get("wfid")}
+        neighbor_rows: List[Dict[str, Any]] = []
+        if idx is not None and not idx_findings:
+            # 邻接相对**选中目标**计算（传播对象本身也是 delta 成员，若按
+            # delta 集合查询会把彼此抵消掉 → 空邻接）。
+            neighbor_rows = idx.neighbors_of(set(wfids) or delta_wfids)
+        neighbors_truncated = len(neighbor_rows) > MAX_IMPACT_NEIGHBORS
+        impact = {
+            "selected": wfids[:MAX_PLAN_TARGETS],
+            "touched_features": len(delta_wfids),
+            "affected_neighbors": neighbor_rows[:MAX_IMPACT_NEIGHBORS],
+            "neighbors_truncated": neighbors_truncated,
+            "measure_delta": vertex_delta_summary(deltas),
+            "atomicity": {
+                "scope": ref_id,
+                "cross_dataset": "blocked",
+                "note": "edit transaction is dataset-scoped (single ref); "
+                "cross-dataset atomic commit is not supported and is never attempted",
+            },
+            "index": "unavailable" if idx_findings else "built",
+        }
+        if neighbors_truncated:
+            impact["neighbor_cap"] = MAX_IMPACT_NEIGHBORS
 
     n_targets = len(wfids)
     plan: Dict[str, Any] = {
@@ -725,6 +910,9 @@ def build_plan(
         "expected_fingerprint": dataset_fingerprint,
         # G44：合同 read-set 绑定（commit 锁内冷读复核；None = 预览时无 active 合同）
         "expected_contract": expected_contract,
+        # 共享拓扑编辑（goal-gis-topology-authoring）：impact 投影 + 基线违规披露
+        "impact": impact,
+        "topology_context": topology_context,
         "status": "pending" if not findings else "invalid",
         "created_at": time.time(),
     }
@@ -801,7 +989,7 @@ def _bbox(geometry: GeoJSONGeometry) -> Optional[List[float]]:
 
 def summarize_plan(plan: Dict[str, Any]) -> PlanSummary:
     """Agent 可见的有界摘要（不含未编辑字段的属性值）。"""
-    return {
+    out: PlanSummary = {
         "plan_id": plan.get("plan_id"),
         "ref_id": plan.get("ref_id"),
         "status": plan.get("status"),
@@ -816,6 +1004,25 @@ def summarize_plan(plan: Dict[str, Any]) -> PlanSummary:
             {"from": s.get("from"), "to": s.get("to")} for s in plan.get("schema_ops") or []
         ],
     }
+    impact = plan.get("impact")
+    if isinstance(impact, dict):
+        measure = impact.get("measure_delta") if isinstance(impact.get("measure_delta"), dict) else {}
+        out["impact_summary"] = {
+            "touched_features": impact.get("touched_features"),
+            "affected_neighbors": len(impact.get("affected_neighbors") or []),
+            "neighbors_truncated": impact.get("neighbors_truncated"),
+            "area_delta_m2": measure.get("area_delta_m2"),
+            "length_delta_m": measure.get("length_delta_m"),
+            "atomicity": impact.get("atomicity"),
+        }
+    topology_context = plan.get("topology_context")
+    if isinstance(topology_context, dict):
+        out["topology_context"] = {
+            "new_violations": topology_context.get("new_violations"),
+            "existing_violations": topology_context.get("existing_violations"),
+            "rules": topology_context.get("rules"),
+        }
+    return out
 
 
 def _extract_fc(data: Any) -> Optional[GeoJSONFeatureCollection]:

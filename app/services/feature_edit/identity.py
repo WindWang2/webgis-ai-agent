@@ -231,6 +231,11 @@ def normalize_op_wfids(
                 raw_ids.extend(str(w) for w in op["wfids"] if isinstance(w, str))
             if isinstance(op.get("wfid"), str):
                 raw_ids.append(op["wfid"])  # split_feature 单值目标
+            # 共享拓扑编辑（goal-gis-topology-authoring）：嵌套要素引用
+            for nested_key in ("at", "endpoint", "to"):
+                nested = op.get(nested_key)
+                if isinstance(nested, dict) and isinstance(nested.get("wfid"), str):
+                    raw_ids.append(nested["wfid"])
     if not raw_ids:
         return ops
     wfid_map = natural_to_wfid_index(mat_fc)
@@ -242,4 +247,8 @@ def normalize_op_wfids(
             op["wfids"] = [wfid_map.get(str(w), str(w)) for w in op["wfids"]]
         if isinstance(op.get("wfid"), str):
             op["wfid"] = wfid_map.get(str(op["wfid"]), op["wfid"])
+        for nested_key in ("at", "endpoint", "to"):
+            nested = op.get(nested_key)
+            if isinstance(nested, dict) and isinstance(nested.get("wfid"), str):
+                nested["wfid"] = wfid_map.get(str(nested["wfid"]), nested["wfid"])
     return normalized
