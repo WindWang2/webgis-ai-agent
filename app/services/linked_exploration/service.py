@@ -235,6 +235,17 @@ def _validate_plan_payload(plan_raw: Dict[str, Any]) -> contract.ExplorationPlan
             "INVALID_PLAN", f"计划校验失败：{e}", status_code=422) from e
 
 
+def _require_v2_storage(plan: contract.ExplorationPlan) -> None:
+    """v3 多源计划的保存/重开编排由多源 preview 引入后开放（WP3）；
+    在此之前 typed 拒绝，绝不带着 AttributeError 崩成 500。"""
+    if plan.sources:
+        raise LinkedExplorationError(
+            "MULTI_SOURCE_VIEW_UNSUPPORTED",
+            "多源计划（schema_version=3）的视图保存尚未开放：请使用单源计划",
+            status_code=422,
+            correction_hint="多源保存将在多源预览上线后开放。")
+
+
 def _plan_conditions(plan: contract.ExplorationPlan) -> List[Any]:
     try:
         return contract.parse_conditions(plan.conditions)
@@ -261,6 +272,7 @@ async def save_view(
 ) -> Dict[str, Any]:
     """保存命名视图：重新冻结核对锚（保存时源必须仍与计划锚同代）。"""
     plan = _validate_plan_payload(plan_raw)
+    _require_v2_storage(plan)
     if not title or len(title) > 200:
         raise LinkedExplorationError(
             "INVALID_TITLE", "标题必须是 1-200 字符", status_code=422)
@@ -377,9 +389,10 @@ async def update_view(
     row = await _owned_view(view_id, session_id)
     new_plan_raw = plan_raw if plan_raw is not None else row.plan
     plan = _validate_plan_payload(new_plan_raw)
-    # review P2-1：换计划与保存同面 —— 重新冻结核对锚（防 PATCH 绕过
-    # save_view 的 STALE_SOURCE 合同）
     if plan_raw is not None:
+        # review P2-1：换计划与保存同面 —— 重新冻结核对锚（防 PATCH 绕过
+        # save_view 的 STALE_SOURCE 合同）
+        _require_v2_storage(plan)
         frozen = await freeze_source_typed(
             session_id, plan.anchor.ref_id,
             owner_token=_actor_owner_token(actor), trusted_dispatch=_trusted(actor))
