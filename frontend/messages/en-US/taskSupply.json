@@ -48,5 +48,17 @@
   "receipt": "Artifact",
   "denominatorNote": "Rate conclusions require denominator role data",
   "licenseNote": "License undeclared: disclosed only, authorization never fabricated",
-  "displayOnlyNote": "Display-only sources cannot enter numeric statistics"
+  "displayOnlyNote": "Display-only sources cannot enter numeric statistics",
+  "stateDraft": "Draft",
+  "stateNeedsConfirmation": "Needs confirmation",
+  "stateReady": "Ready",
+  "stateExecuting": "Executing",
+  "stateCompleted": "Completed",
+  "statePartial": "Partial",
+  "stateCancelled": "Cancelled",
+  "actionUseBound": "Use bound",
+  "actionAcquire": "Acquire",
+  "actionDerive": "Derive",
+  "actionClarify": "Clarify",
+  "actionUserUpload": "User upload"
 }

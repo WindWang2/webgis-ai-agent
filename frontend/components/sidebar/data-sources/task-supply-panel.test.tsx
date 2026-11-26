@@ -144,7 +144,8 @@ describe('TaskSupplyPanel', () => {
     });
     fireEvent.click(screen.getByTestId('tds-create-plan'));
     await waitFor(() => expect(screen.getByTestId('tds-step')).toBeTruthy());
-    expect(document.body.textContent).toContain('requires_confirmation');
+    expect(document.body.textContent).toContain(
+      'taskSupply.stateNeedsConfirmation');
     // 执行被禁用（needs confirmation）
     expect(
       (screen.getByTestId('tds-execute') as HTMLButtonElement).disabled,

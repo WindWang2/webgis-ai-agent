@@ -52,7 +52,8 @@ _VECTOR_MARKERS = ("parquet", "geojson", "feature", "vector", "table",
                    "shapefile", "gpkg")
 _DISPLAY_MARKERS = ("tile", "wms", "wmts", "pmtiles", "xyz")
 
-_MAX_SESSION_PLANS = 20
+_MAX_PLANS_PER_SESSION = 10
+_MAX_SESSIONS = 200
 
 
 def derive_role_class(entry: CatalogEntry) -> str:
@@ -101,7 +102,10 @@ def entry_to_candidate(entry: CatalogEntry) -> CoverageCandidate:
         license="",                    # 无许可证据 → 空（评估侧披露）
         attribution="",
         cost_hint=cost_hint or None,
-        source=f"catalog:{scope}",
+        # fabric 通道需携带 source_ref（sync id 约定的 source_id 部分），
+        # 供执行面解析 CatalogItemModel；其余通道保持 scope 标注
+        source=(entry.source_ref if scope == "fabric" and entry.source_ref
+                else f"catalog:{scope}"),
     )
 
 
@@ -182,25 +186,27 @@ async def discover_task_candidates(
         owner=session_id,
     )
     candidates: List[CoverageCandidate] = []
-    skipped_no_role: List[str] = []
+    skipped_invalid: List[str] = []
+    not_serving = 0
     for entry in result.entries[:50]:
         try:
             cand = entry_to_candidate(entry)
         except ValueError as e:
-            skipped_no_role.append(f"{entry.entry_id}: {e}")
+            skipped_invalid.append(f"{entry.entry_id}: {e}")
             continue
+        # R1 评审 C P3-6：不映射请求角色的候选**不静默丢弃**——
+        # 全量返回（带 serves_roles），由覆盖评估只评 serving 并在矩阵
+        # unknown_reasons 诚实披露其余未评估
         if roles and not (set(cand.serves_roles) & set(roles)):
-            skipped_no_role.append(
-                f"{entry.entry_id}: role={entry.logical_role!r} 不映射到"
-                f"请求角色 {list(roles)}")
-            continue
+            not_serving += 1
         candidates.append(cand)
     meta = {
         "sources_queried": [s.model_dump() for s in result.sources_queried],
         "total_matched": result.total_matched,
         "returned": len(candidates),
         "truncated": result.truncated,
-        "skipped_invalid": skipped_no_role[:4],
+        "skipped_invalid": skipped_invalid[:4],
+        "not_serving_requested_roles": not_serving,
         "bbox_coarse_filter": norm_bbox is not None,
         "note": ("跨日期线任务框不走目录 bbox 粗筛（全量枚举候选，"
                  "由覆盖评估精确判定）" if norm_bbox is None
@@ -233,29 +239,47 @@ def build_requirement_from_args(
 
 
 class TaskSupplyStore:
-    """会话作用域供给计划存储（进程内、有界 LRU、owner 隔离）。"""
+    """会话作用域供给计划存储（进程内、**按会话分桶**的 LRU、owner 隔离）。
+
+    R1 评审 B P1-5：全局单一 LRU 会让任一会话连建 N 个计划就驱逐其他
+    会话的待执行计划（可用性攻击）——改为每会话独立配额 + 会话数上限。
+    """
 
     def __init__(self) -> None:
-        self._plans: "OrderedDict[Tuple[str, str], SupplyPlan]" = OrderedDict()
+        self._buckets: "OrderedDict[str, OrderedDict[str, SupplyPlan]]" = (
+            OrderedDict())
+
+    def _bucket(self, sid: str) -> "OrderedDict[str, SupplyPlan]":
+        b = self._buckets.get(sid)
+        if b is None:
+            b = OrderedDict()
+            self._buckets[sid] = b
+            while len(self._buckets) > _MAX_SESSIONS:
+                self._buckets.popitem(last=False)
+        else:
+            self._buckets.move_to_end(sid)
+        return b
 
     def save(self, session_id: str, plan: SupplyPlan) -> None:
-        key = (str(session_id)[:128], plan.plan_id)
-        self._plans[key] = plan
-        self._plans.move_to_end(key)
-        while len(self._plans) > _MAX_SESSION_PLANS:
-            self._plans.popitem(last=False)
+        sid = str(session_id)[:128]
+        b = self._bucket(sid)
+        b[plan.plan_id] = plan
+        b.move_to_end(plan.plan_id)
+        while len(b) > _MAX_PLANS_PER_SESSION:
+            b.popitem(last=False)
 
     def get(self, session_id: str, plan_id: str) -> Optional[SupplyPlan]:
         """owner 严格隔离：跨会话取他人计划 → None（不泄漏存在性）。"""
-        return self._plans.get((str(session_id)[:128], str(plan_id)[:96]))
+        b = self._buckets.get(str(session_id)[:128])
+        return b.get(str(plan_id)[:96]) if b is not None else None
 
     def drop(self, session_id: str, plan_id: str) -> bool:
-        return self._plans.pop(
-            (str(session_id)[:128], str(plan_id)[:96]), None) is not None
+        b = self._buckets.get(str(session_id)[:128])
+        return b.pop(str(plan_id)[:96], None) is not None if b else False
 
     def list_ids(self, session_id: str) -> List[str]:
-        return [pid for (sid, pid) in self._plans
-                if sid == str(session_id)[:128]]
+        b = self._buckets.get(str(session_id)[:128])
+        return list(b.keys()) if b else []
 
 
 _STORE = TaskSupplyStore()

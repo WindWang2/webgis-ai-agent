@@ -243,23 +243,6 @@ class CoverageMatrix:
 
 # ── 几何工具（metric CRS + 跨日期线） ────────────────────────────────────
 
-def _shift_frame_lon(x: float, lo: float, hi: float) -> float:
-    """把经度 x 平移 k*360 使其落入 [lo, hi] 连续帧（跨线任务用）。"""
-    for k in (0.0, 360.0, -360.0):
-        v = x + k
-        if lo - 1e-9 <= v <= hi + 1e-9:
-            return v
-    return x
-
-
-def _task_frame(task_poly) -> Tuple[float, float]:
-    """任务多边形所在连续帧的经度范围（普通任务 = 自身 bbox）。"""
-    minx, miny, maxx, maxy = task_poly.bounds
-    if minx > maxx:  # 理论不会（shapely 已连续）；防御
-        minx, maxx = maxx, minx
-    return minx, maxx
-
-
 def _metric_transform(lon: float, lat: float):
     """centroid → 本地 UTM Transformer（WGS84）。"""
     from pyproj import CRS, Transformer
@@ -288,8 +271,14 @@ def _polygon_from_geojson(geometry: Dict[str, Any]):
 
 
 def _normalize_antimeridian_coords(coords: Any) -> Any:
-    """递归平移跨线几何顶点：max-min>180 时，负经度 +360（或 >180 的
-    全体 -360），把 ±180 两侧拆开的顶点并成连续帧。"""
+    """跨线几何顶点归一（**逐顶点**帧选择，非整体平移）。
+
+    ±180 拆分约定（GIS 软件导出跨线 AOI 的标准形态：顶点一正一负，
+    如 170 与 -170）必须只平移越界一侧——整体平移在平面上是纯平移，
+    会把 20° 真带变成 340° 宽的错误形状（R1 评审 A P0-1）。
+    规则：max-min>180 时，min<0 → 负经度逐顶点 +360；否则 >180 的
+    逐顶点 -360。未越界顶点保持不变。
+    """
     xs: List[float] = []
 
     def collect(node: Any) -> None:
@@ -304,17 +293,21 @@ def _normalize_antimeridian_coords(coords: Any) -> Any:
     collect(coords)
     if not xs or (max(xs) - min(xs)) <= 180.0:
         return coords
-    shift = 360.0 if min(xs) < 0 else -360.0
 
-    def shift_node(node: Any) -> Any:
+    def shift_vertex(node: Any) -> Any:
         if isinstance(node, (list, tuple)):
             if (len(node) >= 2 and isinstance(node[0], (int, float))
                     and isinstance(node[1], (int, float))):
-                return [float(node[0]) + shift, node[1], *list(node[2:])]
-            return [shift_node(c) for c in node]
+                x = float(node[0])
+                if min(xs) < 0 and x < 0:
+                    return [x + 360.0, node[1], *list(node[2:])]
+                if min(xs) >= 0 and x > 180.0:
+                    return [x - 360.0, node[1], *list(node[2:])]
+                return [x, node[1], *list(node[2:])]
+            return [shift_vertex(c) for c in node]
         return node
 
-    return shift_node(coords)
+    return shift_vertex(coords)
 
 
 def _shift_geometry_to_frame(geometry: Dict[str, Any],
@@ -445,8 +438,6 @@ def evaluate_task_coverage(
     matrix.method_notes.append(
         "未知（no evidence）≠ 不存在（none）；展示级来源不进数值统计资格")
 
-    candidates = list(candidates)[:_MAX_CANDIDATES_PER_ROLE * 8]
-
     for item in requirement.items:
         role = RoleCoverage(role=item.role)
         serving = [c for c in candidates if item.role in c.serves_roles]
@@ -454,6 +445,14 @@ def evaluate_task_coverage(
             role.unknown_reasons.append(
                 f"无候选声明服务角色 {item.role}（候选数 "
                 f"{len(candidates)}）——未搜索/未登记 ≠ 不存在")
+        elif len(serving) > _MAX_CANDIDATES_PER_ROLE:
+            # 溢出诚实披露（R1 评审 A P2-1）：超上限候选未评估，
+            # 绝不静默丢弃证据
+            role.unknown_reasons.append(
+                f"服务角色 {item.role} 的候选 {len(serving)} 个超过单角色"
+                f"评估上限 {_MAX_CANDIDATES_PER_ROLE}——按目录序取前 "
+                f"{_MAX_CANDIDATES_PER_ROLE} 个评估，其余未核验（不冒充"
+                "不存在）")
         for cand in serving[:_MAX_CANDIDATES_PER_ROLE]:
             role.evaluations.append(
                 _evaluate_one(item, cand, requirement))
@@ -587,13 +586,11 @@ def _evaluate_one(item, cand: CoverageCandidate,
         scope.time_range, cand.temporal_coverage)
     ev.temporal_verdict = t_verdict
     ev.gaps.extend(t_gaps)
-    if (t_verdict == "none"
-            and any(g.get("code") == "COVERAGE_TEMPORAL_DISJOINT"
-                    for g in t_gaps)):
-        if item.state == "candidate_found" or True:
-            # 版本/期次不匹配是覆盖缺口的一种（不自动判数据过期——
-            # 需求侧显式声明时间窗才有此判定）
-            pass
+    if t_verdict == "none":
+        # 期次不匹配：期次缺口由供给计划层消费（R1 评审 A P1-1——计划
+        # 必须为此设确认门，不得静默放行执行）
+        ev.disclosures.append(
+            "候选期次与任务时间窗不匹配——获取前需用户确认口径")
 
     # ── 属性 ──
     cand_fields = set(cand.fields)
@@ -623,9 +620,12 @@ def _evaluate_one(item, cand: CoverageCandidate,
         ev.disclosures.append(
             "记录完备性未知：覆盖面积比不构成要素/记录完整度的证据")
 
-    # ── 科学适用性：消费方法 × role_class ──
+    # ── 科学适用性：消费方法 × role_class（R1 评审 A P2-8 全门控） ──
+    _FEATURE_METHODS = ("density", "temporal_comparison")
     for m in item.consumption_methods:
-        if m in _NUMERIC_METHODS:
+        if m == "map_display":
+            ev.fit_for_methods[m] = True
+        elif m in _NUMERIC_METHODS or m in _FEATURE_METHODS:
             fit = cand.role_class in ("numeric_raster", "vector_features")
             if cand.role_class == "display_only":
                 ev.disclosures.append(
@@ -633,7 +633,9 @@ def _evaluate_one(item, cand: CoverageCandidate,
                     "地图展示")
             ev.fit_for_methods[m] = fit
         else:
-            ev.fit_for_methods[m] = True
+            # accessibility / geometry_skeleton 需要素级几何——展示级与
+            # unknown 一律不可（unknown 不自动当成功）
+            ev.fit_for_methods[m] = cand.role_class == "vector_features"
     if (cand.role_class == "display_only"
             and "numeric_stats" not in ev.fit_for_methods):
         # 显式记录（而非缺省缺席）：展示级来源对数值统计不可用，

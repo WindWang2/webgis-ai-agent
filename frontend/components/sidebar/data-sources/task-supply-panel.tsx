@@ -8,7 +8,7 @@
  * 只读覆盖预览不写当前制图地图；采用/执行走既有 revision/确认通道。
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import {
   compareTaskCoverage,
@@ -19,6 +19,24 @@ import {
 } from '@/lib/api/task-data-supply';
 import { describeApiError } from '@/lib/api/transport';
 import { useT } from '@/lib/i18n/useT';
+
+const STATE_KEYS: Record<string, string> = {
+  draft: 'taskSupply.stateDraft',
+  requires_confirmation: 'taskSupply.stateNeedsConfirmation',
+  ready: 'taskSupply.stateReady',
+  executing: 'taskSupply.stateExecuting',
+  completed: 'taskSupply.stateCompleted',
+  partial: 'taskSupply.statePartial',
+  cancelled: 'taskSupply.stateCancelled',
+};
+
+const ACTION_KEYS: Record<string, string> = {
+  use_bound: 'taskSupply.actionUseBound',
+  acquire: 'taskSupply.actionAcquire',
+  derive: 'taskSupply.actionDerive',
+  clarify: 'taskSupply.actionClarify',
+  user_upload: 'taskSupply.actionUserUpload',
+};
 
 const VERDICT_KEYS: Record<string, string> = {
   full: 'taskSupply.verdictFull',
@@ -50,6 +68,13 @@ export function TaskSupplyPanel({ sessionId, ownerToken }: TaskSupplyPanelProps)
   const [plan, setPlan] = useState<SupplyPlan | null>(null);
   const [busy, setBusy] = useState<'coverage' | 'plan' | 'execute' | null>(null);
   const [error, setError] = useState('');
+
+  // P3-7C（R1 评审 C）：会话切换时重置计划与覆盖视图，防旧会话残留
+  useEffect(() => {
+    setPlan(null);
+    setCoverageRoles([]);
+    setError('');
+  }, [sessionId]);
 
   const _scope = useCallback(() => {
     const bboxList = bbox.trim()
@@ -92,7 +117,6 @@ export function TaskSupplyPanel({ sessionId, ownerToken }: TaskSupplyPanelProps)
         { ownerToken },
       );
       setPlan(out.plan);
-      setCoverageRoles([]);
     } catch (err) {
       setError(`${t('errorPrefix')}: ${describeApiError(err, t('errorPrefix'))}`);
     } finally {
@@ -102,35 +126,43 @@ export function TaskSupplyPanel({ sessionId, ownerToken }: TaskSupplyPanelProps)
 
   const chooseAlternative = useCallback(
     (role: string, kind: string) => {
+      // P2-4C（R1 评审 C）：函数式读最新 state 收集全部已决策——
+      // 多角色快速连点不丢先前选择；失败回滚乐观状态
+      let prevPlan: SupplyPlan | null = null;
+      const nextChoices: Record<string, string> = {};
       setPlan((prev) => {
-        if (!prev) return prev;
+        prevPlan = prev;
+        for (const s of prev?.steps ?? []) {
+          if (s.user_choice) nextChoices[s.role] = s.user_choice;
+        }
+        nextChoices[role] = kind;
         return {
-          ...prev,
-          steps: prev.steps.map((s) =>
+          ...(prev ?? plan)!,
+          steps: (prev?.steps ?? []).map((s) =>
             s.role === role ? { ...s, user_choice: kind } : s,
           ),
         };
       });
-      // 选择即重建（choices 进后端语义：keep_gap/accept_exceed 等使计划
-      // ready；switch 换目标）——避免「选择后无处应用」的死锁
-      const nextChoices: Record<string, string> = {};
-      for (const s of plan?.steps ?? []) {
-        if (s.user_choice) nextChoices[s.role] = s.user_choice;
-      }
-      nextChoices[role] = kind;
       setError('');
       setBusy('plan');
       createSupplyPlan(
         {
           ..._scope(),
-          budget_max_bytes: plan?.budget_max_bytes ?? null,
+          budget_max_bytes: prevPlan?.budget_max_bytes ?? null,
           choices: nextChoices,
         },
         { ownerToken },
       )
         .then((out) => setPlan(out.plan))
-        .catch((err) =>
-          setError(`${t('errorPrefix')}: ${describeApiError(err, t('errorPrefix'))}`))
+        .catch((err) => {
+          // 失败回滚：还原该角色的乐观决策（不静默残留假状态）
+          setPlan((cur) => cur ? {
+            ...cur,
+            steps: cur.steps.map((s) =>
+              s.role === role ? { ...s, user_choice: '' } : s),
+          } : cur);
+          setError(`${t('errorPrefix')}: ${describeApiError(err, t('errorPrefix'))}`);
+        })
         .finally(() => setBusy(null));
     },
     [_scope, ownerToken, plan, t],
@@ -269,15 +301,18 @@ export function TaskSupplyPanel({ sessionId, ownerToken }: TaskSupplyPanelProps)
         <section aria-label={t('planTitle')} className="flex flex-col gap-1.5">
           <h3 className="text-caption font-medium text-ink">{t('planTitle')}</h3>
           <p className="text-caption text-ink-secondary" data-testid="tds-plan-state">
-            {t('planState')}: {plan.state}
+            {t('planState')}: {t(STATE_KEYS[plan.state] ?? '') || plan.state}
             {plan.budget_status === 'exceeded' ? ` — ${t('budgetExceeded')}` : ''}
           </p>
           {plan.steps.map((s) => (
             <div key={s.role} className="rounded-md border border-edge-subtle p-1.5" data-testid="tds-step">
               <p className="text-caption font-medium text-ink">
-                {s.role} — {s.action}
+                {s.role} — {t(ACTION_KEYS[s.action] ?? '') || s.action}
                 {s.candidate_id ? ` (${s.candidate_id})` : ''}
               </p>
+              {(s.disclosures ?? []).map((d, i) => (
+                <p key={i} className="text-caption text-ink-secondary">{d}</p>
+              ))}
               {s.outcome && s.outcome !== 'pending' ? (
                 <p className="text-caption text-ink-secondary">
                   {t('stepOutcome')}: {s.outcome}

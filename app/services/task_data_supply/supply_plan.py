@@ -55,6 +55,8 @@ CHOICE_KINDS = (
     "switch",          # 换候选（switch:<candidate_id>）
     "accept_exceed",   # 接受超预算（显式确认）
     "upload",          # 走上传
+    "search_more",     # 先继续搜索已配置通道（步骤保持 clarify，执行时
+                       # 类型化拒绝并给出指引——诚实不自动执行）
 )
 
 _STEP_OUTCOMES = ("pending", "completed", "partial", "failed", "cancelled")
@@ -82,6 +84,7 @@ class SupplyStep:
     action: str
     candidate_id: str = ""
     channel: str = ""
+    source_ref: str = ""       # fabric 通道：source_id（执行面 id 解析用）
     ads_request: Dict[str, Any] = field(default_factory=dict)
     cost_estimate: Dict[str, Any] = field(default_factory=dict)
     alternatives: List[Dict[str, str]] = field(default_factory=list)
@@ -100,9 +103,9 @@ class SupplyStep:
             "action": self.action,
             "candidate_id": self.candidate_id[:96],
             "channel": self.channel[:32],
+            "source_ref": self.source_ref[:96],
             "ads_request": {
-                k: (v if k in ("dataset_key", "version")
-                    else v) for k, v in list(self.ads_request.items())[:8]
+                k: v for k, v in list(self.ads_request.items())[:8]
             },
             "cost_estimate": self.cost_estimate,
             "alternatives": [
@@ -271,7 +274,13 @@ def build_supply_plan(
             steps.append(step)
             plan_parts.append({"role": role, "action": step.action})
             continue
-        if kind == "switch" and arg:
+        if kind == "switch":
+            if not arg:
+                # R1 评审 C P1-2：裸 switch（无候选目标）不得视为已决策
+                # ——静默落回 best 会欺骗性放行执行原候选
+                raise ValueError(
+                    "SUPPLY_CHOICE_SWITCH_TARGET_REQUIRED: switch 决策必须"
+                    "带候选目标（switch:<candidate_id>）")
             evals = [e for e in evals if e.candidate_id == arg]
             if not evals:
                 raise ValueError(
@@ -322,7 +331,28 @@ def build_supply_plan(
             "sample_rate": 1.0,  # 显式不抽样：降级须用户批准，不静默
         }
         disclosures: List[str] = list(best.disclosures[:2])
+        if (scope.bbox is not None and scope.bbox[0] > scope.bbox[2]):
+            # R1 评审 A P2-7：跨日期线 bbox 对单 bbox 下推的数据面不可解析
+            ads_req["crosses_dateline"] = True
+            disclosures.append(
+                "任务范围跨日期线：单 bbox 下推不可用——执行面将如实披露"
+                "实际获取范围，绝不静默拆分或补齐")
         alternatives: List[Dict[str, str]] = []
+        # P1-1A：期次不匹配必须设确认门——不得静默获取口径错配的数据
+        if best.temporal_verdict == "none":
+            disclosures.append(
+                "候选期次与任务时间窗不匹配（版本/期次缺口）——需用户确认"
+                "口径后才能获取")
+            alternatives.append(
+                {"kind": "keep_gap",
+                 "note": "接受期次缺口（结论将带口径披露，不得伪称同期比较）"})
+            alternatives.append(
+                {"kind": "shrink_scope", "note": "改用候选实际覆盖的期次为任务窗"
+                                                "（重新生成需求合同）"})
+            alternatives.append(
+                {"kind": "search_more", "note": "继续搜索匹配期次的候选"})
+            alternatives.append(
+                {"kind": "upload", "note": "由用户提供匹配期次数据"})
 
         if best.verdict == COVER_DECLARED_ONLY:
             disclosures.append("覆盖未核验（仅声明 bbox 相交）——执行后"
@@ -343,10 +373,12 @@ def build_supply_plan(
             alternatives.append(
                 {"kind": "keep_gap", "note": "保留缺口继续（缺口将进入披露）"})
             if len(evals) > 1:
-                others = [e.candidate_id for e in evals[1:_MAX_ALTERNATIVES]]
-                alternatives.append(
-                    {"kind": "switch",
-                     "note": "换候选: " + ",".join(others)})
+                # R1 评审 C P1-2：switch 逐候选展开（kind=switch:<id>），
+                # UI 单选值即完整决策串——杜绝裸 switch 无效决策
+                for alt in evals[1:_MAX_ALTERNATIVES]:
+                    alternatives.append(
+                        {"kind": f"switch:{alt.candidate_id}",
+                         "note": f"换候选 → {alt.candidate_id}"})
             alternatives.append(
                 {"kind": "upload", "note": "由用户提供该角色数据"})
         if not fit_numeric:
@@ -358,6 +390,9 @@ def build_supply_plan(
             role=role, action=PLAN_ACTION_ACQUIRE,
             candidate_id=best.candidate_id,
             channel=cand.channel if cand else "",
+            source_ref=(cand.source if cand and cand.channel.startswith(
+                "data_fabric") and not str(cand.source).startswith("catalog:")
+                else ""),
             ads_request=ads_req,
             cost_estimate=_cost_of(cand),
             alternatives=alternatives[:_MAX_ALTERNATIVES],
@@ -368,7 +403,13 @@ def build_supply_plan(
         plan_parts.append({
             "role": role, "action": step.action, "cand": step.candidate_id,
             "version": ads_req["version"], "fit": fit_numeric,
-            "choice": step.user_choice})
+            "choice": step.user_choice,
+            # R1 评审 A P2-6：覆盖证据进指纹——证据修正（如 footprint
+            # 从 FULL 改 PARTIAL）必须换键，"旧证明不复用"才对证据漂移成立
+            "verdict": best.verdict,
+            "ratio": (round(best.spatial_ratio, 4)
+                      if best.spatial_ratio is not None else None),
+            "temporal": best.temporal_verdict})
 
     # ── 预算 ──
     total_bytes = 0
@@ -388,19 +429,23 @@ def build_supply_plan(
         budget_status = "exceeded"
 
     # ── 状态与指纹 ──
+    def _choice_kind(choice: str) -> str:
+        return choice.split(":", 1)[0]
+
     needs_confirmation = (
         budget_status == "exceeded" and "accept_exceed" not in
-        [choices.get(s.role, "") for s in steps]
+        [_choice_kind(choices.get(s.role, "")) for s in steps]
     ) or any(
-        s.action in (PLAN_ACTION_CLARIFY, PLAN_ACTION_USER_UPLOAD)
-        or s.alternatives and not s.user_choice
-        and s.action == PLAN_ACTION_ACQUIRE
-        and any(k in {a["kind"] for a in s.alternatives}
-                for k in ("keep_gap", "shrink_scope"))
+        # R1 评审 A P2-2 + C：任何带替代方案的步骤未决策即需确认
+        #（含 display_only×numeric FULL 只有 upload 替代的路径——
+        # 统计口径可能因执行而改变，必须显式确认）；
+        # 已决策（user_choice 非空）不再无限拦（search_more/keep_gap
+        # 是合法终态——执行面会对不可执行步骤类型化拒绝并给指引）
+        bool(s.alternatives) and not s.user_choice
         for s in steps
     )
     budget_acknowledged = any(
-        c == "accept_exceed" for c in choices.values())
+        _choice_kind(c) == "accept_exceed" for c in choices.values())
 
     fp_blob = json.dumps({
         "requirement_id": requirement.requirement_id,

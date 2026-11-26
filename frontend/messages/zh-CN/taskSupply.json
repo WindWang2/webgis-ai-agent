@@ -48,5 +48,17 @@
   "receipt": "产物",
   "denominatorNote": "率结论需要分母角色数据",
   "licenseNote": "许可未声明：只披露，不伪造授权",
-  "displayOnlyNote": "展示级来源不进入数值统计"
+  "displayOnlyNote": "展示级来源不进入数值统计",
+  "stateDraft": "草稿",
+  "stateNeedsConfirmation": "需确认",
+  "stateReady": "可执行",
+  "stateExecuting": "执行中",
+  "stateCompleted": "已完成",
+  "statePartial": "部分完成",
+  "stateCancelled": "已取消",
+  "actionUseBound": "使用已绑定",
+  "actionAcquire": "获取",
+  "actionDerive": "派生",
+  "actionClarify": "需澄清",
+  "actionUserUpload": "用户上传"
 }

@@ -115,6 +115,9 @@ def _validate_bbox(bbox: Any) -> Tuple[Optional[List[float]], bool]:
         raise _scope_rejection("bbox 含 NaN/±Inf 分量")
     if out[1] > out[3]:
         raise _scope_rejection("bbox miny > maxy")
+    if out[1] > 90.0 or out[3] < -90.0 or abs(out[1]) > 90.0 \
+            or abs(out[3]) > 90.0:
+        raise _scope_rejection("bbox 纬度超出 [-90, 90]")
     crosses = out[0] > out[2]
     return out, crosses
 
@@ -142,11 +145,26 @@ def _validate_time_range(time_range: Any) -> Optional[List[str]]:
         except ValueError:
             raise ValueError(
                 f"REQUIREMENT_TIME_INVALID: 无法解析 ISO 日期/时间 {raw!r}")
-    if parsed[0] > parsed[1]:
+    if _comparable_instant(parsed[0]) > _comparable_instant(parsed[1]):
         raise ValueError(
             f"REQUIREMENT_TIME_INVALID: start({time_range[0]}) 晚于 "
             f"end({time_range[1]})")
     return [str(time_range[0]).strip(), str(time_range[1]).strip()]
+
+
+def _comparable_instant(value: Any) -> datetime:
+    """date/datetime、aware/naive 归一到同一可比基准（naive 视为 UTC）。
+
+    R1 评审 A P2-4：date 与 datetime 直接比较、aware 与 naive 直接比较
+    都会 TypeError——坏输入必须类型化拒绝，不能炸未捕获异常。
+    """
+    from datetime import timezone as _tz
+
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=_tz.utc)
+        return value.astimezone(_tz.utc)
+    return datetime(value.year, value.month, value.day, tzinfo=_tz.utc)
 
 
 def _geometry_summary(geometry: Any) -> Dict[str, Any]:
@@ -436,15 +454,21 @@ class TaskDataRequirement:
             self.requirement_id = self._compute_id()
 
     def _compute_id(self) -> str:
+        # 语义集合字段（required_fields/consumption_methods/provenance）
+        # 排序后入指纹——同语义不同顺序是同一份需求合同（R1 评审 A P2-5）
         payload = {
             "version": TDR_VERSION,
             "scope": self.task_scope.normalized(),
-            "items": [
-                {k: v for k, v in it.__dict__.items()
-                 if k not in ("state", "reason_code", "disclosure",
-                              "bound_ref", "degraded")}
-                for it in self.items
-            ],
+            "items": sorted(
+                (
+                    {k: (sorted(v) if isinstance(v, tuple) else v)
+                     for k, v in it.__dict__.items()
+                     if k not in ("state", "reason_code", "disclosure",
+                                  "bound_ref", "degraded")}
+                    for it in self.items
+                ),
+                key=lambda d: d.get("role", ""),
+            ),
         }
         blob = json.dumps(payload, ensure_ascii=False, sort_keys=True,
                           default=str)

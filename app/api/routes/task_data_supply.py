@@ -192,34 +192,15 @@ async def execute_supply_plan(
             status_code=409,
             detail=("TASK_SUPPLY_PLAN_NEEDS_CONFIRMATION: 存在未决策事项"
                     f" {pending[:8]}"))
-    from app.tools.task_data_supply_tools import _execute_step, _planner
+    from app.services.task_data_supply.execution import (
+        execute_plan_steps)
 
-    planner = _planner()
     wanted = set(params.roles)
-    results: List[Dict[str, Any]] = []
-    for step in plan.steps:
-        if wanted and step.role not in wanted:
-            continue
-        if step.action not in ("acquire", "use_bound"):
-            planner.record_outcome(plan, step.role, outcome="failed",
-                                   disclosure=f"步骤动作 {step.action} "
-                                              "不可自动执行")
-            results.append({"role": step.role, "outcome": "failed"})
-            continue
-        try:
-            outcome, receipt, rows, disc = await _execute_step(
-                session_id, step)
-            planner.record_outcome(plan, step.role, outcome=outcome,
-                                   receipt_ref=receipt, rows_written=rows,
-                                   disclosure=disc)
-            results.append({"role": step.role, "outcome": outcome,
-                            "receipt_ref": receipt[:96], "rows": rows})
-        except Exception as e:  # noqa: BLE001
-            planner.record_outcome(plan, step.role, outcome="failed",
-                                   disclosure=f"物化失败: {e}"[:200])
-            results.append({"role": step.role, "outcome": "failed"})
+    results, skipped = await execute_plan_steps(session_id, plan,
+                                                roles=wanted)
     return {"success": True, "plan_id": plan.plan_id,
             "plan_state": plan.state, "results": results[:16],
+            "skipped": skipped[:16],
             "plan": plan.to_bounded_dict()}
 
 

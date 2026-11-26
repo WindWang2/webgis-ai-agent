@@ -64,7 +64,7 @@ def register_task_data_supply_tools(registry: ToolRegistry) -> None:
         param_descriptions={
             "place": "任务地点名（如「成都」；与 bbox 二选一或并用）",
             "bbox": "任务范围 bbox：'minx,miny,maxx,maxy'（跨日期线允许"
-                    "minx>maxy）",
+                    "minx>maxx）",
             "time_range": "任务时间窗：'2024-01-01,2024-12-31'",
             "roles_csv": "数据角色（逗号分隔，⊆ DATA_ROLES）",
             "keyword": "候选名关键词过滤",
@@ -112,7 +112,8 @@ def register_task_data_supply_tools(registry: ToolRegistry) -> None:
                 keyword=keyword, limit=24)
         except Exception as e:  # noqa: BLE001
             return {"success": False, "code": "TASK_SUPPLY_DISCOVERY_FAILED",
-                    "message": f"候选发现失败（如实披露，不伪装空结果）: {e}"}
+                    "message": f"候选发现失败（如实披露，不伪装空结果）: "
+                    f"{str(e)[:300]}"}
         matrix = evaluate_task_coverage(requirement, candidates)
         return {
             "success": True,
@@ -184,7 +185,7 @@ def register_task_data_supply_tools(registry: ToolRegistry) -> None:
                 limit=24)
         except Exception as e:  # noqa: BLE001
             return {"success": False, "code": "TASK_SUPPLY_DISCOVERY_FAILED",
-                    "message": f"候选发现失败（如实披露）: {e}"}
+                    "message": f"候选发现失败（如实披露）: {str(e)[:300]}"}
         matrix = evaluate_task_coverage(requirement, candidates)
         return {
             "success": True,
@@ -267,7 +268,7 @@ def register_task_data_supply_tools(registry: ToolRegistry) -> None:
                 limit=24)
         except Exception as e:  # noqa: BLE001
             return {"success": False, "code": "TASK_SUPPLY_DISCOVERY_FAILED",
-                    "message": f"候选发现失败（如实披露）: {e}"}
+                    "message": f"候选发现失败（如实披露）: {str(e)[:300]}"}
         coverage = evaluate_task_coverage(requirement, candidates)
         try:
             plan = build_supply_plan(
@@ -285,13 +286,18 @@ def register_task_data_supply_tools(registry: ToolRegistry) -> None:
         registry, name="execute_supply_plan",
         tier=2, domains=["dataset"],
         description=(
-            "执行**已批准**的供给计划步骤（显式 approved=True）：acquire "
-            "步骤走既有 MaterializationService 生产数据面物化 → 会话 ref；"
-            "use_bound/local 步骤直接确认绑定。需要确认的计划（存在未决策"
-            "的缺口/超支）会被类型化拒绝并列出待决事项。"
-            "\n何时用：用户已对替代方案做出选择并批准执行。"
-            "\n负例：未 approved 不执行；跨会话计划不可见；部分失败如实"
-            "回写 partial 并保留合法产物。"
+            "执行供给计划中已通过状态门（ready）的步骤：acquire 步骤按计划"
+            "投影（bbox/时间/列，有界行数帽）走既有 MaterializationService"
+            " 生产数据面物化 → 会话 ref；use_bound/local 零获取绑定。存在"
+            "未决策事项（覆盖缺口/期次缺口/超支/不可数值资格）的计划处于"
+            " requires_confirmation 状态，会被类型化拒绝并列出待决事项——"
+            "替代方案决策经 plan_task_supply 的 choices 记录后计划才 ready。"
+            "\n信任边界（如实声明）：approved 由调用方断言，本工具不做"
+            "服务端用户身份核验（与既有 materialize_dataset 同信任级）；"
+            "对最终用户的确认应经 UI/用户决策通道完成后由其侧调用。"
+            "\n负例：requires_confirmation 不执行；跨会话计划不可见；"
+            "重复执行幂等（已完成步骤跳过不重复物化）；部分失败如实回写"
+            " partial 并保留合法产物。"
         ),
         param_descriptions={
             "plan_id": "供给计划 id（plan_task_supply 返回）",
@@ -299,7 +305,7 @@ def register_task_data_supply_tools(registry: ToolRegistry) -> None:
             "roles_csv": "只执行这些角色（缺省=全部 acquire/use_bound 步骤）",
             "session_id": "调用会话",
         },
-        side_effect="artifact_creation", deterministic=False, network=False,
+        side_effect="artifact_creation", deterministic=False, network=True,
         idempotent=True,
         latency_class="slow", memory_class="medium", scale_class="medium",
         output_semantic_type="text", result_size_policy="inline_small",
@@ -343,37 +349,12 @@ def register_task_data_supply_tools(registry: ToolRegistry) -> None:
                 "pending_roles": pending[:8],
             }
         wanted = {r.strip() for r in (roles_csv or "").split(",") if r.strip()}
-        planner = _planner()
-        results = []
-        for step in plan.steps:
-            if wanted and step.role not in wanted:
-                continue
-            if step.action not in ("acquire", "use_bound"):
-                planner.record_outcome(
-                    plan, step.role, outcome="failed",
-                    disclosure=f"步骤动作 {step.action} 不可自动执行"
-                               "（需用户上传/澄清）")
-                results.append({"role": step.role, "outcome": "failed",
-                                "code": "TASK_SUPPLY_STEP_NOT_EXECUTABLE"})
-                continue
-            try:
-                outcome, receipt, rows, disc = await _execute_step(
-                    sid, step)
-                planner.record_outcome(
-                    plan, step.role, outcome=outcome, receipt_ref=receipt,
-                    rows_written=rows, disclosure=disc)
-                results.append({"role": step.role, "outcome": outcome,
-                                "receipt_ref": receipt[:96],
-                                "rows": rows})
-            except Exception as e:  # noqa: BLE001
-                planner.record_outcome(
-                    plan, step.role, outcome="failed",
-                    disclosure=f"物化失败（如实披露）: {e}")
-                results.append({"role": step.role, "outcome": "failed",
-                                "code": "TASK_SUPPLY_MATERIALIZATION_FAILED",
-                                "error": str(e)[:200]})
+        from app.services.task_data_supply.execution import (
+            execute_plan_steps)
+        results, skipped = await execute_plan_steps(sid, plan, roles=wanted)
         return {"success": True, "plan_id": plan.plan_id,
                 "plan_state": plan.state, "results": results[:16],
+                "skipped": skipped[:16],
                 "plan": plan.to_bounded_dict()}
 
     @tool(
@@ -418,14 +399,8 @@ def register_task_data_supply_tools(registry: ToolRegistry) -> None:
         return {"success": True, "plan": plan.to_bounded_dict()}
 
 
-def _planner():
-    from app.services.task_data_supply.supply_plan import SupplyPlanner
-
-    return SupplyPlanner()
-
-
 def _candidate_summary(c) -> dict:
-    """CoverageCandidate → 有界摘要（无 to_bounded_dict 时的兜底）。"""
+    """CoverageCandidate → 有界摘要。"""
     return {
         "candidate_id": c.candidate_id[:96],
         "channel": c.channel[:32],
@@ -434,39 +409,6 @@ def _candidate_summary(c) -> dict:
         "declared_bbox": c.declared_bbox,
         "feature_count": c.feature_count,
     }
-
-
-async def _execute_step(session_id: str, step):
-    """单步骤真实执行：走既有 MaterializationService 生产数据面。
-
-    - acquire + fabric 通道 → DataFabricManager.materialize_catalog_item
-      （REST 与 agent 共用的单管线，产物 ref 统一 ``data-fabric`` 前缀）；
-    - use_bound / local 通道 → 数据已在会话内，确认绑定零获取。
-    返回 (outcome, receipt_ref, rows, disclosure)。
-    """
-    if step.action == "use_bound":
-        return ("completed", step.candidate_id, None,
-                "已绑定数据直接使用（零获取）")
-    cand_channel = (step.channel or "").lower()
-    if cand_channel in ("local", ""):
-        return ("completed", step.candidate_id, None,
-                "会话内已有资产直接使用（零获取）")
-    if cand_channel not in ("data_fabric_catalog", "data_fabric_stac"):
-        return ("failed", "", None,
-                f"通道 {step.channel} 暂无生产物化路径（如实拒绝，"
-                "不静默绕道）")
-    from app.core.database import SessionLocal
-    from app.services.data_fabric.manager import DataFabricManager
-
-    with SessionLocal() as db:
-        result = await DataFabricManager.materialize_catalog_item(
-            db, session_id, item_id=step.candidate_id, query_spec=None)
-    ref = str(result.get("ref_id") or result.get("ref") or "")
-    rows = result.get("rows") if isinstance(result.get("rows"), int) else None
-    if not ref:
-        return ("failed", "", None,
-                f"物化未返回产物 ref（如实失败）: {str(result)[:160]}")
-    return ("completed", ref, rows, "")
 
 
 __all__ = ["register_task_data_supply_tools"]
