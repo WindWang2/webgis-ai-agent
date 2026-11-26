@@ -42,3 +42,20 @@ C「后端可合并，前端两处低成本 P1 修完即可」。
 4. i18n chat.chart.figureTopValues 占位符 zh/en 不一致（master 既有）。
 5. G46 既有 7 条路由 HTTP 直接测试缺位（本线为新路由建网 + 修复
    conv.session_id 潜伏缺陷；旧路由测试网留后续）。
+
+## Round 2 复审结论（2026-11-27）
+
+- B'（并发/授权复审者）：**通过** —— P1 + 4×P3 全部修复带回归测试；同 ref
+  双绑定"拒绝+后缀剥离"组合成立；`_validated_plan` 私有通道确认不可达于
+  REST/工具面（grep 证据）；注入安全闭环（sel-ref 叶编译期过 _validate_ast）。
+- C'（语义/验收复审者）：**通过** —— 13 项请求核验全部真实证据支持；
+  i18n 两 P1 经运行时 createTranslator 探针转绿；无虚报。
+- 复审尾巴（本轮随手清理，全部落实）：
+  ① 单源导出 FC 构造 → _build_frozen_fc + to_thread（已改）
+  ② _source_has_incoming 死代码删除（已删）
+  ③ 新回归文件 asyncio 标记 → 类级（已改）
+  ④ A-P3-5/6/11 回归锚 3 项（已补 TestReviewRegressionAnchors）
+- 勘误：B' 提到的 raster_tile_service.py F401 经逐字节比对为 **master 既有
+  基线**（与本线 diff 无关），记入基线清单不修。
+- 遗留跟进（PR 说明）：inspect 抽样循环（20k 帽）量级数十 ms 可后续下线程；
+  A-P3-12 scope 字符串矩阵（无功能消费者，建议后续契约测试钉住）。

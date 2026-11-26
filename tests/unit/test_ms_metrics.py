@@ -386,3 +386,39 @@ class TestGroupCaps:
         with pytest.raises(Exception) as ei:
             metrics.compute_metric(m, {"pop": rows})
         assert getattr(ei.value, "code", "") == "METRIC_OVER_LIMIT"
+
+
+class TestReviewRegressionAnchors:
+    """审查修复回归锚（A-P3-5/6/11：防回退）。"""
+
+    def test_fsum_overflow_group_unavailable_not_500(self):
+        """A-P3-5：1e308 双行 fsum 中间溢出 → 该组 unavailable_scale。"""
+        rows = [_feat({"v": 1e308}), _feat({"v": 1e308})]
+        m = _metric(op="sum", source_id="pop", value_field="v")
+        out = metrics.compute_metric(m, {"pop": rows})
+        g = out["groups"][0]
+        assert g["available"] is False
+        assert g["unavailable_reason"] == "unsupported_at_scale"
+
+    def test_negative_denominator_unavailable(self):
+        """A-P3-6：负分母（脏数据）→ denominator_non_positive。"""
+        rows = [_feat({"district": "d", "births": 10, "pop": -100})]
+        m = _metric(op="rate", source_id="pop", value_field="births",
+                    denominator_field="pop", group_field="district")
+        out = metrics.compute_metric(m, {"pop": rows})
+        g = out["groups"][0]
+        assert g["available"] is False
+        assert g["unavailable_reason"] == "denominator_non_positive"
+
+    def test_cross_rate_grain_is_denominator_side(self):
+        """A-P3-11：跨源 rate 的 grain_source_id = 分母侧（键即分组）。"""
+        link = _attr_link("l1", "school", "pop", "district", "district")
+        metric = _metric(op="rate", source_id="school",
+                         denominator_source_id="pop", link_id="l1")
+        plan = _plan([_src("pop", role="primary"), _src("school")],
+                     links=[link], metrics_=[metric.model_dump()])
+        m = plan.metrics[0]
+        out = metrics.compute_metric(
+            m, {"school": [], "pop": []},
+            links_by_id={lk.link_id: lk for lk in plan.links})
+        assert out["grain_source_id"] == "pop"

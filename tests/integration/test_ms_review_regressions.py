@@ -12,7 +12,6 @@ import pytest
 
 from app.services.linked_exploration import contract, service
 
-pytestmark = pytest.mark.asyncio
 
 SESSION = "ms-review-session"
 ACTOR = {"user_id": "ms-review", "org_id": None, "owner_token": None,
@@ -82,6 +81,7 @@ def _chain_plan(refs):
     }
 
 
+@pytest.mark.asyncio
 class TestTransitiveNoOp:
     async def test_inert_chain_imposes_no_restriction(self):
         """A-P2-1：全域无条件的 A→B→C 链是 no-op —— C 保持全量 3 行
@@ -145,6 +145,7 @@ class TestCrossRateEndpoints:
             contract.ExplorationPlan.model_validate(raw)
 
 
+@pytest.mark.asyncio
 class TestMultiSourceExport:
     async def test_export_rejects_unprojected_and_discloses_not_on_map(self):
         """A-P2-2/B-P1：复合键传播（不可投影）→ EXPORT_SCOPE_NOT_PROJECTABLE

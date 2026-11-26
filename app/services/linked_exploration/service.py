@@ -635,17 +635,6 @@ async def preview_plan(
     return out
 
 
-def _source_has_incoming(plan: contract.ExplorationPlan, sid: str) -> bool:
-    """源是否有任何指向它的传播边（含经其它源传递的判定交给拓扑序 ——
-    此处只看直接入边）。"""
-    for link in plan.links:
-        if link.propagate == "left_to_right" and link.right_source_id == sid:
-            return True
-        if link.propagate == "right_to_left" and link.left_source_id == sid:
-            return True
-    return False
-
-
 async def _resolve_selection_ref(session_id: str, selection_ref: str) -> Dict[str, Any]:
     """选择史句柄解析（gis_situation selection_history；不可解析 →
     typed 拒绝 + 最小澄清，绝不随机挑一代）。基础设施读失败 ≠ 史空：

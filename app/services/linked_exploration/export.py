@@ -104,17 +104,9 @@ async def export_exploration(
     doc = copy.deepcopy(mapspec)
 
     combined_expr = preview.get("map_filter")
-    frozen_fc = {
-        "type": "FeatureCollection",
-        "features": [
-            {
-                "type": "Feature",
-                "geometry": f.get("geometry"),
-                "properties": (f.get("properties") or {}),
-            }
-            for f in frozen.features if isinstance(f, dict)
-        ],
-    }
+    # review B' 复审跟进①：250k 逐要素构造下线程（复用 _build_frozen_fc）
+    frozen_fc = await asyncio.to_thread(
+        _build_frozen_fc, frozen.features)
     filtered_layer_ids = _apply_layer_filters(
         doc, plan.anchor.ref_id, combined_expr, frozen_fc)
     if combined_expr is not None and not filtered_layer_ids:
