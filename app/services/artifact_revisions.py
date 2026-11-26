@@ -460,7 +460,12 @@ def clone_artifact(
         content_sha256 = str(meta.get("content_payload_sha256") or "")
         content_location = str(meta.get("content_location") or "")
         content_type = CONTENT_TYPE_JSON
-        byte_size = 0
+        summary = meta.get("content_summary")
+        payload_bytes = (
+            summary.get("payload_bytes")
+            if isinstance(summary, dict) else None
+        )
+        byte_size = payload_bytes if isinstance(payload_bytes, int) and payload_bytes > 0 else 0
     if not content_sha256 or not content_location:
         return None  # 无持久内容可指：诚实拒绝
     src_meta = dict(source.metadata_json or {})

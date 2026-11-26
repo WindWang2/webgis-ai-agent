@@ -256,6 +256,8 @@ def _get_session_harness(
         for key in list(_cartography_eval_cache):
             if key[0] == evicted_session:
                 del _cartography_eval_cache[key]
+    if _harness is created and _harnesses.get(session_id) is not created:
+        _harness = next(reversed(_harnesses.values()), None) if _harnesses else None
     return created
 
 

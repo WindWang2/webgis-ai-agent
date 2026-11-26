@@ -139,6 +139,67 @@ async def test_harness_eviction_keeps_in_flight_session_lock():
             cartography_runtime._harness = saved_latest
 
 
+def test_harness_lru_eviction_clears_stale_singleton(monkeypatch):
+    """A concurrent LRU eviction must not leave the singleton pointing at it."""
+    from collections import OrderedDict
+    import threading
+    from types import SimpleNamespace
+
+    from app.services.cartography_runtime import _get_session_harness, get_harness
+
+    paused_sid = "harness-evicted-latest"
+    inserted = threading.Event()
+    resume = threading.Event()
+
+    class PausingOrderedDict(OrderedDict):
+        def __setitem__(self, key, value):
+            super().__setitem__(key, value)
+            if key == paused_sid:
+                inserted.set()
+                if not resume.wait(timeout=5):
+                    raise TimeoutError("timed out waiting to resume harness creation")
+
+    monkeypatch.setattr(cartography_runtime, "_harnesses", PausingOrderedDict())
+    monkeypatch.setattr(cartography_runtime, "_harness", None)
+    monkeypatch.setattr(cartography_runtime, "_cartography_eval_locks", OrderedDict())
+    monkeypatch.setattr(cartography_runtime, "_cartography_eval_cache", OrderedDict())
+    monkeypatch.setattr(cartography_runtime, "_deleted_cartography_sessions", OrderedDict())
+    monkeypatch.setattr(cartography_runtime, "_HARNESS_REGISTRY_LIMIT", 2)
+    monkeypatch.setattr(
+        cartography_runtime,
+        "_build_session_harness",
+        lambda session_id: SimpleNamespace(session_id=session_id),
+    )
+
+    created = []
+    errors = []
+
+    def create_paused_harness():
+        try:
+            created.append(_get_session_harness(paused_sid, create=True))
+        except BaseException as error:
+            errors.append(error)
+
+    worker = threading.Thread(target=create_paused_harness)
+    worker.start()
+    assert inserted.wait(timeout=5)
+    try:
+        for i in range(2):
+            _get_session_harness(f"harness-lru-filler-{i}", create=True)
+        assert paused_sid not in cartography_runtime._harnesses
+    finally:
+        resume.set()
+        worker.join(timeout=5)
+
+    assert not worker.is_alive()
+    assert not errors
+    evicted = created[0]
+    assert cartography_runtime._harness is not evicted
+    assert get_harness(paused_sid) is not evicted
+    clear_cartographic_session_state(paused_sid)
+    assert get_harness() is not evicted
+
+
 @pytest.mark.asyncio
 async def test_lock_in_use_covers_waiter_handoff_window():
     """#1681: _lock_in_use 同时看 locked() 与 _waiters（release 交接窗口）。

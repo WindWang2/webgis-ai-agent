@@ -144,7 +144,7 @@ def to_feature_collection(data: Any) -> dict:
     """Normalize input data into a valid FeatureCollection dict.
 
     Accepts a GeoJSON dict, a features list, a string (parsed via
-    :func:`safe_parse`, which also repairs truncated JSON), a single Feature,
+    :func:`safe_parse`, which rejects truncated JSON), a single Feature,
     or a bare geometry — and always returns a ``{"type": "FeatureCollection",
     "features": [...]}`` dict (never None). Never raises.
     """

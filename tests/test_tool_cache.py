@@ -49,9 +49,16 @@ def test_make_cache_key_no_ref_returns_key():
     assert make_cache_key("x", {"a": "normal", "b": ["c", "d"]}) is not None
 
 
+def test_make_cache_key_deep_args_bypasses_cache():
+    nested = 0
+    for _ in range(2_000):
+        nested = [nested]
+    assert make_cache_key("deep_tool", {"payload": nested}) is None
+
+
 from unittest.mock import patch, MagicMock
 
-from app.lib.tool_cache import get_cached, set_cached, _reset_redis_client_for_tests
+from app.lib.tool_cache import get_cached, set_cached, set_cached_async, _reset_redis_client_for_tests
 
 
 @pytest.fixture(autouse=True)
@@ -112,6 +119,16 @@ def test_set_cached_redis_down_swallows_error():
         mock_client.return_value = mock_redis
         # MUST NOT raise
         set_cached("tool_cache:v1:k", {"a": 1}, ttl=3600)
+
+
+def test_set_cached_deep_result_swallows_recursion_error():
+    nested = 0
+    for _ in range(10_000):
+        nested = [nested]
+    with patch("app.lib.tool_cache._get_redis_client") as mock_client:
+        set_cached("tool_cache:v1:deep", nested, ttl=3600)
+        asyncio.run(set_cached_async("tool_cache:v1:deep", nested, ttl=3600))
+        mock_client.assert_not_called()
 
 
 import asyncio

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import math
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -222,7 +223,8 @@ def _is_regression(
 
 def _delta_pct(direction: str, baseline_value: float, observed: float) -> float:
     if baseline_value == 0:
-        return 0.0 if observed == 0 else math.inf
+        # 百分比无定义；用最大有限值保留劣化方向并确保严格 JSON 可序列化。
+        return 0.0 if observed == 0 else sys.float_info.max
     delta = (observed - baseline_value) / abs(baseline_value) * 100.0
     # low_bad 的"劣化幅度"取负方向量（更小才是更糟）。
     return delta if direction == "high_bad" else -delta
