@@ -5,7 +5,7 @@
  * 而不是"容器里出现了 svg"。
  */
 import { describe, it, expect, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { DorlingDiagram } from './dorling-diagram';
 import type { CartogramLayout } from '@/lib/cartogram/contracts';
 
@@ -100,5 +100,41 @@ describe('DorlingDiagram', () => {
       layout={layout({ circles: [], publication_ready: false })}
       selectedId={null} onSelect={() => {}} />);
     expect(document.querySelector('[data-g47-diagram="empty"]')).not.toBeNull();
+  });
+
+  it('标签阈值计算不把整个半径数组展开进 Math.max', () => {
+    const max = vi.spyOn(Math, 'max');
+    try {
+      render(<DorlingDiagram
+        layout={layout({
+          circles: [
+            ...layout().circles,
+            { feature_id: 'c', label: 'C', x: 500, y: 500, radius: 10, value: 1 },
+          ],
+        })}
+        selectedId={null} onSelect={() => {}} />);
+      expect(max.mock.calls.every((args) => args.length <= 2)).toBe(true);
+    } finally {
+      max.mockRestore();
+    }
+  });
+
+  it('滚轮使用非被动原生监听器，取消默认滚动并缩放图面', () => {
+    const addEventListener = vi.spyOn(SVGSVGElement.prototype, 'addEventListener');
+    try {
+      render(<DorlingDiagram layout={layout()} selectedId={null} onSelect={() => {}} />);
+      const svg = document.querySelector('svg') as SVGSVGElement;
+      expect(addEventListener).toHaveBeenCalledWith(
+        'wheel', expect.any(Function), { passive: false },
+      );
+      const event = new WheelEvent('wheel', {
+        bubbles: true, cancelable: true, deltaY: -100, clientX: 500, clientY: 500,
+      });
+      act(() => { svg.dispatchEvent(event); });
+      expect(event.defaultPrevented).toBe(true);
+      expect(svg.getAttribute('data-g47-view-scale')).toBe('1.200');
+    } finally {
+      addEventListener.mockRestore();
+    }
   });
 });

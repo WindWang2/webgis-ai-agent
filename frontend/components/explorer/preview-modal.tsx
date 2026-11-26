@@ -100,7 +100,7 @@ export function PreviewModal({ result, title, onClose }: PreviewModalProps) {
       ref={dialogRef}
       role="dialog"
       aria-modal="true"
-      aria-label={t('defaultTitle')}
+      aria-labelledby="preview-modal-title"
       tabIndex={-1}
       className="fixed inset-0 z-50 flex items-center justify-center bg-surface-scrim p-3 sm:p-6"
     >
@@ -113,7 +113,7 @@ export function PreviewModal({ result, title, onClose }: PreviewModalProps) {
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <h3 className="truncate text-title font-bold text-ink" title={displayTitle}>
+                <h3 id="preview-modal-title" className="truncate text-title font-bold text-ink" title={displayTitle}>
                   {displayTitle}
                 </h3>
                 <span className="shrink-0 rounded-pill bg-surface-sunken border border-edge-subtle px-2 py-0.5 font-mono text-micro text-ink-secondary">

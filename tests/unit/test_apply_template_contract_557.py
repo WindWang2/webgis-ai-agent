@@ -97,6 +97,44 @@ def test_unknown_provider_id_is_explicit_error():
     assert resolve_provider_id_to_name("no-such-provider-xyz") is None
 
 
+@pytest.mark.asyncio
+async def test_basemap_persists_same_canonical_name_emitted_to_frontend(registry, monkeypatch):
+    """Alias providerIds must not make the persisted spec diverge from the command."""
+    template = {
+        "id": "tmpl_bm_alias",
+        "kind": "basemap",
+        "name": "别名底图",
+        "payload": {"providerId": "carto-positron-labels"},
+    }
+    monkeypatch.setattr(
+        "app.services.templates.intent_resolver.get_template_or_composite",
+        lambda template_id: template if template_id == template["id"] else None,
+    )
+    persisted = {}
+
+    async def fake_set_basemap(session_id, provider_id):
+        persisted.update(session_id=session_id, provider_id=provider_id)
+        return {"success": True}
+
+    monkeypatch.setattr(
+        "app.services.mapspec_store.mapspec_store.set_basemap",
+        fake_set_basemap,
+    )
+
+    result = await registry.dispatch(
+        "apply_template",
+        {"template_id": template["id"]},
+        session_id="session-basemap-alias",
+    )
+
+    assert "error" not in result
+    assert result["params"]["name"] == "Carto Positron 矢量"
+    assert persisted == {
+        "session_id": "session-basemap-alias",
+        "provider_id": result["params"]["name"],
+    }
+
+
 # ── 断点 1：symbology 形状 ────────────────────────────────────────────────
 
 

@@ -113,15 +113,18 @@ def _template_record_to_dict(r) -> Dict[str, Any]:
     }
 
 
-def _list_scoped_user_templates(*, kind: Optional[str] = None) -> List[Any]:
+def _list_scoped_user_templates(
+    *, kind: Optional[str] = None, q: Optional[str] = None, limit: Optional[int] = None,
+) -> List[Any]:
     """DB rows visible to the current tool caller (builtin ∪ creator ∪ org).
 
     Never returns an unscoped ``.all()`` — always applies
-    ``template_scope_clause``. On DB failure returns ``[]`` so the registry
-    seed path still serves builtins.
+    ``template_scope_clause``. Search and row limits stay in SQL so large
+    tenant galleries are not fully hydrated per call. On DB failure returns
+    ``[]`` so the registry seed path still serves builtins.
     """
     try:
-        from sqlalchemy import select as _sel
+        from sqlalchemy import String, cast, or_, select as _sel
 
         from app.core.database import SessionLocal
         from app.models.db_model import CartographyTemplate
@@ -137,6 +140,18 @@ def _list_scoped_user_templates(*, kind: Optional[str] = None) -> List[Any]:
                 stmt = stmt.where(scope)
             if kind:
                 stmt = stmt.where(CartographyTemplate.kind == kind)
+            q_lower = (q or "").lower().strip()
+            if q_lower:
+                escaped = q_lower.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                pattern = f"%{escaped}%"
+                stmt = stmt.where(or_(
+                    CartographyTemplate.name.ilike(pattern, escape="\\"),
+                    CartographyTemplate.description.ilike(pattern, escape="\\"),
+                    CartographyTemplate.category.ilike(pattern, escape="\\"),
+                    cast(CartographyTemplate.keywords, String).ilike(pattern, escape="\\"),
+                ))
+            if limit is not None:
+                stmt = stmt.limit(limit)
             return list(db.execute(stmt).scalars().all())
         finally:
             db.close()
@@ -334,7 +349,7 @@ def register_template_tools(registry: ToolRegistry):
 
         # Also pull tenant-visible DB templates (not in registry).
         # Scope: builtin ∪ creator_id ∪ org_id — same as HTTP gallery (#1442).
-        user_results = _list_scoped_user_templates(kind=kind)
+        user_results = _list_scoped_user_templates(kind=kind, q=q, limit=limit)
 
         user_dicts = [
             {
@@ -616,7 +631,7 @@ def register_template_tools(registry: ToolRegistry):
             if session_id:
                 try:
                     from app.services.mapspec_store import mapspec_store
-                    bres = await mapspec_store.set_basemap(session_id, payload.get("providerId", ""))
+                    bres = await mapspec_store.set_basemap(session_id, canonical_name)
                     if not bres.get("success"):
                         basemap_warning = f"desired-state tracking failed: {bres.get('message')}"
                 except Exception as exc:  # noqa: BLE001 - tracking is best-effort

@@ -61,7 +61,7 @@ export function DorlingDiagram({ layout, selectedId, onSelect, height = 420 }: P
     [circles, hovered, selected],
   );
 
-  const onWheel = useCallback((event: React.WheelEvent<SVGSVGElement>) => {
+  const onWheel = useCallback((event: WheelEvent) => {
     event.preventDefault();
     const svg = svgRef.current;
     if (!svg) return;
@@ -86,6 +86,13 @@ export function DorlingDiagram({ layout, selectedId, onSelect, height = 420 }: P
       };
     });
   }, [extent]);
+
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    svg.addEventListener('wheel', onWheel, { passive: false });
+    return () => svg.removeEventListener('wheel', onWheel);
+  }, [circles.length, onWheel]);
 
   const onPointerDown = useCallback((event: React.PointerEvent<SVGSVGElement>) => {
     if (event.button !== 0) return;
@@ -161,6 +168,7 @@ export function DorlingDiagram({ layout, selectedId, onSelect, height = 420 }: P
   const unit = layout?.legend?.unit || '';
   const zeroCount = (layout?.zero_ids ?? []).length;
   const missingCount = (layout?.missing_ids ?? []).length;
+  const maxRadius = circles.reduce((max, c) => Math.max(max, c.radius), -Infinity);
 
   return (
     <div className="space-y-2" data-g47-diagram="root">
@@ -176,7 +184,6 @@ export function DorlingDiagram({ layout, selectedId, onSelect, height = 420 }: P
           viewBox={`0 0 ${extent} ${extent}`}
           preserveAspectRatio="xMidYMid meet"
           style={{ width: '100%', height, display: 'block', touchAction: 'none', cursor: drag.current ? 'grabbing' : 'grab' }}
-          onWheel={onWheel}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
@@ -227,7 +234,7 @@ export function DorlingDiagram({ layout, selectedId, onSelect, height = 420 }: P
             </g>
             <g fontSize={11 / view.scale} fill="#0f172a" textAnchor="middle" pointerEvents="none">
               {circles
-                .filter((c) => c.radius >= Math.max(...circles.map((x) => x.radius)) * 0.42)
+                .filter((c) => c.radius >= maxRadius * 0.42)
                 .map((c) => (
                   <text key={`label-${c.feature_id}`} x={c.x} y={c.y + 4 / view.scale}>
                     {c.label || c.feature_id}

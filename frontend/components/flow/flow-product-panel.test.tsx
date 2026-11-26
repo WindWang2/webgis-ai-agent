@@ -225,6 +225,55 @@ describe('FlowProductPanel', () => {
     await waitFor(() => expect(refreshMock).toHaveBeenCalledWith(SESSION, 6));
   });
 
+  it('Apply 提交成功后刷新失败不报 applyFailed，并退出编辑态', async () => {
+    commitMapSpecDocument(CANDIDATE_SPEC, 5);
+    previewMock.mockResolvedValue(PREVIEW);
+    commitMock.mockImplementation(async () => {
+      commitMapSpecDocument(APPLIED_SPEC, 6);
+      return { success: true, status: 'committed', mutation_revision: 6 };
+    });
+    refreshMock.mockRejectedValue(new Error('refresh boom'));
+    render(<FlowProductPanel />);
+
+    const sourceSelect = await screen.findByLabelText('OD 表（GeoJSON 源）');
+    fireEvent.change(sourceSelect, { target: { value: 'ref:geojson-od-1' } });
+    await waitFor(() => expect(screen.getByLabelText(/权重字段/)).toHaveValue('trips'));
+    fireEvent.click(screen.getByRole('button', { name: '预览' }));
+    await screen.findByText(/80.0%/);
+    fireEvent.click(screen.getByRole('button', { name: '应用到地图' }));
+
+    await waitFor(() => expect(refreshMock).toHaveBeenCalledWith(SESSION, 6));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByText('已应用到地图')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '预览' })).toBeNull();
+  });
+
+  it('Preview 必填门控覆盖四个经纬度字段与权重字段', async () => {
+    commitMapSpecDocument(CANDIDATE_SPEC, 5);
+    render(<FlowProductPanel />);
+    await waitFor(() => expect(screen.getByLabelText(/权重字段/)).toHaveValue('trips'));
+
+    const previewButton = screen.getByRole('button', { name: '预览' });
+    expect(previewButton).toHaveProperty('disabled', false);
+    for (const [label, value] of [
+      ['起点经度字段', 'origin_lng'],
+      ['起点纬度字段', 'origin_lat'],
+      ['终点经度字段', 'destination_lng'],
+      ['终点纬度字段', 'destination_lat'],
+    ]) {
+      const field = screen.getByLabelText(new RegExp(label));
+      fireEvent.change(field, { target: { value: '' } });
+      expect(previewButton).toHaveProperty('disabled', true);
+      fireEvent.change(field, { target: { value } });
+      expect(previewButton).toHaveProperty('disabled', false);
+    }
+
+    const weightField = screen.getByLabelText(/权重字段/);
+    expect(weightField.closest('div')?.textContent).toContain('必填');
+    fireEvent.change(weightField, { target: { value: '' } });
+    expect(previewButton).toHaveProperty('disabled', true);
+  });
+
   it('预览后改配置 → 预览过期，Apply 禁用并提示', async () => {
     commitMapSpecDocument(CANDIDATE_SPEC, 5);
     previewMock.mockResolvedValue(PREVIEW);

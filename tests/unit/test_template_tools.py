@@ -335,7 +335,7 @@ async def test_list_templates_hides_other_tenant(registry, monkeypatch):
         payload={},
     )
 
-    def fake_list(*, kind=None):
+    def fake_list(*, kind=None, q=None, limit=None):
         # Simulate scoped query result for caller B: only builtin (A's row filtered out).
         rows = [builtin]
         if kind:
@@ -369,7 +369,7 @@ async def test_list_templates_owner_sees_own(registry, monkeypatch):
     monkeypatch.setattr(
         templates_mod,
         "_list_scoped_user_templates",
-        lambda *, kind=None: [owned],
+        lambda *, kind=None, q=None, limit=None: [owned],
     )
 
     token = _bind_caller("user_a", org_id=1)
@@ -494,6 +494,34 @@ def test_list_scoped_never_unscoped_all(monkeypatch):
 
     assert rows == []
     assert "stmt" in captured
+
+
+def test_list_scoped_user_templates_pushes_search_and_limit_to_sql(monkeypatch):
+    """Scoped DB reads must filter q and cap rows in SQL, not after .all()."""
+    captured = {}
+
+    class CapturingSession(_FakeSession):
+        def execute(self, stmt):
+            captured["stmt"] = stmt
+            return _FakeResult([])
+
+    monkeypatch.setattr(
+        "app.core.database.SessionLocal",
+        lambda: CapturingSession(),
+    )
+
+    rows = templates_mod._list_scoped_user_templates(
+        kind="layout", q=" Needle ", limit=7,
+    )
+
+    assert rows == []
+    compiled = captured["stmt"].compile()
+    sql = str(compiled).lower()
+    assert "where" in sql
+    assert "limit" in sql
+    assert "cast" in sql and "keywords" in sql
+    assert "%needle%" in compiled.params.values()
+    assert 7 in compiled.params.values()
 
 
 # ─── #1444 apply_template DB off the event loop ───────────────────────────────

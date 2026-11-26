@@ -34,10 +34,20 @@ describe('PreviewModal', () => {
     const handleClose = vi.fn();
     render(<PreviewModal result={mockQueryResult} onClose={handleClose} />);
 
-    const dialog = screen.getByRole('dialog', { name: '数据样例预览' });
+    const dialog = screen.getByRole('dialog', { name: '数据集: cd-schools-2026' });
     expect(dialog).toBeInTheDocument();
     expect(screen.getByText('数据集: cd-schools-2026')).toBeInTheDocument();
     expect(screen.getByText('共 2 要素')).toBeInTheDocument();
+  });
+
+  it('uses the visible custom title as the dialog accessible name', () => {
+    render(<PreviewModal result={mockQueryResult} title="成都学校分布" onClose={vi.fn()} />);
+
+    const title = screen.getByRole('heading', { name: '成都学校分布' });
+    expect(screen.getByRole('dialog', { name: '成都学校分布' })).toHaveAttribute(
+      'aria-labelledby',
+      title.id
+    );
   });
 
   it('supports switching between 属性表格 and 原始 JSON tabs', async () => {

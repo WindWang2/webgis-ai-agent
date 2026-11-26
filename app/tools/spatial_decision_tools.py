@@ -96,7 +96,7 @@ class ScenarioItem(BaseModel):
 
 
 class ScenarioCompareArgs(BaseModel):
-    scenarios: List[ScenarioItem] = Field(..., description="待对比情景列表（至少 2 个）")
+    scenarios: List[ScenarioItem] = Field(..., min_length=2, description="待对比情景列表（至少 2 个）")
     optimization_goals: Dict[str, str] = Field(
         default_factory=dict,
         description="指标优化方向映射，如 {'housing_price': 'maximize', 'commute_time': 'minimize'}",
@@ -247,8 +247,8 @@ def register_spatial_decision_tools(registry: ToolRegistry):
         if session_id and resolved_session is None:
             return {"type": "error", "message": "session is unavailable in the verified caller scope"}
         session_id = resolved_session or ""
-        if not scenarios:
-            return {"type": "error", "message": "至少需要提供一个方案进行对比。"}
+        if len(scenarios) < 2:
+            return {"type": "error", "message": "至少需要两个方案进行对比。"}
 
         try:
             # P-4（#877）：各方案相互独立（独立 decision_id、geocode/RAG 网络往返），

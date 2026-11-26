@@ -231,7 +231,11 @@ export function FlowProductPanel() {
       }
       const { sessionId, ownerToken } = getMapSpecSessionCursor();
       if (sessionId) {
-        await refreshMapSpecAfterExternalMutation(sessionId, data?.mutation_revision);
+        try {
+          await refreshMapSpecAfterExternalMutation(sessionId, data?.mutation_revision);
+        } catch (err) {
+          devOnly.warn('[FlowProductPanel] map spec refresh after apply failed', err);
+        }
       }
       if (getMapSpecSessionCursor().sessionId !== sessionId || getMapSpecSessionCursor().ownerToken !== ownerToken) return;
       setEditing(false);
@@ -337,11 +341,13 @@ export function FlowProductPanel() {
                   <div key={key}>
                     <label htmlFor={`flow-field-${key}`} className={labelCls}>
                       {t(FIELD_LABEL_KEYS[key])}
-                      {key !== 'weight_field' && <span className="text-ink-disabled"> ({t('flow.fieldRequired')})</span>}
+                      <span className="text-ink-disabled"> ({t('flow.fieldRequired')})</span>
                     </label>
                     <select
                       id={`flow-field-${key}`}
                       className={inputCls}
+                      aria-label={t(FIELD_LABEL_KEYS[key])}
+                      aria-required
                       value={config[key]}
                       disabled={inspectFields.length === 0}
                       onChange={(e) => patchConfig({ [key]: e.target.value } as Partial<FlowProductConfig>)}
@@ -723,7 +729,7 @@ export function FlowProductPanel() {
                 <button
                   type="button"
                   onClick={() => void runPreview()}
-                  disabled={!sessionId || !config.od_table_ref || !config.origin_id_field || !config.destination_id_field || !config.weight_field || preview.status === 'running'}
+                  disabled={!sessionId || !config.od_table_ref || !config.origin_id_field || !config.origin_lng_field || !config.origin_lat_field || !config.destination_id_field || !config.destination_lng_field || !config.destination_lat_field || !config.weight_field || preview.status === 'running'}
                   className="flex-1 rounded-md border border-edge-subtle bg-surface-overlay py-1.5 text-body font-semibold text-ink transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {preview.status === 'running' ? t('flow.previewRunning') : t('flow.previewButton')}

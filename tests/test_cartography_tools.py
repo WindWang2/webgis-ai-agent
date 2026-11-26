@@ -79,6 +79,38 @@ async def test_heatmap_grid_emits_continuous_legend_spec(spatial_registry):
 
 
 @pytest.mark.asyncio
+async def test_heatmap_grid_celery_wait_uses_tool_timeout(spatial_registry, monkeypatch):
+    from unittest.mock import MagicMock
+
+    monkeypatch.setattr("app.lib.tool_cache.get_cached", lambda key: None)
+    monkeypatch.setattr(
+        "app.lib.tool_cache._singleflight_sync",
+        lambda key, ttl, lock_ttl_s, compute: compute(),
+    )
+    task = MagicMock()
+    task.get.return_value = {
+        "success": True,
+        "data": {"type": "FeatureCollection", "features": []},
+    }
+    run_heatmap_generation = MagicMock()
+    run_heatmap_generation.apply_async.return_value = task
+    monkeypatch.setattr(
+        "app.services.spatial_tasks.run_heatmap_generation", run_heatmap_generation
+    )
+
+    out = await spatial_registry.dispatch("heatmap_data", {
+        "geojson": _points(20), "render_type": "grid",
+        "cell_size": 321, "bandwidth_m": 987,
+    })
+
+    assert out.get("command") == "add_layer"
+    task.get.assert_called_once_with(
+        timeout=spatial_registry.metadata("heatmap_data")["timeout"]
+    )
+    task.revoke.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_heatmap_raster_emits_continuous_legend_spec(spatial_registry):
     out = await spatial_registry.dispatch("heatmap_data", {
         "geojson": _points(20), "render_type": "raster",

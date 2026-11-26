@@ -6,8 +6,11 @@ import ast
 import importlib.util
 import sys
 import logging
+import stat
+import tempfile
 import yaml
 from pathlib import Path
+from app.lib.runtime.file_lock import exclusive_file_lock
 from app.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -64,17 +67,32 @@ def approve_runtime_skill(filename: str, file_path: str,
     if lock is None:
         return False
     try:
-        data = json.loads(lock.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            return False
-        section = data.setdefault("runtime_skills", {})
-        if not isinstance(section, dict):
-            return False
-        section[filename] = _sha256_file(file_path)
-        lock.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        # Atomic replacement changes the lock inode, so serialize on a stable sidecar.
+        with lock.with_name(lock.name + ".lock").open("a+b") as lock_file:
+            with exclusive_file_lock(lock_file.fileno()):
+                data = json.loads(lock.read_text(encoding="utf-8"))
+                if not isinstance(data, dict):
+                    return False
+                section = data.setdefault("runtime_skills", {})
+                if not isinstance(section, dict):
+                    return False
+                section[filename] = _sha256_file(file_path)
+                fd, tmp_name = tempfile.mkstemp(
+                    prefix=f".{lock.name}.", suffix=".tmp", dir=str(lock.parent),
+                )
+                try:
+                    os.chmod(tmp_name, stat.S_IMODE(lock.stat().st_mode))
+                    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                        fh.write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+                        fh.flush()
+                        os.fsync(fh.fileno())
+                    os.replace(tmp_name, lock)
+                except BaseException:
+                    try:
+                        os.unlink(tmp_name)
+                    except OSError:
+                        pass
+                    raise
     except (OSError, ValueError):
         return False
     return True
@@ -555,21 +573,20 @@ def _load_single_skill(registry: ToolRegistry, file_path: str, filename: str,
     # audit ISSUE-011：锁启用时先做完整性闸 —— 未登记/篡改的 .py 永不执行。
     if lock_hashes is None:
         lock_hashes = _runtime_skill_hashes(str(Path(file_path).parent))
-    if lock_hashes is not None:
-        expected = lock_hashes.get(filename)
-        actual = _sha256_file(file_path)
-        if expected is None:
-            logger.error(
-                "Skill %s quarantined: not listed in skills-lock.json "
-                "runtime_skills (approve via approve_runtime_skill)", filename,
-            )
-            return
-        if expected != actual:
-            logger.error(
-                "Skill %s quarantined: sha256 mismatch vs skills-lock.json "
-                "(expected %s…, got %s…)", filename, expected[:12], actual[:12],
-            )
-            return
+    expected = lock_hashes.get(filename)
+    actual = _sha256_file(file_path)
+    if expected is None:
+        logger.error(
+            "Skill %s quarantined: not listed in skills-lock.json "
+            "runtime_skills (approve via approve_runtime_skill)", filename,
+        )
+        return
+    if expected != actual:
+        logger.error(
+            "Skill %s quarantined: sha256 mismatch vs skills-lock.json "
+            "(expected %s…, got %s…)", filename, expected[:12], actual[:12],
+        )
+        return
     module_name = f"app.skills.{filename[:-3]}"
     try:
         spec = importlib.util.spec_from_file_location(module_name, file_path)
