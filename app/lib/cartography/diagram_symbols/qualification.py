@@ -132,7 +132,12 @@ def qualify_features(
             row.append((cat, v))
         if row:
             if math.fsum(v for _, v in row) == 0 and kind != "series_bars":
+                # review A#2：全零组成/分段要素 skip-with-accounting（与
+                # bars 零长宽容一致）—— 一个全零区县不再阻塞整层；
+                # geometry 的 ZERO_TOTAL 守卫保留为最终防线。
                 zero_total_features += 1
+                features_empty += 1
+                continue
             values_out.append(row)
             ids_out.append(str(fid))
             if row_missing == n_categories:

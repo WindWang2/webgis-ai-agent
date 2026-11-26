@@ -192,6 +192,14 @@ def normalize_size_policy(
                     f"r_min_px={normalized['r_min_px']} > r_max_px={r_max}",
                     field="size_policy.r_min_px",
                 )
+    elif kind == "segmented_proportional" and bool(sp.get("total_area_encoding")):
+        raise DiagramSymbolError(
+            "INVALID_SIZE_POLICY",
+            "segmented_proportional 的半径律是单值 sqrt(v/v_ref)，"
+            "total_area_encoding 不适用（开了只会虚假声明总量编码）",
+            field="size_policy.total_area_encoding",
+            correction_hint="组成总量面积编码仅 composition_pie/composition_donut 支持",
+        )
     elif kind == "series_bars":
         normalized["h_max_px"] = _finite_positive(sp.get("h_max_px", 40.0), "size_policy.h_max_px")
         if normalized["h_max_px"] > MAX_GLYPH_EXTENT_PX / 2:

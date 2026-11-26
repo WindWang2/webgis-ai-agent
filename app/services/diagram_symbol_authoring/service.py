@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 from app.lib.cartography.diagram_symbols import (
     DiagramSymbolError,
     build_glyph_geometry,
+    normalize_size_policy,
     build_glyph_legend,
     compute_glyph_scale,
     diagram_block_fingerprint,
@@ -168,9 +169,10 @@ def _diagram_legend_spec(block: Dict[str, Any]) -> Dict[str, Any]:
     kind = block["kind"]
     categories = block["categories"]
     sp = dict(block.get("size_policy") or {})
+    scale_for_legend = compute_glyph_scale(kind, [[1.0] * len(categories)], sp)
     legend = build_glyph_legend(
         kind, categories,
-        compute_glyph_scale(kind, [[1.0] * len(categories)], sp),
+        scale_for_legend,
         sp,
         palette_id=block.get("palette_id") or "Set1",
         unit=block.get("unit"),
@@ -258,8 +260,10 @@ def _plan_locked(
             "DIAGRAM.SOURCE.TOO_LARGE", "features",
             f"要素数 {len(features)} 超过图符硬帽 {MAX_PLAN_FEATURES}",
             hint="先经 webgis_layer_aggregate 聚合到区域统计，再对聚合结果入图")])
-    sp = dict(block.get("size_policy") or {})
+    # P0（review A#1）：size_policy 是可选块 —— 必须经归一化器补默认值
+    #（缺省键直接下标会在 compute_glyph_scale 炸裸 KeyError）。
     kind = block["kind"]
+    sp = normalize_size_policy(kind, block.get("size_policy"))
     categories = block["categories"]
     fields = block["fields"]
     qualified = qualify_features(
@@ -389,7 +393,11 @@ async def apply_diagram_symbol(
             new_layer.pop("legend_spec", None)  # 只清自己写的图例
     else:
         new_layer["diagram_symbol"] = block
-        new_layer["legend_spec"] = _diagram_legend_spec(block)
+        existing = new_layer.get("legend_spec")
+        # review B#4：user-wins —— 既有 legend_spec 非"自己写的"则不覆写
+        #（图例双轨披露：图符几何照常渲染，图例保持用户版本）
+        if not (isinstance(existing, dict) and existing.get("source") == _LEGEND_SOURCE_MARKER):
+            new_layer["legend_spec"] = _diagram_legend_spec(block)
 
     compact = {
         "layer_id": str(new_layer.get("id") or layer),

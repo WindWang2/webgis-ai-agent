@@ -351,6 +351,7 @@
     "blocked": "Blocked features",
     "leaderLines": "Leader lines",
     "missing": "Missing accounting",
-    "legendPreview": "Legend categories"
+    "legendPreview": "Legend categories",
+    "notApplied": "Not committed (CAS conflict / failure)"
   }
 }

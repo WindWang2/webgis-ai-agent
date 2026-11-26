@@ -14,7 +14,8 @@
  *
  * 状态纪律：blend 用 blendFuncSeparate(SRC_ALPHA, ONE_MINUS_SRC_ALPHA, ...)
  * （MapLibre 文档对非预乘 alpha 的建议）；不改 depth/stencil；三角化结果
- * 按 geometry 对象弱缓存（geometry 是 oracle 的稳定输出）。
+ * 按 geometry 对象弱缓存（WeakMap，geometry 是 oracle 稳定输出——换 spec
+ * 时实例携带新 geometry 对象，旧条目随 GC 释放）。
  */
 
 import type {
@@ -109,6 +110,18 @@ export function createDiagramSymbolCustomLayer(
     return shader;
   }
 
+  // review B#1：真实三角化缓存（WeakMap by geometry 引用；render() 不再
+  // 每帧重三角化 —— 1k glyph 的 11-18ms/帧 CPU 归零，仅剩投影+填充）。
+  const triCache = new WeakMap<DiagramGlyph, TriangulatedGlyph>();
+  function triangulateCached(instance: DiagramGlyphInstance): TriangulatedGlyph {
+    let tri = triCache.get(instance.geometry);
+    if (tri === undefined) {
+      tri = triangulateGlyph(instance.geometry, instance.palette);
+      triCache.set(instance.geometry, tri);
+    }
+    return tri;
+  }
+
   const layer: DiagramSymbolCustomLayer = {
     id: layerId,
     type: "custom",
@@ -171,7 +184,7 @@ export function createDiagramSymbolCustomLayer(
       for (const instance of visibleGlyphs) {
         const point = mapRef.project([instance.position[0], instance.position[1]]);
         const center: [number, number] = [point.x * dprX, point.y * dprY];
-        const tri = triangulateGlyph(instance.geometry, instance.palette);
+        const tri = triangulateCached(instance);
         prepared.push({ center, triangulated: tri });
         fillVertexCount += tri.vertexCount;
         if (instance.leaderLine && instance.displacementPx > 0) leaderVertexCount += 2;

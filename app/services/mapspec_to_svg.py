@@ -1408,8 +1408,22 @@ def _render_diagram_symbol_layer_svg(
             for row in qualified["values"]
         ]
         bound_radii = [_diagram_glyph_bound_radius(g) for g in geometries]
+        # review A#3：qualification 会剔除"全类别缺失"要素行 → 布局输入
+        # 必须按 glyph_feature_ids 重排对齐（与 service/_features_qualified_order
+        # 及前端孪生同构），否则等长卫兵整层拒绝。
+        fid_order = {
+            str(fid): feat for feat, fid in
+            ((f, (f.get("id") if isinstance(f, dict) and f.get("id") is not None
+                  else (f.get("properties") or {}).get(id_field)))
+             for f in features)
+            if fid is not None
+        }
+        features_aligned = [
+            fid_order[str(fid)] for fid in qualified["glyph_feature_ids"]
+            if str(fid) in fid_order
+        ]
         plan = _diagram_solve_layout(
-            features, qualified, bound_radii,
+            features_aligned, qualified, bound_radii,
             # 无界图符数量拒绝：max_glyphs 硬帽显式进布局政策（超帽 →
             # omitted_budget 会计，不画）。
             layout_policy={"max_glyphs": _DIAGRAM_MAX_GLYPHS},

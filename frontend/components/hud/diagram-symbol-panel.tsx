@@ -161,10 +161,15 @@ export function DiagramSymbolPanel({ layerId }: Props) {
     const epoch = epochRef.current;
     setBusy(true);
     try {
-      await applyDiagramSymbol(
+      const receipt = await applyDiagramSymbol(
         ctx, layerId, block, 'commit', cursor.revision,
         `diagram-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
       if (epoch !== epochRef.current) return;
+      // review B#5：superseded/error 是 200 回执 —— 不能当成功报。
+      if (receipt.status !== 'committed') {
+        toast(`${receipt.status}: ${receipt.error ?? t('diagramSymbol.notApplied')}`, 'error');
+        return;
+      }
       toast(t('diagramSymbol.applied'), 'success');
       await reload();
     } catch (err) {

@@ -351,6 +351,7 @@
     "blocked": "阻塞要素",
     "leaderLines": "引线",
     "missing": "缺失会计",
-    "legendPreview": "图例类别"
+    "legendPreview": "图例类别",
+    "notApplied": "未提交（CAS 冲突/失败）"
   }
 }

@@ -207,8 +207,22 @@ def _normalize_layout_policy(policy: Optional[Mapping[str, Any]]) -> Dict[str, A
         "leader_threshold_px": float(leader_thr),
         "min_zoom_floor": min_zoom_floor,
         "displacement_enabled": bool(p.get("displacement_enabled", True)),
-        "reference_zoom": float(p.get("reference_zoom", 12.0)),
+        "reference_zoom": _finite_zoom(p.get("reference_zoom", 12.0)),
     }
+
+
+def _finite_zoom(value: Any) -> float:
+    """review B#2：reference_zoom 有限性校验（NaN/Inf/越界 → typed 拒绝；
+    NaN 会让 scale/position 全 NaN，1e4 会 2.0**1e4 OverflowError —— 都不是
+    typed 错误，直穿路由成 500）。与 TS 孪生收紧口径对齐。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) \
+            or not math.isfinite(float(value)) or not (0.0 <= float(value) <= 24.0):
+        raise DiagramSymbolError(
+            "INVALID_SIZE_POLICY",
+            f"layout_policy.reference_zoom 非法：{value!r}",
+            correction_hint="取 [0, 24] 内有限数值（Web Mercator zoom 域）",
+        )
+    return float(value)
 
 
 def _glyph_min_zoom(radius_px: float, floor: int) -> int:

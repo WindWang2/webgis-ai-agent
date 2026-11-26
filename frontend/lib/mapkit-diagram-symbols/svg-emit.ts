@@ -58,6 +58,20 @@ function donutSlicePath(cx: number, cy: number, rOuter: number, rInner: number,
                         startDeg: number, endDeg: number): string {
   const span = endDeg - startDeg;
   if (span <= 0) return "";
+  if (span >= 359.999) {
+    // review A#5：全圆环带 —— 弧指令端点重合会整段丢弃，双半圆构造
+    //（与后端 SVG twin 同构）。
+    const mid = startDeg + 180;
+    const [mx, my] = angleUnit(mid);
+    const [sx, sy] = angleUnit(startDeg);
+    const [ex, ey] = angleUnit(endDeg);
+    return `M ${fmt(cx + rOuter * sx)} ${fmt(cy + rOuter * sy)} `
+      + `A ${fmt(rOuter)} ${fmt(rOuter)} 0 0 1 ${fmt(cx + rOuter * mx)} ${fmt(cy + rOuter * my)} `
+      + `A ${fmt(rOuter)} ${fmt(rOuter)} 0 0 1 ${fmt(cx + rOuter * ex)} ${fmt(cy + rOuter * ey)} `
+      + `L ${fmt(cx + rInner * ex)} ${fmt(cy + rInner * ey)} `
+      + `A ${fmt(rInner)} ${fmt(rInner)} 0 0 0 ${fmt(cx + rInner * mx)} ${fmt(cy + rInner * my)} `
+      + `A ${fmt(rInner)} ${fmt(rInner)} 0 0 0 ${fmt(cx + rInner * sx)} ${fmt(cy + rInner * sy)} Z`;
+  }
   const [sx, sy] = angleUnit(startDeg);
   const [ex, ey] = angleUnit(endDeg);
   const large = span > 180 ? 1 : 0;

@@ -96,7 +96,11 @@ export function qualifyFeatureValues(
         missing[cat] = (missing[cat] ?? 0) + 1;
         return;
       }
-      row.push([cat, typeof raw === "number" ? raw : Number(raw)] as GlyphValue);
+      if (typeof raw !== "number" || !Number.isFinite(raw)) {
+        // review A#7：与 Python qualification 同语义 —— 不做静默转型。
+        throw new Error(`FIELD_NOT_NUMERIC: category=${cat} got ${typeof raw}`);
+      }
+      row.push([cat, raw] as GlyphValue);
     });
     if (row.length > 0) {
       values.push(row);
