@@ -437,6 +437,45 @@ async def test_heatmap_raster_enters_mapspec_review(service, fake_registry, clea
 
 
 @pytest.mark.asyncio
+async def test_heatmap_raster_png_write_runs_off_event_loop(
+    service, fake_registry, clean_session, monkeypatch,
+):
+    import threading
+
+    from app.services import raster_store
+
+    png = (
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQ"
+        "AAAABJRU5ErkJggg=="
+    )
+    fake_registry.dispatch.return_value = {
+        "type": "heatmap_raster",
+        "image": f"data:image/png;base64,{png}",
+        "bbox": [116.0, 39.0, 117.0, 40.0],
+        "command": "add_heatmap_raster",
+    }
+    loop_thread = threading.get_ident()
+    write_threads = []
+    real_save_png = raster_store.save_png
+
+    def record_save_png(*args):
+        write_threads.append(threading.get_ident())
+        return real_save_png(*args)
+
+    monkeypatch.setattr(raster_store, "save_png", record_save_png)
+
+    result = await service.dispatch(
+        _tc("heatmap_data", {"render_type": "raster"}, tc_id="heat_off_loop"),
+        clean_session,
+        set(),
+    )
+
+    assert result.status == "ok"
+    assert len(write_threads) == 1
+    assert write_threads[0] != loop_thread
+
+
+@pytest.mark.asyncio
 async def test_heatmap_raster_command_satisfies_frontend_contract(
     service, fake_registry, clean_session,
 ):

@@ -17,7 +17,7 @@ from app.services import report_service as rs
 from app.services.report_service import ReportService
 
 
-def _spec_with_export_layout(paper: str, orientation: str) -> dict[str, Any]:
+def _spec_with_export_layout(paper: str, orientation: str, dpi: int = 300) -> dict[str, Any]:
     return {
         "version": "1.0",
         "sources": {
@@ -31,7 +31,7 @@ def _spec_with_export_layout(paper: str, orientation: str) -> dict[str, Any]:
                 {
                     "id": "exp",
                     "type": "export_layout",
-                    "options": {"paperSize": paper, "orientation": orientation, "dpi": 300},
+                    "options": {"paperSize": paper, "orientation": orientation, "dpi": dpi},
                 }
             ]
         },
@@ -39,19 +39,21 @@ def _spec_with_export_layout(paper: str, orientation: str) -> dict[str, Any]:
 
 
 @pytest.mark.parametrize(
-    "paper,orientation,expected_ratio",
+    "paper,orientation,dpi,expected_ratio",
     [
-        ("A4", "landscape", 297 / 210),
-        ("A4", "portrait", 210 / 297),
-        ("A3", "landscape", 420 / 297),
+        ("A4", "landscape", 300, 297 / 210),
+        ("A4", "portrait", 300, 210 / 297),
+        ("A3", "landscape", 300, 420 / 297),
+        ("A4", "landscape", 150, 297 / 210),
     ],
 )
-def test_report_compile_uses_publication_layout_aspect(paper, orientation, expected_ratio):
+def test_report_compile_uses_publication_layout_aspect(paper, orientation, dpi, expected_ratio):
     """报告附图编译画幅纵横比 == 版面描述 IR.page（前端同源决策）。"""
     svc = ReportService.__new__(ReportService)  # 只测编译接线，不触 DB 面
     captured: dict[str, Any] = {}
 
     def _fake_compile(mapspec, dpi, *, width, height, include_chrome, max_features, timeout_ms):
+        captured["dpi"] = dpi
         captured["width"] = width
         captured["height"] = height
         captured["include_chrome"] = include_chrome
@@ -68,13 +70,14 @@ def test_report_compile_uses_publication_layout_aspect(paper, orientation, expec
     try:
         comp = asyncio.run(
             svc._compile_vector_svg_bounded(
-                _spec_with_export_layout(paper, orientation), timeout_s=5.0
+                _spec_with_export_layout(paper, orientation, dpi), timeout_s=5.0
             )
         )
     finally:
         rs.compile_mapspec_to_svg_detailed = original
 
     assert captured["include_chrome"] is True
+    assert captured["dpi"] == dpi
     assert captured["width"] == 1200
     ratio = captured["width"] / captured["height"]
     assert math.isclose(ratio, expected_ratio, rel_tol=1e-3), (

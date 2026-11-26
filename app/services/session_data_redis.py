@@ -965,12 +965,19 @@ class RedisSessionStore(BaseSessionStore):
         # v2(review 5/6-A4)：fields 预序列化在 WATCH 窗口外 —— 大 mapspec 的
         # dumps（~10ms 级）此前持窗口，WS 感知写并发时 3 次重试的碰撞概率
         # 被无谓放大（finalize 在用户拖动期间以百分比级概率假失败）。
-        pre_serialized: dict[str, str] = {}
-        for key, value in fields.items():
-            pre_serialized[key] = await asyncio.to_thread(
-                json.dumps, value, ensure_ascii=False,
-                default=_numpy_json_default,
+        try:
+            pre_serialized: dict[str, str] = {}
+            for key, value in fields.items():
+                pre_serialized[key] = await asyncio.to_thread(
+                    json.dumps, value, ensure_ascii=False,
+                    default=_numpy_json_default,
+                )
+        except (TypeError, ValueError) as e:
+            logger.warning(
+                "commit_mapspec_state invalid payload for %s: %s",
+                session_id, e,
             )
+            return False
         for _attempt in range(3):
             if _attempt:
                 # 小退避 + 抖动：削平 WS 写风暴下的连续碰撞。
@@ -1977,22 +1984,30 @@ return results
         """
         await self._ensure_connected()
         data_key = self._data_key(session_id, ref_id)
-        try:
-            async with self._r.pipeline() as pipe:
-                await pipe.watch(data_key)
-                if not await pipe.exists(data_key):
-                    await pipe.unwatch()
-                    return False
-                pipe.multi()
-                pipe.expire(data_key, DATA_TTL)
-                pipe.expire(self._descriptor_key(session_id, ref_id), DATA_TTL)
-                pipe.zadd(self._refs_order_key(session_id), {ref_id: time.time()})
-                self._refresh_session_ttl(pipe, session_id)
-                await pipe.execute()
-            return True
-        except aioredis.RedisError as e:
-            logger.warning("Redis ref_exists failed for session %s ref %s: %s", session_id, ref_id, e)
-            return False
+        for _attempt in range(3):
+            try:
+                async with self._r.pipeline() as pipe:
+                    await pipe.watch(data_key)
+                    if not await pipe.exists(data_key):
+                        await pipe.unwatch()
+                        return False
+                    pipe.multi()
+                    pipe.expire(data_key, DATA_TTL)
+                    pipe.expire(self._descriptor_key(session_id, ref_id), DATA_TTL)
+                    pipe.zadd(self._refs_order_key(session_id), {ref_id: time.time()})
+                    self._refresh_session_ttl(pipe, session_id)
+                    await pipe.execute()
+                return True
+            except aioredis.WatchError:
+                continue  # concurrent overwrite / recency write — recheck and retry
+            except aioredis.RedisError as e:
+                logger.warning("Redis ref_exists failed for session %s ref %s: %s", session_id, ref_id, e)
+                return False
+        logger.warning(
+            "Redis ref_exists gave up after 3 concurrent writes for session %s ref %s",
+            session_id, ref_id,
+        )
+        return False
 
     async def _session_ref_ids(self, session_id: str) -> list:
         try:

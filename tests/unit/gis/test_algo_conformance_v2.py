@@ -415,6 +415,20 @@ def test_service_area_simple_travel_time_radius_oracle():
     assert area == pytest.approx(math.pi * 1250.0 ** 2, rel=0.01)
 
 
+def test_service_area_simple_rejects_unknown_mode():
+    """A typo must not silently produce a walking-speed service area."""
+    from app.tools.advanced_spatial import register_advanced_spatial_tools
+
+    reg = ToolRegistry()
+    register_advanced_spatial_tools(reg)
+    with patch("app.tools.advanced_spatial.SpatialAnalyzer.buffer") as buffer:
+        with pytest.raises(ValueError, match="mode"):
+            reg._tools["service_area_simple"](
+                _fc([_point(104.06, 30.57)]), mode="driveing"
+            )
+    buffer.assert_not_called()
+
+
 # ── network.traffic_status_external ───────────────────────────────────
 
 async def test_traffic_status_typed_validation_and_unconfigured(cm_registry, monkeypatch):

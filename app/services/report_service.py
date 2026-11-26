@@ -261,6 +261,7 @@ def _serialize_svg(elem: Any, out: list[str], is_root: bool) -> None:
 
 
 def _clean_svg_tree(elem: Any) -> None:
+    previous_sibling = None
     for child in list(elem):
         ns, local = _split_tag(child.tag) if isinstance(child.tag, str) else ("x", "")
         if (
@@ -272,9 +273,13 @@ def _clean_svg_tree(elem: Any) -> None:
             tail = child.tail
             elem.remove(child)
             if tail:  # 保留兄弟文本
-                elem.text = (elem.text or "") + tail
+                if previous_sibling is None:
+                    elem.text = (elem.text or "") + tail
+                else:
+                    previous_sibling.tail = (previous_sibling.tail or "") + tail
             continue
         _clean_svg_tree(child)
+        previous_sibling = child
     for attr in list(elem.attrib.keys()):
         _, local = _split_tag(attr)
         low = local.lower()
@@ -694,7 +699,7 @@ class ReportService:
             asyncio.get_running_loop().run_in_executor(
                 _REPORT_SVG_COMPILE_POOL,
                 functools.partial(
-                    compile_mapspec_to_svg_detailed, mapspec, 300,
+                    compile_mapspec_to_svg_detailed, mapspec, ir["page"]["dpi"],
                     max_features=min(max_features, TIER_EXPORT_FEATURES),
                     timeout_ms=timeout_ms,
                     width=width,

@@ -279,6 +279,13 @@ def _durable_status(durable_job_id: Optional[str]) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _request_durable_cancel(durable_job_id: str) -> None:
+    from app.services.jobs.store import DurableJobStore
+    from app.tools._utils import db_session
+    with db_session() as db:
+        DurableJobStore.request_cancel_sync(db, durable_job_id)
+
+
 async def status(args: JobRefArgs, principal: str) -> Dict[str, Any]:
     state = load_state(principal, args.job_id)
     artifacts = dict(state.get("artifacts") or {})
@@ -301,7 +308,8 @@ async def status(args: JobRefArgs, principal: str) -> Dict[str, Any]:
         "artifacts": artifacts or None,
         "verification": state.get("verification"),
         "error": state.get("error"),
-        "durable_job": _durable_status(state.get("durable_job_id")),
+        "durable_job": await asyncio.to_thread(
+            _durable_status, state.get("durable_job_id")),
         "completed": state.get("status") == "completed"
                      and bool((state.get("verification") or {}).get("passed")),
     }
@@ -315,11 +323,8 @@ async def cancel(args: JobRefArgs, principal: str) -> Dict[str, Any]:
     durable_id = state.get("durable_job_id")
     if durable_id:
         try:
-            from app.services.jobs.store import DurableJobStore
-            from app.tools._utils import db_session
+            await asyncio.to_thread(_request_durable_cancel, durable_id)
             from app.services.jobs.cancellation import registry as cancel_registry
-            with db_session() as db:
-                DurableJobStore.request_cancel_sync(db, durable_id)
             cancel_registry.cancel(durable_id)
         except Exception:  # noqa: BLE001 — 平台取消失败仍保留本领域取消终态
             pass

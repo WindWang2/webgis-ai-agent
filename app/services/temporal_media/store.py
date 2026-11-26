@@ -10,6 +10,7 @@ import fcntl
 import hashlib
 import json
 import os
+import shutil
 import time
 import uuid
 from pathlib import Path
@@ -21,6 +22,8 @@ from .contracts import (
 )
 
 _TERMINAL = frozenset(("completed", "cancelled", "failed"))
+_PREVIEW_TTL_SECONDS = 24 * 60 * 60
+_MAX_PREVIEW_ENTRIES = 64
 
 
 def owner_key(principal: str) -> str:
@@ -80,10 +83,35 @@ def load_plan(principal: str, job_id: str) -> Dict[str, Any]:
                      max_bytes=16 * 1024 * 1024)
 
 
+def _prune_previews(principal: str) -> None:
+    root = media_root() / owner_key(principal)
+    if not root.is_dir():
+        return
+    now = time.time()
+    entries: List[Tuple[float, Path]] = []
+    for directory in root.glob("preview_*"):
+        try:
+            modified = (directory / "plan.json").stat().st_mtime
+        except OSError:
+            continue
+        if now - modified > _PREVIEW_TTL_SECONDS:
+            shutil.rmtree(directory, ignore_errors=True)
+        else:
+            entries.append((modified, directory))
+    entries.sort(key=lambda item: item[0])
+    overflow = max(0, len(entries) - _MAX_PREVIEW_ENTRIES)
+    for _, directory in entries:
+        if overflow <= 0:
+            break
+        shutil.rmtree(directory, ignore_errors=True)
+        overflow -= 1
+
+
 def save_preview(principal: str, plan: Dict[str, Any]) -> str:
     """owner 作用域的预览计划句柄（16 位短 ref → 完整冻结计划）。"""
     ref = str(plan["plan_hash"])[:16]
     atomic_json(job_dir(principal, "preview_" + ref) / "plan.json", plan)
+    _prune_previews(principal)
     return ref
 
 
@@ -92,8 +120,12 @@ def resolve_preview(principal: str, ref: str) -> Dict[str, Any]:
         raise TemporalMediaError("PLAN_VERSION_MISMATCH",
                                  "unknown preview plan_ref", status_code=409)
     try:
+        plan_path = job_dir(principal, "preview_" + ref) / "plan.json"
+        if time.time() - plan_path.stat().st_mtime > _PREVIEW_TTL_SECONDS:
+            raise TemporalMediaError(
+                "STATE_UNAVAILABLE", "preview plan_ref has expired", status_code=404)
         plan = load_plan(principal, "preview_" + ref)
-    except TemporalMediaError as exc:
+    except (TemporalMediaError, OSError) as exc:
         raise TemporalMediaError("PLAN_VERSION_MISMATCH",
                                  "unknown or expired preview plan_ref",
                                  status_code=409) from exc

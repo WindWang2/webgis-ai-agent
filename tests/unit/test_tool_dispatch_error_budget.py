@@ -162,6 +162,24 @@ async def test_normal_return_failure_shapes_share_the_budget(dispatch_harness, s
     assert calls == [True]
 
 
+async def test_correction_hint_keeps_failure_diagnostics_visible(dispatch_harness):
+    original = {
+        "success": False,
+        "code": "VALIDATION_ERROR",
+        "message": "geometry is invalid",
+        "correction_hint": "Repair the geometry with buffer(0), then retry.",
+    }
+    service, _, _, _ = dispatch_harness([original])
+
+    result = await service.dispatch(deepcopy(CALL), SESSION, set())
+
+    assert result.status == "error"
+    assert TOOL in result.llm_payload
+    assert original["code"] in result.llm_payload
+    assert original["message"] in result.llm_payload
+    assert original["correction_hint"] in result.llm_payload
+
+
 @pytest.mark.parametrize("error_type", [None, "参数校验", "ProviderError"])
 @pytest.mark.parametrize("hint", [None, "", "请检查参数。\n保留这个换行。"])
 async def test_small_payload_is_exactly_backward_compatible(dispatch_harness, error_type, hint):
@@ -169,7 +187,9 @@ async def test_small_payload_is_exactly_backward_compatible(dispatch_harness, er
         "success": False, "code": "TOOL_ERROR", "error_type": error_type,
         "message": "区域不存在 <未知> & 已过期", "correction_hint": hint,
     }
-    expected = hint or wrap_error_dict_for_llm(TOOL, original)
+    expected = wrap_error_dict_for_llm(TOOL, {**original, "correction_hint": None})
+    if hint and hint not in original["message"]:
+        expected += "\n" + hint
     service, _, _, _ = dispatch_harness([original])
     result = await service.dispatch(deepcopy(CALL), SESSION, set())
     note = _note(result)
@@ -187,7 +207,9 @@ async def test_recovery_note_counts_towards_the_boundary(dispatch_harness, delta
     service, _, _, _ = dispatch_harness([original, near_boundary])
     first = await service.dispatch(deepcopy(CALL), "boundary-reference", set())
     note = _note(first)
-    hint = "a" * (MSG_MAX_CHARS - len(note) - 1 + delta)
+    base = wrap_error_dict_for_llm(TOOL, original)
+    hint_budget = MSG_MAX_CHARS - len(note) - 1 - len(base) - 1
+    hint = "a" * (hint_budget + delta)
     near_boundary["correction_hint"] = hint
     result = await service.dispatch(deepcopy(CALL), SESSION, set())
 
@@ -196,7 +218,7 @@ async def test_recovery_note_counts_towards_the_boundary(dispatch_harness, delta
     assert result.raw_result["correction_hint"] == hint
     assert result.llm_payload.endswith("\n" + note)
     if delta <= 0:
-        assert result.llm_payload == hint + "\n" + note
+        assert result.llm_payload == f"{base}\n{hint}\n{note}"
     else:
         assert len(result.llm_payload) == MSG_MAX_CHARS
         assert "…[已截断]" in result.llm_payload
@@ -222,7 +244,7 @@ async def test_existing_recovery_note_is_preserved_without_duplication(dispatch_
     assert result.llm_payload.count(note) == 1
     assert result.raw_result["correction_hint"] == hint
     if position == "small":
-        assert result.llm_payload == hint
+        assert result.llm_payload == wrap_error_dict_for_llm(TOOL, original) + "\n" + hint
     elif position == "late":
         assert result.llm_payload.endswith("\n" + note)
 

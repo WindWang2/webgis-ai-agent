@@ -33,12 +33,19 @@ def _resolve_kriging_declared_crs(data: Any) -> Optional[str]:
     declared = extract_declared_crs(data)
     if not declared:
         return None
-    if "4490" in declared:
-        return "EPSG:4490"
-    if "3857" in declared:
-        return "EPSG:3857"
-    if "4326" in declared or "WGS84" in declared.upper():
+    # Resolve the whole identifier; a numeric substring may belong to a
+    # compound or different authority code and must not select an EPSG CRS.
+    from pyproj import CRS
+
+    try:
+        epsg = CRS.from_user_input(declared).to_epsg()
+    except Exception:
+        return declared
+    upper_declared = declared.upper()
+    if epsg == 4326 and "WGS84" in upper_declared:
         return "EPSG:4326"
+    if epsg in (4326, 3857, 4490) and str(epsg) in upper_declared:
+        return f"EPSG:{epsg}"
     return declared
 
 
@@ -2704,7 +2711,12 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
            failure_modes=("invalid_args", "missing_data"))
     def service_area_simple(geojson: Any, travel_time_min: float = 15, mode: str = "walking", dissolve: bool = True) -> dict:
         speeds = {"walking": 5.0, "cycling": 15.0, "driving": 40.0}
-        speed = speeds.get(mode.lower(), 5.0)
+        normalized_mode = mode.lower()
+        if normalized_mode not in speeds:
+            raise ValueError(
+                f"unsupported mode {mode!r}; expected one of: walking, cycling, driving"
+            )
+        speed = speeds[normalized_mode]
         distance_m = (speed * 1000) * (travel_time_min / 60.0)
         data = safe_parse_geojson(geojson)
         # #765: forward the parsed FeatureCollection so a declared `crs`

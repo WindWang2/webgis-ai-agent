@@ -1359,9 +1359,12 @@ class ToolDispatchService:
                         ))
             # Classification/recovery above consume the full diagnostics. Only
             # this LLM presentation is clipped, including HTML-escaped errors.
-            llm_payload = bound_llm_text(
-                correction_hint if correction_hint else wrap_error_dict_for_llm(tool_name, result)
+            error_payload = wrap_error_dict_for_llm(
+                tool_name, {**result, "correction_hint": None}
             )
+            if correction_hint and correction_hint not in error_msg:
+                error_payload = f"{error_payload}\n{correction_hint}"
+            llm_payload = bound_llm_text(error_payload)
             if _recovery_note and _recovery_note not in llm_payload:
                 # 两引擎共用同一恢复文案源（Pi HTTP 回包 / legacy
                 # tool_result 消息）—— 单行、有界（≤240）、无用户原文。
@@ -2170,7 +2173,7 @@ class ToolDispatchService:
             png = _decode_data_url_png(image) if isinstance(image, str) else None
             if png is not None:
                 session_dir = mapspec_store_instance.get_session_dir(session_id)
-                image_ref = save_png(session_dir, source_id, png)
+                image_ref = await asyncio.to_thread(save_png, session_dir, source_id, png)
             elif isinstance(image, str) and image.startswith("ref:"):
                 image_ref = image
             elif isinstance(result_ref, str) and result_ref.startswith("ref:"):

@@ -131,6 +131,7 @@ class RefSpillStore:
         if len(blob) > self._max_single_bytes:
             return False
         sdir = self._session_dir(session_id)
+        tmp = None
         try:
             sdir.mkdir(parents=True, exist_ok=True)
             self._enforce_session_cap(sdir, incoming=len(blob))
@@ -140,6 +141,11 @@ class RefSpillStore:
             os.replace(tmp, final)
             return True
         except Exception as e:  # noqa: BLE001 — spill 永不阻断淘汰主路径
+            if tmp is not None:
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
             logger.debug("ref spill write failed for %s: %s", ref_id, e)
             return False
 
@@ -514,8 +520,8 @@ class MemorySessionStore(BaseSessionStore):
         # hold the process-wide cache lock"）。overwrite 是 plan_mode 每波后
         # 重持久化 step_results 的热路径，此前在临界区内 await to_thread 跑
         # O(features) 计算，任意会话的 store/get/delete 全部排队停顿。
-        # #1113 P3-5 语义保持：覆写后重算 descriptor（Memory 读者无惰性回退，
-        # 旧描述符留置 = 谎报形状）；计算失败按同款 pop + warning。
+        # #1113 P3-5 语义保持：覆写后重算 descriptor（旧描述符留置 = 谎报
+        # 形状）；计算失败按同款 pop + warning，后续 getter 惰性重算。
         # G-2: identical-object overwrites 已在上方锁内短路跳过本段。
         try:
             from app.schemas.ref_descriptor import compute_descriptor
@@ -931,16 +937,42 @@ class MemorySessionStore(BaseSessionStore):
         }
 
     async def get_ref_descriptor(self, session_id: str, ref_id: str) -> Optional[dict]:
-        """V3 Performance: return pre-computed descriptor (O(1)); None if not found.
+        """Return a cached descriptor, lazily recomputing it from a live ref.
 
-        V5-E: stamps the live content_revision onto the (cached) descriptor so
-        consumers always read the CURRENT revision, never a stale snapshot.
+        V5-E: stamps the live content_revision onto the descriptor so consumers
+        always read the CURRENT revision, never a stale snapshot.
         """
         d = self._descriptors.get(session_id, {}).get(ref_id)
-        if d is None:
+        if d is not None:
+            d = copy.deepcopy(d)
+            d["content_revision"] = self._ref_revisions.get(session_id, {}).get(ref_id, d.get("content_revision", 0))
+            return d
+
+        async with self._lock:
+            session_cache = self._store.get(session_id)
+            if not session_cache or ref_id not in session_cache:
+                return None
+            data = session_cache[ref_id]
+            revision = self._ref_revisions.get(session_id, {}).get(ref_id, 0)
+            self._touch_cache_item(session_cache, ref_id)
+            self._touch_session(session_id)
+
+        try:
+            from app.schemas.ref_descriptor import compute_descriptor
+            descriptor = await asyncio.to_thread(compute_descriptor, ref_id, data)
+            d = descriptor.to_dict()
+        except Exception as e:
+            logger.warning("V3: Failed to compute descriptor for %s: %s", ref_id, e)
             return None
+
+        async with self._lock:
+            if (self._store.get(session_id, {}).get(ref_id) is not data
+                    or self._ref_revisions.get(session_id, {}).get(ref_id) != revision):
+                return None
+            self._descriptors.setdefault(session_id, {})[ref_id] = d
+
         d = copy.deepcopy(d)
-        d["content_revision"] = self._ref_revisions.get(session_id, {}).get(ref_id, d.get("content_revision", 0))
+        d["content_revision"] = revision
         return d
 
     async def ref_exists(self, session_id: str, ref_id: str) -> bool:

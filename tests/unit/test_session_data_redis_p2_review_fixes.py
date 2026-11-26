@@ -159,3 +159,37 @@ async def test_descriptor_fallback_does_not_cache_superseded_payload(monkeypatch
     cached = json.loads(raw)
     assert cached["feature_count"] == 3, "stale shape metadata was cached"
     assert cached["content_revision"] == 2, "stale shape metadata carries the new revision"
+
+
+# ── ref_exists: WatchError is a retryable conflict, not a missing ref ──────
+
+@pytest.mark.asyncio
+async def test_ref_exists_retries_watch_error_and_succeeds():
+    raw = fakeredis.aioredis.FakeRedis(decode_responses=False)
+    store = RedisSessionStore(redis_url="redis://unused", redis=raw)
+    sid = "sess-ref-exists-watch"
+    ref = await store.store(sid, {"v": 1})
+
+    wrapped = _WatchErrorOnceRedis(raw)
+    store._r = wrapped
+
+    assert await store.ref_exists(sid, ref) is True
+    assert wrapped.watch_errors == 1, "WatchError was not raised by the fixture"
+    assert await raw.exists(store._data_key(sid, ref)) == 1
+
+
+# ── commit_mapspec_state: invalid fields return False before any write ─────
+
+@pytest.mark.asyncio
+async def test_commit_mapspec_state_unserializable_field_returns_false():
+    store = _store()
+    sid = "sess-mapspec-invalid-payload"
+
+    ok = await store.commit_mapspec_state(
+        sid, {"valid": {"x": 1}, "invalid": object()},
+    )
+
+    assert ok is False
+    state_key = store._state_key(sid)
+    assert await store._r.hget(state_key, "valid") is None
+    assert await store._r.hget(state_key, "invalid") is None

@@ -373,3 +373,63 @@ class TestRefSpillSerializationFidelity:
         assert spill.spill("s1", "ref:data-dt0001", payload) is False
         assert spill.has("s1", "ref:data-dt0001") is False
         assert spill.load("s1", "ref:data-dt0001") is None
+
+
+class TestRefSpillFailureCleanup:
+    @pytest.mark.parametrize("failure_stage", ["write_bytes", "os.replace"])
+    def test_failed_spill_removes_temporary_file(self, tmp_path, monkeypatch, failure_stage):
+        from pathlib import Path
+
+        import app.services.session_data as session_data
+
+        spill = session_data.RefSpillStore(str(tmp_path))
+        if failure_stage == "write_bytes":
+            real_write_bytes = Path.write_bytes
+
+            def fail_write_bytes(path, data):
+                real_write_bytes(path, b"partial")
+                raise OSError("disk full")
+
+            monkeypatch.setattr(Path, "write_bytes", fail_write_bytes)
+        else:
+            def fail_replace(src, dst):
+                raise OSError("replace denied")
+
+            monkeypatch.setattr(session_data.os, "replace", fail_replace)
+
+        assert spill.spill("s1", "ref:data-failure", {"value": 1}) is False
+        assert list(spill._session_dir("s1").iterdir()) == []
+
+
+class TestDescriptorFallback:
+    @pytest.mark.asyncio
+    async def test_overwrite_descriptor_failure_falls_back_on_read(self, monkeypatch):
+        import app.schemas.ref_descriptor as descriptor_module
+        from app.services.session_data import MemorySessionStore
+
+        store = MemorySessionStore()
+        sid = "descriptor-fallback"
+        ref_id = await store.store(sid, {"value": 1}, prefix="data")
+        payload = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [116.0, 39.9]},
+                    "properties": {},
+                }
+            ],
+        }
+
+        def fail_compute(ref_id, data):
+            raise RuntimeError("descriptor computation failed")
+
+        with monkeypatch.context() as mp:
+            mp.setattr(descriptor_module, "compute_descriptor", fail_compute)
+            assert await store.overwrite(sid, ref_id, payload) is True
+
+        res = await store.get_ref_descriptor_authorized(sid, ref_id)
+        assert res.success is True
+        assert res.data["feature_count"] == 1
+        assert res.data["content_revision"] == 2
+        assert await store.get_ref_descriptor(sid, ref_id) == res.data
