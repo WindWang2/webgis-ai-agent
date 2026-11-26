@@ -69,6 +69,10 @@ async def export_exploration(
         raise LinkedExplorationError(
             "INVALID_PLAN", "需要 view_id 或 plan", status_code=422)
     plan = _validate_plan_payload(plan_raw)
+    if plan.sources:
+        # v3 多源导出：逐源图层过滤 + 逐源口径卡（不走单源路径）
+        return await _export_multi_source(
+            session_id, actor, plan=plan, fmt=fmt, dpi=dpi, title=title)
     conditions = contract.parse_conditions(plan.conditions)
     charts = _plan_charts(plan)
 
@@ -125,12 +129,46 @@ async def export_exploration(
     _inject_chart_components(doc, preview, charts, title)
     _inject_annotation(doc, preview, conditions, plan.anchor.ref_id, title)
 
-    # 3. 编译（bounds = MapSpec.view.bounds —— 单页合成范围）
+    # 3. 编译 + 落盘（共享尾链）
     view = doc.get("view") or {}
     bounds = view.get("bounds") if isinstance(view, dict) else None
     if not (isinstance(bounds, list) and len(bounds) == 4):
         bounds = None
 
+    manifest: Dict[str, Any] = {
+        "schema_version": 1,
+        "domain": "linked_exploration",
+        "format": fmt,
+        "source_anchor": preview.get("anchor"),
+        "conditions_digest": preview.get("conditions_digest"),
+        "match_count": preview.get("match_count"),
+        "total_source_features": preview.get("total"),
+        "filtered_layer_ids": filtered_layer_ids,
+        "map_filter": combined_expr,
+        "chart_scope_note": "facet（排除自身条件）口径统计印出；匹配总数为全部条件口径",
+    }
+    summary = {
+        "match_count": preview.get("match_count"),
+        "total": preview.get("total"),
+        "conditions_digest": preview.get("conditions_digest"),
+        "filtered_layer_ids": filtered_layer_ids,
+    }
+    return await _render_and_persist(
+        session_id, doc, fmt=fmt, dpi=dpi, bounds=bounds,
+        manifest=manifest, summary=summary)
+
+
+async def _render_and_persist(
+    session_id: str,
+    doc: Dict[str, Any],
+    *,
+    fmt: str,
+    dpi: int,
+    bounds: Optional[List[Any]],
+    manifest: Dict[str, Any],
+    summary: Dict[str, Any],
+) -> Dict[str, Any]:
+    """SVG 编码 → PNG/PDF 转换 → 持久化（v2/v3 共享尾链）。"""
     from app.services.mapspec_to_svg import compile_mapspec_to_svg_detailed
 
     dpi_i = max(72, min(int(dpi), 400))
@@ -140,21 +178,9 @@ async def export_exploration(
         include_chrome=True, bounds=bounds)
     svg = comp.svg
 
-    manifest: Dict[str, Any] = {
-        "schema_version": 1,
-        "domain": "linked_exploration",
-        "format": fmt,
-        "target_dpi": dpi_i,
-        "source_anchor": preview.get("anchor"),
-        "conditions_digest": preview.get("conditions_digest"),
-        "match_count": preview.get("match_count"),
-        "total_source_features": preview.get("total"),
-        "filtered_layer_ids": filtered_layer_ids,
-        "map_filter": combined_expr,
-        "chart_scope_note": "facet（排除自身条件）口径统计印出；匹配总数为全部条件口径",
-        "feature_count": getattr(comp, "feature_count", None),
-        "diagnostics": [d for d in (comp.diagnostics or [])][:40],
-    }
+    manifest = {**manifest, "target_dpi": dpi_i,
+                "feature_count": getattr(comp, "feature_count", None),
+                "diagnostics": [d for d in (comp.diagnostics or [])][:40]}
 
     if fmt == "svg":
         payload = svg.encode("utf-8")
@@ -182,11 +208,169 @@ async def export_exploration(
         "download_url": delivered.get("download_url"),
         "manifest_url": delivered.get("manifest_url"),
         "filename": delivered.get("filename"),
-        "match_count": preview.get("match_count"),
-        "total": preview.get("total"),
+        **summary,
+    }
+
+
+async def _export_multi_source(
+    session_id: str,
+    actor: Dict[str, Any],
+    *,
+    plan: Any,
+    fmt: str,
+    dpi: int,
+    title: str,
+) -> Dict[str, Any]:
+    """v3 多源冻结导出：逐源图层过滤（传播投影后）+ 逐源口径卡。
+
+    诚实性边界（沿 P1-3 纪律）：
+    - 有过滤 scope 的源在地图上没有目标层 → EXPORT_NO_TARGET_LAYER
+      （scope 会被无声丢弃，拒绝导出）；
+    - 传播约束不可投影（复合键）→ EXPORT_SCOPE_NOT_PROJECTABLE
+      （图面会过宽，拒绝导出；建议单键对关系后再导出）；
+    - 未过滤/未上图源逐源披露在口径卡（人口表等纯统计源不上图是
+      正常用法，不拒绝，但必须印出）。
+    """
+    from app.services.linked_exploration.service import preview_plan
+    from app.services.linked_exploration.snapshot import freeze_source_typed
+
+    # 1. 同代求值（逐源锚核对在 preview_plan 内；漂移 → STALE_SOURCE）
+    preview = await preview_plan(session_id, plan.model_dump(mode="json"),
+                                 actor, create_handle=False)
+    per_source = preview["per_source"]
+
+    # 2. 逐源冻结（导出图面同代数据；预览后再冻结并复核锚 —— 收窄
+    #    TOCTOU 窗口到编码期间，编码内不再读源）
+    frozen_by_ref: Dict[str, Any] = {}
+    for binding in contract.plan_source_bindings(plan):
+        ref_id = binding.anchor.ref_id
+        if ref_id in frozen_by_ref:
+            continue
+        frozen = await freeze_source_typed(
+            session_id, ref_id,
+            owner_token=actor.get("owner_token"),
+            trusted_dispatch=bool(actor.get("trusted_session_id")))
+        if (frozen.content_revision != binding.anchor.content_revision
+                or frozen.content_fingerprint
+                != binding.anchor.content_fingerprint):
+            raise LinkedExplorationError(
+                "STALE_SOURCE",
+                f"导出期间源 {binding.source_id} 已推进 —— 已冻结任务保持"
+                "原结果需重新打开视图",
+                status_code=409,
+                detail={"source_id": binding.source_id})
+        frozen_by_ref[ref_id] = frozen
+
+    # 3. MapSpec 副本投影（逐源）
+    from app.services.mapspec.store import mapspec_store_instance as mapspec_store
+
+    mapspec = await mapspec_store.get_mapspec(session_id)
+    if not isinstance(mapspec, dict):
+        raise LinkedExplorationError(
+            "MAPSPEC_UNAVAILABLE", "会话没有可导出的 MapSpec", status_code=409)
+    doc = copy.deepcopy(mapspec)
+
+    filtered_layer_ids: List[str] = []
+    unprojected: List[str] = []
+    not_on_map: List[str] = []
+    per_source_manifest: Dict[str, Any] = {}
+    for binding in contract.plan_source_bindings(plan):
+        sid = binding.source_id
+        ref_id = binding.anchor.ref_id
+        entry = per_source.get(sid) or {}
+        expr = entry.get("map_filter")
+        projected = entry.get("map_filter_projected", True)
+        frozen = frozen_by_ref[ref_id]
+        frozen_fc = {
+            "type": "FeatureCollection",
+            "features": [
+                {"type": "Feature",
+                 "geometry": f.get("geometry"),
+                 "properties": (f.get("properties") or {})}
+                for f in frozen.features if isinstance(f, dict)
+            ],
+        }
+        if expr is not None and not projected:
+            unprojected.append(sid)
+            continue
+        hits = _apply_layer_filters(doc, ref_id, expr, frozen_fc)
+        if expr is not None and not hits:
+            raise LinkedExplorationError(
+                "EXPORT_NO_TARGET_LAYER",
+                f"源 {sid}（{ref_id}）的联动过滤 scope 在 committed MapSpec "
+                "中没有目标图层 —— 拒绝导出会被无声丢弃的过滤面",
+                status_code=409,
+                correction_hint="先在地图上以该 ref 建立图层，或从计划中"
+                                "移除该源后再导出。",
+                detail={"source_id": sid, "ref_id": ref_id})
+        filtered_layer_ids.extend(hits)
+        if not hits:
+            not_on_map.append(sid)
+        per_source_manifest[sid] = {
+            "ref_id": ref_id,
+            "revision": frozen.content_revision,
+            "match_count": entry.get("match_count"),
+            "total": entry.get("total"),
+            "map_filter_applied": expr is not None,
+            "propagations": len(entry.get("propagations") or []),
+        }
+
+    # 4. 图表（facet 口径）+ 多源口径卡
+    charts = _plan_charts(plan)
+    _inject_chart_components(doc, preview, charts, title)
+    primary_id = preview.get("primary_source_id")
+    primary_entry = per_source.get(primary_id) or {}
+    conditions = contract.parse_conditions(plan.conditions)
+    _inject_annotation(doc, preview, conditions,
+                       primary_id, title,
+                       per_source=per_source_manifest,
+                       not_on_map=not_on_map,
+                       unprojected=unprojected,
+                       plan_digest=preview.get("plan_digest"))
+
+    if unprojected:
+        raise LinkedExplorationError(
+            "EXPORT_SCOPE_NOT_PROJECTABLE",
+            f"源 {','.join(unprojected)} 的传播约束为复合键 —— 地图过滤"
+            "无法精确编译，图面会过宽；拒绝导出",
+            status_code=409,
+            correction_hint="将相关关系改为单键对（或拆分关系）后重新导出；"
+                            "统计仍可经 preview 获得。",
+            detail={"sources": unprojected})
+
+    view = doc.get("view") or {}
+    bounds = view.get("bounds") if isinstance(view, dict) else None
+    if not (isinstance(bounds, list) and len(bounds) == 4):
+        bounds = None
+
+    manifest: Dict[str, Any] = {
+        "schema_version": 1,
+        "domain": "linked_exploration",
+        "format": fmt,
+        "multi_source": True,
+        "primary_source_id": primary_id,
+        "per_source": per_source_manifest,
+        "conditions_digest": preview.get("conditions_digest"),
+        "plan_digest": preview.get("plan_digest"),
+        "match_count": primary_entry.get("match_count"),
+        "total_source_features": primary_entry.get("total"),
+        "filtered_layer_ids": filtered_layer_ids,
+        "not_on_map_sources": not_on_map,
+        "chart_scope_note": (
+            "facet（排除自身条件）口径统计印出；每源匹配数为该源联动"
+            "范围口径（含跨源传播）"),
+    }
+    summary = {
+        "match_count": primary_entry.get("match_count"),
+        "total": primary_entry.get("total"),
         "conditions_digest": preview.get("conditions_digest"),
         "filtered_layer_ids": filtered_layer_ids,
+        "per_source": {sid: m["match_count"]
+                       for sid, m in per_source_manifest.items()},
     }
+    return await _render_and_persist(
+        session_id, doc, fmt=fmt, dpi=dpi, bounds=bounds,
+        manifest=manifest, summary=summary)
 
 
 def _layer_source_ref(layer: Dict[str, Any], doc: Dict[str, Any]) -> Optional[str]:
@@ -329,9 +513,16 @@ def _inject_chart_components(
 
 def _inject_annotation(
     doc: Dict[str, Any], preview: Dict[str, Any], conditions: List[Any],
-    ref_id: str, title: str,
+    ref_id: str, title: str, *,
+    per_source: Optional[Dict[str, Any]] = None,
+    not_on_map: Optional[List[str]] = None,
+    unprojected: Optional[List[str]] = None,
+    plan_digest: Optional[str] = None,
 ) -> None:
-    """口径卡：匹配计数/总数/源锚/条件 digest（facet 说明印出）。"""
+    """口径卡：匹配计数/总数/源锚/条件 digest（facet 说明印出）。
+
+    多源模式（per_source 给出时）：逐源范围 + 未上图源 + 传播计数
+    （≤8 行硬帽 —— annotation 组件按换行拆行，超限折叠为汇总行）。"""
     layout = doc.get("layout")
     if not isinstance(layout, dict):
         layout = {}
@@ -340,13 +531,33 @@ def _inject_annotation(
     if not isinstance(components, list):
         components = []
         layout["components"] = components
-    lines = [
-        f"联合探索导出{(' · ' + title) if title else ''}",
-        f"匹配 {preview.get('match_count')} / 共 {preview.get('total')} 要素（全部条件口径）",
-        f"源锚：{ref_id} rev{preview.get('anchor', {}).get('content_revision')}",
-        f"条件摘要：{preview.get('conditions_digest')} · 条件数 {len(conditions)}",
-        "图内统计为 facet 口径（各图排除自身条件）；地图范围与匹配集同代冻结",
-    ]
+    if per_source is not None:
+        lines = [
+            f"多源联动导出{(' · ' + title) if title else ''}",
+            f"计划 digest {plan_digest or '—'} · 条件数 {len(conditions)}",
+        ]
+        for sid, m in list(per_source.items())[:4]:
+            scope = f"匹配 {m.get('match_count')} / {m.get('total')}"
+            if m.get("map_filter_applied"):
+                scope += f"（含 {m.get('propagations')} 条传播，已上图）"
+            elif sid in (not_on_map or []):
+                scope += "（未上图：纯统计源）"
+            else:
+                scope += "（无条件过滤，已上图）"
+            lines.append(f"源 {sid} {scope}")
+        if not_on_map:
+            lines.append("未上图源：" + "、".join(not_on_map))
+        if unprojected:
+            lines.append("不可投影源：" + "、".join(unprojected))
+        lines.append("图内统计为 facet 口径；每源范围为联动过滤后同代冻结")
+    else:
+        lines = [
+            f"联合探索导出{(' · ' + title) if title else ''}",
+            f"匹配 {preview.get('match_count')} / 共 {preview.get('total')} 要素（全部条件口径）",
+            f"源锚：{ref_id} rev{preview.get('anchor', {}).get('content_revision')}",
+            f"条件摘要：{preview.get('conditions_digest')} · 条件数 {len(conditions)}",
+            "图内统计为 facet 口径（各图排除自身条件）；地图范围与匹配集同代冻结",
+        ]
     # annotation 组件的行走 text 字段（_parse_annotation 按换行拆行，≤8 行）
     components.append({
         "id": "g46-export-annotation-scope",

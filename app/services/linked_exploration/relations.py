@@ -38,8 +38,10 @@ def _err(code: str, message: str, **kw: Any) -> LinkedExplorationError:
 
 def propagation_edges(plan: contract.ExplorationPlan) -> Dict[str, List[str]]:
     """传播方向边表：``{from_source: [to_source, ...]}``（仅 propagate
-    非 none 的关系产生边；平行关系保留重复边 —— 拓扑序不受影响）。"""
-    edges: Dict[str, List[str]] = {b.source_id: [] for b in plan.sources}
+    非 none 的关系产生边；平行关系保留重复边 —— 拓扑序不受影响）。
+    v2 计划经派生 primary 绑定参与（无 links → 单节点）。"""
+    sources = [b.source_id for b in contract.plan_source_bindings(plan)]
+    edges: Dict[str, List[str]] = {sid: [] for sid in sources}
     for link in plan.links:
         if link.propagate == "left_to_right":
             edges[link.left_source_id].append(link.right_source_id)
@@ -178,6 +180,153 @@ def require_key_set_within_cap(keyset: PropagatedKeySet) -> None:
                     "cap": contract.MAX_PROPAGATED_KEYS})
 
 
+# ─── 复合键传播（≤8 键对；键身份 = 逐对规范键组成的元组） ────────────────
+
+@dataclass
+class PropagatedCompositeKeySet:
+    """上游匹配行的复合键集合 + 诚实统计（逐对字段披露）。"""
+
+    link_id: str
+    from_source: str
+    #: 目标侧字段序列（与键对顺序一致）
+    target_fields: List[str]
+    keys: Set[Tuple[KeyTuple, ...]] = dc_field(default_factory=set)
+    scanned: int = 0
+    matched: int = 0
+    skipped_missing: int = 0
+    skipped_invalid: int = 0
+    invalid_samples: List[Any] = dc_field(default_factory=list)
+
+
+def composite_key_specs(
+    link: contract.LinkSpec, side: str,
+) -> List[KeyFieldSpec]:
+    """关系某侧全部键对的 G38 spec 序列（side = "left"/"right"）。"""
+    return [key_spec_for(link, pair, side) for pair in link.keys]
+
+
+def _side_fields(link: contract.LinkSpec, side: str) -> List[str]:
+    return [p.left_field if side == "left" else p.right_field
+            for p in link.keys]
+
+
+def composite_key_of(
+    props: Dict[str, Any],
+    fields: List[str],
+    specs: List[KeyFieldSpec],
+) -> Tuple[Optional[Tuple[KeyTuple, ...]], bool]:
+    """行属性 → 复合键元组；返回 (键|None, invalid)。任一对缺失 →
+    None（G38 null 政策：null 不参与匹配）；任一对类型不可比 →
+    invalid。"""
+    parts: List[KeyTuple] = []
+    for field, spec in zip(fields, specs):
+        key, bad = normalize_link_key_safe(props.get(field), spec)
+        if bad:
+            return None, True
+        if key is None:
+            return None, False
+        parts.append(key)
+    return tuple(parts), False
+
+
+def collect_propagated_composite_keys(
+    features: Sequence[Dict[str, Any]],
+    where: Optional[Dict[str, Any]],
+    *,
+    link: contract.LinkSpec,
+    side: str,
+) -> PropagatedCompositeKeySet:
+    """上游源最终匹配行的复合键集合（无损收集；帽由调用方施加）。"""
+    out = PropagatedCompositeKeySet(
+        link_id=link.link_id,
+        from_source=link.left_source_id if side == "left"
+        else link.right_source_id,
+        target_fields=_side_fields(
+            link, "right" if side == "left" else "left"),
+    )
+    specs = composite_key_specs(link, side)
+    for feat in features:
+        props = feat.get("properties") if isinstance(feat, dict) else None
+        props = props if isinstance(props, dict) else {}
+        out.scanned += 1
+        if where is not None and not evaluate_where(where, feat):
+            continue
+        out.matched += 1
+        key, invalid = composite_key_of(props, _side_fields(link, side), specs)
+        if invalid:
+            out.skipped_invalid += 1
+            if len(out.invalid_samples) < 8:
+                out.invalid_samples.append(
+                    {f: props.get(f) for f in _side_fields(link, side)})
+            continue
+        if key is None:
+            out.skipped_missing += 1
+            continue
+        out.keys.add(key)
+    return out
+
+
+def require_composite_within_cap(
+    keyset: PropagatedCompositeKeySet,
+) -> None:
+    if len(keyset.keys) > contract.MAX_PROPAGATED_KEYS:
+        raise _err(
+            "PROPAGATION_KEYSET_OVER_LIMIT",
+            f"传播键集 {len(keyset.keys)} 个超过上限 "
+            f"{contract.MAX_PROPAGATED_KEYS}：请收窄上游选择或改用"
+            "反向传播（键少的侧作上游）",
+            field=",".join(keyset.target_fields),
+            correction_hint="缩小上游条件后再预览，或把传播方向反转。",
+            detail={"key_count": len(keyset.keys),
+                    "cap": contract.MAX_PROPAGATED_KEYS})
+
+
+def composite_predicate(
+    fields: List[str],
+    specs: List[KeyFieldSpec],
+    keys: Set[Tuple[KeyTuple, ...]],
+) -> Callable[[Dict[str, Any]], bool]:
+    """目标侧行谓词：复合键 ∈ 传播键集（与收集侧同规范化）。"""
+    def _pred(feature: Dict[str, Any]) -> bool:
+        props = feature.get("properties") if isinstance(feature, dict) else None
+        props = props if isinstance(props, dict) else {}
+        key, invalid = composite_key_of(props, fields, specs)
+        if invalid or key is None:
+            return False
+        return key in keys
+    return _pred
+
+
+def composite_single_pair_projection(
+    keyset: PropagatedCompositeKeySet,
+) -> Optional[List[Any]]:
+    """单键对传播 → MapLibre ``in`` 投影；复合键对（>1）返回 None
+    （多字段键集的 AND-in 是行乘积超集 —— 宁可披露不可投影，也不给
+    过宽的地图过滤假象）。"""
+    if len(keyset.target_fields) != 1:
+        return None
+    field = keyset.target_fields[0]
+    single = {k[0] for k in keyset.keys}
+    return key_set_to_maplibre(field, single)
+
+
+def composite_digest_fragment(
+    keyset: PropagatedCompositeKeySet,
+) -> Dict[str, Any]:
+    return {
+        "link_id": keyset.link_id,
+        "from_source": keyset.from_source,
+        "target_fields": keyset.target_fields,
+        "keys": sorted(
+            ([list(inner) for inner in key] for key in keyset.keys),
+            key=lambda parts: str(parts)),
+        "scanned": keyset.scanned,
+        "matched": keyset.matched,
+        "skipped_missing": keyset.skipped_missing,
+        "skipped_invalid": keyset.skipped_invalid,
+    }
+
+
 # ─── 键集约束：内存谓词 + MapLibre 投影 + digest ─────────────────────────
 
 def key_set_predicate(field: str, keys: Set[KeyTuple],
@@ -240,8 +389,13 @@ def key_set_digest_fragment(keyset: PropagatedKeySet) -> Dict[str, Any]:
 
 __all__ = [
     "KeyTuple", "PropagatedKeySet", "KEY_INVALID",
+    "PropagatedCompositeKeySet",
     "propagation_edges", "propagation_order",
     "key_spec_for", "normalize_link_key", "normalize_link_key_safe",
     "collect_propagated_keys", "require_key_set_within_cap",
     "key_set_predicate", "key_set_to_maplibre", "key_set_digest_fragment",
+    "composite_key_specs", "composite_key_of",
+    "collect_propagated_composite_keys", "require_composite_within_cap",
+    "composite_predicate", "composite_single_pair_projection",
+    "composite_digest_fragment",
 ]
