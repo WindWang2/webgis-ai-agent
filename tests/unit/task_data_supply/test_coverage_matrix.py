@@ -85,9 +85,12 @@ def _row(matrix, role="subject", cid="src/pois"):
 
 class TestSpatialCoverage:
     def test_bbox_overlap_with_footprint_hole_is_partial(self):
-        # 任务 (0,0)-(1,1)；footprint 全 bbox 但挖掉 (0.5,0.5)-(1,1) 四分之一的洞
+        # 任务 (0,0)-(1,1)；footprint 全 bbox 但挖掉严格内洞 0.25 面积
+        #（手算期望 0.75；洞边贴外环属缺陷输入，由 make_valid 健壮性
+        # 用例覆盖——OGC 语义下贴边洞被释放，不属"严格洞"）
         ring = [[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]
-        hole = [[0.5, 0.5], [1.0, 0.5], [1.0, 1.0], [0.5, 1.0], [0.5, 0.5]]
+        hole = [[0.25, 0.25], [0.75, 0.25], [0.75, 0.75], [0.25, 0.75],
+                [0.25, 0.25]]
         footprint = {"type": "Polygon",
                      "coordinates": [ring, hole]}
         ev = _row(evaluate_task_coverage(
@@ -97,8 +100,21 @@ class TestSpatialCoverage:
         assert ev.verdict == COVER_PARTIAL
         assert ev.spatial_ratio is not None
         assert abs(ev.spatial_ratio - 0.75) < TOL
-        assert any("hole" in g["dimension"] or g["dimension"] == "spatial"
-                   for g in ev.gaps)
+        assert any(g["dimension"] == "spatial" for g in ev.gaps)
+
+    def test_touching_hole_defect_input_does_not_crash(self):
+        """缺陷输入健壮性：洞边贴外环（非法多边形）→ make_valid 修复后
+        正常出判定，绝不 GEOS 崩溃（R1 复审发现的生产输入问题）。"""
+        ring = [[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]
+        touching_hole = [[0.25, 0.0], [0.75, 0.0], [0.75, 0.25],
+                         [0.25, 0.25], [0.25, 0.0]]  # 南边贴外环
+        ev = _row(evaluate_task_coverage(
+            _req(scope=TaskScope(bbox=[0.0, 0.0, 1.0, 1.0])),
+            [_cand(declared_bbox=[0.0, 0.0, 1.0, 1.0],
+                   footprint_geometry={"type": "Polygon",
+                                       "coordinates": [ring,
+                                                       touching_hole]})]))
+        assert ev.verdict in (COVER_FULL, COVER_PARTIAL)
 
     def test_bbox_overlap_without_footprint_is_declared_only(self):
         ev = _row(evaluate_task_coverage(_req(), [_cand()]))

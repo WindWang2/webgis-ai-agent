@@ -275,10 +275,16 @@ def _metric_transform(lon: float, lat: float):
 def _polygon_from_geojson(geometry: Dict[str, Any]):
     from shapely.geometry import shape
     from shapely.geometry.polygon import orient
+    from shapely.validation import make_valid
 
-    # orient(..., 1.0)：外环 CCW / 内环 CW——调用方给的环方向不可信，
-    # 不归一会把带洞多边形判成无效（交集为空 → 伪 none）。
-    return orient(shape(geometry), 1.0)
+    # orient(..., 1.0)：外环 CCW / 内环 CW——调用方给的环方向不可信；
+    # make_valid：目录 footprint 可能带接触边/自交等真实缺陷（R1 复审
+    # 发现：洞边贴外环 → GEOS 拓扑异常直接崩评估）。无效几何先修复再算，
+    # 不把调用方数据质量问题变成内部异常。
+    poly = orient(shape(geometry), 1.0)
+    if not poly.is_valid:
+        poly = make_valid(poly)
+    return poly
 
 
 def _normalize_antimeridian_coords(coords: Any) -> Any:
@@ -332,7 +338,12 @@ def _shift_geometry_to_frame(geometry: Dict[str, Any],
     shifted = {"type": geometry.get("type"),
                "coordinates": shift_vertex(geometry.get("coordinates"))}
     try:
-        return orient(shape(shifted), 1.0)
+        poly = orient(shape(shifted), 1.0)
+        if not poly.is_valid:
+            from shapely.validation import make_valid
+
+            poly = make_valid(poly)
+        return poly
     except Exception:
         return None
 
@@ -447,6 +458,9 @@ def evaluate_task_coverage(
             role.evaluations.append(
                 _evaluate_one(item, cand, requirement))
         role.evaluations.sort(key=lambda e: e.rank)
+        # 内存与有界输出同界：只保留 top-7（下游 supply_plan 只消费
+        # 前 5 个候选；接口契约 ≤7 行/角色不随候选规模膨胀）
+        del role.evaluations[_MAX_EVALUATIONS_OUT:]
         matrix.roles.append(role)
     return matrix
 
