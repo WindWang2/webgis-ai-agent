@@ -343,8 +343,16 @@ class AsyncHistoryService(HistoryStoreProtocol):
         this method adds both rows and commits once. If the commit fails
         (locked / IntegrityError) neither row persists — no orphan user row.
         """
-        import anyio
+        await self._save_interaction_internal(session_id, user_content, assistant_content)
 
+    async def _save_interaction_internal(
+        self,
+        session_id: str,
+        user_content: str,
+        assistant_content: str,
+        metadata: Optional[dict] = None,
+    ) -> None:
+        import anyio
         for attempt in range(3):
             try:
                 if user_content:
@@ -353,6 +361,7 @@ class AsyncHistoryService(HistoryStoreProtocol):
                             conversation_id=session_id,
                             role="user",
                             content=user_content,
+                            context_receipt=metadata,
                             created_at=datetime.now(timezone.utc),
                         )
                     )
@@ -376,6 +385,7 @@ class AsyncHistoryService(HistoryStoreProtocol):
                     await anyio.sleep(0.1 * (attempt + 1))
                     await self.db.rollback()
                     continue
+                await self.db.rollback()
                 raise
 
     async def _commit_interaction_internal(
@@ -387,7 +397,9 @@ class AsyncHistoryService(HistoryStoreProtocol):
     ) -> None:
         # #915 atomic: single transaction for the user+assistant pair so that a
         # failure on the second insert cannot leave an orphan user row.
-        await self.save_interaction(session_id, user_content, assistant_content)
+        await self._save_interaction_internal(
+            session_id, user_content, assistant_content, metadata
+        )
 
     async def get_or_create_conversation(
         self,
@@ -519,6 +531,7 @@ class AsyncHistoryService(HistoryStoreProtocol):
                     await anyio.sleep(0.1 * (attempt + 1))
                     await self.db.rollback()
                     continue
+                await self.db.rollback()
                 raise
 
     async def update_title(self, session_id: str, title: str) -> None:

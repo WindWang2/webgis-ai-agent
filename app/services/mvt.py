@@ -1495,7 +1495,7 @@ def build_spatial_index_entry(key, data) -> SpatialIndexEntry:
         except Exception:  # pragma: no cover - defensive
             vertex_count = 0
     est_bytes = (
-        _estimate_json_bytes(features)
+        _estimate_json_bytes(kept)
         + vertex_count * _COORD_OBJ_BYTES
         + len(kept) * _FEATURE_OBJ_BYTES
         + len(geoms) * _GEOM_OBJ_BYTES
@@ -1908,7 +1908,7 @@ class SingleFlightManager:
                 except asyncio.TimeoutError:
                     degraded = True  # leader 挂死 → 有界等待后诚实降级
                 except BaseException as exc:  # noqa: BLE001
-                    if isinstance(exc, asyncio.CancelledError) and not return_fut.done():
+                    if isinstance(exc, asyncio.CancelledError) and asyncio.current_task().cancelling():
                         raise  # 等待者自身取消：原样传播（绝不吞）
                     degraded = True  # leader 崩溃 → 降级直接重算，不消费其异常
             finally:

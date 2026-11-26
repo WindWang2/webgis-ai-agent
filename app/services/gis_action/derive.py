@@ -246,7 +246,7 @@ async def materialize_classification(
     测试为 stub）。失败路径全部 typed 记录并保留原 IR 形态（向后兼容）。
     """
     records: List[MaterializationRecord] = []
-    updates: Dict[str, Dict[str, Any]] = {}   # intent_id → legend_spec
+    updates: Dict[str, LayerBlueprint] = {}   # intent_id → validated blueprint
 
     for li, bp, params, legend in _iter_classification_intents(ir):
         raw_k = (bp.classification or {}).get("k") \
@@ -302,7 +302,25 @@ async def materialize_classification(
                 code=DERIVE_NO_DATA, field=field_name,
                 source_ref=source_ref))
             continue
-        updates[li.intent_id] = spec
+        # 构造式重建（非 model_copy）：LayerBlueprint 的键数/字节闸在
+        # model_post_init，model_copy 会绕过 —— 巨型 legend_spec 不得
+        # 借物化入库。
+        try:
+            updates[li.intent_id] = LayerBlueprint(
+                layer_type=li.blueprint.layer_type,
+                cartography=li.blueprint.cartography,
+                paint=li.blueprint.paint,
+                legend_spec=spec,
+                classification=li.blueprint.classification,
+                label_spec=li.blueprint.label_spec,
+            )
+        except Exception as exc:  # noqa: BLE001 — 单层重建故障只记该层
+            logger.warning("[action-derive] blueprint rebuild failed for %s: %s",
+                           li.intent_id, exc)
+            records.append(MaterializationRecord(
+                layer_id=li.layer_id, intent_id=li.intent_id,
+                code=DERIVE_SKIPPED))
+            continue
         records.append(MaterializationRecord(
             layer_id=li.layer_id, intent_id=li.intent_id, code=DERIVE_OK,
             field=field_name, breaks_count=len(spec.get("breaks") or []),
@@ -313,21 +331,9 @@ async def materialize_classification(
 
     new_intents = []
     for li in ir.layer_intents:
-        spec = updates.get(li.intent_id)
-        if spec is None or li.blueprint is None:
+        blueprint = updates.get(li.intent_id)
+        if blueprint is None or li.blueprint is None:
             new_intents.append(li)
             continue
-        # 构造式重建（非 model_copy）：LayerBlueprint 的键数/字节闸在
-        # model_post_init，model_copy 会绕过 —— 巨型 legend_spec 不得
-        # 借物化入库。
-        new_intents.append(li.model_copy(update={
-            "blueprint": LayerBlueprint(
-                layer_type=li.blueprint.layer_type,
-                cartography=li.blueprint.cartography,
-                paint=li.blueprint.paint,
-                legend_spec=spec,
-                classification=li.blueprint.classification,
-                label_spec=li.blueprint.label_spec,
-            ),
-        }))
+        new_intents.append(li.model_copy(update={"blueprint": blueprint}))
     return ir.model_copy(update={"layer_intents": new_intents}), records

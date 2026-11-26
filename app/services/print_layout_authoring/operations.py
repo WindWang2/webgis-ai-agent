@@ -138,7 +138,16 @@ def _apply_one(plan: Dict[str, Any], op: Dict[str, Any], locks: List[str],
         changes.append({"op": name, "profile": profile, "width_mm": w, "height_mm": h})
         return
     if name == "set_pages":
-        pages = plan.setdefault("atlas", {}).setdefault("pages", [])
+        atlas = plan.setdefault("atlas", {})
+        if not isinstance(atlas, dict):
+            raise OperationError("INVALID_ATLAS", "atlas must be an object")
+        pages = atlas.setdefault("pages", [])
+        if not isinstance(pages, list) or any(not isinstance(p, dict) for p in pages):
+            raise OperationError("INVALID_PAGE_SET", "pages must be a list of objects")
+        for page in pages:
+            overrides = page.get("overrides") or []
+            if not isinstance(overrides, list) or any(not isinstance(ov, dict) for ov in overrides):
+                raise OperationError("INVALID_PAGE_SET", "page overrides must be a list of objects")
         known = {str(p.get("page_id")): p for p in pages}
         requested = op.get("pages")
         if not isinstance(requested, list) or not requested:
@@ -154,7 +163,13 @@ def _apply_one(plan: Dict[str, Any], op: Dict[str, Any], locks: List[str],
                 if key in item:
                     page[key] = item[key]
             if "overrides" in item:
-                page["overrides"] = copy.deepcopy(item["overrides"])
+                overrides = item["overrides"]
+                if overrides is not None and (
+                        not isinstance(overrides, list)
+                        or any(not isinstance(ov, dict) for ov in overrides)):
+                    raise OperationError("INVALID_PAGE_SET",
+                                         "page overrides must be a list of objects")
+                page["overrides"] = copy.deepcopy(overrides)
             # binding_digest / original_title 只读：排序绝不改数据绑定
         enabled = [p for p in pages if p.get("enabled") is not False]
         if len(enabled) > 20:
@@ -358,7 +373,7 @@ def _assert_locks_preserved(before: Dict[str, Any], after: Dict[str, Any],
     next_pages = {str(p.get("page_id")): p
                   for p in (after.get("atlas") or {}).get("pages") or []
                   if isinstance(p, dict)}
-    for pid in set(prev_pages) | set(next_pages):
+    for pid in set(next_pages):
         _compare(_index(apply_page_overrides(base_before, prev_pages.get(pid))),
                  _index(apply_page_overrides(base_after, next_pages.get(pid))),
                  f" on page {pid}")

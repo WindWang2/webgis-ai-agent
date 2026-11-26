@@ -6,7 +6,7 @@ lazy="select" — serializing N artifacts fired ~N×(1 selectin + 2 select)
 queries. With explicit selectinload, the total query count is constant.
 """
 import pytest
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect
 from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base
@@ -73,6 +73,24 @@ def project_with_artifacts(db_session):
         ))
     db.commit()
     return proj
+
+
+def test_list_projects_defers_metadata_json(db_session):
+    proj = Project(
+        id="proj_metadata",
+        name="metadata-heavy",
+        metadata_json={"payload": "x" * 100_000},
+        status="active",
+    )
+    db_session.add(proj)
+    db_session.commit()
+    db_session.expunge_all()
+
+    rows, total = ProjectService.list_projects(db_session)
+
+    assert total == 1
+    assert rows[0].name == "metadata-heavy"
+    assert "metadata_json" in inspect(rows[0]).unloaded
 
 
 def test_list_project_artifacts_query_count_is_constant(db_session, project_with_artifacts):

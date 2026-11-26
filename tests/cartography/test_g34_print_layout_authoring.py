@@ -771,6 +771,38 @@ def test_t27_text_over_max_lines_truncation_is_disclosed_not_silent():
                for d in comp.print_layout_receipt["diagnostics"])
 
 
+def test_t38_authored_chrome_discloses_unsupported_draw_kinds():
+    """作者绘制计划里的未知 kind 必须进 omitted/诊断，不能静默消失。"""
+    from app.services.mapspec_to_svg import _render_authored_chrome
+
+    kinds = ("panel", "colorbar", "annotation", "inset_map")
+    draw_plan = {
+        "version": "print_layout.v1",
+        "map_rect": {"x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0},
+        "scale": {},
+        "components": [
+            {"id": kind, "kind": kind, "visible": True} for kind in kinds
+        ] + [
+            {"id": "map", "kind": "map_slot", "visible": True},
+            {"id": "group", "kind": "group", "visible": True},
+        ],
+    }
+    _fragment, coverage = _render_authored_chrome(
+        {}, draw_plan, [0.0, 0.0, 1.0, 1.0], 100.0, 100.0,
+        lambda _coord: (0.0, 0.0),
+    )
+    assert coverage["rendered"] == []
+    assert coverage["omitted"] == [
+        {"component_id": kind, "type": kind,
+         "code": "publication_component_omitted"}
+        for kind in kinds
+    ]
+    assert coverage["diagnostics"] == [
+        ("publication_component_omitted", "authoring kind unsupported", kind)
+        for kind in kinds
+    ]
+
+
 # ── T34–T37：P2 回归（字体回退披露 / 模板 typed 回执 / PNG 失败 typed / 页级覆写校验）
 
 def test_t34_font_fallback_does_not_claim_unapplied_weight_style(monkeypatch):
@@ -866,3 +898,63 @@ def test_t37_validate_authoring_applies_page_overrides():
     assert report["ok"] is False, report
     assert any(e["code"] == "TEXT_OVERFLOW_BLOCKED" and e["component_id"] == "title"
                for e in report["errors"]), report
+
+
+# ── P3 回归（非法页册 typed 回执 / 删页不误伤锁覆写）──────────────────────
+
+@pytest.mark.parametrize(("atlas", "code"), [
+    (None, "INVALID_ATLAS"),
+    ({"pages": {}}, "INVALID_PAGE_SET"),
+    ({"pages": [None]}, "INVALID_PAGE_SET"),
+    ({"pages": [{"page_id": "main", "overrides": {"component_id": "title"}}]},
+     "INVALID_PAGE_SET"),
+])
+def test_set_pages_after_invalid_replace_plan_returns_typed_error(atlas, code):
+    plan = empty_print_layout()
+    candidate = copy.deepcopy(plan)
+    candidate["atlas"] = atlas
+    res = operations.apply_operations(plan, [
+        {"op": "replace_plan", "plan": candidate},
+        {"op": "set_pages", "pages": [{"page_id": "main"}]},
+    ], locks=["title"])
+    assert res["ok"] is False
+    assert res["issues"][0]["code"] == code
+    assert res["plan"] == plan
+
+
+def test_set_pages_rejects_malformed_overrides_without_lock_check_crash():
+    plan = empty_print_layout()
+    plan["atlas"]["pages"] = [{"page_id": "main"}]
+    res = operations.apply_operations(plan, [{
+        "op": "set_pages", "pages": [{
+            "page_id": "main", "overrides": {"component_id": "title"},
+        }],
+    }], locks=["title"])
+    assert res["ok"] is False
+    assert res["issues"][0]["code"] == "INVALID_PAGE_SET"
+    assert res["plan"] == plan
+
+
+def test_replace_plan_may_delete_page_with_locked_override():
+    plan = empty_print_layout()
+    title = next(c for c in plan["components"] if c["id"] == "title")
+    plan["atlas"]["pages"] = [
+        {"page_id": "p1", "overrides": [{"component_id": "title", "visible": False}]},
+        {"page_id": "p2", "overrides": [{
+            "component_id": "title", "frame": {**title["frame"], "x": 20.0},
+        }]},
+    ]
+    candidate = copy.deepcopy(plan)
+    candidate["atlas"]["pages"].pop()
+    res = operations.apply_operations(
+        plan, [{"op": "replace_plan", "plan": candidate}], locks=["title"])
+    assert res["ok"], res["issues"]
+
+    injected = copy.deepcopy(plan)
+    injected["atlas"]["pages"].append({
+        "page_id": "p3", "overrides": [{"component_id": "title", "visible": False}],
+    })
+    rejected = operations.apply_operations(
+        plan, [{"op": "replace_plan", "plan": injected}], locks=["title"])
+    assert rejected["ok"] is False
+    assert rejected["issues"][0]["code"] == "PRINT_LAYOUT_LOCKED_COMPONENT"

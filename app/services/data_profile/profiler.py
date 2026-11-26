@@ -364,8 +364,16 @@ class DatasetProfiler:
             if isinstance(f, dict) and isinstance(f.get("geometry"), dict):
                 sample_geom = f["geometry"]
                 break
-        lon_facts = describe_longitude_semantics(
-            bbox=vp.extent, geometry=sample_geom)
+        try:
+            lon_facts = describe_longitude_semantics(
+                bbox=vp.extent, geometry=sample_geom)
+        except Exception as e:  # noqa: BLE001 — 经度证据异常 → FAILED 剖析
+            return DatasetProfileV3(
+                target_ref=ref,
+                category="unknown",
+                profile_quality=ProfileQuality.FAILED,
+                diagnostics=[f"profile_error: {e}"],
+            )
         return DatasetProfileV3(
             target_ref=ref,
             category=category,

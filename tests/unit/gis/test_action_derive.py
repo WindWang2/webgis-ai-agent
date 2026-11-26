@@ -237,3 +237,25 @@ class TestMaterialize:
         _, records = await materialize_classification(
             ir, current={}, load_geojson=loader)
         assert [r.code for r in records] == [DERIVE_SKIPPED]
+
+    @pytest.mark.asyncio
+    async def test_blueprint_budget_rejection_preserves_other_layers(self):
+        """单层重建超字节闸只降级该层，不丢失前面已成功的物化与披露。"""
+        long_field = "pop" * 2000
+        ir = _ir(
+            _layer_intent("L1", source="ref:d1"),
+            _layer_intent(
+                "L2", source="ref:d2",
+                classification={"k": 5, "method": "quantiles",
+                                "palette": "YlOrRd", "field": long_field},
+            ),
+        )
+
+        async def loader(ref):
+            return _geojson(field="pop" if ref == "ref:d1" else long_field)
+
+        updated, records = await materialize_classification(
+            ir, current={}, load_geojson=loader)
+        assert [r.code for r in records] == [DERIVE_OK, DERIVE_SKIPPED]
+        assert updated.layer_intents[0].blueprint.legend_spec["breaks"]
+        assert updated.layer_intents[1].blueprint.legend_spec == {}

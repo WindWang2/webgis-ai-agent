@@ -39,6 +39,7 @@ import hashlib
 import json
 import logging
 import threading
+import weakref
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
@@ -49,7 +50,9 @@ from app.services.provenance.fingerprint import canonical_dumps
 
 logger = logging.getLogger(__name__)
 
-_QUOTA_LOCKS: dict[str, threading.Lock] = {}
+_QUOTA_LOCKS: weakref.WeakValueDictionary[str, threading.Lock] = (
+    weakref.WeakValueDictionary()
+)
 _QUOTA_GUARD = threading.Lock()
 
 
@@ -514,9 +517,11 @@ async def promote_run_artifacts(
             report.append(entry)
             continue
         payload: Optional[Any] = None
+        session_probed = False
         if session_id and art.storage_ref:
             try:
                 payload = await session_data_manager.get(session_id, art.storage_ref)
+                session_probed = True
             except Exception as e:  # noqa: BLE001 — store outage is disclosed, not fatal
                 logger.warning(
                     "[artifact_promotion] session store read failed for %s: %s",
@@ -524,11 +529,11 @@ async def promote_run_artifacts(
                 )
                 payload = None
         if payload is None:
-            # Truthful status: "no_session_context" (caller had no session to
-            # probe — content MAY still be alive) differs from
+            # Truthful status: "no_session_context" (no usable session context
+            # to probe — content MAY still be alive) differs from
             # "session_expired" (probed and gone). Never conflate the two.
             meta["content_status"] = (
-                "no_session_context" if not session_id else "session_expired"
+                "session_expired" if session_probed else "no_session_context"
             )
             art.metadata_json = meta
             entry["status"] = meta["content_status"]
