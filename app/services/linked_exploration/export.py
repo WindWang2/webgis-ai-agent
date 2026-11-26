@@ -41,10 +41,6 @@ _MAX_EXPORT_BINS = 32
 _ANNOTATION_MAX_CHARS = 400
 
 
-def _actor_of(actor: Dict[str, Any]) -> Dict[str, Any]:
-    return actor
-
-
 async def export_exploration(
     session_id: str,
     actor: Dict[str, Any],

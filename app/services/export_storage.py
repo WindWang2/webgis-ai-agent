@@ -73,9 +73,14 @@ def get_export_owner(
 
 def persist_export_file(filename: str, content: bytes, ext: str) -> None:
     """Synchronous temporary write + atomic replace; async callers offload it."""
-    with tempfile.NamedTemporaryFile(
-        dir=export_paths.ensure_exports_root(), delete=False, suffix=ext,
-    ) as tmp:
-        tmp.write(content)
-        tmp_path = tmp.name
-    os.replace(tmp_path, os.path.join(str(export_paths.ensure_exports_root()), filename))
+    tmp_path: Optional[str] = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            dir=export_paths.ensure_exports_root(), delete=False, suffix=ext,
+        ) as tmp:
+            tmp_path = tmp.name
+            tmp.write(content)
+        os.replace(tmp_path, os.path.join(str(export_paths.ensure_exports_root()), filename))
+    finally:
+        if tmp_path is not None:
+            Path(tmp_path).unlink(missing_ok=True)

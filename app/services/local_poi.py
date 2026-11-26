@@ -697,9 +697,16 @@ def gd_poi_catalog() -> Dict[str, Any]:
     if available:
         out["gpkg"] = str(gd_poi_gpkg_path())
         if _meta_path().exists():
-            meta = json.loads(_meta_path().read_text(encoding="utf-8"))
-            out["provinces"] = meta.get("provinces", {})
-            out["total_rows"] = sum(meta.get("provinces", {}).values())
+            try:
+                meta = json.loads(_meta_path().read_text(encoding="utf-8"))
+                provinces = meta.get("provinces", {})
+            except (ValueError, OSError) as exc:
+                # 撕裂/损坏的 meta（旧版非原子写遗留）与 ingest 侧容错对称：
+                # 目录降级为「可用但省份明细未知」，不让整个查询抛错。
+                logger.warning("[gd-poi] meta.json 不可解析（%s），provinces 明细降级", exc)
+            else:
+                out["provinces"] = provinces
+                out["total_rows"] = sum(provinces.values())
     else:
         out["error"] = "gd_pois.gpkg 未生成"
         out["correction_hint"] = "运行 python manage.py gd-poi-ingest 预处理。"

@@ -130,7 +130,9 @@ def aggregate_features(
             if key is None:
                 null_key_count += 1
         elif isinstance(raw_key, str):
-            key = raw_key if len(raw_key) <= 128 else raw_key[:128]
+            # 不截断：前 128 字符相同的不同长键若截断会被静默合并，
+            # count/sum 混淆且无披露（违背诚实分组规则）—— 键原样入组。
+            key = raw_key
         else:
             # 容器/复杂键：以类型名归组（诚实：不丢行，不假装可比）
             key = f"<{type(raw_key).__name__}>"

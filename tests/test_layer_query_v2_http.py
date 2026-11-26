@@ -372,6 +372,33 @@ async def test_aggregate_over_limit_422(client, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_aggregate_long_keys_not_silently_truncated(client, monkeypatch):
+    # 前 128 字符相同、尾部不同的两个长键必须保持不同组：
+    # 截断会静默合并它们，count/sum 混淆且无 truncated 披露。
+    prefix = "x" * 128
+    key_a, key_b = prefix + "A", prefix + "B"
+    features = []
+    for i in range(6):
+        features.append({
+            "type": "Feature", "geometry": {"type": "Point", "coordinates": [104.0, 30.0]},
+            "properties": {"long": key_a if i % 2 == 0 else key_b, "v": i},
+        })
+    _install_store(monkeypatch, data={"type": "FeatureCollection", "features": features})
+    r = await client.get("/api/v1/layers/data/ref-page/aggregate", params={
+        "session_id": _VALID_SID, "group_by": "long", "agg": "sum", "agg_field": "v",
+    })
+    assert r.status_code == 200, r.text
+    body = r.json()
+    rows = {row["key"]: row for row in body["rows"]}
+    assert set(rows) == {key_a, key_b}
+    assert rows[key_a]["count"] == 3 and rows[key_b]["count"] == 3
+    # 合并会让 sum 变成 15（0+1+...+5）；分组正确则为 0+2+4 / 1+3+5
+    assert rows[key_a]["sum"] == pytest.approx(6)
+    assert rows[key_b]["sum"] == pytest.approx(9)
+    assert body["total_matching"] == 6
+
+
+@pytest.mark.asyncio
 async def test_aggregate_overflow_key_disambiguation(client, monkeypatch):
     features = []
     for i in range(12):

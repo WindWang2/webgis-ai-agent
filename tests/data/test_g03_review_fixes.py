@@ -160,6 +160,89 @@ class TestF1GuardBudgetBypass:
             _fc([{"type": "Feature", "geometry": gc, "properties": {}}]))
 
 
+# ═══════════════════ P3-00：守卫扫描面封洞（id/外来成员/FC 级键） ══════════
+
+
+class TestP3GuardFullTreeCoverage:
+    """评审 P3-app_services_data_ingest-00 实证反例：守卫只扫
+    feature["properties"]——id/外来成员及 FC 级键的超大串与深嵌套绕过
+    全部检查直接入库（上游仅有总载荷帽）。修复后整棵 FC 树（geometry
+    坐标专扫外）走同一判据（深度/超大串/预算，耗尽即类型化拒绝）。
+    """
+
+    def test_oversized_feature_id_rejected(self):
+        """feature["id"] 300KB 串 → PROPERTY_STRING_OVERSIZED（不得入库）。"""
+        fc = _fc([{"type": "Feature", "id": "A" * (300 * 1024),
+                   "geometry": {"type": "Point", "coordinates": [116.0, 39.0]},
+                   "properties": {}}])
+        with pytest.raises(GeojsonGuardError) as ei:
+            validate_feature_collection(fc)
+        assert ei.value.code == "PROPERTY_STRING_OVERSIZED"
+        assert ei.value.feature_index == 0
+
+    def test_oversized_foreign_feature_member_rejected(self):
+        """feature 级外来成员（非 properties/geometry）300KB 串 → 拒绝。"""
+        fc = _fc([{"type": "Feature", "note": "A" * (300 * 1024),
+                   "geometry": {"type": "Point", "coordinates": [116.0, 39.0]},
+                   "properties": {}}])
+        with pytest.raises(GeojsonGuardError) as ei:
+            validate_feature_collection(fc)
+        assert ei.value.code == "PROPERTY_STRING_OVERSIZED"
+        assert ei.value.feature_index == 0
+
+    def test_oversized_fc_level_key_rejected(self):
+        """FC 级键（metadata）300KB 串 → 拒绝（无所属要素）。"""
+        fc = {"type": "FeatureCollection",
+              "metadata": "A" * (300 * 1024),
+              "features": [_point([116.0, 39.0])]}
+        with pytest.raises(GeojsonGuardError) as ei:
+            validate_feature_collection(fc)
+        assert ei.value.code == "PROPERTY_STRING_OVERSIZED"
+
+    def test_deep_fc_level_member_rejected(self):
+        """FC 级键 200 层深嵌套 → STRUCTURE_TOO_DEEP。"""
+        node: dict = {"x": 1}
+        for _ in range(200):
+            node = {"child": node}
+        fc = {"type": "FeatureCollection", "extra": node,
+              "features": [_point([116.0, 39.0])]}
+        with pytest.raises(GeojsonGuardError) as ei:
+            validate_feature_collection(fc)
+        assert ei.value.code == "STRUCTURE_TOO_DEEP"
+
+    def test_legit_foreign_members_not_falsely_rejected(self):
+        """合法外来成员（crs/bbox/数字 id/短串 id/metadata 字典）不误拒。"""
+        fc = {"type": "FeatureCollection",
+              "crs": {"type": "name", "properties": {"name": "EPSG:4326"}},
+              "bbox": [104.0, 30.0, 105.0, 31.0],
+              "metadata": {"source": "test", "tags": ["a", "b"]},
+              "features": [
+                  {"type": "Feature", "id": 42,
+                   "geometry": {"type": "Point",
+                                "coordinates": [116.0, 39.0]},
+                   "properties": {}},
+                  {"type": "Feature", "id": "feat-abc",
+                   "geometry": {"type": "Point",
+                                "coordinates": [116.1, 39.1]},
+                   "properties": {"name": "x"}},
+              ]}
+        validate_feature_collection(fc)  # 不抛即通过
+
+    async def test_pipeline_rejects_oversized_feature_id_before_store(
+        self, sem_store
+    ):
+        """管线级反例：id 超大串在 store 前类型化拒绝（无 ref 铸造）。"""
+        result = await get_ingest_pipeline().ingest(
+            "g03-p3-id", _fc([{"type": "Feature",
+                               "id": "A" * (300 * 1024),
+                               "geometry": {"type": "Point",
+                                            "coordinates": [116.0, 39.0]},
+                               "properties": {}}]))
+        assert not result.ok
+        assert result.error_code == "PROPERTY_STRING_OVERSIZED"
+        assert result.ref_id == ""
+
+
 # ═══════════════════ F3：NaN/Inf bbox 伪 pass ════════════════════════════
 
 

@@ -2,6 +2,7 @@
 import contextlib
 import json
 import logging
+import math
 import os
 import shutil
 import tempfile
@@ -390,14 +391,22 @@ def parse_vector(
             "或请在上传前为数据指定 CRS。"
         )
 
-    # 获取几何类型
+    # 获取几何类型。全部 feature 几何为 null 时 unique() == [None] —— 原样写进
+    # meta.json 是 JSON null，进 uploads.geometry_type（String(50)，NOT NULL）
+    # 还会 IntegrityError。如实落字符串 "None"，保持严格 JSON 与 DB 可写。
     geom_types = gdf.geometry.type.unique()
-    geometry_type = geom_types[0] if len(geom_types) == 1 else "Mixed"
+    geometry_type = (geom_types[0] or "None") if len(geom_types) == 1 else "Mixed"
     feature_count = len(gdf)
 
-    # 计算边界
+    # 计算边界。全部几何为 null（或空几何）时 total_bounds 返回 NaN —— NaN 不是
+    # 合法 JSON：写进 meta.json 即非严格 JSON，进 uploads.bbox（JSON 列）直接坏。
+    # 没有可用几何 ⇒ bbox = None（诚实"无"），绝不写 NaN。
     bounds = gdf.total_bounds.tolist()  # [minx, miny, maxx, maxy]
-    bbox = [bounds[0], bounds[1], bounds[2], bounds[3]]
+    bbox = (
+        [bounds[0], bounds[1], bounds[2], bounds[3]]
+        if all(math.isfinite(b) for b in bounds)
+        else None
+    )
 
     # 保存为 GeoJSON（原子发布：#1634）
     output_path = upload_dir / "original.geojson"

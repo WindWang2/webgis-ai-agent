@@ -524,6 +524,27 @@ async def test_poi_rerun_after_interrupt_is_idempotent(stats_env):
     ]
 
 
+@pytest.mark.asyncio
+async def test_poi_catalog_tolerates_torn_meta(stats_env):
+    """meta.json 撕裂/损坏时目录查询不得整体抛错（与 ingest 侧容错对称）。
+
+    旧实现直接 json.loads 无兜底：撕裂的 meta 让 gd_poi_catalog 抛
+    JSONDecodeError，连带 get_local_stats_catalog 整个工具失败。
+    """
+    from app.services.local_poi import _meta_path, gd_poi_catalog, ingest_gd_poi
+
+    ingest_gd_poi()
+    good = gd_poi_catalog()
+    assert good["available"] is True
+    assert good["total_rows"] == 4
+
+    _meta_path().write_text('{"provinces": {"5100', encoding="utf-8")
+    torn = gd_poi_catalog()
+    assert torn["available"] is True  # 仍可用，仅省份明细降级
+    assert "provinces" not in torn
+    assert "total_rows" not in torn
+
+
 # ── 工具注册与调度 ────────────────────────────────────────────────────────
 
 

@@ -90,6 +90,40 @@ def test_byte_replace_failure_preserves_existing_artifact(storage, tmp_path, mon
     assert (tmp_path / "one.png").read_bytes() == b"old-complete"
 
 
+def test_persist_failures_leave_no_temp_residue(storage, tmp_path, monkeypatch):
+    def fail_replace(*args):
+        raise OSError("artifact disk failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(storage.os, "replace", fail_replace)
+        with pytest.raises(OSError, match="artifact disk failure"):
+            storage.persist_export_file("one.png", b"new-complete", ".png")
+    assert not list(tmp_path.glob("tmp*"))
+
+    real_named = storage.tempfile.NamedTemporaryFile
+
+    class FullDisk:
+        def __init__(self, *args, **kwargs):
+            self._handle = real_named(*args, **kwargs)
+            self.name = self._handle.name
+
+        def write(self, payload):
+            raise OSError("no space left on device")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            self._handle.close()
+            return False
+
+    with monkeypatch.context() as patch:
+        patch.setattr(storage.tempfile, "NamedTemporaryFile", FullDisk)
+        with pytest.raises(OSError, match="no space left on device"):
+            storage.persist_export_file("two.png", b"payload", ".png")
+    assert not list(tmp_path.glob("tmp*"))
+
+
 def test_call_time_root_and_concurrent_owner_receipts(storage, tmp_path, monkeypatch):
     from app.services import export_paths
 
