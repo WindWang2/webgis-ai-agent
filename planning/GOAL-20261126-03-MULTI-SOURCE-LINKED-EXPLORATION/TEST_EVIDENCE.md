@@ -77,3 +77,42 @@ S10 selection handle 单 (session,ref,revision) 绑定（per-source 多 handle �
 ## 新增测试记录（执行期追加）
 
 （WP 执行时在此登记每批测试命令与结果）
+
+## WP5 实测（2026-11-27，worktree @ b1473b315+selection_ref）
+
+### 性能（确定性 fixture：学校点×40 区县人口表；USE_REDIS=false；单进程；preview_plan 含逐源冻结/传播/图表 facet/指标）
+
+| 规模 | p50 | max | school_match（手算自洽） | pop_match | 指标组 |
+|---|---|---|---|---|---|
+| 1,000 | 11.4ms | 12.3ms | 500（public 半数） | 20（含 public 学校的区县） | 20 |
+| 50,000 | 517.5ms | 533.8ms | 25,000 | 20 | 20 |
+| 250,000 | 2,481.8ms | 2,494.4ms | 125,000 | 20 | 20 |
+
+线性扩展；250k = 冻结硬帽（bivariate MAX_SOURCE_FEATURES），本域承诺有界精确。
+全量列表不进 LLM/前端（工具回执有界：桶≤24 行/组≤24；前端组件消费 REST 有界面）。
+
+### Pi 真实 journey（PI_JOURNEY_E2E=1，vendor/pi 构建成功 pin ef4a1cfcc entry e41d12cff09921e1）
+
+- `bash scripts/build-vendor-pi.sh` OK（86 files, 9.6MiB）
+- 直接运行：**app 启动失败** —— master 既有缺陷①：Runtime Manifest 严格校验
+  11 项悬空 capability（webgis_scenario_*→gis_scenario_harness、
+  webgis_*_paper_scale_generalization→cartography_paper_scale_*，
+  来自已合并的 #2274/#2275；`git diff origin/master...HEAD` 证明本线不涉及
+  runtime_manifest/capability 文件）。用 app 提供的降级开关
+  GIS_MANIFEST_STRICT=0 后 app 可启动。
+- 降级后旅程：**前 6 项 gate 全绿**（warmup_ok / inspect_receipt /
+  preview_tool_called / combined_match_count / facet_denominators /
+  handle_present —— 即本线改动最重的 preview/求值/句柄链真实经 Pi 子进程
+  验证通过）；**view_save 起 5 项 gate 未达** —— master 既有缺陷②：
+  SQLite 托管水位 `_MANAGED_WATERMARK=0103_workflow_run_session` 落后于
+  已合并迁移（messages.attachments 在 g36/0107+），新库 schema 缺列 →
+  transcript 持久化 INSERT 失败 → 驱动事件循环关闭。本线 diff 不含
+  migrations/sqlite_schema/db_model（已核）。
+- 结论：两处阻塞均为跨线基线缺陷（迁移治理/manifest 治理），按 R0 纪律
+  只记录不扩线修复；本线未虚报 journey 全绿。
+
+### openapi 快照
+
+- master 上 `test_api_compatibility` 本就红（6 项既有 breaking 源于
+  #2266/#2281 等已合并改动的快照未刷新）；本线 additive 新路由按仓库规则
+  `API_SNAPSHOT_UPDATE=1` 显式刷新（快照含既有漂移一并落盘，PR 说明）。

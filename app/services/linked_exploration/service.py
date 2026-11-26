@@ -304,8 +304,17 @@ async def preview_plan(
     actor: Dict[str, Any],
     *,
     create_handle: bool = True,
+    selection_ref: Optional[str] = None,
+    selection_source_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """多源联动预览权威面（v3 主面；v2 单源计划同面兼容）。
+
+    ``selection_ref``：选择史指代（``previous`` / ``<epoch_seq>``，来自
+    gis_situation selection_history）—— 解析成功 → 在目标源（缺省
+    primary）注入 id 集合条件（"只看刚才选中的那组"）；不可解析 →
+    ``SELECTION_REF_UNRESOLVED`` typed 拒绝 + 最小澄清提示（绝不随机挑
+    一代冒充）。ids 摄入上限 50（MAX_HISTORY_IDS）+ 截断权威披露
+    ``ids_truncated``/``matched_count`` —— 真实命中数以后者为准。
 
     语义：
     1. 逐源冻结并核对计划锚（任一漂移 → STALE_SOURCE，逐源列明）——
@@ -324,6 +333,21 @@ async def preview_plan(
     bindings = contract.plan_source_bindings(plan)
     owner = _actor_owner_token(actor)
     trusted = _trusted(actor)
+
+    # 0. 选择史指代（"只看刚才选中的那组"）：解析句柄（解析只需账本，
+    #    id 字段解析在冻结后做 —— 见下方 step 1.5）
+    selection_claimed: Optional[Dict[str, Any]] = None
+    selection_target_sid: Optional[str] = None
+    if selection_ref:
+        target_sid = selection_source_id or \
+            contract.plan_primary_binding(plan).source_id
+        if target_sid not in {b.source_id for b in bindings}:
+            raise LinkedExplorationError(
+                "UNKNOWN_SOURCE",
+                f"selection_source_id {target_sid!r} 不在计划 sources 中",
+                status_code=422)
+        selection_claimed = await _resolve_selection_ref(session_id, selection_ref)
+        selection_target_sid = target_sid
 
     # 1. 逐源冻结 + 锚核对（同 ref 去重）
     frozen_by_ref: Dict[str, Any] = {}
@@ -358,6 +382,40 @@ async def preview_plan(
     features_by_source: Dict[str, List[Any]] = {
         b.source_id: frozen_by_ref[b.anchor.ref_id].features for b in bindings
     }
+    # 1.5 选择史 ids → 目标源 id 字段条件（冻结后才能解析 id 字段链）
+    selection_disclosure: Optional[Dict[str, Any]] = None
+    if selection_claimed is not None and selection_target_sid is not None:
+        target_features = features_by_source[selection_target_sid]
+        id_field = _resolve_id_field(target_features)
+        if id_field is None:
+            raise LinkedExplorationError(
+                "SELECTION_ID_FIELD_UNRESOLVED",
+                "目标源要素没有稳定 id 字段链（_wfid/id/OBJECTID/fid…）——"
+                "历史选择指代无法映射为条件",
+                status_code=422,
+                correction_hint="改用显式条件（如按键字段筛选）替代选择史指代。")
+        ids = list(selection_claimed.get("feature_ids") or [])
+        conditions.append(contract.parse_condition({
+            "kind": "category",
+            "condition_id": f"sel-ref-{selection_claimed.get('claimed_at_seq')}",
+            "chart_id": f"sel-ref-chart-{selection_target_sid}",
+            "field": id_field,
+            "values": ids,
+            "source_id": selection_target_sid,
+        }))
+        selection_disclosure = {
+            "selection_ref": selection_ref,
+            "source_id": selection_target_sid,
+            "id_field": id_field,
+            "claimed_epoch_seq": selection_claimed.get("claimed_at_seq"),
+            "id_count": len(ids),
+            "matched_count": selection_claimed.get("matched_count"),
+            "ids_truncated": bool(selection_claimed.get("ids_truncated")),
+            "layer_id": selection_claimed.get("layer_id"),
+            "note": "历史 ids 摄入上限 50；ids_truncated=true 时真实命中数"
+                    "以 matched_count 为准",
+        }
+
     own_wheres = contract.compile_plan_wheres(plan, conditions)
 
     # 2. 传播：拓扑序单遍；上游最终匹配行的键集 → 下游谓词
@@ -529,7 +587,7 @@ async def preview_plan(
             links_by_id=links_by_id))
 
     primary = contract.plan_primary_binding(plan)
-    return {
+    out = {
         "schema_version": plan.schema_version,
         "primary_source_id": primary.source_id,
         "anchors": {b.source_id: frozen_by_ref[b.anchor.ref_id].anchor()
@@ -541,6 +599,9 @@ async def preview_plan(
         "metrics": metrics_out,
         "completeness": "complete",
     }
+    if selection_disclosure is not None:
+        out["selection_ref_resolved"] = selection_disclosure
+    return out
 
 
 def _source_has_incoming(plan: contract.ExplorationPlan, sid: str) -> bool:
@@ -552,6 +613,43 @@ def _source_has_incoming(plan: contract.ExplorationPlan, sid: str) -> bool:
         if link.propagate == "right_to_left" and link.left_source_id == sid:
             return True
     return False
+
+
+async def _resolve_selection_ref(session_id: str, selection_ref: str) -> Dict[str, Any]:
+    """选择史句柄解析（gis_situation selection_history；不可解析 →
+    typed 拒绝 + 最小澄清，绝不随机挑一代）。"""
+    from app.services.gis_situation.selection_history import resolve_selection_ref
+    from app.services.session_data import session_data_manager
+
+    try:
+        ledger = await session_data_manager.get_state_field(
+            session_id, "_interaction_ir_ledger")
+    except Exception:  # noqa: BLE001 — 史面读失败 = 句柄不可解析
+        ledger = []
+    claimed = resolve_selection_ref(
+        ledger if isinstance(ledger, list) else [], selection_ref)
+    if claimed is None:
+        raise LinkedExplorationError(
+            "SELECTION_REF_UNRESOLVED",
+            f"选择史中无可解析句柄 {selection_ref!r}（史空/越界/已清除）",
+            status_code=422,
+            correction_hint="请说明具体哪一组（如 'previous' 或代号），"
+                            "或重新选择后重试。")
+    return claimed
+
+
+def _resolve_id_field(features: Sequence[Any]) -> Optional[str]:
+    """要素 id 字段链解析（与 feature_pages.FEATURE_ID_KEYS 同源）。"""
+    from app.services.feature_pages import FEATURE_ID_KEYS
+
+    for feat in list(features)[:50]:
+        props = feat.get("properties") if isinstance(feat, dict) else None
+        if not isinstance(props, dict):
+            continue
+        for key in FEATURE_ID_KEYS:
+            if key in props:
+                return key
+    return None
 
 
 # ─── 层级钻取：显式层级声明 + 计划改写重放（无层级 → 诚实阻塞） ──────────

@@ -15,7 +15,6 @@ import uuid
 import pytest
 
 from app.tools.linked_exploration_tools import (
-    DrillArgs,
     PlanPreviewArgs,
     register_linked_exploration_tools,
 )

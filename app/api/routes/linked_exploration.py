@@ -154,6 +154,8 @@ async def preview_conditions(
 class PlanPreviewBody(BaseModel):
     plan: Dict[str, Any]
     create_handle: bool = True
+    selection_ref: Optional[str] = Field(default=None, max_length=32)
+    selection_source_id: Optional[str] = Field(default=None, max_length=64)
 
 
 class DrillBody(BaseModel):
@@ -176,7 +178,9 @@ async def preview_plan(
     try:
         return await service.preview_plan(
             session_id, body.plan, _actor(conv, x_session_token, session_id),
-            create_handle=body.create_handle)
+            create_handle=body.create_handle,
+            selection_ref=body.selection_ref,
+            selection_source_id=body.selection_source_id)
     except LinkedExplorationError as e:
         raise _fail(e)
 

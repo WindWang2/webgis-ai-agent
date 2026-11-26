@@ -81,6 +81,13 @@ class PlanPreviewArgs(BaseModel):
         ..., description="ExplorationPlan（v3 多源：sources/links/"
                          "metrics/charts/conditions；v2 单源同面兼容）",
         json_schema_extra={"ref_cursor": True})
+    selection_ref: Optional[str] = Field(
+        default=None, max_length=32,
+        description="选择史指代：'previous'（刚才那组）或代号；不可解析 → "
+                    "SELECTION_REF_UNRESOLVED typed 拒绝 + 最小澄清")
+    selection_source_id: Optional[str] = Field(
+        default=None, max_length=64,
+        description="指代作用源（缺省 primary）")
 
 
 class DrillArgs(BaseModel):
@@ -524,13 +531,16 @@ def register_linked_exploration_tools(registry: ToolRegistry) -> None:
                        "metric_over_limit", "spatial_metric_unsupported"),
     )
     async def webgis_exploration_plan_preview(
-        plan: Dict[str, Any], session_id: str = "",
+        plan: Dict[str, Any], selection_ref: Optional[str] = None,
+        selection_source_id: Optional[str] = None, session_id: str = "",
     ) -> dict:
         if not session_id:
             return {"success": False, "code": "SOURCE_UNAVAILABLE",
                     "message": "Missing session_id context"}
         result = await _guard(service.preview_plan(
-            session_id, plan, _actor(session_id)))
+            session_id, plan, _actor(session_id),
+            selection_ref=selection_ref,
+            selection_source_id=selection_source_id))
         if result.get("success") is False:
             return result
         per_source_out = {}
@@ -602,6 +612,7 @@ def register_linked_exploration_tools(registry: ToolRegistry) -> None:
             "anchors": result.get("anchors"),
             "conditions_digest": result.get("conditions_digest"),
             "plan_digest": result.get("plan_digest"),
+            "selection_ref_resolved": result.get("selection_ref_resolved"),
             "per_source": per_source_out,
             "charts": charts_brief,
             "metrics": metrics_out,

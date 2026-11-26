@@ -413,3 +413,70 @@ async def session_data_manager_overwrite(ref, fc, sid):
     from app.services.session_data import session_data_manager
 
     return await session_data_manager.overwrite(sid, ref, fc)
+
+
+class TestSelectionRef:
+    """选择史指代（"只看刚才选中的那组"）：解析 → id 条件注入 → 传播。"""
+
+    async def test_selection_ref_restricts_primary_and_propagates(self, monkeypatch):
+        from app.services.session_data import session_data_manager
+
+        sid = "ms-journey-selref"
+        actor = {**ACTOR, "trusted_session_id": sid}
+        school_ref = await session_data_manager.store(
+            sid, _schools_fc(), prefix="mssel")
+        pop_ref = await session_data_manager.store(
+            sid, _population_fc(), prefix="msselp")
+        a_school = (await service.inspect_source(sid, school_ref, actor))["anchor"]
+        a_pop = (await service.inspect_source(sid, pop_ref, actor))["anchor"]
+        # 选择史：用户在地图上选了 2 个武侯区学校（_wfid sch-0, sch-1）。
+        # map_state 走 Redis（本环境无）—— 按既有 IR 测试模式以 monkeypatch
+        # 提供账本读取；resolve_selection_ref/条件注入/传播链全为真实代码。
+        # 两代选择：seq2（当前代）替换 seq1（→ superseded = "previous"）
+        ledger = [
+            {"kind": "feature_selected", "server_seq": 1,
+             "payload": {"selected_ids": ["sch-0", "sch-1"],
+                         "layer_id": "lyr-schools",
+                         "dataset_ref": school_ref, "matched_count": 2}},
+            {"kind": "feature_selected", "server_seq": 2,
+             "payload": {"selected_ids": ["sch-5"],
+                         "layer_id": "lyr-schools",
+                         "dataset_ref": school_ref, "matched_count": 1}},
+        ]
+
+        async def _fake_get_state_field(session_id_arg, field):
+            if field == "_interaction_ir_ledger":
+                return ledger
+            return await session_data_manager.get_state_field(
+                session_id_arg, field)
+
+        import app.services.session_data as sd_mod
+        monkeypatch.setattr(
+            sd_mod.session_data_manager, "get_state_field",
+            _fake_get_state_field)
+        plan = _v3_plan(a_school, a_pop, links=[_l2r_link()])
+        out = await service.preview_plan(
+            sid, plan, actor, selection_ref="previous")
+        # 手算：只看 sch-0/sch-1（都武侯区 public）→ 学校 2；传播键 {武侯区}
+        # → 人口 1 行
+        assert out["per_source"]["school"]["match_count"] == 2
+        assert out["per_source"]["pop"]["match_count"] == 1
+        disc = out["selection_ref_resolved"]
+        assert disc["id_field"] == "_wfid"
+        assert disc["id_count"] == 2
+        assert disc["ids_truncated"] is False
+
+    async def test_selection_ref_unresolvable_typed(self):
+        from app.services.session_data import session_data_manager
+
+        sid = "ms-journey-selref2"
+        actor = {**ACTOR, "trusted_session_id": sid}
+        school_ref = await session_data_manager.store(
+            sid, _schools_fc(), prefix="mssel2")
+        a_school = (await service.inspect_source(sid, school_ref, actor))["anchor"]
+        plan = _v3_plan(a_school, a_school)
+        with pytest.raises(LinkedExplorationError) as ei:
+            await service.preview_plan(sid, plan, actor,
+                                       selection_ref="previous")
+        assert ei.value.code == "SELECTION_REF_UNRESOLVED"
+        assert "previous" in ei.value.correction_hint  # 最小澄清提示
