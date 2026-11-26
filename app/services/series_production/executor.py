@@ -18,9 +18,11 @@ import contextlib
 import hashlib
 import json
 import logging
-import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from defusedxml import ElementTree as SafeET
+from defusedxml.common import DefusedXmlException
 
 from app.services.design_specs.contract import canonical_json
 from app.services.series_production.contract import (
@@ -156,7 +158,7 @@ def qa_member_artifacts(artifacts: List[Dict[str, Any]], title: str) -> MemberQa
             checks.append({"check": "svg_magic", "fmt": fmt, "ok": magic_ok})
             if magic_ok:
                 try:
-                    root = ET.fromstring(payload.decode("utf-8", errors="replace"))
+                    root = SafeET.fromstring(payload.decode("utf-8", errors="replace"))
                     has_draw = root.findall(".//{http://www.w3.org/2000/svg}path") or \
                         root.findall(".//{http://www.w3.org/2000/svg}g")
                     checks.append({"check": "svg_parse", "fmt": fmt, "ok": bool(has_draw),
@@ -171,7 +173,7 @@ def qa_member_artifacts(artifacts: List[Dict[str, Any]], title: str) -> MemberQa
                         warnings.append(
                             f"svg 未检出标题文本（title='{title[:40]}'）—— 请核对图面 chrome"
                         )
-                except ET.ParseError as exc:
+                except (SafeET.ParseError, DefusedXmlException) as exc:
                     checks.append({"check": "svg_parse", "fmt": fmt, "ok": False,
                                    "error": str(exc)[:120]})
                     ok = False
