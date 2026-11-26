@@ -29,3 +29,25 @@
 ## WP 期间证据
 
 （每 WP 完成后追加：红→绿失败用例、旅程命令、正负例结果）
+
+## WP5/终验证据（2026-11-27）
+
+| 命令 | 结果 | 状态 |
+|---|---|---|
+| `pytest tests/unit/test_pi_decision.py tests/unit/test_pi_decision_wiring.py tests/unit/test_pi_schema_poi_typed.py -q`（review 修复后） | **74 passed** | ✅ |
+| `pytest tests/cartography/test_map_plan_tools_v1.py -q` | 6 passed | ✅ |
+| `pytest tests/unit/test_pi_native_surface.py tests/unit/test_local_stats_data.py tests/unit/test_pi_tool_spec.py tests/unit/test_pi_surface_parity.py -q` | 62 passed, 1 xfailed | ✅ |
+| `pytest tests/test_tool_argument_aliases.py tests/test_tool_meta_contract.py -q` | 10 passed, 2 failed（meta_contract 2 项 = **base 同样失败**，预存） | ⚠️ 预存 |
+| `ruff check`（本线全部触及文件） | All checks passed | ✅ |
+| `PI_JOURNEY_E2E=1 pytest tests/integration/test_pi_stub_llm_journeys.py -q` | 本分支 FAIL（J6b nearest_facility 未激活）；**干净 base detach worktree + 同一 vendor dist 复跑同样 FAIL** → 预存/环境性，非本线回归 | ⚠️ 预存（精确命令与对照见 REVIEW.md） |
+
+## 未实测/诚实披露
+
+- 真实 classifier provider（typesafe/openai decisions 等）无凭据 → 未实测；
+  传输层注入点已留（`set_decision_assist_transport`），生产 classify 传输
+  未接线。stub 传输覆盖编排逻辑（单测），vendor `ctx.modelRegistry.classify`
+  的 wire 级消费未走通（journey 车道预存红，未阻塞记录）。
+- 模板候选域 tie 探测在 recipe 选择后（plan_from_intent 内部）→ 本期未接线
+  （SCOPE 已记录）；澄清 bool 域以「默认项翻转」机制覆盖（单测）。
+- Windows/POSIX 停机矩阵、多 worker recycle：本线未新增 spawn 面改动，
+  沿用既有契约测试；未重测全 OS 矩阵（如实披露）。
