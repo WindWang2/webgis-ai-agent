@@ -193,6 +193,21 @@ def test_region_requires_crop_rect():
     assert ei.value.reason == "region_requires_crop_rect"
 
 
+def test_region_crop_non_numeric_is_typed_rejection():
+    # 非数值 crop 值（intake 载荷 crop 含 null/字符串）→ typed 拒绝，
+    # 不得外溢 TypeError/ValueError（登记期只抛 EvidenceRejected）。
+    for bad in ({"x": None, "y": 0, "w": 10, "h": 10},
+                {"x": 0, "y": None, "w": 10, "h": 10},
+                {"x": 0, "y": 0, "w": "abc", "h": 10},
+                {"x": 0, "y": 0, "w": 10, "h": None}):
+        with pytest.raises(EvidenceRejected) as ei:
+            _map_record("s1", source_type="map_region", crop=bad).validate_invariants()
+        assert ei.value.reason in ("region_requires_crop_rect", "region_crop_empty")
+    # 合法矩形仍照常通过（守卫不过度拒绝）。
+    _map_record("s1", source_type="map_region",
+                crop={"x": 0, "y": 0, "w": 10, "h": 10}).validate_invariants()
+
+
 def test_record_roundtrip_drops_malformed():
     rec = _map_record("s1")
     parsed = VisualEvidenceRecord.from_dict(rec.to_dict())

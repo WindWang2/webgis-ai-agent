@@ -1641,7 +1641,6 @@ class WorkflowEngine:
             except IntegrityError:
                 if attempt == 2:
                     raise
-        raise RuntimeError("workflow revision retry exhausted")
 
     @staticmethod
     async def _reconstruct_prior(

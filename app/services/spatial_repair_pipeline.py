@@ -582,7 +582,13 @@ class SpatialRepairPipeline:
 
         logs: List[str] = []
         cleaned_features = []
-        unprocessed_features = []
+        # 与 cleaned_features 平行的「原始下标」轨：未处理要素（不可解析几何 /
+        # 非 dict 记录）必须回到原下标，而不是被 extend 到队尾 —— 否则输出顺序
+        # 相对输入漂移，audit 的 feature_index 与 _QUALITY_FLAG_KEY 里的下标
+        # 在下游全部错位。
+        cleaned_source_indices: List[int] = []
+        # 未处理要素按原始下标归档（合并时按序插回原位）。
+        unprocessed_by_index: Dict[int, Any] = {}
 
         # ----------------------------------------------------
         # Operation: crs_transform
@@ -600,7 +606,7 @@ class SpatialRepairPipeline:
         for idx, feat in enumerate(features):
             if not isinstance(feat, dict):
                 logs.append(f"Feature {idx}: Skipped non-dictionary record")
-                unprocessed_features.append(feat)
+                unprocessed_by_index[idx] = feat
                 for op in active_ops:
                     _bump(op, failed=1)
                 continue
@@ -617,13 +623,14 @@ class SpatialRepairPipeline:
                     continue
                 else:
                     cleaned_features.append(feat)
+                    cleaned_source_indices.append(idx)
                     continue
 
             try:
                 geom = shape(geom_raw)
             except Exception as e:
                 logs.append(f"Feature {idx}: Skipped due to unparseable geometry: {e}")
-                unprocessed_features.append(feat)
+                unprocessed_by_index[idx] = feat
                 for op in active_ops:
                     _bump(op, failed=1)
                 continue
@@ -635,6 +642,7 @@ class SpatialRepairPipeline:
                     continue
                 else:
                     cleaned_features.append(feat)
+                    cleaned_source_indices.append(idx)
                     continue
 
             # ----------------------------------------------------
@@ -739,6 +747,7 @@ class SpatialRepairPipeline:
 
             feat["geometry"] = mapping(geom)
             cleaned_features.append(feat)
+            cleaned_source_indices.append(idx)
 
         # #618-15: 数据集级 CRS 声明必须在「所有要素都成功投影」之后才更新。
         # 只要有任一要素投影失败（坐标停留在源 CRS），把数据集标记成目标 CRS
@@ -762,6 +771,7 @@ class SpatialRepairPipeline:
         _post_loop_count = len(cleaned_features)
         if "deduplicate" in active_ops and cleaned_features:
             unique_features = []
+            unique_source_indices: List[int] = []
             seen_hashes = set()
             for f_idx, f in enumerate(cleaned_features):
                 geom_dict = f.get("geometry")
@@ -779,6 +789,7 @@ class SpatialRepairPipeline:
                 if combined_key not in seen_hashes:
                     seen_hashes.add(combined_key)
                     unique_features.append(f)
+                    unique_source_indices.append(cleaned_source_indices[f_idx])
                 else:
                     try:
                         area_delta_by_op["deduplicate"] = (
@@ -791,6 +802,7 @@ class SpatialRepairPipeline:
             if removed_duplicates > 0:
                 _bump("deduplicate", affected=removed_duplicates)
             cleaned_features = unique_features
+            cleaned_source_indices = unique_source_indices
         _post_dedup_count = len(cleaned_features)
 
         # ----------------------------------------------------
@@ -1160,6 +1172,9 @@ class SpatialRepairPipeline:
                     cleaned_features = [
                         f for i, f in enumerate(cleaned_features) if i not in _flagged_feats
                     ]
+                    cleaned_source_indices = [
+                        si for i, si in enumerate(cleaned_source_indices) if i not in _flagged_feats
+                    ]
                     _removed = _before_drop - len(cleaned_features)
                     if _removed:
                         _bump("drop_outliers_or_flag", affected=_removed)
@@ -1185,7 +1200,20 @@ class SpatialRepairPipeline:
                         "clip/trim is line-03's outlier_policy decision)"
                     )
 
-        cleaned_features.extend(unprocessed_features)
+        # 不可解析要素回到原下标：按原始顺序与存活要素交错合并，输出顺序与输入
+        # 一致（被 remove_empty / deduplicate / drop_outliers 剔除的下标自然消失）。
+        if unprocessed_by_index:
+            _ordered: List[Any] = []
+            _ci = 0
+            _n_kept = len(cleaned_features)
+            for _orig_idx in range(_input_count):
+                if _orig_idx in unprocessed_by_index:
+                    _ordered.append(unprocessed_by_index[_orig_idx])
+                if _ci < _n_kept and cleaned_source_indices[_ci] == _orig_idx:
+                    _ordered.append(cleaned_features[_ci])
+                    _ci += 1
+            _ordered.extend(cleaned_features[_ci:])  # 防御：绝不丢要素
+            cleaned_features = _ordered
         repaired_geojson["features"] = cleaned_features
 
         # Wave-4: bounded per-op evidence in canonical op order (≤16 entries).

@@ -299,3 +299,81 @@ def test_non_destructive_across_all_new_ops():
         },
     )
     assert data == orig
+
+
+class TestUnprocessedFeatureOrder:
+    """不可解析要素必须留在原下标：曾被打包 extend 到队尾，输出顺序相对输入
+    漂移，audit 的 feature_index 与 _QUALITY_FLAG_KEY 的下游下标全部错位。"""
+
+    def _bogus(self, v=0):
+        return {"type": "Feature", "properties": {"v": v}, "geometry": {"type": "Bogus"}}
+
+    def test_unparseable_geometry_stays_at_original_index(self):
+        data = {"type": "FeatureCollection", "features": [
+            _poly(0, 0, 1, 1),
+            self._bogus(),
+            _poly(2, 0, 3, 1),
+        ]}
+        orig = copy.deepcopy(data)
+        repaired, logs, evidence, lineage = _run(data, ["make_valid"])
+        assert data == orig  # 非破坏
+        feats = repaired["features"]
+        assert len(feats) == 3
+        # 原下标 1 的不可解析要素仍在下标 1（曾被打包挪到队尾）。
+        assert feats[1]["geometry"] == {"type": "Bogus"}
+        assert _shape(feats[0]["geometry"]).area == pytest.approx(1.0)
+        assert _shape(feats[2]["geometry"]).area == pytest.approx(1.0)
+        # audit 日志里的 feature index 与输出位置同指一个要素。
+        assert any("Feature 1: Skipped due to unparseable geometry" in e for e in logs)
+
+    def test_non_dict_record_stays_at_original_index(self):
+        data = {"type": "FeatureCollection", "features": [
+            _poly(0, 0, 1, 1),
+            "malformed",
+            _poly(2, 0, 3, 1),
+        ]}
+        repaired, logs, evidence, lineage = _run(data, ["make_valid"])
+        feats = repaired["features"]
+        assert len(feats) == 3
+        assert feats[1] == "malformed"
+        assert any("Feature 1: Skipped non-dictionary record" in e for e in logs)
+
+    def test_unparseable_survives_removals_and_dedup_with_order_intact(self):
+        # 下标 0 被 remove_empty 剔除、下标 3 被 deduplicate 剔除，
+        # 下标 1/4 不可解析 —— 输出必须是 [bogus(1), poly(2), bogus(4)]。
+        data = {"type": "FeatureCollection", "features": [
+            {"type": "Feature", "properties": {"v": 1}, "geometry": None},
+            self._bogus(),
+            _poly(0, 0, 1, 1),
+            _poly(0, 0, 1, 1),
+            self._bogus(),
+        ]}
+        repaired, logs, evidence, lineage = _run(data, ["remove_empty", "deduplicate"])
+        feats = repaired["features"]
+        assert len(feats) == 3
+        assert feats[0]["geometry"] == {"type": "Bogus"}
+        assert _shape(feats[1]["geometry"]).area == pytest.approx(1.0)
+        assert feats[2]["geometry"] == {"type": "Bogus"}
+
+    def test_outlier_drop_keeps_unprocessed_at_original_index(self):
+        feats = [
+            {"type": "Feature", "properties": {"v": float(v)}, "geometry": None}
+            for v in range(10)
+        ]
+        feats.insert(2, self._bogus())          # 原下标 2：不可解析
+        feats.append({"type": "Feature", "properties": {"v": 1e6}, "geometry": None})
+        data = {"type": "FeatureCollection", "features": feats}
+        repaired, logs, evidence, lineage = _run(
+            data, ["drop_outliers_or_flag"],
+            op_params={"drop_outliers_or_flag": {"mode": "drop", "fields": [
+                {"field": "v", "suggested_clip": [0, 10]}
+            ]}},
+        )
+        out = repaired["features"]
+        assert len(out) == 11  # 10 个在界 + 1 个不可解析；1e6 被 drop
+        assert out[2]["geometry"] == {"type": "Bogus"}
+        assert [f["properties"]["v"] for f in out if f["geometry"] is None] == [
+            float(v) for v in range(10)
+        ]
+        assert any(row["op"] == "drop_outliers_or_flag" and row["features_affected"] == 1
+                   for row in evidence)

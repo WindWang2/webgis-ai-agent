@@ -182,6 +182,19 @@ def test_session_gate_can_be_reused_after_loop_is_closed():
     assert gate.held_sessions == 0
 
 
+def test_oversized_data_url_png_is_refused_before_decode():
+    from app.services.tool_dispatch_gates import _decode_data_url_png
+
+    # P3 resource-leak: 超大 base64 载荷（>2MiB，合法 base64）必须先拒绝
+    # 再解码，否则内存按 4/3 放大；拒绝后调用方回退 ref:/无地址图像路径。
+    oversized = "data:image/png;base64," + "A" * (2 * 1024 * 1024 + 4)
+    assert _decode_data_url_png(oversized) is None
+    # 边界内的 data URL 仍正常解码（不改变既有形状）。
+    small = "data:image/png;base64," + "A" * 64
+    assert _decode_data_url_png(small) == b"\x00" * 48
+    assert _decode_data_url_png("ref:raster/abc") is None
+
+
 def test_context_peek_never_allocates_or_crosses_tenants():
     from app.services.gis_harness.hotpath_convergence import session_ctx
 

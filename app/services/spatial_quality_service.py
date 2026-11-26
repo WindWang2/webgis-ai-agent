@@ -617,6 +617,7 @@ class SpatialQualityEngine:
                     near_pts = pt_tree.query(pt.buffer(dup_threshold))
                     connected = False
                     inspected = 0
+                    budget_exhausted = False
                     for candidate_idx in near_pts:
                         cand_idx_int = int(candidate_idx)
                         if cand_idx_int == pt_idx:
@@ -629,12 +630,21 @@ class SpatialQualityEngine:
                         # undetermined (a false "dangling" would be worse).
                         if inspected >= cls.MAX_DANGLING_CANDIDATES:
                             dangling_undetermined += 1
+                            budget_exhausted = True
                             break
                         inspected += 1
                         if pt.distance(pt_geoms[cand_idx_int]) < dup_threshold:
                             connected = True
                             break
-                    if not connected and inspected < cls.MAX_DANGLING_CANDIDATES:
+                    # `inspected == MAX_DANGLING_CANDIDATES` does NOT by itself
+                    # mean the verdict is unknown: if the candidate list ran out
+                    # at exactly the budget boundary, every candidate was scanned
+                    # and the endpoint IS dangling. Only a scan the budget cut
+                    # short (budget_exhausted) stays unflagged/undetermined —
+                    # the old `inspected < MAX` test silently dropped that
+                    # boundary case (no issue, no undetermined count, no
+                    # truncation reason).
+                    if not connected and not budget_exhausted:
                         emit_issue(
                                 dimension="topology",
                                 code="DANGLING_ENDPOINT",
