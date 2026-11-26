@@ -286,6 +286,20 @@ def build_supply_plan(
                 raise ValueError(
                     f"SUPPLY_CHOICE_SWITCH_UNKNOWN: {arg!r} 不在该角色"
                     "评估行中")
+        if kind == "search_more":
+            # R2 评审 A 新 P1：acquire 步骤上的 search_more 必须转为
+            # clarify——"继续搜索匹配候选"意味着**不获取当前候选**，
+            # 记录决策却照常执行会静默获取用户明确拒绝的口径/缺口数据
+            step = SupplyStep(
+                role=role, action=PLAN_ACTION_CLARIFY,
+                alternatives=[{"kind": "upload",
+                               "note": "也可直接由用户提供该角色数据"}],
+                disclosures=["用户选择继续搜索匹配候选——当前候选不获取"],
+                user_choice=choices[role])
+            steps.append(step)
+            plan_parts.append({"role": role, "action": step.action,
+                               "choice": "search_more"})
+            continue
         if kind == "shrink_scope":
             # 缩小范围由调用方以新 TaskScope 重建需求（范围变化可追溯，
             # 指纹随新 scope 变化）；本计划记录该决策供审计

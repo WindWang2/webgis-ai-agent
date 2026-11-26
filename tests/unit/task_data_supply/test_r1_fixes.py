@@ -342,3 +342,64 @@ class TestFabricExecution:
 
         spec = _query_spec_from_ads({"bbox": [170.0, -10.0, -170.0, 10.0]})
         assert spec.bbox is None  # 跨线形状不投给单 bbox 下推（已披露）
+
+
+class TestSearchMoreOnAcquire:
+    """R2 评审 A 新 P1 回归：acquire 步骤上 search_more 必须转 clarify，
+    执行面类型化拒绝——绝不静默执行用户明确不取的候选。"""
+
+    def _plan(self, choices):
+        from app.services.task_data_supply.coverage import (
+            CoverageCandidate, evaluate_task_coverage)
+
+        req = task_requirement(
+            TaskScope(bbox=[104.0, 30.0, 105.0, 31.0],
+                      time_range=["2024-01-01", "2024-12-31"]),
+            [{"role": "subject", "consumption_methods": ["numeric_stats"]}],
+            provenance=[{"source": "r2"}])
+        cand = CoverageCandidate(
+            candidate_id="old/2010", channel="local",
+            serves_roles=("subject",),
+            declared_bbox=[104.0, 30.0, 105.0, 31.0],
+            temporal_coverage=["2010-01-01", "2015-12-31"],
+            footprint_geometry=_square(103.9, 29.9, 105.1, 31.1))
+        return build_supply_plan(req, evaluate_task_coverage(req, [cand]),
+                                 [cand], choices=choices)
+
+    def test_search_more_converts_acquire_to_clarify(self):
+        plan = self._plan({"subject": "search_more"})
+        assert plan.state == "ready"
+        step = plan.step("subject")
+        assert step.action == "clarify"
+        assert any("不获取" in d for d in step.disclosures)
+
+    def test_execution_refuses_search_more_step(self):
+        import asyncio
+
+        from app.services.task_data_supply.coverage import (
+            CoverageCandidate, evaluate_task_coverage)
+        from app.services.task_data_supply.execution import execute_plan_steps
+
+        req = task_requirement(
+            TaskScope(bbox=[104.0, 30.0, 105.0, 31.0],
+                      time_range=["2024-01-01", "2024-12-31"]),
+            [{"role": "subject", "consumption_methods": ["numeric_stats"]}],
+            provenance=[{"source": "r2"}])
+        cand = CoverageCandidate(
+            candidate_id="old/2010", channel="local",
+            serves_roles=("subject",),
+            declared_bbox=[104.0, 30.0, 105.0, 31.0],
+            temporal_coverage=["2010-01-01", "2015-12-31"],
+            footprint_geometry=_square(103.9, 29.9, 105.1, 31.1))
+        plan = build_supply_plan(req, evaluate_task_coverage(req, [cand]),
+                                 [cand], choices={"subject": "search_more"})
+        loop = asyncio.get_event_loop_policy().new_event_loop()
+        try:
+            results, _skipped = loop.run_until_complete(
+                execute_plan_steps("sess-r2", plan))
+        finally:
+            loop.close()
+        assert results[0]["outcome"] == "failed"
+        assert results[0]["code"] == "TASK_SUPPLY_STEP_NOT_EXECUTABLE"
+        # 候选未被绑定/物化
+        assert plan.step("subject").receipt_ref == ""
