@@ -34,7 +34,7 @@
 ```bash
 cd /home/kevin/projects/webgis/webgis-wt-carto-design-series-20261125
 PY=/home/kevin/projects/webgis/webgis-ai-agent/.venv/bin/python
-$PY -m pytest tests/unit/design_specs tests/unit/map_series tests/unit/series_production tests/cartography/design_series tests/unit/test_tool_registry_rationalization.py --no-cov -q   # 210+ passed
+$PY -m pytest tests/unit/design_specs tests/unit/map_series tests/unit/series_production tests/cartography/design_series tests/unit/test_tool_registry_rationalization.py --no-cov -q   # 223 passed
 $PY -m pytest -m cartography --no-cov -q            # 2800 passed；5 失败=master 既有基线（见下）
 $PY -m alembic upgrade head && $PY -m alembic downgrade -1 && $PY -m alembic upgrade head   # g50/g51 往返
 cd frontend && pnpm lint && pnpm test               # lint 0 warnings；626 file-passed
@@ -42,7 +42,7 @@ cd frontend && pnpm lint && pnpm test               # lint 0 warnings；626 file
 
 ## 验证环境与结果
 
-- 后端本域 210 passed；cartography 标记 2800 passed / **5 失败均为 master 既有基线**（`test_contracts.py` pin 一致性、`scale_portrayal_cases` corpus、`component_variants` v3/v4 ×3 —— 已在干净 master worktree `/tmp/wg-master-baseline2@8fe3d7663` 逐个复现，非本分支引入）
+- 后端本域 223 passed（含 R1 回归 5 项）；cartography 标记 2800 passed / **5 失败均为 master 既有基线**（`test_contracts.py` pin 一致性、`scale_portrayal_cases` corpus、`component_variants` v3/v4 ×3 —— 已在干净 master worktree `/tmp/wg-master-baseline2@8fe3d7663` 逐个复现，非本分支引入）
 - 前端 vitest 5604 passed / 19 failed（分支基线既有：pdf-dependency-security 15、geoai 2、postcss 1、chat.json 占位符 1 + 2 收集错误 —— 独立 HEAD worktree 复跑证明）；lint 0 warnings；typecheck 7 项（5 项与 master 逐签名一致 + 2 项为共享 node_modules 缺可选依赖的环境产物）
 - 资源：构建/测试 -j2 内串行；20 成员系列生产 0.2s / 66KB 产物（合成小文档、96dpi）
 
@@ -62,12 +62,12 @@ cd frontend && pnpm lint && pnpm test               # lint 0 warnings；626 file
 
 ## 未完成/跳过项
 
-- `simulated_data` 声明面：series 契约（map_series.v1）未携带该字段，freeze 载荷如实缺席时 manifest 不伪造该披露（机制由单测覆盖；旗舰测试锁状态一致性）。系列契约如需该声明建议后续 additive。
 - 系列成员生产当前支持单页地图产物（SVG/PDF/PNG）；成员级多页图册（每成员再分页）不在本期（既有 atlas_batch 已覆盖单会话分页场景）。
+- R1 两项 P3 如实披露不修（均有测试锁定现有行为）：no-op 传播记 `failed`（receipt 词表已在前端与测试编码）；设计规范命名查重按 creator scope 而非 org scope（保守 fail-closed：同 creator 跨 org 同名误报 conflict，不泄露他人存在性）。
 - 前端 journey 为 mock 模式（仓库 Playwright 纪律）；真实浏览器多轮路径已在 vitest 组件层覆盖核心交互。
 
 ## 测试与新增面清单
 
-- 新增后端测试 194（design_specs 105 + map_series 73 + series_production 16）+ 案例库/旗舰 19
+- 新增后端测试 223（design_specs 105 + map_series 78 + series_production 16 + design_series 案例/旗舰 19 + registry 归类 5）+ R1 回归 5（含于上述）
 - 新增工具 17（design_spec 5 + map_design 4 + map_series 7 + series_production 1），全部 registry 归类、typed errors、有界回执、inspect/preview 与 apply 分级
 - migration：g50/g51（upgrade/downgrade 往返验证；无 CHECK 破坏；既有表零改动）
