@@ -57,6 +57,7 @@ interface PreviewState { receipt: PreviewReceipt; formKey: string }
 
 export function BivariateReliabilityPanel({ layerId }: Props) {
   const t = useT('hud');
+  const tCommon = useT();
   const toast = useToastStore((s) => s.addToast);
   const liveRevision = useSyncExternalStore(
     subscribeMapSpecLive, () => getMapSpecSessionCursor().revision);
@@ -197,6 +198,8 @@ export function BivariateReliabilityPanel({ layerId }: Props) {
       };
     }
     if (!estField) return null;
+    const visualNumbers = [vMin, vMax, outMin, outMax, unknownOut];
+    if (visualNumbers.some((v) => !v.trim() || !Number.isFinite(Number(v)))) return null;
     const interval = measureKind === 'confidence_interval' || measureKind === 'prediction_interval';
     const lv = Number(level);
     const measure: Record<string, unknown> = {
@@ -327,13 +330,22 @@ export function BivariateReliabilityPanel({ layerId }: Props) {
   );
 
   const numInput = (id: string, label: string, value: string,
-                    onChange: (v: string) => void, step = 'any') => (
-    <label className="block min-w-0" htmlFor={id}>
-      <span className={labelCls}>{label}</span>
-      <input id={id} className={inputCls} type="number" step={step}
-        value={value} onChange={(e) => { onChange(e.target.value); invalidate(); }} />
-    </label>
-  );
+                    onChange: (v: string) => void, step = 'any', required = true) => {
+    const invalid = required && !value.trim();
+    return (
+      <label className="block min-w-0" htmlFor={id}>
+        <span className={labelCls}>{label}</span>
+        <input id={id} className={inputCls} type="number" step={step} required={required}
+          aria-invalid={invalid} value={value}
+          onChange={(e) => { onChange(e.target.value); invalidate(); }} />
+        {invalid && (
+          <span role="alert" className="block text-micro text-status-error mt-1">
+            {label}: {tCommon('common.required')}
+          </span>
+        )}
+      </label>
+    );
+  };
 
   // ── 渲染 ──
   return (
@@ -495,7 +507,7 @@ export function BivariateReliabilityPanel({ layerId }: Props) {
                 <div className="grid grid-cols-3 gap-2">
                   {fieldSelect('g41-low', t('bivariateReliability.lowField'), lowField, setLowField)}
                   {fieldSelect('g41-high', t('bivariateReliability.highField'), highField, setHighField)}
-                  {numInput('g41-level', t('bivariateReliability.level'), level, setLevel, '0.01')}
+                  {numInput('g41-level', t('bivariateReliability.level'), level, setLevel, '0.01', false)}
                 </div>
               ) : (
                 fieldSelect('g41-value', t('bivariateReliability.valueField'), valueField, setValueField)

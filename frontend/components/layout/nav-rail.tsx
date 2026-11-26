@@ -157,6 +157,29 @@ export function NavRail({ variant = 'vertical' }: { variant?: 'vertical' | 'bott
     [mode, setWorkbenchMode],
   );
 
+  const onModeRadiogroupKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      const radios = Array.from(
+        e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]')
+      );
+      if (radios.length === 0) return;
+      const focusedIndex = radios.indexOf(document.activeElement as HTMLButtonElement);
+      const currentIndex = focusedIndex >= 0 ? focusedIndex : WORKBENCH_MODES.indexOf(mode);
+      const prevKey = variant === 'bottom' ? 'ArrowLeft' : 'ArrowUp';
+      const nextKey = variant === 'bottom' ? 'ArrowRight' : 'ArrowDown';
+      let nextIndex: number | null = null;
+      if (e.key === nextKey) nextIndex = (currentIndex + 1) % radios.length;
+      else if (e.key === prevKey) nextIndex = (currentIndex - 1 + radios.length) % radios.length;
+      else if (e.key === 'Home') nextIndex = 0;
+      else if (e.key === 'End') nextIndex = radios.length - 1;
+      if (nextIndex === null) return;
+      e.preventDefault();
+      switchMode(WORKBENCH_MODES[nextIndex]);
+      radios[nextIndex].focus();
+    },
+    [mode, switchMode, variant]
+  );
+
   /** agent 切换模式的一键返回：恢复 agent 切换前用户所在模式（store 记录）。 */
   const revertAgentMode = useCallback(() => {
     const target = useHudStore.getState().userModeBeforeAgent ?? 'explore';
@@ -232,7 +255,13 @@ export function NavRail({ variant = 'vertical' }: { variant?: 'vertical' | 'bott
         {/* #1666：模式 radiogroup 方向随 variant 切换 —— 底部档 horizontal
             横向排布（修复前恒 flex-col，3 个模式按钮在 48px 底栏内纵向堆叠
             被裁剪）。竖排档维持 w-full 纵列。 */}
-        <div role="radiogroup" aria-label={t('nav.workbenchMode')} className={variant === 'bottom' ? "flex flex-row items-center gap-1" : "flex w-full flex-col items-center gap-1"}>
+        <div
+          role="radiogroup"
+          aria-label={t('nav.workbenchMode')}
+          aria-orientation={variant === 'bottom' ? 'horizontal' : 'vertical'}
+          className={variant === 'bottom' ? "flex flex-row items-center gap-1" : "flex w-full flex-col items-center gap-1"}
+          onKeyDown={onModeRadiogroupKeyDown}
+        >
         {WORKBENCH_MODES.map((m) => {
           const ModeIcon = MODE_META[m].icon;
           const modeLabel = t(`modes.${m}`);

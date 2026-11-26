@@ -77,6 +77,27 @@ describe('交互侧网格碰撞（W4.2）', () => {
     }
   });
 
+  it('缺省退让半径按各标签自身字号计算', () => {
+    const inputs: GridLabelInput[] = [
+      { id: 'small', text: 'A', x: 100, y: 100, kind: 'point', priority: 0, fontSize: 12 },
+      { id: 'large', text: '甲', x: 100, y: 100, kind: 'point', priority: 1, fontSize: 40 },
+    ];
+    const out = solveGridCollision(inputs, { viewport: VP });
+    expect(out[0]).toMatchObject({ status: 'placed', dx: 9, dy: 9 });
+    expect(out[1]).toMatchObject({ status: 'placed', dx: 30, dy: 30 });
+  });
+
+  it('出视口与碰撞抑制使用不同原因', () => {
+    const out = solveGridCollision([
+      { id: 'outside', text: '甲', x: -100, y: 100, kind: 'line', priority: 0, fontSize: 12 },
+      { id: 'first', text: '甲', x: 100, y: 100, kind: 'line', priority: 1, fontSize: 12 },
+      { id: 'second', text: '甲', x: 100, y: 100, kind: 'line', priority: 2, fontSize: 12 },
+    ], { viewport: VP });
+    expect(out[0]).toMatchObject({ status: 'suppressed', reason: 'out_of_viewport' });
+    expect(out[1]).toMatchObject({ status: 'placed', reason: '' });
+    expect(out[2]).toMatchObject({ status: 'suppressed', reason: 'collision' });
+  });
+
   it('空文本抑制；盒估算 CJK 1.0em / 其他 0.6em', () => {
     const out = solveGridCollision(
       [{ id: 'e', text: '  ', x: 10, y: 10, kind: 'point', priority: 0, fontSize: 12 }],

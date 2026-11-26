@@ -282,8 +282,13 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
         override: { opacity: val },
       })
         .then((outcome) => {
-          if (outcome !== 'superseded') {
+          if (outcome === 'routed') {
             updateLayer(layer.id, { opacity: val });
+          } else if (outcome === 'no_active_frame') {
+            useToastStore.getState().addToast(
+              t('layerStyle.frameOverrideFailed', { scope: frameEditScopeLabel(frameScope) }),
+              'error',
+            );
           }
         })
         .catch(() => {
@@ -456,6 +461,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
                 <div className="relative w-7 h-7 rounded-lg overflow-hidden border border-edge-subtle shadow-xs">
                   <input type="color" value={strokeColor}
                     onChange={(e) => updateStyle({ strokeColor: e.target.value })}
+                    disabled={specBacked && specLayerType === 'line'}
                     aria-label={t('style.strokeColor')}
                     className="absolute inset-0 w-full h-full cursor-pointer" />
                 </div>

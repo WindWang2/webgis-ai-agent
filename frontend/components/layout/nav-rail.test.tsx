@@ -116,6 +116,23 @@ describe('NavRail', () => {
     expect(setActiveLeftTab).toHaveBeenCalledWith('analysis'); // modeActiveTab.analyze
   });
 
+  it.each([
+    { key: 'ArrowDown', next: 'analyze' },
+    { key: 'ArrowUp', next: 'compose' },
+    { key: 'Home', next: 'explore' },
+    { key: 'End', next: 'compose' },
+  ])('mode radio $key activates $next and moves focus', ({ key, next }) => {
+    render(<NavRail />);
+    const explore = screen.getByTestId('mode-explore');
+    explore.focus();
+
+    const changesMode = next !== store.mode;
+    fireEvent.keyDown(explore, { key });
+    if (!changesMode) expect(store.setWorkbenchMode).not.toHaveBeenCalled();
+    else expect(store.setWorkbenchMode).toHaveBeenLastCalledWith(next, 'user');
+    expect(screen.getByTestId(`mode-${next}`)).toHaveFocus();
+  });
+
   it('agent mode switch shows the revert control; click reverts to explore', () => {
     store.mode = 'compose';
     store.modeOrigin = 'agent';
@@ -293,9 +310,23 @@ describe('NavRail 底部档（variant=bottom，#1666）', () => {
     const group = screen.getByRole('radiogroup', { name: '工作台模式' });
     expect(group.className).toContain('flex-row');
     expect(group.className).not.toContain('flex-col');
+    expect(group).toHaveAttribute('aria-orientation', 'horizontal');
     // 模式切换主路径不回归：3 个模式按钮仍在场。
-    expect(screen.getByTestId('mode-explore')).toBeInTheDocument();
-    expect(screen.getByTestId('mode-analyze')).toBeInTheDocument();
-    expect(screen.getByTestId('mode-compose')).toBeInTheDocument();
+    const explore = screen.getByTestId('mode-explore');
+    const analyze = screen.getByTestId('mode-analyze');
+    const compose = screen.getByTestId('mode-compose');
+    expect(explore).toBeInTheDocument();
+    expect(analyze).toBeInTheDocument();
+    expect(compose).toBeInTheDocument();
+
+    explore.focus();
+    fireEvent.keyDown(explore, { key: 'ArrowRight' });
+    expect(store.setWorkbenchMode).toHaveBeenLastCalledWith('analyze', 'user');
+    expect(analyze).toHaveFocus();
+
+    explore.focus();
+    fireEvent.keyDown(explore, { key: 'ArrowLeft' });
+    expect(store.setWorkbenchMode).toHaveBeenLastCalledWith('compose', 'user');
+    expect(compose).toHaveFocus();
   });
 });

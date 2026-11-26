@@ -66,6 +66,9 @@ vi.mock('@/components/sidebar/chat-tab', () => ({
 }));
 vi.mock('@/components/sidebar/project-tab', () => ({ ProjectTab: () => <div data-testid="tab-project" /> }));
 vi.mock('@/components/sidebar/layers-tab', () => ({ LayersTab: () => <div data-testid="tab-layers" /> }));
+vi.mock('@/components/hud/raster-authoring-panel', () => ({
+  RasterAuthoringLauncher: () => <div data-testid="raster-authoring-launcher" />,
+}));
 vi.mock('@/components/sidebar/analysis-tab', () => ({ AnalysisTab: () => <div data-testid="tab-analysis" /> }));
 vi.mock('@/components/sidebar/data-sources-tab', () => ({ DataSourcesTab: () => <div data-testid="tab-data-sources" /> }));
 vi.mock('@/components/sidebar/map-studio-tab', () => ({ MapStudioTab: () => <div data-testid="tab-map-studio" /> }));
@@ -141,6 +144,15 @@ describe('ContextPanel', () => {
     expect(screen.getByText('2')).toBeInTheDocument();
     expect(screen.getByTestId('tab-layers')).toBeInTheDocument();
     expect(screen.queryByTestId('tab-chat')).not.toBeInTheDocument();
+  });
+
+  it('mobile layers tab exposes the raster authoring launcher without a selected layer', () => {
+    store.activeLeftTab = 'layers';
+    store.editingLayerId = null;
+    render(<ContextPanel {...baseProps} layoutMode="mobile" />);
+
+    expect(screen.getByTestId('tab-layers')).toBeInTheDocument();
+    expect(screen.getByTestId('raster-authoring-launcher')).toBeInTheDocument();
   });
 
   it('maps legacy exports tab onto the map studio panel', () => {

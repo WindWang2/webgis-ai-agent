@@ -370,7 +370,7 @@ export function stepResultDecision(
   let layerMount: LayerMountDecision | null = null;
   let chip: StepResultDecision['chip'] = null;
   if (data.geojson_ref || result?.image) {
-    const layerId = data.geojson_ref ?? `layer-${ctx.now}`;
+    const layerId = data.geojson_ref ?? (stepId ? `layer-${ctx.now}-${stepId}` : `layer-${ctx.now}`);
     const layerName = ctx.labelFor(tool, typeof data.name === 'string' ? data.name : undefined);
     const accentColor = ctx.accentColor;
     const legendSpec = result?.legend_spec ?? undefined;

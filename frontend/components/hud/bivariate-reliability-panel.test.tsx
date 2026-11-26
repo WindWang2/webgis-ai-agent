@@ -216,6 +216,27 @@ describe('BivariateReliabilityPanel', () => {
     expect(screen.queryByTestId('g41-preview')).not.toBeInTheDocument();
   });
 
+  it.each([
+    ['bivariateReliability.domainMax'],
+    ['bivariateReliability.outputMax'],
+  ])('rejects an empty %s instead of previewing it as zero', async (label) => {
+    render(<BivariateReliabilityPanel layerId="L1" />);
+    await waitFor(() => expect(screen.getByTestId('g41-bivariate-form')).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText('bivariateReliability.mode'),
+      { target: { value: 'reliability_dual_channel' } });
+    await waitFor(() => expect(screen.getByTestId('g41-reliability-form')).toBeInTheDocument());
+
+    const input = screen.getByLabelText(label);
+    fireEvent.change(input, { target: { value: '' } });
+
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByRole('alert')).toHaveTextContent(label);
+    const preview = screen.getByText('bivariateReliability.previewBtn').closest('button');
+    expect(preview).toBeDisabled();
+    fireEvent.click(preview!);
+    expect(previewMock).not.toHaveBeenCalled();
+  });
+
   it('offers the reliability mode with measure and visual controls', async () => {
     render(<BivariateReliabilityPanel layerId="L1" />);
     await waitFor(() => expect(screen.getByTestId('g41-bivariate-form')).toBeInTheDocument());

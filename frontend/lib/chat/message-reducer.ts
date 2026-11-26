@@ -84,6 +84,20 @@ function findIndexById(prev: ChatStreamMessage[], messageId: string): number {
   return prev.findIndex((m) => m.id === messageId);
 }
 
+/** map 变换未命中任何目标时保持数组引用恒定。 */
+function mapMessages(
+  prev: ChatStreamMessage[],
+  update: (message: ChatStreamMessage, index: number) => ChatStreamMessage,
+): ChatStreamMessage[] {
+  let changed = false;
+  const next = prev.map((message, index) => {
+    const updated = update(message, index);
+    if (updated !== message) changed = true;
+    return updated;
+  });
+  return changed ? next : prev;
+}
+
 /**
  * TokenBatcher flush 快照应用：覆盖目标消息的 content/think，翻转
  * isThinking。目标不存在（会话已切换等）时原样返回。
@@ -232,7 +246,7 @@ export function attachPlanProposal(
   prev: ChatStreamMessage[],
   args: { messageId: string; plan: PlanProposalPayload },
 ): ChatStreamMessage[] {
-  return prev.map((m) => (m.id === args.messageId ? { ...m, plan: args.plan } : m));
+  return mapMessages(prev, (m) => (m.id === args.messageId ? { ...m, plan: args.plan } : m));
 }
 
 /**
@@ -305,7 +319,7 @@ export function setRuntimeInteractionStatus(
     resolveEvidence?: string;
   },
 ): ChatStreamMessage[] {
-  return prev.map((m) => {
+  return mapMessages(prev, (m) => {
     if (!m.runtimeInteractions?.some((c) => c.interactionId === args.interactionId)) return m;
     return {
       ...m,
@@ -335,7 +349,7 @@ export function setClarificationStatus(
     submittedAnswers?: Record<string, string>;
   },
 ): ChatStreamMessage[] {
-  return prev.map((m) =>
+  return mapMessages(prev, (m) =>
     m.clarification?.envelope.request_id === args.requestId
       ? {
           ...m,
@@ -363,7 +377,7 @@ export function replaceClarificationEnvelope(
   args: { envelope: import('@/lib/types/clarification').ClarificationEnvelope | undefined },
 ): ChatStreamMessage[] {
   if (!args.envelope) {
-    return prev.map((m) =>
+    return mapMessages(prev, (m) =>
       m.clarification &&
       m.clarification.status !== 'submitted' &&
       m.clarification.status !== 'stale'
@@ -395,7 +409,7 @@ export function replaceClarificationEnvelope(
     }
     return prev;
   }
-  return prev.map((m, i) => {
+  return mapMessages(prev, (m, i) => {
     if (i === target.i) return { ...m, clarification: card };
     if (m.clarification && m.clarification.status !== 'submitted'
       && m.clarification.status !== 'stale') {
@@ -433,7 +447,7 @@ export function setPlanStatus(
   prev: ChatStreamMessage[],
   args: { planId: string; status: PlanProposalPayload['status'] },
 ): ChatStreamMessage[] {
-  return prev.map((m) =>
+  return mapMessages(prev, (m) =>
     m.plan?.plan_id === args.planId
       ? { ...m, plan: { ...m.plan, status: args.status } }
       : m,
@@ -445,7 +459,7 @@ export function attachAgentPlan(
   prev: ChatStreamMessage[],
   args: { messageId: string; agentPlan: AgentPlanState },
 ): ChatStreamMessage[] {
-  return prev.map((m) => (m.id === args.messageId ? { ...m, agentPlan: args.agentPlan } : m));
+  return mapMessages(prev, (m) => (m.id === args.messageId ? { ...m, agentPlan: args.agentPlan } : m));
 }
 
 /** plan_step_done：步骤打勾。 */
@@ -453,7 +467,7 @@ export function markAgentPlanStepDone(
   prev: ChatStreamMessage[],
   args: { messageId: string; stepN: number },
 ): ChatStreamMessage[] {
-  return prev.map((m) => {
+  return mapMessages(prev, (m) => {
     if (m.id !== args.messageId || !m.agentPlan) return m;
     return {
       ...m,
@@ -473,7 +487,7 @@ export function finalizeAgentPlan(
   args: { messageId: string; skipped: number[] },
 ): ChatStreamMessage[] {
   const skipped = new Set(args.skipped);
-  return prev.map((m) => {
+  return mapMessages(prev, (m) => {
     if (m.id !== args.messageId || !m.agentPlan) return m;
     return {
       ...m,
@@ -493,7 +507,7 @@ export function attachLayerChip(
   prev: ChatStreamMessage[],
   args: { messageId: string; layerName: string; resultId?: string },
 ): ChatStreamMessage[] {
-  return prev.map((m) =>
+  return mapMessages(prev, (m) =>
     m.id === args.messageId
       ? { ...m, layerAdded: args.layerName, resultId: args.resultId }
       : m,
@@ -506,7 +520,7 @@ export function attachChart(
   args: { messageId: string; chart: unknown; maxCharts?: number },
 ): ChatStreamMessage[] {
   const max = args.maxCharts ?? 20;
-  return prev.map((m) =>
+  return mapMessages(prev, (m) =>
     m.id === args.messageId
       ? { ...m, charts: [...((m.charts as unknown[]) ?? []).slice(-(max - 1)), args.chart] }
       : m,
@@ -524,7 +538,7 @@ export function appendTurnNotice(
   const marker = args.kind === 'cancelled'
     ? t('chat.turnCancelled')
     : t('chat.turnFailed', { detail: args.detail ?? t('chat.turnFailedDefault') });
-  return prev.map((m) => {
+  return mapMessages(prev, (m) => {
     if (m.id !== args.messageId) return m;
     const existing = m.content && !m.isThinking ? m.content : '';
     return {
@@ -540,7 +554,7 @@ export function clearThinkingFlag(
   prev: ChatStreamMessage[],
   args: { messageId: string },
 ): ChatStreamMessage[] {
-  return prev.map((m) =>
+  return mapMessages(prev, (m) =>
     m.id === args.messageId && m.isThinking ? { ...m, isThinking: false } : m,
   );
 }
@@ -553,7 +567,7 @@ export function settleThinkingMessage(
   prev: ChatStreamMessage[],
   args: { messageId: string; fallbackText?: string },
 ): ChatStreamMessage[] {
-  return prev.map((m) =>
+  return mapMessages(prev, (m) =>
     m.id === args.messageId && m.isThinking
       ? { ...m, isThinking: false, content: m.content || args.fallbackText || t('chat.turnComplete') }
       : m,
@@ -586,7 +600,7 @@ export function setFeatureEditProposalStatus(
     receipt?: import('@/lib/types/feature-edit').FeatureEditProposalState['receipt'];
   },
 ): ChatStreamMessage[] {
-  return prev.map((m) => {
+  return mapMessages(prev, (m) => {
     const p = m.featureEditProposal;
     if (!p || p.plan_id !== args.planId) return m;
     return {

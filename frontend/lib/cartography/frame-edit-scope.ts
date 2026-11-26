@@ -48,15 +48,15 @@ export function frameEditScopeLabel(scope: FrameEditScope): string {
 /**
  * 把 override 写入目标帧 layerOverrides（frames 整表携带，目标帧外的槽
  * 逐字保留 —— A03「仅改第二幅」的构造性保证）。
- * 返回 'routed' = 已路由到帧；'no_active_frame' = 无活动画幅（调用方走
- * 根级默认路径）。
+ * 返回 'routed' = 已写入目标帧；'no_active_frame' = 会话、spec 或目标帧
+ * 已失效而未写入；'superseded' = CAS 冲突。
  */
 export async function commitLayerOverrideForFrame(
   frameId: string,
   patch: FrameOverridePatch,
-): Promise<'routed' | 'superseded'> {
+): Promise<'routed' | 'no_active_frame' | 'superseded'> {
   const enqueuedSessionId = getMapSpecSessionCursor().sessionId;
-  let outcome: 'routed' | 'superseded' = 'routed';
+  let outcome: 'routed' | 'no_active_frame' | 'superseded' = 'no_active_frame';
   await enqueueUserMutation(async () => {
     const { sessionId, ownerToken } = getMapSpecSessionCursor();
     if (!sessionId || sessionId !== enqueuedSessionId) return;

@@ -99,25 +99,29 @@ export function solveGridCollision(
     ? opts.cellPx
     : Math.max(2 * maxEdge, 1);
   const grid = new SpatialGrid(cell);
-  const offset = opts.offsetPx && opts.offsetPx > 0
-    ? opts.offsetPx
-    : (prepared[0]?.f.fontSize ?? 12) * 0.75;
 
   for (const { f, w, h } of prepared) {
     let chosen: { dx: number; dy: number; box: Box } | null = null;
+    let hasInViewportCandidate = false;
     if (f.kind === 'point') {
+      const offset = opts.offsetPx && opts.offsetPx > 0
+        ? opts.offsetPx
+        : f.fontSize * 0.75;
       for (const [ox, oy] of DECLUTTER_OFFSETS) {
         const dx = ox * offset;
         const dy = oy * offset;
         const box = boxFrom(f.x + dx, f.y + dy, w, h, 0, 'point');
-        if (insideViewport(box, vp) && !grid.collides(box)) {
+        const inViewport = insideViewport(box, vp);
+        if (inViewport) hasInViewportCandidate = true;
+        if (inViewport && !grid.collides(box)) {
           chosen = { dx, dy, box };
           break;
         }
       }
     } else {
       const box = boxFrom(f.x, f.y, w, h, 0, f.kind);
-      if (insideViewport(box, vp) && !grid.collides(box)) {
+      hasInViewportCandidate = insideViewport(box, vp);
+      if (hasInViewportCandidate && !grid.collides(box)) {
         chosen = { dx: 0, dy: 0, box };
       }
     }
@@ -125,7 +129,10 @@ export function solveGridCollision(
       grid.insert(chosen.box);
       placements.push({ id: f.id, dx: chosen.dx, dy: chosen.dy, status: 'placed', reason: '' });
     } else {
-      placements.push({ id: f.id, dx: 0, dy: 0, status: 'suppressed', reason: 'collision' });
+      placements.push({
+        id: f.id, dx: 0, dy: 0, status: 'suppressed',
+        reason: hasInViewportCandidate ? 'collision' : 'out_of_viewport',
+      });
     }
   }
   // 输出保持输入序（消费方按 id 取用）

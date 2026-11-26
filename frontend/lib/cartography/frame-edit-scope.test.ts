@@ -104,7 +104,37 @@ describe('commitLayerOverrideForFrame（A03 仅本幅）', () => {
       layerId: 'layer-0',
       override: { opacity: 0.5 },
     });
-    expect(out).toBe('routed');
+    expect(out).toBe('no_active_frame');
+    expect(mutations).toHaveLength(0);
+  });
+
+  it('无会话或 spec 缺失 → 返回 no_active_frame 且不写 mutation', async () => {
+    setMapSpecSessionCursor(undefined);
+    await expect(commitLayerOverrideForFrame('fp-2', {
+      layerId: 'layer-0',
+      override: { opacity: 0.5 },
+    })).resolves.toBe('no_active_frame');
+
+    setMapSpecSessionCursor('s-scope', 12, 'tok');
+    resetLiveState();
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ map_state: {} }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })));
+    await expect(commitLayerOverrideForFrame('fp-2', {
+      layerId: 'layer-0',
+      override: { opacity: 0.5 },
+    })).resolves.toBe('no_active_frame');
+    expect(mutations).toHaveLength(0);
+  });
+
+  it('排队期间会话切换 → 返回 no_active_frame 且不写 mutation', async () => {
+    const pending = commitLayerOverrideForFrame('fp-2', {
+      layerId: 'layer-0',
+      override: { opacity: 0.5 },
+    });
+    setMapSpecSessionCursor('s-other', 1, 'other-tok');
+    await expect(pending).resolves.toBe('no_active_frame');
     expect(mutations).toHaveLength(0);
   });
 

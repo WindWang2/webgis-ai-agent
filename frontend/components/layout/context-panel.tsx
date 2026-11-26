@@ -440,6 +440,8 @@ export function ContextPanel({
           {activeTab === 'layers' && (
             <PanelErrorBoundary label={t('panel.boundary.layers')}>
               {editingLayerId ? <LayerStylePanel /> : <LayersTab />}
+              {/* 编辑某层时 layer-style-panel 已有同一入口，避免两个面板同时出现 */}
+              {!editingLayerId && <RasterAuthoringLauncher />}
             </PanelErrorBoundary>
           )}
           {activeTab === 'components' && (

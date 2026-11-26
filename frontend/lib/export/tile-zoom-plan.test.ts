@@ -19,6 +19,15 @@ describe('高 DPI 栅格取图规划（W6.3 折中）', () => {
     expect(plan.captureZoom).toBe(19);
   });
 
+  it('headroom 小于半级：披露实际增益而非声称无 headroom', () => {
+    const plan = planTileZoomCapture(18.6, 300, 19);
+    expect(plan.zoomGainLevels).toBeCloseTo(0.4, 3);
+    expect(plan.captureZoom).toBe(19);
+    expect(plan.disclosure).toContain('zoom 提升 0.4 级');
+    expect(plan.disclosure).toContain('重采样');
+    expect(plan.disclosure).not.toContain('无 headroom');
+  });
+
   it('无 headroom：增益 0 且如实披露「与 V10 等同」（不静默）', () => {
     const plan = planTileZoomCapture(19, 300, 19);
     expect(plan.zoomGainLevels).toBe(0);
