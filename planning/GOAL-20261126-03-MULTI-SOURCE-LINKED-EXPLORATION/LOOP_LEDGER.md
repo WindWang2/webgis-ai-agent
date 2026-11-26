@@ -13,3 +13,6 @@
 - openapi 快照 `tests/quality/snapshots/openapi.json` 需对账（新增路由后重新生成，走仓库脚本）。
 - 前端测试命令待确认（frontend/ package.json scripts）。
 - 主树 `zcode/full-code-review-fixes` 有未提交改动（其他线）——绝不触碰主工作树。
+
+| R2 | WP1 契约 v3+关系(642632d04)；WP2 指标求值器(5b141a16f)；WP3 多源编排+导出(d10f74bb1) | 新增 71 单元+12 集成；全域 160 passed；Ruff 全绿；G46 基线 77 不退化 | 通过 | WP4 工具/REST/前端接线 |
+| R2 备注 | 关键修复：evaluate_where 参数序；__other__ 键序列化；propagation_order v2 兼容；空传播集 handle 跳过；export 尾链抽共享（v2 回归曾破 4 项已复原） | — | — | — |
