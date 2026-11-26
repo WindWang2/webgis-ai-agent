@@ -30,10 +30,22 @@ provider-aware schema、原生交互阻塞语义、上下文压缩治理、provi
 
 - `vendor/pi` gitlink（不升 pin、不改动子模组内容）
 - 其他四线核心：数据供给（02）、联动探索（03）、图符表达（04）、发布验证（05）
-  的核心模块；`app/tools/**` 域工具实现；`frontend/` 大改（本线前端只允许
-  既有事件消费点的必要小接线）
+  的核心模块；`frontend/` 大改（本线前端只允许既有事件消费点的必要小接线）
 - 主工作树 `webgis-ai-agent`（`zcode/full-code-review-fixes` 未提交改动）
 - 兄弟 worktree、其他分支、共享根账本 `.goal-loop-ledger.md`（只读）
+
+## 所有权校正（实际调查后回写，review F6）
+
+原边界将 `app/tools/**` 列为禁止触碰；实现中两处**必要的最小修改**据此
+校正记录（均为兼容现有接口的局部增量，未重排任何共享文件）：
+
+1. `app/tools/map_plan_tools.py` — WP2 生产接线点：`webgis_compile_map_plan`
+   在 `resolve_intent_adaptive` 后调用 `assist_map_request_intent`
+   （feature gate 默认关 = 零行为差），结果 receipt 增加 decision_assist
+   披露。该工具是任务识别决策的唯一生产调用方。
+2. `app/tools/local_stats.py` — WP3 schema 卫生：`query_local_poi` 补
+   typed `QueryLocalPoiArgs`（C20 bare 桶清零）。schema 单一来源本就在
+   registry args_model，属本线（工具契约）所有权范畴。
 
 ## PR/方向去重结论（2026-11-27 实查）
 

@@ -180,6 +180,21 @@ def test_validate_duplicate_request_id():
     assert second.reason_code == pd.REASON_DUPLICATE
 
 
+def test_validate_confidence_cross_checked_against_probabilities():
+    """自报 confidence 0.9 但分布 P(a)=0.2 → 采信更保守信号，拒绝。"""
+    result = _choice_result("a", 0.9)
+    result["answers"]["task_choice"]["probabilities"] = {"a": 0.2, "b": 0.8}
+    outcome = pd.validate_classifier_result(_request(), result)
+    assert outcome.reason_code == pd.REASON_LOW_CONFIDENCE
+
+
+def test_validate_usage_bool_rejected_as_malformed():
+    result = _choice_result("a", 0.9)
+    result["usage"] = {"totalTokens": True}
+    outcome = pd.validate_classifier_result(_request(), result)
+    assert outcome.ok and outcome.usage_total_tokens == 0
+
+
 # ── bool 域阈值 ─────────────────────────────────────────────────────
 
 def _bool_result(p):
@@ -217,7 +232,7 @@ def test_bool_invalid_probability():
 
 def _run(coro):
     import asyncio
-    return asyncio.get_event_loop_policy().new_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 class StubTransport:
@@ -266,6 +281,45 @@ def test_assist_accepts_and_dedupes_same_request():
     assert transport.calls == 1
 
 
+def test_assist_concurrent_same_request_single_transport_call():
+    """同 scope 并发同 id：in-flight 占位保证只打一次传输。"""
+    import asyncio
+
+    class SlowTransport:
+        def __init__(self):
+            self.calls = 0
+
+        async def classify(self, model_ref, context):
+            self.calls += 1
+            await asyncio.sleep(0.01)
+            return _choice_result("b", 0.88)
+
+    transport = SlowTransport()
+    assist = pd.DecisionAssist(transport, enabled=True, model_ref="x/y")
+
+    async def two_concurrent():
+        return await asyncio.gather(assist.assist(_request()),
+                                    assist.assist(_request()))
+
+    first, second = _run(two_concurrent())
+    assert transport.calls == 1
+    assert (first.ok, second.ok) in ((True, False), (False, True))
+    if not first.ok:
+        assert first.reason_code == pd.REASON_DUPLICATE
+    else:
+        assert second.reason_code == pd.REASON_DUPLICATE
+
+
+def test_assist_scope_isolates_sessions():
+    """不同 scope（会话）互不影响：同 request_id 各自可执行。"""
+    transport = StubTransport(_choice_result("a", 0.9))
+    assist = pd.DecisionAssist(transport, enabled=True, model_ref="x/y")
+    first = _run(assist.assist(_request(), scope="sess-A"))
+    second = _run(assist.assist(_request(), scope="sess-B"))
+    assert first.ok and second.ok
+    assert transport.calls == 2
+
+
 def test_assist_not_applicable_for_none_request():
     assist = pd.DecisionAssist(StubTransport(), enabled=True, model_ref="x/y")
     outcome = _run(assist.assist(None))
@@ -274,27 +328,44 @@ def test_assist_not_applicable_for_none_request():
 
 # ── 应用闸（宿主权威） ──────────────────────────────────────────────
 
-def test_task_gate_applies_only_on_specificity_tie():
-    tied = _task_candidates(("a", 3, 4), ("b", 3, 6))
+def test_task_gate_applies_only_on_full_tie():
+    """decide_task 裁决序 = (specificity, span, -order)：assist 只在
+    规则前两元都未分出胜负（同 spec 且同 span）时采纳。"""
     outcome = pd.DecisionOutcome(status=pd.STATUS_ACCEPTED,
                                  domain=pd.DOMAIN_TASK_IDENTIFICATION,
                                  request_id="x", choice="b", confidence=0.9)
-    assert pd.apply_task_choice(outcome, tied, "a") == "b"
+    # 全平级（spec 与 span 都相同）→ 采纳
+    full_tie = _task_candidates(("a", 3, 6), ("b", 3, 6))
+    assert pd.apply_task_choice(outcome, full_tie, "a") == "b"
+    # 同 spec 但 span 已分胜负（a=5 > b=2）→ 拒绝（规则已区分）
+    span_decided = _task_candidates(("a", 3, 5), ("b", 3, 2))
+    assert pd.apply_task_choice(outcome, span_decided, "a") == "a"
+    # 特异性降级 → 拒绝（评价任务不可降为视觉任务）
     strict = _task_candidates(("a", 5, 4), ("b", 3, 6))
     assert pd.apply_task_choice(outcome, strict, "a") == "a"
 
 
+def test_task_gate_rejects_higher_specificity_choice():
+    """assist 选择特异性**高于**确定性胜者同样拒绝（胜者唯一权威，
+    不得经辅助通道变更裁决）。"""
+    outcome = pd.DecisionOutcome(status=pd.STATUS_ACCEPTED,
+                                 domain=pd.DOMAIN_TASK_IDENTIFICATION,
+                                 request_id="x", choice="b", confidence=0.9)
+    odd = _task_candidates(("a", 3, 4), ("b", 5, 4))
+    assert pd.apply_task_choice(outcome, odd, "a") == "a"
+
+
 def test_task_gate_rejects_out_of_set_and_non_accepted():
-    tied = _task_candidates(("a", 3, 4), ("b", 3, 6))
+    full_tie = _task_candidates(("a", 3, 6), ("b", 3, 6))
     rogue = pd.DecisionOutcome(status=pd.STATUS_ACCEPTED,
                                domain=pd.DOMAIN_TASK_IDENTIFICATION,
                                request_id="x", choice="zzz", confidence=0.99)
-    assert pd.apply_task_choice(rogue, tied, "a") == "a"
+    assert pd.apply_task_choice(rogue, full_tie, "a") == "a"
     rejected = pd.DecisionOutcome(status=pd.STATUS_REJECTED,
                                   domain=pd.DOMAIN_TASK_IDENTIFICATION,
                                   request_id="x", choice="b",
                                   reason_code=pd.REASON_LOW_CONFIDENCE)
-    assert pd.apply_task_choice(rejected, tied, "a") == "a"
+    assert pd.apply_task_choice(rejected, full_tie, "a") == "a"
 
 
 def test_template_gate_only_within_tied_top():

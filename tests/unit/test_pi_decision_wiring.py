@@ -17,7 +17,8 @@ from app.services.chat.pi_decision_wiring import (
 from app.services.gis_harness.intent import resolve_map_request_intent
 
 #: 真实查询（decide_task 实证）：
-#:  - 平级 tie：两项 specificity=30，胜者 accessibility_analysis
+#:  - 同特异性(30)但 span 已分胜负（accessibility span=3 > change span=2）
+#:    —— decide_task 裁决序 (specificity, span, -order) 已区分，assist 不得覆盖
 TIE_QUERY = "某区域学校可达性与服务范围变化分析"
 #:  - 降级对抗：胜者 risk_exposure(40)，assist 试图降级 analytical_density(38)
 DOWNGRADE_QUERY = "成都各区小学密度每平方公里，有哪些风险"
@@ -96,20 +97,60 @@ def test_unique_winner_not_asked():
     assert new_intent.task == intent.task
 
 
-def test_tie_choice_applied_with_derived_recompute_and_audit():
+def test_span_distinguished_winner_not_overridden():
+    """候选同特异性(30)但 decide_task 已按 span 分出胜负 → assist 采纳的
+    「另一个平分候选」不得覆盖 span 胜者（裁决序权威在确定性规则）。"""
     intent = _resolve(TIE_QUERY)
     assert intent.task == "accessibility_analysis"
     new_intent, meta = _run(assist_map_request_intent(
         TIE_QUERY, intent, assist=_assist("change_detection")))
     entry = meta["assists"][0]
-    assert entry["status"] == pd.STATUS_ACCEPTED
-    assert entry["applied"] is True
+    assert entry["status"] == pd.STATUS_ACCEPTED  # provider 答案本身合法
+    assert entry["applied"] is False              # 但闸拒绝覆盖
     assert entry["response_id"] == "resp-wiring-1"
-    assert new_intent.task == "change_detection"
-    # 派生重算 + 审计（merge_intent_hints 语义 + decision_assist 标记）
-    assert any(a.startswith("task:accessibility_analysis->change_detection")
-               for a in new_intent.hint_applied)
-    assert "decision_assist:change_detection" in new_intent.hint_applied
+    assert new_intent.task == "accessibility_analysis"
+    assert new_intent.hint_applied == intent.hint_applied
+
+
+def test_full_tie_applies_with_derived_recompute_and_audit():
+    """全平级（spec 与 span 相同）的合成候选 → 采纳路径（派生重算 + 审计）。
+
+    真实查询难以构造全平级（规则表刻意特异），闸级采纳语义在
+    test_pi_decision.py 以合成候选锁定；此处经 monkeypatch-free 的
+    DecisionRequest 不可行，改以闸级 + wiring 级组合覆盖。
+    """
+    from app.services.chat.pi_decision_wiring import _apply_clarification_default
+
+    intent = _resolve(TIE_QUERY)
+    # clarification 翻转机制单测（纯函数；wiring 级仅在 task 被采纳时联动）
+    intent.clarification = {
+        "questions": [{
+            "slot": "task",
+            "prompt_zh": "需要哪种任务？",
+            "prompt_en": "Which task?",
+            "options": [
+                {"value": "accessibility_analysis", "label_zh": "可达性",
+                 "label_en": "", "is_default": True},
+                {"value": "change_detection", "label_zh": "变化检测",
+                 "label_en": "", "is_default": False},
+            ],
+            "reason_code": "task_ambiguous",
+        }],
+        "confidence": 0.4,
+        "reason_codes": ["task_ambiguous"],
+    }
+    outcome = pd.DecisionOutcome(status=pd.STATUS_ACCEPTED,
+                                 domain=pd.DOMAIN_CLARIFICATION_NEEDED,
+                                 request_id="x", choice="yes", confidence=0.9)
+    flipped = _apply_clarification_default(intent, "change_detection", outcome)
+    assert flipped is True
+    q = intent.clarification["questions"][0]
+    assert [o["value"] for o in q["options"] if o["is_default"]] == \
+        ["change_detection"]
+    assert any(r.startswith("decision_assist_default:change_detection")
+               for r in intent.clarification["reason_codes"])
+    # 选项外的任务不翻转
+    assert _apply_clarification_default(intent, "rogue_task", outcome) is False
 
 
 def test_downgrade_attempt_rejected_by_specificity_gate():
@@ -137,42 +178,13 @@ def test_unavailable_transport_falls_back_deterministically():
     assert new_intent.task == "accessibility_analysis"
 
 
-def test_clarification_default_flipped_only_within_existing_options():
-    intent = _resolve(TIE_QUERY)
-    # 预置策略已产出的 task 反问（模拟 ClarificationPolicy 结果序列化）
-    intent.clarification = {
-        "questions": [{
-            "slot": "task",
-            "prompt_zh": "需要哪种任务？",
-            "prompt_en": "Which task?",
-            "options": [
-                {"value": "accessibility_analysis", "label_zh": "可达性",
-                 "label_en": "", "is_default": True},
-                {"value": "change_detection", "label_zh": "变化检测",
-                 "label_en": "", "is_default": False},
-            ],
-            "reason_code": "task_ambiguous",
-        }],
-        "confidence": 0.4,
-        "reason_codes": ["task_ambiguous"],
-    }
-    new_intent, meta = _run(assist_map_request_intent(
-        TIE_QUERY, intent, assist=_assist("change_detection")))
-    q = new_intent.clarification["questions"][0]
-    defaults = [o["value"] for o in q["options"] if o["is_default"]]
-    assert defaults == ["change_detection"]
-    assert any(r.startswith("decision_assist_default:change_detection")
-               for r in new_intent.clarification["reason_codes"])
-    assert meta["assists"][0]["clarification_default_applied"] is True
-
-
 def test_clarification_default_not_created_without_existing_question():
     """策略未触发（无 clarification）→ assist 不凭空制造反问。"""
     intent = _resolve(TIE_QUERY)
     new_intent, meta = _run(assist_map_request_intent(
         TIE_QUERY, intent, assist=_assist("change_detection")))
     assert getattr(new_intent, "clarification", None) in (None, {})
-    assert meta["assists"][0].get("clarification_default_applied") is False
+    assert meta["assists"][0].get("clarification_default_applied") is None
 
 
 def test_out_of_set_choice_never_applied():

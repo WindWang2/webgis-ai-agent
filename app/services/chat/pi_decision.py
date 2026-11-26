@@ -319,7 +319,8 @@ def validate_classifier_result(
     if isinstance(usage, Mapping):
         total = usage.get("totalTokens", usage.get("tokens", {}).get("total")
                           if isinstance(usage.get("tokens"), Mapping) else 0)
-        if isinstance(total, int) and 0 <= total <= 10**9:
+        if isinstance(total, int) and not isinstance(total, bool) \
+                and 0 <= total <= 10**9:
             usage_tokens = total
 
     if expected_type == "choice":
@@ -331,6 +332,17 @@ def validate_classifier_result(
         confidence = _answer_confidence(answer)
         if confidence is None:
             return _reject(request, REASON_MALFORMED)
+        # 保守交叉校验：vendor 结果携带 probabilities 分布时，采信
+        # min(自报 confidence, P(所选)) —— 自报分不得凌驾于分布之上。
+        probabilities = answer.get("probabilities")
+        if isinstance(probabilities, Mapping):
+            p_choice = probabilities.get(choice)
+            if isinstance(p_choice, (int, float)) \
+                    and not isinstance(p_choice, bool):
+                p_value = float(p_choice)
+                if p_value != p_value or p_value < 0.0 or p_value > 1.0:
+                    return _reject(request, REASON_MALFORMED)
+                confidence = min(confidence, p_value)
         if confidence < max(request.confidence_floor, CHOICE_CONFIDENCE_FLOOR):
             return _reject(request, REASON_LOW_CONFIDENCE)
         return DecisionOutcome(
@@ -414,14 +426,22 @@ class DecisionAssist:
                          if enabled is None else bool(enabled))
         self._model_ref = (default_model_ref(environ)
                            if model_ref is None else model_ref)
-        self._seen: OrderedDict[str, DecisionOutcome] = OrderedDict()
+        self._seen: OrderedDict[tuple[str, str], DecisionOutcome] = OrderedDict()
+        self._inflight: set[tuple[str, str]] = set()
         self._dedupe_capacity = max(4, int(dedupe_capacity))
 
     @property
     def enabled(self) -> bool:
         return self._enabled
 
-    async def assist(self, request: Optional[DecisionRequest]) -> DecisionOutcome:
+    async def assist(self, request: Optional[DecisionRequest],
+                     *, scope: str = "") -> DecisionOutcome:
+        """执行一次有界决策辅助。
+
+        ``scope``：dedupe 作用域（调用方传 session_id）—— 同一 request_id
+        在不同会话互不影响，避免「同查询跨会话共享判定状态」。同 scope 下
+        并发同 id（in-flight）与已完成重放都 typed 拒绝（幂等契约）。
+        """
         if request is None or request.domain not in DOMAINS:
             return DecisionOutcome(status=STATUS_REJECTED,
                                    domain=getattr(request, "domain", ""),
@@ -429,27 +449,35 @@ class DecisionAssist:
                                    reason_code=REASON_NOT_APPLICABLE)
         if not self._enabled:
             return _reject(request, REASON_DISABLED)
-        prior = self._seen.get(request.request_id)
-        if prior is not None:
+        key = (scope, request.request_id)
+        prior = self._seen.get(key)
+        if prior is not None or key in self._inflight:
             return DecisionOutcome(
                 status=STATUS_REJECTED, domain=request.domain,
                 request_id=request.request_id, reason_code=REASON_DUPLICATE)
         if not self._model_ref or self._transport is None:
             outcome = _reject(request, REASON_NO_PROVIDER)
         else:
+            # check-then-set 原子化：先占 in-flight 再 await（事件循环单线程
+            # 内同 tick 串行；await 期间到达的并发调用会命中 in-flight）。
+            self._inflight.add(key)
             try:
-                raw = await self._transport.classify(
-                    self._model_ref, request.to_classifier_context())
-            except DecisionTransportUnavailable:
-                outcome = DecisionOutcome(
-                    status=STATUS_UNAVAILABLE, domain=request.domain,
-                    request_id=request.request_id, reason_code=REASON_NO_PROVIDER)
-            except Exception:  # noqa: BLE001 —— 传输层任何异常都诚实拒绝
-                outcome = _reject(request, REASON_PROVIDER_ERROR)
-            else:
-                outcome = validate_classifier_result(
-                    request, raw, seen_request_ids=None)
-        self._seen[request.request_id] = outcome
+                try:
+                    raw = await self._transport.classify(
+                        self._model_ref, request.to_classifier_context())
+                except DecisionTransportUnavailable:
+                    outcome = DecisionOutcome(
+                        status=STATUS_UNAVAILABLE, domain=request.domain,
+                        request_id=request.request_id,
+                        reason_code=REASON_NO_PROVIDER)
+                except Exception:  # noqa: BLE001 —— 传输层任何异常都诚实拒绝
+                    outcome = _reject(request, REASON_PROVIDER_ERROR)
+                else:
+                    outcome = validate_classifier_result(
+                        request, raw, seen_request_ids=None)
+            finally:
+                self._inflight.discard(key)
+        self._seen[key] = outcome
         while len(self._seen) > self._dedupe_capacity:
             self._seen.popitem(last=False)
         return outcome
@@ -463,21 +491,24 @@ def apply_task_choice(
     task_candidates: Sequence[tuple[str, str, int, int]],
     deterministic_task: str,
 ) -> str:
-    """任务识别闸：仅当 accepted 且选择 ∈ 候选且其最优特异性**不高于**
-    确定性胜者（即平级，规则未区分时）才采纳；否则返回确定性任务。
+    """任务识别闸：仅当 accepted 且选择 ∈ 候选且与确定性胜者**全序平级**
+    （``decide_task`` 裁决序 ``(specificity, span, -order)`` 的前两元都
+    相同 —— 规则确实未分出胜负）才采纳；特异性降级、特异性更高、或
+    span 已分出胜负的选择一律回落确定性任务。
     """
     if not outcome.ok or outcome.domain != DOMAIN_TASK_IDENTIFICATION:
         return deterministic_task
     if outcome.choice not in {task for _r, task, _s, _sp in task_candidates}:
         return deterministic_task
-    winner_spec: Optional[int] = None
-    choice_spec: Optional[int] = None
-    for _rule_id, task, specificity, _span in task_candidates:
+    winner_key: Optional[tuple[int, int]] = None
+    choice_key: Optional[tuple[int, int]] = None
+    for _rule_id, task, specificity, span in task_candidates:
+        key = (specificity, span)
         if task == deterministic_task:
-            winner_spec = specificity if winner_spec is None else max(winner_spec, specificity)
+            winner_key = key if winner_key is None else max(winner_key, key)
         if task == outcome.choice:
-            choice_spec = specificity if choice_spec is None else max(choice_spec, specificity)
-    if winner_spec is None or choice_spec is None or choice_spec < winner_spec:
+            choice_key = key if choice_key is None else max(choice_key, key)
+    if winner_key is None or choice_key is None or choice_key != winner_key:
         return deterministic_task
     return outcome.choice
 

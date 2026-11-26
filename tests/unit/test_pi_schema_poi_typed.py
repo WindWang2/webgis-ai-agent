@@ -23,9 +23,18 @@ _TESTS_DIR = Path(__file__).resolve().parents[1]
 
 
 def _strict_reject_nodes():
-    """复用 schema 卫生车道移植的上游谓词（单一事实源，不复制实现）。"""
-    spec = importlib.util.spec_from_file_location(
-        "_tpns_helper", _TESTS_DIR / "unit" / "test_pi_native_surface.py")
+    """复用 schema 卫生车道移植的上游谓词（单一事实源，不复制实现）。
+
+    经 importlib 以私有模块名加载（避免与 pytest 收集的同名模块冲突）；
+    路径耦合是已知取舍（review F5）：文件重命名会以 FileNotFoundError
+    在此显式失败并指向本函数。
+    """
+    helper_path = _TESTS_DIR / "unit" / "test_pi_native_surface.py"
+    if not helper_path.exists():  # pragma: no cover - 明确指向重命名问题
+        raise FileNotFoundError(
+            f"schema 卫生车道文件被移动/重命名？未找到 {helper_path}；"
+            "请同步更新 test_pi_schema_poi_typed._strict_reject_nodes 的路径")
+    spec = importlib.util.spec_from_file_location("_tpns_helper", helper_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module._strict_reject_nodes

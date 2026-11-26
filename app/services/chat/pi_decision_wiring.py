@@ -108,10 +108,12 @@ async def assist_map_request_intent(
     intent: Any,
     *,
     assist: Optional[pd.DecisionAssist] = None,
+    scope: str = "",
 ) -> tuple[Any, dict[str, Any]]:
     """对确定性 intent 执行有界决策辅助；返回 ``(intent, decision_meta)``。
 
-    任何路径都不抛出（传输层异常已在 DecisionAssist 内 typed 化）。
+    ``scope`` 传入 session_id（dedupe 会话隔离）。任何路径都不抛出
+    （传输层异常已在 DecisionAssist 内 typed 化）。
     """
     from app.services.gis_harness import intent_semantic as semantic
 
@@ -121,12 +123,13 @@ async def assist_map_request_intent(
         return intent, meta
     meta["enabled"] = True
 
-    # 1. 任务识别（候选 ≥2 才出题；唯一胜者不出题 = not_applicable）
+    # 1. 任务识别（候选 ≥2 才出题；唯一胜者不出题 = not_applicable；
+    #    decide_task 的 span 裁决语义由 apply_task_choice 全序平级闸尊重）
     decision = semantic.decide_task(query)
     request = pd.build_task_identification_request(
         query, task_candidates=decision.candidates, matched_task=intent.task,
         state_fields=_task_state_fields(intent))
-    outcome = await helper.assist(request)
+    outcome = await helper.assist(request, scope=scope)
     assisted_task = pd.apply_task_choice(outcome, decision.candidates,
                                          intent.task)
     entry: dict[str, Any] = {

@@ -30,6 +30,12 @@ class QueryLocalPoiArgs(BaseModel):
     仅把类型显式化；subtype 的 OR 列表语义（G-8 #872）保留为 typed
     union —— 因此该工具归入 ``typed_non_strict``（strict 需要闭集且
     禁止删约束换 strict，见 PI_UPSTREAM_COMPAT_MATRIX C20）。
+
+    已知非等价面（独立 review F4，如实披露）：四种旧「接受但必然无意义」
+    的形状现在校验期即响错 —— ``bbox`` 传 int/dict、bbox 数组混入 null、
+    polygon 传 ≥4 层数组。旧路径把它们传进运行时后要么静默忽略（如
+    ``bbox=5`` + 有效 district 仍出结果）、要么运行期报格式错；新路径
+    给出 typed VALIDATION_ERROR（更响、可自愈）。合法输入面不变。
     """
 
     bbox: Union[str, List[Union[int, float]]] = Field(
