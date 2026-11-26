@@ -59,3 +59,19 @@
 **通过？** WP2/WP3 本地闸 ✅（journey 待回填）。
 
 **下一步**：WP4 审计结论落账 → 独立 review 子代理 → 修复 → PR。
+
+## R3（终轮）：review 修复 + 交付
+
+**事实**
+- 独立 review：无 P0/P1，2×P2 + 5×P3 全处置（提交 2ad114767），修复后 74/74。
+- J6b journey 与 meta_contract 2 项失败经 base detach worktree 对照实证为
+  预存（先前线漂移/环境），未扩线。
+- PR 已建：**#2283**（head `zcode/goal-pi-native-decision-governance-20261126-172144`，
+  未合并、未等待 CI）。worktree 保留。
+
+**Oracle 核对**
+- WP1–WP5 核心闭环 ✅（决策 opt-in 全链/schema 卫生/阻塞裁定/审计）
+- 本线 P0/P1 = 0（独立 review 确认）✅
+- 矩阵 §6 + 运行时契约事实同步 ✅（未改 PI_RUNTIME_CONTRACT.md——本线未触
+  其行为契约面，新增裁定记录于矩阵 §6）
+- 本地闸绿（预存失败如实分列）✅；PR 已提交 ✅
