@@ -306,7 +306,7 @@ def register_feature_edit_tools(registry: ToolRegistry) -> None:
                 break
         return {"success": True, "ref_id": ref_id, "events": events[: max(1, min(int(limit), 50))]}
 
-    # ── 共享拓扑约束面（goal-gis-topology-authoring / ADR-0300；全部纯读） ──
+    # ── 共享拓扑约束面（goal-gis-topology-authoring / ADR-0304；全部纯读） ──
 
     @tool(
         registry,

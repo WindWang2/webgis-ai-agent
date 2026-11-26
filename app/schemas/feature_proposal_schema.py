@@ -144,7 +144,7 @@ class ProposalOpModel(BaseModel):
         "set_fields", "repair_geometry", "move_by", "snap_to_ref",
         "create_features", "delete_features", "replace_geometry",
         "split_feature", "merge_features",
-        # 共享拓扑编辑（goal-gis-topology-authoring / ADR-0300；提案通道恒需 owner 审批）
+        # 共享拓扑编辑（goal-gis-topology-authoring / ADR-0304；提案通道恒需 owner 审批）
         "move_shared_vertex", "insert_shared_vertex", "delete_shared_vertex",
         "reshape_shared_edge", "connect_endpoint",
     ]
@@ -160,7 +160,7 @@ class ProposalOpModel(BaseModel):
     line: Optional[Dict[str, Any]] = None
     field_policy: Optional[Dict[str, Any]] = None
     wfids: Optional[List[str]] = Field(default=None, min_length=1, max_length=200)
-    # ── 共享拓扑编辑参数（goal-gis-topology-authoring / ADR-0300；与
+    # ── 共享拓扑编辑参数（goal-gis-topology-authoring / ADR-0304；与
     # EditOpModel 同形状 —— 提案通道恒需 owner 审批，语义不变） ──
     at: Optional[Any] = None
     to: Optional[Any] = None

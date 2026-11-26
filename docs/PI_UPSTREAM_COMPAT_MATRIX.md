@@ -1,7 +1,7 @@
 # Pi 上游兼容矩阵（PI_UPSTREAM_COMPAT_MATRIX）
 
 > G01-PI-NATIVE-RUNTIME / PI-10；G12 更新（ADR-0288）；G22 升级 v1.5.2；
-> 01 线升级 v1.6.0（ADR-0300）。
+> 01 线升级 v1.6.0（ADR-0305）。
 > goal-pi-native-gis-host-20261125 升级 v1.6.1（ADR-0301）。
 > 当前 pin：**v1.6.1**（gitlink `ef4a1cfcca62b77ad3558337ff3e1c7f6beeadfe`，
 > 上游 `earendil-works/pi`，原 `badlogic/pi-mono`；lightweight tag，
@@ -65,7 +65,7 @@
 6. **禁止**：在新版发布证据（tag/release notes + 上述测试绿）之前引入未发布
    API；禁止跳过矩阵直接升 pin。
 
-## 4b. v1.5.2 → v1.6.0 差异裁决（ADR-0300，2026-11-25）
+## 4b. v1.5.2 → v1.6.0 差异裁决（ADR-0305，2026-11-25）
 
 四栏口径：
 
@@ -182,5 +182,5 @@
 | v1.5.0 | PR #1973（ADR-0282） | 两段加载/prompt disposition/pi-schema 校验等契约面以此为准 |
 | v1.5.1 | G12（ADR-0288） | 原生工具发现/嵌套调用/有序停机契约面（C11–C16）以此为准；floor 下限 |
 | v1.5.2 | G22（2026-11-11） | pin-only 升级；消费面零漂移（§4 正式裁决）；interactive missing-cwd UX/导入清理不触及 rpc 面 |
-| v1.6.0 | 01 线（ADR-0300，2026-11-25） | 行为修复升级（C17–C20）；wire 文档零漂移；前置修复 master broken symlink（1b3f9e415 回归） |
+| v1.6.0 | 01 线（ADR-0305，2026-11-25） | 行为修复升级（C17–C20）；wire 文档零漂移；前置修复 master broken symlink（1b3f9e415 回归） |
 | **v1.6.1**（当前） | goal-pi-native-gis-host-20261125（ADR-0301，2026-11-26） | 先修 #2169 symlink 回归再升 pin；消费面零漂移（§4.5 裁决，json/rpc/rpc-extension-ui 文档逐字节一致）；新契约面 C17–C24（供应链守卫/manifest/版本探针/能力快照/v1.6.x 生命周期与 provider 事件）|

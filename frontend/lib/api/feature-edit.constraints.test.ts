@@ -13,7 +13,7 @@ beforeEach(() => {
   apiFetch.mockClear();
 });
 
-describe('feature-edit constraint surface client（ADR-0300 只读三端点）', () => {
+describe('feature-edit constraint surface client（ADR-0304 只读三端点）', () => {
   it('constraints/inspect：POST 路径 + 可选过滤体（缺省空体）', async () => {
     await inspectFeatureEditConstraints('s1', 'ref:a', {
       toleranceM: 0.5,

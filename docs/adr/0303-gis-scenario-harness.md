@@ -1,4 +1,4 @@
-# ADR-0300: GIS 情境化多方案候选 Harness（G05）
+# ADR-0303: GIS 情境化多方案候选 Harness（G05）
 
 日期：2026-11-25 · 状态：已实现（PR: feat/contextual-gis-scenario-harness-20261124）
 

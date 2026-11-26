@@ -1,8 +1,8 @@
 /**
- * Journey 50 — 共享拓扑约束编辑（ADR-0300；mock 档）。
+ * Journey 50 — 共享拓扑约束编辑（ADR-0304；mock 档）。
  *
  * 用户旅程（任务书 WP5 / 验收「至少三个用户旅程」之一 —— 提案卡链路）：
- *  1) 共享顶点编辑预览（vector_feature_edit_preview 携带 ADR-0300 additive
+ *  1) 共享顶点编辑预览（vector_feature_edit_preview 携带 ADR-0304 additive
  *     impact_summary / topology_context）→ 提案卡渲染 impact 区块；
  *  2) 「新增违规 0 / 基线存量 1（披露）」语义可读，跨数据集阻断说明在场；
  *  3) 用户 approve → 决策 POST {action:'approve'} → 卡片 applied + 回执；
@@ -27,7 +27,7 @@ const TASK_ID = 't-j50';
 const PLAN_ID = 'fep-j50-shared-1';
 const REF_ID = 'ref:j50-parcels';
 
-/** 共享顶点编辑预览 turn（ADR-0300 additive 投影在场）。 */
+/** 共享顶点编辑预览 turn（ADR-0304 additive 投影在场）。 */
 function sharedEditPreviewTurn(): string {
   return [
     sse('session', { session_id: SESSION_ID }),
@@ -122,7 +122,7 @@ test.describe('journey-50 shared topology constrained edit', () => {
     await awaitShellReady(page);
     await sendChat(page, '把两块相邻地块的共享角点向东移 5 米');
 
-    // 提案卡挂载 + impact 区块（ADR-0300 additive 投影可读）
+    // 提案卡挂载 + impact 区块（ADR-0304 additive 投影可读）
     const card = page.getByTestId('edit-proposal-card-pending');
     await expect(card).toBeVisible({ timeout: 20_000 });
     const impact = page.getByTestId('edit-proposal-impact');

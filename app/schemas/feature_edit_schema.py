@@ -11,7 +11,7 @@ class EditOpModel(BaseModel):
         "set_fields", "rename_field", "repair_geometry", "move_by", "snap_to_ref",
         # G14 结构性操作
         "create_features", "delete_features", "replace_geometry", "split_feature", "merge_features",
-        # 共享拓扑编辑（goal-gis-topology-authoring / ADR-0300）
+        # 共享拓扑编辑（goal-gis-topology-authoring / ADR-0304）
         "move_shared_vertex", "insert_shared_vertex", "delete_shared_vertex",
         "reshape_shared_edge", "connect_endpoint",
     ]
@@ -35,7 +35,7 @@ class EditOpModel(BaseModel):
     # 或 WFID 均可）；一个 plan 表达多要素异构修改。create/split/merge 自带
     # 目标，不接受该键（shape 校验拒绝）。
     wfids: Optional[List[str]] = Field(default=None, min_length=1, max_length=200)
-    # ── 共享拓扑编辑参数（ADR-0300；形状校验在 plan._validate_op_shapes） ──
+    # ── 共享拓扑编辑参数（ADR-0304；形状校验在 plan._validate_op_shapes） ──
     at: Optional[Any] = None                          # [lon,lat] 或 {wfid, path_index, vertex_index}
     to: Optional[Any] = None                          # move 目标 / connect 目标（坐标或 endpoint ref）
     edge: Optional[Dict[str, Any]] = None             # insert：{between:[a,b]} 或 {near, tolerance_m}

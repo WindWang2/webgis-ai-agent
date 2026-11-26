@@ -18,7 +18,7 @@
 ## WP 完成状态
 - WP1 共享空间结构建模：✅ shared_topology.py（exact/容差/level_field 三种匹配、
   500k 顶点预算、成员寻址表、边索引）；typed impact plan（plan.impact +
-  summarize.impact_summary）。ADR-0300。
+  summarize.impact_summary）。ADR-0304。
 - WP2 面状共享边编辑：✅ move/insert/delete/reshape 四 op 双侧精确同步；
   基线/新增违规分离（身份键 + 重叠面积严重度：相对 >5% 且绝对 >0.5m²
   实质扩大视为新增；新增阻断、存量披露）；提交门同语义；多 path 同步；

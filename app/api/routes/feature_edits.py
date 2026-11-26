@@ -340,7 +340,7 @@ async def get_feature_lineage(
     return {"ref_id": ref_id, "events": events[: max(1, min(limit, 50))], "queried_wfid": wfid}
 
 
-# ── 共享拓扑约束面（goal-gis-topology-authoring / ADR-0300；全部只读） ─────
+# ── 共享拓扑约束面（goal-gis-topology-authoring / ADR-0304；全部只读） ─────
 
 @router.post("/sessions/{session_id}/feature-edits/{ref_id}/constraints/inspect")
 async def inspect_feature_edit_constraints(

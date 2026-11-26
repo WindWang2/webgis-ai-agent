@@ -35,12 +35,11 @@ tag 独立存在已用 `git ls-remote` 双查询验证）。相对 pin v1.5.2 �
   `full_output_error`；extension dialog `blockedKind`；大量 provider 重试覆盖修复。
 
 同方向先行分支 `feat/pi-next-gis-host-20261124`（本地、未推送、无 PR）已完成
-symlink 修复 + **v1.6.0** pin + ADR-0300 + C17–C20。本任务按新授权（v1.6.1+、
+symlink 修复 + **v1.6.0** pin + ADR-0305 + C17–C20。本任务按新授权（v1.6.1+、
 可复现运行、动态工具、会话与治理全量 WP）从 master 独立实现，不 cherry-pick 该
 分支；两者在 `vendor/pi`、`pi_compat.py`、`PI_UPSTREAM_COMPAT_MATRIX.md`、
 `pi_doctor.py`、`test_pi_vendor_contract.py` 上必然语义重叠，合并顺序建议见
-本 ADR 末节。ADR 编号说明：0300 已被 4 个开放 PR（#2272/#2273/#2275）与上述
-先行分支并行占用（5 处撞号），本 ADR 取 **0301** 避免第 6 处。
+本 ADR 末节。集成后本决策保留 ADR-0301，先行分支的 v1.6.0 决策见 ADR-0305。
 
 ## Decision
 
@@ -106,7 +105,7 @@ symlink 修复 + **v1.6.0** pin + ADR-0300 + C17–C20。本任务按新授权�
   （快照字段/manifest/诊断码），回退不需改业务代码。
 - 与先行分支 `feat/pi-next-gis-host-20261124`（v1.6.0）合并顺序建议：本分支
   先合（v1.6.1 是 v1.6.0 的严格超集，能力快照为 feature-based 可覆盖
-  C17–C20 场景）；先行分支如需保留，应 rebase 到本分支并把 ADR-0300/C17–C20
+  C17–C20 场景）；先行分支如需保留，应 rebase 到本分支并把 ADR-0305/C17–C20
   归并进矩阵，保留其独立测试资产。两者不得同时以现状合并。
 
 ## Verification（对应本仓库验收）

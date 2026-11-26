@@ -17,9 +17,9 @@ export interface FeatureEditPreviewSummary {
   expected_content_revision?: number;
   preview?: FeatureEditPreviewItem[];
   expires_in_s?: number;
-  /** ADR-0300 共享拓扑编辑：impact 的有界摘要投影（仅共享 op 出现）。 */
+  /** ADR-0304 共享拓扑编辑：impact 的有界摘要投影（仅共享 op 出现）。 */
   impact_summary?: FeatureEditImpactSummary;
-  /** ADR-0300：基线/新增违规分离披露（仅共享 op 出现）。 */
+  /** ADR-0304：基线/新增违规分离披露（仅共享 op 出现）。 */
   topology_context?: FeatureEditTopologyContext;
 }
 
@@ -37,7 +37,7 @@ export interface FeatureEditOpSummary {
     | 'replace_geometry'
     | 'split_feature'
     | 'merge_features'
-    // ADR-0300 共享拓扑操作
+    // ADR-0304 共享拓扑操作
     | 'move_shared_vertex'
     | 'insert_shared_vertex'
     | 'delete_shared_vertex'
@@ -115,9 +115,9 @@ export interface FeatureEditProposalState {
   expected_content_revision: number;
   expires_in_s?: number;
   error?: string;
-  /** ADR-0300：共享拓扑 plan 的有界影响摘要（仅共享 op 出现）。 */
+  /** ADR-0304：共享拓扑 plan 的有界影响摘要（仅共享 op 出现）。 */
   impact_summary?: FeatureEditImpactSummary;
-  /** ADR-0300：基线/新增违规分离披露（仅共享 op 出现）。 */
+  /** ADR-0304：基线/新增违规分离披露（仅共享 op 出现）。 */
   topology_context?: FeatureEditTopologyContext;
   /** applied 后的回执摘要（撤销入口/地图刷新依据）。 */
   receipt?: {
@@ -148,7 +148,7 @@ export interface FeatureEditOpPayload {
   wfid?: string;
   line?: GeoJSON.LineString;
   field_policy?: { mode?: 'first' | 'require_identical'; overrides?: Record<string, unknown> };
-  // ── ADR-0300 共享拓扑操作参数（形状校验在服务端 _validate_op_shapes） ──
+  // ── ADR-0304 共享拓扑操作参数（形状校验在服务端 _validate_op_shapes） ──
   /** move/insert/delete 的顶点引用：[lon,lat] 或 {wfid, path_index, vertex_index}。 */
   at?: FeatureEditVertexRef;
   /** insert_shared_vertex 的落点定位（{between:[a,b]} 或 {near, tolerance_m}）。 */
@@ -165,11 +165,11 @@ export interface FeatureEditOpPayload {
   wfids?: string[];
 }
 
-/** 共享 op 的顶点引用（ADR-0300）：坐标或结构化索引。 */
+/** 共享 op 的顶点引用（ADR-0304）：坐标或结构化索引。 */
 export type FeatureEditVertexRef = [number, number] | { wfid: string; path_index?: number; vertex_index?: number };
 
 /**
- * ADR-0300：plan impact 的有界摘要（summarize_plan 投影，仅共享 op 出现）。
+ * ADR-0304：plan impact 的有界摘要（summarize_plan 投影，仅共享 op 出现）。
  * affected_neighbors 已在服务端有界（≤64 + truncated 披露）。
  */
 export interface FeatureEditImpactSummary {
@@ -181,7 +181,7 @@ export interface FeatureEditImpactSummary {
   atomicity?: { scope?: string; cross_dataset?: string; note?: string } | null;
 }
 
-/** ADR-0300：基线/新增违规分离披露（D4：新增阻断、存量只披露）。 */
+/** ADR-0304：基线/新增违规分离披露（D4：新增阻断、存量只披露）。 */
 export interface FeatureEditTopologyContext {
   new_violations?: number | null;
   existing_violations?: number | null;
@@ -202,7 +202,7 @@ export interface FeatureEditDanglingEndpoint {
 }
 
 /**
- * ADR-0300：约束面检查响应（constraints/inspect 只读投影）。
+ * ADR-0304：约束面检查响应（constraints/inspect 只读投影）。
  * 索引对物化形态构建；typed 否定面（index_too_large 等）在 index_findings 照实披露。
  */
 export interface FeatureEditConstraintsInspectResult {
@@ -226,7 +226,7 @@ export interface FeatureEditConstraintsInspectResult {
   budgets?: Record<string, unknown>;
 }
 
-/** ADR-0300：候选 op 的有界影响投影（impact REST，纯读不落 plan store）。 */
+/** ADR-0304：候选 op 的有界影响投影（impact REST，纯读不落 plan store）。 */
 export interface FeatureEditImpactResult {
   success?: boolean;
   ref_id?: string;
@@ -252,7 +252,7 @@ export interface FeatureEditImpactResult {
   atomicity?: { scope?: string; cross_dataset?: string; note?: string };
 }
 
-/** ADR-0300：声明规则在当前修订版的复检（revalidate REST，编辑后质量闭环）。 */
+/** ADR-0304：声明规则在当前修订版的复检（revalidate REST，编辑后质量闭环）。 */
 export interface FeatureEditRevalidateResult {
   success?: boolean;
   ref_id?: string;

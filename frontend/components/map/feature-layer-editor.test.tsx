@@ -209,7 +209,7 @@ describe('inline 层保持本地命中（A01 不回退）', () => {
   });
 });
 
-// ── ADR-0300 共享顶点拖拽（move_shared_vertex；本地检测只是临时预览） ──
+// ── ADR-0304 共享顶点拖拽（move_shared_vertex；本地检测只是临时预览） ──
 
 /** 两条线共享顶点 (104.0, 30.5) 的 inline 图层。 */
 const SHARED_LAYER = {
@@ -270,7 +270,7 @@ function renderVertexEditor(map: ReturnType<typeof fakeMap>, layer: typeof SHARE
   render(<FeatureLayerEditor mapRef={mapRef} />);
 }
 
-describe('共享顶点拖拽（ADR-0300）', () => {
+describe('共享顶点拖拽（ADR-0304）', () => {
   it('共享顶点拖拽提交 move_shared_vertex（at/to 坐标 + 原目标要素 id）', async () => {
     const map = fakeMap();
     renderVertexEditor(map, SHARED_LAYER);

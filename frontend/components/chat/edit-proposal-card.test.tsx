@@ -74,9 +74,9 @@ describe('EditProposalCard', () => {
   });
 });
 
-// ── ADR-0300 共享拓扑影响段（additive：仅共享 op 的 plan 带这些字段） ──
+// ── ADR-0304 共享拓扑影响段（additive：仅共享 op 的 plan 带这些字段） ──
 
-describe('EditProposalCard 影响段（ADR-0300）', () => {
+describe('EditProposalCard 影响段（ADR-0304）', () => {
   it('impact_summary + topology_context 渲染影响/违规/跨数据集披露', () => {
     render(
       <EditProposalCard

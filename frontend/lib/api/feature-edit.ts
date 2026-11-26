@@ -187,7 +187,7 @@ export function getFeatureLineage(
   });
 }
 
-// ── ADR-0300 共享拓扑约束面（只读；与 preview/commit 互补，不落 plan store） ──
+// ── ADR-0304 共享拓扑约束面（只读；与 preview/commit 互补，不落 plan store） ──
 
 /** 约束面检查：匹配模式/共享结构摘要/邻接视图/声明规则/基线违规（有界）。 */
 export function inspectFeatureEditConstraints(

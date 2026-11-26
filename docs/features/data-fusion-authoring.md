@@ -7,7 +7,7 @@
 > provenance/许可署名/质量报告随附），可被既有统计/热力/聚合/交付链
 > 直接消费。Pi 与普通 UI 走同一服务、同一权限、同一收据。
 
-- ADR：`docs/adr/0300-multi-source-entity-fusion.md`
+- ADR：`docs/adr/0302-multi-source-entity-fusion.md`
 - 后端：`app/services/data_fusion_authoring/`（contracts/plan/textsim/
   matching/adjudication/executor/outputs/review/incremental/service）
 - HTTP：`/api/v1/data-fusion-authoring/...`（`app/api/routes/data_fusion_authoring.py`）

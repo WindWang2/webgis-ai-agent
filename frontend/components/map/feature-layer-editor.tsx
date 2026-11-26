@@ -10,7 +10,7 @@ import { registerEscapeHandler } from '@/lib/utils/escape-stack';
  * - 手势期间的几何只进本地 draft 源（wb-feedit-*），零 REST；手势结束
  *   经 layer-edit-bridge 走 preview→approve 服务端事务（一次手势一次
  *   revision）；Escape 取消不落任何服务端写入（V04/V05）；
- * - 共享顶点拖拽（ADR-0300）：inline 源抓到与其它要素重合的顶点时本地
+ * - 共享顶点拖拽（ADR-0304）：inline 源抓到与其它要素重合的顶点时本地
  *   只做临时高亮（wb-shared-hl-*），提交改走 move_shared_vertex 由服务端
  *   权威重算传播范围 —— 前端共享检测不是第二真相；
  * - 图层渲染真相仍在 MapSpec/HUD 行 —— 提交成功后由回执驱动的
@@ -36,7 +36,7 @@ const DRAFT_SOURCE = 'wb-feedit-src';
 const DRAFT_LINE_LAYER = 'wb-feedit-draft-line';
 const DRAFT_POINT_LAYER = 'wb-feedit-draft-point';
 const EDIT_COLOR = '#f59e0b';
-/* ADR-0300 共享顶点拖拽：受影响邻接要素的临时高亮（半透明橙）。 */
+/* ADR-0304 共享顶点拖拽：受影响邻接要素的临时高亮（半透明橙）。 */
 const SHARED_HL_SOURCE = 'wb-shared-hl-src';
 const SHARED_HL_FILL_LAYER = 'wb-shared-hl-fill';
 const SHARED_HL_LINE_LAYER = 'wb-shared-hl-line';
@@ -103,7 +103,7 @@ function geometryVertexCoords(geometry: GeoJSON.Geometry): [number, number][] {
 }
 
 /**
- * 共享顶点的临时检测（ADR-0300；仅驱动地图高亮预览 —— 服务端 plan
+ * 共享顶点的临时检测（ADR-0304；仅驱动地图高亮预览 —— 服务端 plan
  * preview 会权威重算传播范围，前端不造第二真相）：在被编辑图层行的
  * inline 源里扫描其它要素是否持有与被抓顶点完全一致的坐标
  * （首经纬度精确相等；闭合重复点坐标相同，天然视同同一位逻辑顶点）。
@@ -170,7 +170,7 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
   const draggingIndexRef = useRef(-1);
   const geometryAtDragStartRef = useRef<GeoJSON.Geometry | null>(null);
   /**
-   * ADR-0300：本次拖拽抓到的顶点是否共享（onDown 临时检测置位；坐标是
+   * ADR-0304：本次拖拽抓到的顶点是否共享（onDown 临时检测置位；坐标是
    * move_shared_vertex 的 at 参数）。临时预览 —— 权威传播由服务端重算。
    */
   const sharedDragRef = useRef<{ at: [number, number] } | null>(null);
@@ -577,7 +577,7 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
       geometryAtDragStartRef.current = vt.geometry;
       sharedDragRef.current = null;
       setSharedHighlight(EMPTY_FEATURES);
-      // ADR-0300：仅 inline 源做共享顶点临时检测（MVT 行无内联要素，不参与；
+      // ADR-0304：仅 inline 源做共享顶点临时检测（MVT 行无内联要素，不参与；
       // 高亮只是视觉预览 —— 权威传播由服务端 plan preview 重算）。
       const inline = (layers.find((l) => l.id === editTarget?.layerId)?.source as { features?: GeoJSON.Feature[] } | undefined)?.features;
       if (inline?.length) {
@@ -612,7 +612,7 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
       if (typeof m?.dragPan?.enable === 'function') m.dragPan.enable();
       if (before && JSON.stringify(before) !== JSON.stringify(target.geometry)) {
         if (shared) {
-          // ADR-0300：共享顶点 → 服务端权威传播 op（plan preview 不合则显式失败）。
+          // ADR-0304：共享顶点 → 服务端权威传播 op（plan preview 不合则显式失败）。
           const moved = ringOf(target.geometry)[dragIndex];
           await submit(
             [{ op: 'move_shared_vertex', at: shared.at, to: moved ? [moved[0], moved[1]] : shared.at }],

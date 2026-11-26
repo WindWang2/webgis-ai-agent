@@ -53,7 +53,7 @@ function formatSignedDelta(v: number): string {
 }
 
 /**
- * ADR-0300 共享拓扑影响段（additive：仅共享 op 的 plan 带这些字段）。
+ * ADR-0304 共享拓扑影响段（additive：仅共享 op 的 plan 带这些字段）。
  * 有界渲染：固定行数的计数/量值投影，不展开邻接清单 —— 权威传播范围以
  * 服务端 plan summary 为准。
  */
@@ -155,7 +155,7 @@ export function EditProposalCard({ proposal, disabled, onDecide }: EditProposalC
     replace_geometry: t('chat.editProposal.opReplaceGeometry'),
     split_feature: t('chat.editProposal.opSplitFeature'),
     merge_features: t('chat.editProposal.opMergeFeatures'),
-    // ADR-0300 共享拓扑 op（词表 additive；标签来自新 namespace，chat.json 不动）
+    // ADR-0304 共享拓扑 op（词表 additive；标签来自新 namespace，chat.json 不动）
     move_shared_vertex: t('topologyEditing.ops.moveSharedVertex'),
     insert_shared_vertex: t('topologyEditing.ops.insertSharedVertex'),
     delete_shared_vertex: t('topologyEditing.ops.deleteSharedVertex'),
