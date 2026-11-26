@@ -38,3 +38,24 @@ golden 文本不一致，master 上生成器与 golden 已漂移）。判定：�
 ## 本线新增验证（逐 WP 追加）
 
 （待填）
+
+## 本线验证汇总（R2 前，2026-11-27）
+
+### 后端
+- `tests/unit/task_data_supply/`：**82 passed**（含 5 旅程 + perf 基准 + 工具 dispatch + REST 契约），单进程 OMP=2
+- mypy（7 个新源文件）：Success, no issues
+- ruff 全量（app/ tests/ scripts/）：29 项错误 **与干净 master 逐字节一致**（#2281 披露的历史诊断；本线零新增零修改）
+- 既有失败集回归：catalog/discovery 相关测试 2 failed 与 master 完全一致（test_audit4 keyword reachable ×2）；dataset_semantics+gis_harness 基线 10 failed 与 master 一致 → **失败集未扩大**
+- perf 实测（declared-only 路径）：1k→p50 17.3ms/峰值 22MB；50k→p50 18.4ms/393MB（fixture 构造）；混合 footprint 50k→p50 22.2ms；真值集 0 误判
+- 工具 conformance：本线 5 工具全 pass；全仓 fail=11 与 master 完全一致（他线遗留）；capabilities 覆盖 80%/缺122 与 master 持平（本线零恶化）
+
+### 前端
+- task-supply-panel vitest：5 passed
+- data-sources-tab 既有测试回归：16 passed（3 文件）
+- i18n 闸：key-completeness 9/10 passed（figureTopValues 占位符失配为 master 既有）；no-raw-cjk / en 无 CJK 通过
+- typecheck：错误集与干净基线逐字节一致（5 项既有诊断）
+- eslint（改动文件，--max-warnings 0）：通过
+
+### 快照/契约
+- OpenAPI 快照显式刷新：**master 提交面本就漂移**（干净 master 重新生成 = +13434/-5339，已用 detached master worktree 复现验证）；本线刷新 = master 漂移 + 本线新增 path（+89 行 api-docs 生成区）
+- api-docs drift 闸 + API compatibility 闸：15 passed
