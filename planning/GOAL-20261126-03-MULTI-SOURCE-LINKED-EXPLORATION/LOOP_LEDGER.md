@@ -16,3 +16,4 @@
 
 | R2 | WP1 契约 v3+关系(642632d04)；WP2 指标求值器(5b141a16f)；WP3 多源编排+导出(d10f74bb1) | 新增 71 单元+12 集成；全域 160 passed；Ruff 全绿；G46 基线 77 不退化 | 通过 | WP4 工具/REST/前端接线 |
 | R2 备注 | 关键修复：evaluate_where 参数序；__other__ 键序列化；propagation_order v2 兼容；空传播集 handle 跳过；export 尾链抽共享（v2 回归曾破 4 项已复原） | — | — | — |
+| R3 | WP4 工具/REST/前端(b1473b315)；WP5 selection_ref+性能/Pi journey 证据(78e090ef4) | 后端全域 170 passed；前端组件 5/5+面板回归 4/4；tsc/eslint 本域净；性能 1k/50k/250k=11.4/517.5/2481.8ms；Pi journey 6 gate 绿、view_save 起被 2 项 master 既有基线缺陷阻塞（manifest 悬空 capability、SQLite 水位 0103<g36）如实披露 | 通过 | WP6 三审查代理（A/B/C）→ P0/P1 修复 → 复审 → PR |
