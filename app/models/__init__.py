@@ -88,6 +88,11 @@ from app.models.data_join_authoring import (  # noqa: F401 — 模型注册 + �
     DataJoinPlan,
     DataJoinRun,
 )
+from app.models.data_fusion_authoring import (  # noqa: F401 — 模型注册 + 再导出（融合工作台）
+    DataFusionDecision,
+    DataFusionPlan,
+    DataFusionRun,
+)
 from app.models.linked_exploration import (  # noqa: F401 — 模型注册 + 再导出（G46）
     ExplorationView,
 )

@@ -49,6 +49,7 @@ import zhMarket from '@/messages/zh-CN/market.json'
 import zhFlow from '@/messages/zh-CN/flow.json'
 import zhDataDelivery from '@/messages/zh-CN/dataDelivery.json'
 import zhDataJoin from '@/messages/zh-CN/dataJoin.json'
+import zhDataFusion from '@/messages/zh-CN/dataFusion.json'
 import zhLinkedExploration from '@/messages/zh-CN/linkedExploration.json'
 import zhCoordinateOperations from '@/messages/zh-CN/coordinateOperations.json'
 import zhMethodExperiment from '@/messages/zh-CN/methodExperiment.json'
@@ -98,6 +99,7 @@ import enMarket from '@/messages/en-US/market.json'
 import enFlow from '@/messages/en-US/flow.json'
 import enDataDelivery from '@/messages/en-US/dataDelivery.json'
 import enDataJoin from '@/messages/en-US/dataJoin.json'
+import enDataFusion from '@/messages/en-US/dataFusion.json'
 import enLinkedExploration from '@/messages/en-US/linkedExploration.json'
 import enFieldContracts from '@/messages/en-US/fieldContracts.json'
 import enCartogram from '@/messages/en-US/cartogram.json'
@@ -141,6 +143,7 @@ export interface AppMessages {
   flow: typeof zhFlow
   dataDelivery: typeof zhDataDelivery
   dataJoin: typeof zhDataJoin
+  dataFusion: typeof zhDataFusion
   linkedExploration: typeof zhLinkedExploration
   coordinateOperations: typeof zhCoordinateOperations
   methodExperiment: typeof zhMethodExperiment
@@ -171,6 +174,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     dataPreparation: zhDataPreparation,
     dataDelivery: zhDataDelivery,
     dataJoin: zhDataJoin,
+    dataFusion: zhDataFusion,
     linkedExploration: zhLinkedExploration,
     coordinateOperations: zhCoordinateOperations,
     methodExperiment: zhMethodExperiment,
@@ -221,6 +225,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     dataPreparation: enDataPreparation as unknown as AppMessages['dataPreparation'],
     dataDelivery: enDataDelivery as unknown as AppMessages['dataDelivery'],
     dataJoin: enDataJoin as unknown as AppMessages['dataJoin'],
+    dataFusion: enDataFusion as unknown as AppMessages['dataFusion'],
     linkedExploration: enLinkedExploration as unknown as AppMessages['linkedExploration'],
     coordinateOperations: enCoordinateOperations as unknown as AppMessages['coordinateOperations'],
     methodExperiment: enMethodExperiment as unknown as AppMessages['methodExperiment'],

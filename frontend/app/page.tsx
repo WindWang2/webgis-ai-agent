@@ -68,6 +68,8 @@ const CoordinateOperationsPanel = dynamic(() => import('@/components/sidebar/coo
 const MethodExperimentPanel = dynamic(() => import('@/components/method-experiment/experiment-panel'), { ssr: false });
 // G44：业务字段合同工作台（声明/评估/激活/批量填值）——与 DataJoinPanel 同款挂载
 const FieldContractsPanel = dynamic(() => import('@/components/sidebar/field-contracts/field-contracts-panel').then(m => ({ default: m.FieldContractsPanel })), { ssr: false });
+// 多源实体融合工作台（data-fusion-authoring）——与 DataJoinPanel 同款挂载
+const DataFusionPanel = dynamic(() => import('@/components/sidebar/data-fusion/data-fusion-panel').then(m => ({ default: m.DataFusionPanel })), { ssr: false });
 const SearchDrawer = dynamic(() => import('@/components/search/search-drawer').then(m => ({ default: m.SearchDrawer })), { ssr: false });
 
 const MapPanel = dynamic(
@@ -595,6 +597,7 @@ export default function Home() {
         <CoordinateOperationsPanel sessionId={sessionId} ownerToken={activeSessionToken} />
       <MethodExperimentPanel sessionId={sessionId} ownerToken={activeSessionToken} />
       <FieldContractsPanel sessionId={sessionId} ownerToken={activeSessionToken} />
+      <DataFusionPanel sessionId={sessionId} ownerToken={activeSessionToken} />
 
       {/* ADR-0147：跨会话搜索（本地索引 + 跳转恢复；handleSelectSession 内含抽屉关闭语义） */}
       <SearchDrawer onSelectSession={handleSelectSession} />

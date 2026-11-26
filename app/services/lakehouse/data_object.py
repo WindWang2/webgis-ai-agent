@@ -186,8 +186,11 @@ def build_object_manifest(
     # 消费方为交付下载/幂等复用，dr/orphan 扫描面不变 —— 不入 DATA_OBJECT_KINDS）。
     # "data_join"（G38）：数据关联派生成果终态包（GeoJSON/rows 成员 +
     # manifest/receipt；消费方为结果分页/幂等复用，dr/orphan 扫描面不变）。
+    # "data_fusion"（融合工作台）：多源实体融合成果终态包（fused_fc/
+    # quality_report/lineage/receipt；消费方与 data_join 同口径）。
     if kind not in (*DATA_OBJECT_KINDS, "modelops_artifact", "arrow_ipc",
-                    "data_delivery", "data_join", "coordinate_operation"):
+                    "data_delivery", "data_join", "coordinate_operation",
+                    "data_fusion"):
         raise DataObjectError(f"unknown data object kind: {kind!r}")
     scope = dict(owner_scope)
     if not scope or set(scope) - {"session_id", "project_id"}:

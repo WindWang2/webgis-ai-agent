@@ -84,6 +84,20 @@ CAPABILITIES: List[CapabilityDescriptor] = [
             version="1.0",
         ),
         CapabilityDescriptor(
+            id="data_fusion_authoring", name="多源实体融合", category="data_access",
+            description="多来源同一地理实体的可证明融合作者面：来源资格卡、"
+                        "融合预览（只读不合并）、ID/空间/名称三通道 blocking "
+                        "匹配与证据评分、歧义保护、字段/几何冲突审阅（CAS "
+                        "决定+人工锁定）、受权 commit 产出不可变融合数据集"
+                        "版本（provenance/质量报告/许可署名随附）、来源刷新"
+                        "影响面与锁定继承。",
+            output_artifact_types=["feature_collection"],
+            preferred_execution="local_first",
+            deterministic=True,
+            purpose_template="{subject} 实体融合",
+            version="1.0",
+        ),
+        CapabilityDescriptor(
             id="federated_dataset_query", name="联邦数据集查询", category="data_access",
             description="N 源（2..4）有界左深链式联邦查询：属性/空间连接与"
                         "聚合逐跳串联，成本排序、最小投影、半连接约减、"

@@ -330,3 +330,4 @@ frontend/package-lock.json
 # Local agent workspaces
 /.workbuddy/
 /.zwork/
+.task-fusion-20261124/
