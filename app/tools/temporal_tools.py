@@ -879,13 +879,16 @@ def register_temporal_science_tools(registry: ToolRegistry):
                     "箱数×期数 > 5000，逐格 z/p/q 矩阵未内联（分类/计数/证据完整）；"
                     "需要矩阵请缩小范围或分层调用")
 
-            flat_z = [abs(v) for row in result["gi_star_z"] for v in row]
+            # 大立方（箱×期 可达 4M 格）勿物化 abs() Python list：numpy
+            # 紧凑数组 + nanmax，峰值内存约为嵌套 list 的 1/2。
+            z_arr = np.asarray(result["gi_star_z"], dtype=float)
             mk_avail = [m for m in result["mk_trend"] if m["available"]]
             uncertainty = [
                 StatisticalSignificance(
                     target="gi_star_periodic",
                     statistic_name="Getis-Ord Gi* (max |z|, bins x periods)",
-                    statistic_value=(max(flat_z) if flat_z else 0.0),
+                    statistic_value=(float(np.nanmax(np.abs(z_arr)))
+                                     if z_arr.size else 0.0),
                     p_value=(min(min(row) for row in result["gi_star_p"])
                              if result["gi_star_p"] else None),
                     method="analytic_normal",

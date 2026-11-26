@@ -334,6 +334,48 @@ async def test_2156_cog_out_dir_no_double_data_prefix(tmp_path, monkeypatch):
     assert norm.endswith(os.path.join("data", "cog")), norm
 
 
+@pytest.mark.asyncio
+async def test_2156_cog_out_dir_bare_data_no_double_prefix(tmp_path, monkeypatch):
+    """#2156 P3：out_dir="data" / "./data"（无结尾斜杠）同样不得双前缀。"""
+    import os
+    from app.tools.raster_tools_cog import register_raster_cog_tools
+    from app.tools.registry import ToolRegistry
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "data").mkdir()
+
+    reg = ToolRegistry()
+    register_raster_cog_tools(reg)
+    fn = reg._tools["convert_raster_to_cog"]
+
+    captured: dict = {}
+
+    def fake_ensure_cog(src, dst, session_id=""):
+        captured["dst"] = dst
+        return dst
+
+    import app.tools.raster_tools_cog as cog_mod
+
+    async def _inline(f, *a, **k):
+        return f(*a, **k)
+
+    monkeypatch.setattr(cog_mod.asyncio, "to_thread", _inline)
+    monkeypatch.setattr("app.lib.geo_raster.cog.ensure_cog", fake_ensure_cog)
+    monkeypatch.setattr("app.lib.geo_raster.cog.validate_cog",
+                        lambda p: {"ok": True, "driver": "GTiff"})
+
+    src = tmp_path / "data" / "in.tif"
+    src.write_bytes(b"x")
+    data_root = os.path.realpath(str(tmp_path / "data"))
+
+    for out_dir in ("data", "./data"):
+        out = await fn(raster_path="in.tif", out_dir=out_dir, session_id="")
+        assert out.get("success") is True, out
+        norm = os.path.normpath(captured["dst"])
+        assert "data/data" not in norm, f"双前缀未消除 ({out_dir}): {norm}"
+        assert norm == data_root, f"应落到 data 根 ({out_dir}): {norm}"
+
+
 # ── #2156(P3) manage_analysis_asset 删除顺序：先提交后删文件 ──────────────
 
 def test_2156_asset_delete_commits_before_unlink():

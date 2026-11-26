@@ -346,6 +346,71 @@ def test_emerging_hotspot_tool_evidence_blocks():
     assert ev["parameters_applied"]["distance_band_m"] == 100.0
 
 
+def test_eha_tool_max_abs_z_without_per_cell_list():
+    """P3 perf：max|z| 证据统计量不得物化 bins×periods 个 Python float。
+
+    旧实现 ``flat_z = [abs(v) for row in gi_star_z for v in row]`` 对每格
+    调用一次内置 abs 并常驻整个中间 list（90k 格 ≈2.9MB；4M 格上限下可达
+    数百 MB）。修复改走 numpy 紧凑数组 + np.nanmax：内置 abs 调用数与格数
+    脱钩（90k 格实测 90,902 → 902 次），dispatch 峰值 55.4MB → 50.6MB。
+    """
+    import builtins
+
+    from app.tools.registry import ToolRegistry
+    from app.tools.temporal_tools import register_temporal_tools
+
+    registry = ToolRegistry()
+    register_temporal_tools(registry)
+
+    # ① 小立方：max|z| 锚值不变（文件头手算锚 2.7085，4 宽区块中心箱）。
+    payload = asyncio.run(registry.dispatch("emerging_hotspot_analysis", {
+        "dataset": _eha_geojson(),
+        "counts_field": "counts",
+        "distance_band_m": BAND,
+        "alpha": 0.05,
+    }))
+    assert payload.get("success") is True, payload.get("message")
+    gi = next(u for u in payload["scientific_evidence"]["uncertainty"]
+              if u.get("target") == "gi_star_periodic")
+    assert gi["statistic_value"] == pytest.approx(2.7085, abs=1e-3)
+
+    # ② 大立方（90k 格，>5000 护栏：矩阵仍全量计算、只是不内联）：
+    # 内置 abs 调用数必须与格数脱钩——旧实现每格一次。
+    n_bins, n_periods = 300, 300
+    rng = np.random.default_rng(7)
+    counts = rng.poisson(3.0, size=(n_bins, n_periods)).astype(float)
+    counts[100:120, 150:200] += 8.0
+    feats = []
+    for i in range(n_bins):
+        lo, la = 116.30 + (i % 50) * 0.0008, 39.90 + (i // 50) * 0.0008
+        feats.append({"type": "Feature",
+                      "geometry": {"type": "Point", "coordinates": [lo, la]},
+                      "properties": {"counts": counts[i].tolist()}})
+    big_fc = {"type": "FeatureCollection", "features": feats}
+
+    calls = {"n": 0}
+    real_abs = builtins.abs
+
+    def _counting_abs(x):
+        calls["n"] += 1
+        return real_abs(x)
+
+    builtins.abs = _counting_abs
+    try:
+        payload2 = asyncio.run(registry.dispatch("emerging_hotspot_analysis", {
+            "dataset": big_fc,
+            "counts_field": "counts",
+            "distance_band_m": 0.0,
+            "alpha": 0.05,
+        }))
+    finally:
+        builtins.abs = real_abs
+    assert payload2.get("success") is True, payload2.get("message")
+    assert calls["n"] < n_bins * n_periods // 10, (
+        f"max|z| 仍在逐格物化 abs() list：{calls['n']} 次内置 abs 调用 "
+        f"（{n_bins * n_periods} 格）")
+
+
 def test_eha_degenerate_band_disclosed_not_silent():
     """P2 修复：distance_band 超过全框跨度 → W 全 1（每箱 denom_inner=0）。
 

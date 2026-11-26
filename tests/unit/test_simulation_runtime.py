@@ -858,6 +858,32 @@ class TestSimulationTool:
             SimulationModelKind.TRAFFIC_PROPAGATION
         )
 
+    def test_tool_impl_forced_async_marks_envelope(self, monkeypatch):
+        """work_units>2M：显式 run_async=False 被强制转异步，回执必须带
+        async_forced 标记，同步调用方不会把 job envelope 误当推演结果。"""
+        import app.tools.simulation_tools as mod
+
+        def fake_enqueue(params, config, **kw):
+            return {"status": "analysis_task_started", "job_id": "1",
+                    "task_id": "t", "idempotent_reuse": False,
+                    "message": "ok"}
+
+        monkeypatch.setattr(mod, "enqueue_simulation", fake_enqueue)
+        params = _hydro_params(grid=_grid(w=100, h=100)).model_dump(mode="json")
+        out = mod.run_spatial_simulation_impl(
+            model_kind="hydro_diffusion", params=params,
+            dt_seconds=5.0, n_steps=300, output_stride=50, run_async=False,
+            session_id="sim-fixture",
+        )
+        assert out["success"] is True
+        data = out["data"]
+        assert data["status"] == "analysis_task_started"
+        assert data["async_forced"] is True
+        assert data["work_units"] == 100 * 100 * 300
+        # 回执是 job envelope 而非同步推演结果：无 products/conservation
+        assert "products" not in data
+        assert "conservation" not in data
+
     def test_registry_dispatch_tier3_gate_and_inline_run(self):
         """registry 真实分发：tier-3 确认门 + inline 推演 + 守恒通过。"""
         import asyncio

@@ -67,6 +67,21 @@ async def test_reset_map_view_returns_default(registry):
 
 
 @pytest.mark.asyncio
+async def test_reset_map_view_does_not_share_default_center(registry):
+    """reset_map_view 返回的 params["center"] 必须是独立副本；
+    就地改写不得污染模块级 DEFAULT_VIEW。"""
+    from app.tools.map_view import DEFAULT_VIEW
+
+    out = await registry.dispatch("reset_map_view", {})
+    center = out["params"]["center"]
+    # 返回的 center 不能与模块级 list 同对象
+    assert center is not DEFAULT_VIEW["center"]
+    # 就地改写不得影响全局默认视图
+    center[0] = 999.0
+    assert DEFAULT_VIEW["center"] == [104.0, 35.0]
+
+
+@pytest.mark.asyncio
 async def test_set_map_view_requires_at_least_one_param(registry):
     bad = await registry.dispatch("set_map_view", {})
     assert "error" in bad

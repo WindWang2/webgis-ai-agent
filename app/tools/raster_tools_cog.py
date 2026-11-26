@@ -65,7 +65,7 @@ def register_raster_cog_tools(registry: ToolRegistry):
             # 不受影响），默认 "cog" → ./data/cog。
             _norm_out = out_dir
             while True:
-                _stripped = re.sub(r"^(\./|data/)", "", _norm_out)
+                _stripped = re.sub(r"^(\./|data/|data$)", "", _norm_out)
                 if _stripped == _norm_out:
                     break
                 _norm_out = _stripped

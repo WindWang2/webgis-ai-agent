@@ -616,9 +616,16 @@ def register_network_tools(registry: ToolRegistry):
         if breaks is None:
             breaks = [5.0, 10.0, 15.0]
         # 评审 M3：无界 breaks 列表 = 无界 Dijkstra 轮次 —— 语义上界 32。
+        # Explicit rejection via the file-uniform {"type":"error"} envelope
+        # (mirrors network_od_matrix / optimize_route), not a raised ValueError.
         if not 1 <= len(breaks) <= 32:
-            raise ValueError(
-                f"breaks 列表长度超限：{len(breaks)}（允许 1-32 个时间断点）")
+            return {
+                "type": "error",
+                "message": (
+                    f"breaks 列表长度超限：{len(breaks)}（允许 1-32 个时间断点）；"
+                    f"请减少时间断点数量后重试。"
+                ),
+            }
         try:
             # VNext 参数契约（§12）：breaks 为 JSON 数组（契约以 string+JSON
             # 语义声明，类型词表无 array —— terrain.extract_contours 先例），
