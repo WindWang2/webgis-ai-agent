@@ -14,7 +14,7 @@
   ],
   "default_mapspec_version": "1.0",
   "description": "C11 CartoIR 契约词表双向漂移闸：backend pytest 断言本文件 ≡ mapspec_schema 常量，frontend vitest 断言本文件 ≡ lib/carto-ir/contract-manifest.ts 常量。任一侧改词表不更新本文件即红。",
-  "latest_mapspec_version": "2.1",
+  "latest_mapspec_version": "2.2",
   "mapspec_versions": [
     "1.0",
     "1.1",
@@ -28,7 +28,8 @@
     "1.9",
     "1.10",
     "2.0",
-    "2.1"
+    "2.1",
+    "2.2"
   ],
   "representation_modes": [
     "raw",

@@ -223,6 +223,7 @@ export interface MapSpecLayer {
   flow?: MapSpecLayerFlow;
   raster_style?: RasterExpressionSpec;
   symbol_asset?: MapSpecLayerSymbolAsset;
+  diagram_symbol?: MapSpecLayerDiagramSymbol;
 }
 
 export interface MapSpecLayerFlow {
@@ -310,6 +311,29 @@ export interface MapSpecLayerSymbolAsset {
   category_binding?: MapSpecLayerSymbolAssetCategoryBinding;
   applied_by?: Record<string, unknown>;
   prev_paint_snapshot?: Record<string, unknown>;
+}
+
+export interface MapSpecDiagramSizePolicy {
+  r_max_px?: number;
+  r_min_px?: number;
+  inner_radius_ratio?: number;
+  total_area_encoding?: boolean;
+  h_max_px?: number;
+  bar_w_px?: number;
+  bar_gap_px?: number;
+}
+
+export interface MapSpecLayerDiagramSymbol {
+  schema_version?: "diagram_symbol.v1";
+  kind: "composition_pie" | "composition_donut" | "series_bars" | "segmented_proportional";
+  layout?: "stacked" | "grouped";
+  categories: string[];
+  fields: string[];
+  unit?: string;
+  missing_policy?: "omit" | "block";
+  size_policy?: MapSpecDiagramSizePolicy;
+  palette_id?: string;
+  id_field?: string;
 }
 
 export interface MapSpecRepresentationWindow {
