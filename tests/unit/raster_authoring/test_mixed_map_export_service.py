@@ -368,3 +368,51 @@ class TestRasterOnlyToolCompat:
         assert art["bytes"][:8] == b"\x89PNG\r\n\x1a\n"
         assert "vec-layer" in art["frozen"]["omitted_layers"] or \
             art["frozen"]["omitted_layers"] is not None
+
+
+class TestPngRasterizerSubprocessFailure:
+    """review P3：rsvg 子进程 TimeoutExpired / OSError 必须映射为 typed 拒绝
+    （与 PDF 面 _map_pdf_error 同纪律）—— 裸异常会冒泡成无 code 的 500。"""
+
+    @staticmethod
+    def _stub_compile_and_probe(monkeypatch):
+        from types import SimpleNamespace
+
+        from app.services import mixed_map_export as mme
+
+        monkeypatch.setattr(mme, "_probe_rsvg", lambda: "/usr/bin/rsvg-convert")
+        monkeypatch.setattr(
+            mme, "_compile_single_svg",
+            lambda *a, **k: SimpleNamespace(
+                svg="<svg xmlns='http://www.w3.org/2000/svg' "
+                    "width='16' height='16'></svg>",
+                raster_placements=[], feature_count=0, diagnostics=[]))
+        return mme
+
+    def test_timeout_expired_maps_to_typed_error(self, monkeypatch):
+        import subprocess
+
+        mme = self._stub_compile_and_probe(monkeypatch)
+
+        def _hang(*a, **k):
+            raise subprocess.TimeoutExpired(cmd="rsvg-convert", timeout=120)
+
+        monkeypatch.setattr(subprocess, "run", _hang)
+        with pytest.raises(MixedMapExportError) as ei:
+            mme._export_png({}, {}, {}, True)
+        assert ei.value.code == "PNG_RENDER_TIMEOUT"
+        assert ei.value.status_code == 504
+
+    def test_oserror_maps_to_typed_error(self, monkeypatch):
+        import subprocess
+
+        mme = self._stub_compile_and_probe(monkeypatch)
+
+        def _no_exec(*a, **k):
+            raise OSError(13, "Permission denied")
+
+        monkeypatch.setattr(subprocess, "run", _no_exec)
+        with pytest.raises(MixedMapExportError) as ei:
+            mme._export_png({}, {}, {}, True)
+        assert ei.value.code == "PNG_RENDER_FAILED"
+        assert ei.value.status_code == 500

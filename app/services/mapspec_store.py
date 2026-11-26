@@ -413,6 +413,22 @@ class MapSpecStore:
                 source["task_scope_fingerprint"] = current_scope_fp
         recorded_fp = ""
         recorded_scope_fp = ""
+        # P3 并发：CAS 基线必须先于旧绑定指纹读（下）—— 读与写之间若落入
+        # 同 session 的其他 mutation，绑定写以落后 expected_revision 提交 →
+        # superseded，不拿过期记录落复用裁决、不覆盖并发结果。读失败
+        # （缺字段/存储异常）按无 CAS（None = 既有 tool 兼容路径），有痕。
+        base_revision: Optional[int] = None
+        try:
+            raw_rev = await session_data_manager.get_state_field(
+                session_id, "_cartographic_mutation_revision"
+            )
+            if raw_rev is not None:
+                base_revision = int(raw_rev)
+        except Exception:  # noqa: BLE001 — CAS 基线缺失按无并发保护
+            logger.warning(
+                "[mapspec_store] cas baseline revision read skipped",
+                exc_info=True)
+            base_revision = None
         try:
             spec = await self.get_mapspec(session_id)
             prev_sources = (spec or {}).get("sources")
@@ -467,9 +483,19 @@ class MapSpecStore:
         res = await self._apply(
             session_id, UpsertSourceIntent(source_id=source_id, source=source),
             origin=origin, actor=actor,
+            # P3 并发：绑定写携带读时 CAS 基线 —— 并发改同一 source 时
+            # 落后 → superseded，拒绝基于过期记录的复用裁决落图。
+            expected_revision=base_revision,
         )
         if res.is_error:
             raise RuntimeError(res.error_msg)
+        if res.superseded:
+            # 引擎锁内发现 revision 已推进 → 本次绑定未持久化。不得返回
+            # profile 谎报成功（调用方会以为绑定已落图）；抛错交调用方
+            # 重试（重读新基线后再对账）。
+            raise RuntimeError(
+                res.error_msg or "MapSpec revision has changed."
+            )
         if ref_id:
             # H08：绑定成功 → 数据绑定 durable facts（同 ingest 6b）。
             try:

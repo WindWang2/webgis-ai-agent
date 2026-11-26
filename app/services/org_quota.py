@@ -199,15 +199,19 @@ async def check_rate(org_id: str, *, limit_per_min: Optional[int] = None,
         raise PlatformError("organization rate limiter unavailable", category=ErrorCategory.RETRYABLE, http_status=503)
     if settings.is_production() and not isinstance(limiter, RedisRateLimiter):
         raise PlatformError("shared organization rate limiter unavailable", category=ErrorCategory.RETRYABLE, http_status=503)
+    # 与 storage/concurrency 的 <=0 语义一致：<=0 = 不限流，NULL = 跟随全局默认。
+    effective_limit = DEFAULT_RATE_PER_MIN if limit_per_min is None else limit_per_min
+    if effective_limit <= 0:
+        return True
     try:
         if isinstance(limiter, RedisRateLimiter):
             return await limiter.is_allowed(
-                f"org_quota_rate:{org_id}", max(1, limit_per_min or DEFAULT_RATE_PER_MIN),
+                f"org_quota_rate:{org_id}", effective_limit,
                 60, fail_closed=True,
             )
         return await limiter.is_allowed(
             f"org_quota_rate:{org_id}",
-            max(1, limit_per_min or DEFAULT_RATE_PER_MIN),
+            effective_limit,
             60,
         )
     except Exception:  # noqa: BLE001

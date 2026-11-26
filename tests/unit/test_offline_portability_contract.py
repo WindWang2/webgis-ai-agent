@@ -147,6 +147,35 @@ def test_redis_down_detail_redacts_url_password():
     assert "redis://:***@redis:6379/0" in result["detail"]
 
 
+def test_redis_check_closes_client_when_probe_fails():
+    """离线部署最常见情形（redis 不可达/鉴权失败）也必须关闭客户端。
+
+    ping 走 except 分支直接返回时，若连接已建立（鉴权失败、连接后超时等），
+    连接池里的 socket 句柄不显式释放即泄漏；--json/--out 之外，preflight
+    还被 health/report 面反复调用。
+    """
+    from unittest import mock
+
+    from app.services import offline_preflight as pf
+
+    closed = []
+
+    class _BoomClient:
+        def ping(self):
+            raise OSError("connection refused")
+
+        def close(self):
+            closed.append(True)
+
+    with mock.patch("app.core.config.settings") as fake_settings:
+        fake_settings.USE_REDIS = True
+        fake_settings.REDIS_URL = "redis://:s3cr3t-pw@redis:6379/0"
+        with mock.patch("redis.from_url", return_value=_BoomClient()):
+            result = pf.check_redis()
+    assert result["status"] == "down"
+    assert closed, "失败路径未调用 r.close()——连接池 socket 泄漏"
+
+
 def test_check_layer_scrubs_url_and_keyvalue_secrets():
     """#1710：_check 层兜底——任意 check 的 detail 内口令一律脱敏。
 
