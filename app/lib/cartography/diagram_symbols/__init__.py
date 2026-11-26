@@ -36,6 +36,15 @@ from app.lib.cartography.diagram_symbols.qualification import (
     DEFAULT_ID_FIELD,
     qualify_features,
 )
+from app.lib.cartography.diagram_symbols.layout import (
+    DEFAULT_MAX_GLYPHS,
+    MAX_LAYOUT_FEATURES,
+    compute_feature_anchor,
+    lnglat_to_world,
+    solve_diagram_symbol_layout,
+    world_to_lnglat,
+    world_px_scale,
+)
 
 __all__ = [
     "DIAGRAM_ERROR_CODES",
@@ -62,4 +71,11 @@ __all__ = [
     "build_glyph_legend",
     "DEFAULT_ID_FIELD",
     "qualify_features",
+    "DEFAULT_MAX_GLYPHS",
+    "MAX_LAYOUT_FEATURES",
+    "compute_feature_anchor",
+    "lnglat_to_world",
+    "solve_diagram_symbol_layout",
+    "world_to_lnglat",
+    "world_px_scale",
 ]

@@ -131,6 +131,9 @@ DIAGRAM_ERROR_CODES: Tuple[str, ...] = (
     "MISSING_UNIT_DECLARATION",
     "DUPLICATE_CATEGORY",
     "INNER_RADIUS_OUT_OF_RANGE",
+    "INVALID_COORDINATES",
+    "MISSING_VALUE_BLOCKED",
+    "BUDGET_EXCEEDED",
 )
 
 
@@ -240,9 +243,20 @@ def _finite_non_negative(value: Any, field: str) -> float:
 # ── 跨要素公共尺度（scale；唯一权威，渲染端禁止自行发明）───────────────
 
 
+def _row_numbers(row: Sequence[Any]) -> List[float]:
+    """行归一：接受裸数值 [v, ...] 或资格层 (category, value) 对 [(c, v), ...]。"""
+    out: List[float] = []
+    for item in row:
+        if isinstance(item, (tuple, list)) and len(item) == 2:
+            out.append(float(item[1]))
+        else:
+            out.append(float(item))
+    return out
+
+
 def compute_glyph_scale(
     kind: str,
-    per_feature_values: Sequence[Sequence[float]],
+    per_feature_values: Sequence[Sequence[Any]],
     size_policy: Dict[str, float],
 ) -> Dict[str, float]:
     """计算全图唯一公共尺度（cross-feature common scale）。
@@ -261,7 +275,7 @@ def compute_glyph_scale(
     """
     flat: List[float] = []
     for row in per_feature_values:
-        flat.extend(float(v) for v in row)
+        flat.extend(_row_numbers(row))
     if not flat:
         raise DiagramSymbolError(
             "ZERO_TOTAL", "没有任何可用数值（全要素全类别为空）", correction_hint="检查字段选择与缺失策略"
@@ -276,22 +290,50 @@ def compute_glyph_scale(
                 "ZERO_TOTAL", "全部数值为零/非正，无面积或角度语义可编码",
                 correction_hint="检查数据是否全为零值",
             )
-        v_min_pos = min(positives)
-        v_max_pos = max(positives)
-        if v_max_pos / v_min_pos > EXTREME_VALUE_RANGE_RATIO:
-            raise DiagramSymbolError(
-                "EXTREME_VALUE_RANGE",
-                f"数值跨度 max/min={v_max_pos / v_min_pos:.3g} 超过 {EXTREME_VALUE_RANGE_RATIO:.0f}，"
-                f"最小图符半径比将 >{EXTREME_RADIUS_RATIO:.0f} 倍，视觉不可辨",
-                correction_hint="先分档（graduated）或改用对数语义表达，再考虑图符",
-                details={"v_max": v_max_pos, "v_min": v_min_pos},
-            )
         r_max = size_policy["r_max_px"]
         scale["r_max_px"] = r_max
-        scale["v_ref"] = v_max_pos
-        if size_policy.get("total_area_encoding"):
+        if kind in ("composition_pie", "composition_donut") \
+                and size_policy.get("total_area_encoding"):
+            # 总量面积编码：半径律作用在**要素总量**上 → v_ref = 跨要素总量最大值
+            #（单类别最大值会让半径比偏离面积律 √(total/v_max_total)）
+            totals = [math.fsum(_row_numbers(row)) for row in per_feature_values]
+            totals = [t for t in totals if t > 0]
+            if not totals:
+                raise DiagramSymbolError(
+                    "ZERO_TOTAL", "全部要素总量为零，无总量面积语义可编码",
+                    correction_hint="关闭 total_area_encoding（只编码组成）或检查数据",
+                )
+            v_max_total = max(totals)
+            v_min_total = min(t for t in totals if t > 0)
+            if v_max_total / v_min_total > EXTREME_VALUE_RANGE_RATIO:
+                raise DiagramSymbolError(
+                    "EXTREME_VALUE_RANGE",
+                    f"总量跨度 max/min={v_max_total / v_min_total:.3g} 超过 "
+                    f"{EXTREME_VALUE_RANGE_RATIO:.0f}，最小图符半径比将 >"
+                    f"{EXTREME_RADIUS_RATIO:.0f} 倍，视觉不可辨",
+                    correction_hint="先分档或关闭总量面积编码",
+                    details={"v_max_total": v_max_total, "v_min_total": v_min_total},
+                )
+            scale["v_ref"] = v_max_total
             scale["total_area_encoding"] = 1.0
             scale["r_min_px"] = size_policy["r_min_px"]
+        else:
+            # segmented（等角分段）与未开总量编码的组成：v_ref = 全图
+            # (要素,类别) 单值最大（分段的半径律作用在单值上）
+            v_min_pos = min(positives)
+            v_max_pos = max(positives)
+            if v_max_pos / v_min_pos > EXTREME_VALUE_RANGE_RATIO:
+                raise DiagramSymbolError(
+                    "EXTREME_VALUE_RANGE",
+                    f"数值跨度 max/min={v_max_pos / v_min_pos:.3g} 超过 {EXTREME_VALUE_RANGE_RATIO:.0f}，"
+                    f"最小图符半径比将 >{EXTREME_RADIUS_RATIO:.0f} 倍，视觉不可辨",
+                    correction_hint="先分档（graduated）或改用对数语义表达，再考虑图符",
+                    details={"v_max": v_max_pos, "v_min": v_min_pos},
+                )
+            scale["v_ref"] = v_max_pos
+            if size_policy.get("total_area_encoding"):
+                scale["total_area_encoding"] = 1.0
+                scale["r_min_px"] = size_policy["r_min_px"]
     elif kind == "series_bars":
         if v_max_abs <= 0:
             raise DiagramSymbolError(
