@@ -417,6 +417,10 @@ class DecisionAssist:
         self._seen: OrderedDict[str, DecisionOutcome] = OrderedDict()
         self._dedupe_capacity = max(4, int(dedupe_capacity))
 
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
     async def assist(self, request: Optional[DecisionRequest]) -> DecisionOutcome:
         if request is None or request.domain not in DOMAINS:
             return DecisionOutcome(status=STATUS_REJECTED,

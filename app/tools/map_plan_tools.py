@@ -162,6 +162,10 @@ def register_map_plan_tools(registry: ToolRegistry):
 
         # ── 意图（规则快路径，零 LLM）→ planner plan ────────────────────
         intent, _clar = resolve_intent_adaptive(query, use_llm=False)
+        # WP2 有界决策辅助（PI_DECISION_ASSIST 默认关；关闭时零行为差）：
+        # 任务平级 tie 经既有 hint 机制采纳，protected/降级一律拒绝。
+        from app.services.chat.pi_decision_wiring import assist_map_request_intent
+        intent, decision_meta = await assist_map_request_intent(query, intent)
         planner = MapProductPlanner()
         plan = planner.plan_from_intent(intent, use_memo=False)
 
@@ -198,4 +202,6 @@ def register_map_plan_tools(registry: ToolRegistry):
         summary = _bounded_summary(result, finalization)
         summary["plan_id"] = getattr(plan, "plan_id", "")
         summary["recipe_id"] = getattr(plan, "recipe_id", "")
+        if decision_meta.get("assists"):
+            summary["decision_assist"] = decision_meta
         return summary
