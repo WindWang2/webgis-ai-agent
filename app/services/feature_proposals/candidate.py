@@ -142,18 +142,21 @@ def evaluate_candidate(
     op_seed: str,
     target_payloads: Optional[Dict[str, Any]] = None,
     geometry_type: Optional[str] = None,
+    shared_level_field: Optional[str] = None,
 ) -> Tuple[List[FeatureDelta], List[Dict[str, Any]], List[Dict[str, Any]]]:
     """对给定（物化后）fc 重放提案 ops。
 
     返回 (deltas, findings, lineage_events) —— deltas 含 birth/retire/
     字段/几何 before-after 全量证据（G14 同构）。findings 非空 = 候选在
     该数据形态上不可求值（校验失败）。op 级 wfids 在求值前归一化到
-    wfid 空间（自然 id → 稳定身份）。
+    wfid 空间（自然 id → 稳定身份）。shared_level_field 与 G14 plan/commit
+    同源透传（信封级层级守卫；缺失会让提案候选与 merge 重放分歧）。
     """
     normalized = normalize_op_wfids(ops, fc)
     deltas, _schema_ops, findings, _summaries, lineage = derive_changes(
         fc, normalized, ordered_targets, target_payloads or {},
         plan_seed=op_seed, geometry_type=geometry_type,
+        shared_level_field=shared_level_field,
     )
     return deltas, findings, lineage
 

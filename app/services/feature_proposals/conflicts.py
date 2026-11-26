@@ -390,6 +390,11 @@ def classify_conflicts(
     cand_deltas, cand_findings, cand_lineage = evaluate_candidate(
         base_mat, ops, ordered_targets, op_seed=op_seed,
         target_payloads=target_payloads, geometry_type=geometry_type,
+        shared_level_field=(
+            base_payload.get("level_field")
+            if isinstance(base_payload, dict) and isinstance(base_payload.get("level_field"), str)
+            else None
+        ),
     )
     if cand_findings:
         # 候选在 base 上已不可求值（数据形态变了/参数失效）。
