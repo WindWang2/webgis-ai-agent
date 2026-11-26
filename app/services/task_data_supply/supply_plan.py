@@ -134,6 +134,7 @@ class SupplyPlan:
     budget_max_bytes: Optional[int] = None
     estimated_total_bytes: Optional[int] = None
     budget_acknowledged: bool = False
+    in_flight: bool = False   # 执行互斥旗标（进程内；不持久化语义）
 
     def step(self, role: str) -> SupplyStep:
         for s in self.steps:
@@ -190,6 +191,10 @@ class SupplyPlanner:
         plan.state = "cancelled"
 
     def _refresh_state(self, plan: SupplyPlan) -> None:
+        # R2 评审 B P1：executing 不再作为持久状态（roles 过滤执行会把
+        # 计划永久楔死在 executing，后续一律 BUSY）——互斥由
+        # execution.execute_plan_steps 的 in-flight 旗标承载，状态机只
+        # 表达可恢复的业务终态/可继续态。
         outcomes = {s.outcome for s in plan.steps}
         if outcomes == {"completed"}:
             plan.state = "completed"
@@ -197,9 +202,8 @@ class SupplyPlanner:
             plan.state = "partial"
         elif "cancelled" in outcomes and "pending" not in outcomes:
             plan.state = "cancelled"
-        elif "pending" in outcomes:
-            plan.state = "executing" if "completed" in outcomes \
-                else plan.state
+        else:
+            plan.state = "ready"  # 尚有 pending 且无失败：可继续执行
 
 
 # ── 构建 ─────────────────────────────────────────────────────────────────

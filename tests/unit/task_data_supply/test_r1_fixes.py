@@ -403,3 +403,182 @@ class TestSearchMoreOnAcquire:
         assert results[0]["code"] == "TASK_SUPPLY_STEP_NOT_EXECUTABLE"
         # 候选未被绑定/物化
         assert plan.step("subject").receipt_ref == ""
+
+
+class TestR2Fixes:
+    """R2 评审 B/C 修复回归：executing 楔死、REST 身份、fabric 端到端。"""
+
+    def _fabric_plan(self):
+        req = task_requirement(
+            TaskScope(bbox=[104.0, 30.0, 105.0, 31.0]),
+            [{"role": "subject", "consumption_methods": ["numeric_stats"]}],
+            provenance=[{"source": "r2b"}])
+        cand = CoverageCandidate(
+            candidate_id="fabric:parcels", channel="data_fabric_catalog",
+            serves_roles=("subject",), role_class="vector_features",
+            declared_bbox=[104.0, 30.0, 105.0, 31.0],
+            source="ds-tenant-a",
+            footprint_geometry=_square(103.9, 29.9, 105.1, 31.1))
+        return build_supply_plan(req, evaluate_task_coverage(req, [cand]),
+                                 [cand])
+
+    def _fabric_env(self):
+        from app.core.database import Base, Engine, SessionLocal
+        from app.models.data_fabric import (
+            CatalogItemModel, DataSourceModel)
+
+        Base.metadata.create_all(bind=Engine)
+        with SessionLocal() as db:
+            db.query(CatalogItemModel).delete()
+            db.query(DataSourceModel).delete()
+            db.add(DataSourceModel(
+                id="ds-tenant-a", org_id=None, owner_id="user-a",
+                name="tenant a source", source_type="postgis",
+                endpoint_url="postgresql://example/db",
+                connection_profile={}, capabilities_json=[]))
+            db.add(CatalogItemModel(
+                id="cat_ds-tenant-a_parcels", source_id="ds-tenant-a",
+                name="parcels", title="parcels", geometry_type="Polygon",
+                feature_type="vector", crs="EPSG:4326", bbox_json=None,
+                tags_json=[], descriptor_json={}, meta_profile_json={},
+                fingerprint="fp-x", availability="available"))
+            db.commit()
+
+    def _cleanup_env(self):
+        from app.core.database import SessionLocal
+        from app.models.data_fabric import (
+            CatalogItemModel, DataSourceModel)
+
+        with SessionLocal() as db:
+            db.query(CatalogItemModel).delete()
+            db.query(DataSourceModel).delete()
+            db.commit()
+
+    def test_fabric_end_to_end_resolve_tenant_materialize(self):
+        """R2-B：解析→租户→物化三段接线（monkeypatch 物化，断言 item.id
+        与 QuerySpec 投影真实传递）。"""
+        import asyncio
+
+        from app.services.data_fabric.manager import DataFabricManager
+        from app.services.task_data_supply.execution import execute_plan_steps
+
+        self._fabric_env()
+        try:
+            plan = self._fabric_plan()
+            assert plan.state == "ready"
+            captured = {}
+
+            async def _fake_materialize(cls, db, session_id, *, item_id,
+                                        query_spec=None, **kw):
+                captured["item_id"] = item_id
+                captured["spec"] = query_spec
+                return {"ref_id": "ref:fabric-parquet/e2e",
+                        "feature_count": 42}
+
+            original = DataFabricManager.materialize_catalog_item
+            DataFabricManager.materialize_catalog_item = classmethod(
+                _fake_materialize)
+            loop = asyncio.get_event_loop_policy().new_event_loop()
+            try:
+                results, _skipped = loop.run_until_complete(
+                    execute_plan_steps(
+                        "sess-fab", plan,
+                        caller_identity=("user-a", None)))
+            finally:
+                loop.close()
+                DataFabricManager.materialize_catalog_item = original
+            assert results[0]["outcome"] == "completed", results
+            assert results[0]["receipt_ref"] == "ref:fabric-parquet/e2e"
+            assert results[0]["rows"] == 42  # feature_count 键读取（R2-B P3）
+            assert captured["item_id"] == "cat_ds-tenant-a_parcels"
+            assert captured["spec"].bbox == [104.0, 30.0, 105.0, 31.0]
+            assert captured["spec"].limit >= 1000
+            assert plan.step("subject").outcome == "completed"
+        finally:
+            self._cleanup_env()
+
+    def test_fabric_tenant_deny_is_typed_failure(self):
+        """他人身份 → 类型化失败，不泄漏跨租户条目存在性。"""
+        import asyncio
+
+        from app.services.data_fabric.manager import DataFabricManager
+        from app.services.task_data_supply.execution import execute_plan_steps
+
+        self._fabric_env()
+        try:
+            plan = self._fabric_plan()
+            called = {"n": 0}
+
+            async def _fail_materialize(*a, **kw):
+                called["n"] += 1
+                raise AssertionError("物化不应被调用（租户拒绝必须在前）")
+
+            original = DataFabricManager.materialize_catalog_item
+            DataFabricManager.materialize_catalog_item = classmethod(
+                _fail_materialize)
+            loop = asyncio.get_event_loop_policy().new_event_loop()
+            try:
+                results, _ = loop.run_until_complete(
+                    execute_plan_steps(
+                        "sess-fab", plan,
+                        caller_identity=("user-b", None)))
+            finally:
+                loop.close()
+                DataFabricManager.materialize_catalog_item = original
+            assert called["n"] == 0
+            assert results[0]["outcome"] == "failed"
+            # 拒绝原因落在步骤披露（不泄漏跨租户条目存在性）
+            step = plan.step("subject")
+            assert any("不可见" in d for d in step.disclosures)
+            assert step.receipt_ref == ""
+        finally:
+            self._cleanup_env()
+
+    def test_roles_filtered_execution_does_not_wedge(self):
+        """R2-B P1 回归：roles 过滤执行后计划保持可继续（不再楔死在
+        executing，后续角色可执行）。"""
+        import asyncio
+
+        from app.services.task_data_supply.execution import execute_plan_steps
+        from app.services.task_data_supply.supply_plan import SupplyPlanner
+
+        async def _run():
+            planner = SupplyPlanner()
+            plan = self._two_role_plan()
+            r1, _ = await execute_plan_steps(
+                "s", plan, roles={"subject"},
+                planner=planner, caller_identity=("u", None))
+            assert r1[0]["outcome"] == "completed"
+            r2, _ = await execute_plan_steps(
+                "s", plan, roles={"boundary"},
+                planner=planner, caller_identity=("u", None))
+            assert r2[0]["outcome"] == "completed", (r2, plan.state)
+            return plan
+
+        plan = asyncio.get_event_loop_policy().new_event_loop().run_until_complete(_run())
+        assert plan.state == "completed"
+
+    def _two_role_plan(self):
+        from app.services.task_data_supply.coverage import (
+            CoverageCandidate, evaluate_task_coverage)
+
+        req = task_requirement(
+            TaskScope(bbox=[104.0, 30.0, 105.0, 31.0]),
+            [{"role": "subject", "consumption_methods": ["numeric_stats"]},
+             {"role": "boundary", "consumption_methods": [
+                 "geometry_skeleton"]}],
+            provenance=[{"source": "r2b"}])
+        cands = [
+            CoverageCandidate(
+                candidate_id="ref:a", channel="local",
+                serves_roles=("subject",), role_class="vector_features",
+                declared_bbox=[104.0, 30.0, 105.0, 31.0],
+                footprint_geometry=_square(103.9, 29.9, 105.1, 31.1)),
+            CoverageCandidate(
+                candidate_id="ref:b", channel="local",
+                serves_roles=("boundary",), role_class="vector_features",
+                declared_bbox=[104.0, 30.0, 105.0, 31.0],
+                footprint_geometry=_square(103.9, 29.9, 105.1, 31.1)),
+        ]
+        return build_supply_plan(req, evaluate_task_coverage(req, cands),
+                                 cands)

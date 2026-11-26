@@ -65,6 +65,18 @@ def _planner() -> SupplyPlanner:
     return SupplyPlanner()
 
 
+def _caller_identity_from_user(
+    user: Optional[Dict[str, Any]],
+) -> Tuple[Optional[str], Optional[str]]:
+    """REST user dict → (user_id, org_id)（anonymous 哨兵归一 None）。"""
+    if not user:
+        return None, None
+    uid = str(user.get("user_id") or "").strip()
+    org = user.get("org_id")
+    return (uid if uid and uid != "anonymous" else None,
+            str(org) if org not in (None, "") else None)
+
+
 def _require_session_owner(
     session_id: str,
     user: Optional[Dict[str, Any]],
@@ -195,9 +207,20 @@ async def execute_supply_plan(
     from app.services.task_data_supply.execution import (
         execute_plan_steps)
 
+    # R2 评审 C P1：REST 侧显式传入调用方身份（工具上下文只在 agent 链
+    # 绑定）——owner 物化自己的 fabric 源不再被误拒
+    identity = _caller_identity_from_user(user)
     wanted = set(params.roles)
-    results, skipped = await execute_plan_steps(session_id, plan,
-                                                roles=wanted)
+    results, skipped = await execute_plan_steps(
+        session_id, plan, roles=wanted, caller_identity=identity)
+    gate = next((r for r in results
+                 if isinstance(r.get("code"), str)
+                 and r["code"].startswith("TASK_SUPPLY_PLAN_")
+                 and r.get("role") == "*"), None)
+    if gate is not None:
+        if gate["code"] == "TASK_SUPPLY_PLAN_BUSY":
+            raise HTTPException(status_code=423, detail=gate["error"])
+        raise HTTPException(status_code=409, detail=gate["error"])
     return {"success": True, "plan_id": plan.plan_id,
             "plan_state": plan.state, "results": results[:16],
             "skipped": skipped[:16],

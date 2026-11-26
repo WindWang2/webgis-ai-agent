@@ -157,3 +157,51 @@ async def test_unknown_role_rejected(client):
                              json=_scope_payload(roles=["volcano"]))
     assert resp.status_code == 400
     assert "REQUIREMENT_ROLE_UNKNOWN" in resp.json()["detail"]
+
+
+# ── R2-B/C 补齐：鉴权负例（此前 REVIEW.md 宣称但未兑现——现已真实存在） ──
+
+@pytest.mark.asyncio
+async def test_unauthenticated_rejected_before_business_logic():
+    """不 override 鉴权依赖：未认证请求先于业务逻辑被拒（401）。"""
+    application = _app()  # 不挂 dependency_overrides
+    from app.core.auth import get_current_user as real_dep
+
+    application.dependency_overrides[tds_routes.get_current_user] = (
+        real_dep)
+    transport = ASGITransport(app=application)
+    async with AsyncClient(transport=transport,
+                           base_url="http://test") as c:
+        resp = await c.post("/api/v1/task-data-supply/coverage",
+                            json=_scope_payload())
+    assert resp.status_code in (401, 403), resp.text
+
+
+@pytest.mark.asyncio
+async def test_other_user_session_is_404():
+    """会话存在但归属他人 → 404（不泄漏存在性；非「不存在」分支）。"""
+    application = _app()
+    application.dependency_overrides[tds_routes.get_current_user] = (
+        lambda: {"user_id": "sup-intruder"})
+    transport = ASGITransport(app=application)
+    async with AsyncClient(transport=transport,
+                           base_url="http://test") as c:
+        resp = await c.post("/api/v1/task-data-supply/coverage",
+                            json=_scope_payload())
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_anonymous_with_bad_owner_token_is_404():
+    """匿名 + 错误 X-Session-Token → fail-closed 404（SEC-08 继承）。"""
+    application = _app()
+    application.dependency_overrides[tds_routes.get_current_user] = (
+        lambda: {"user_id": "anonymous"})
+    transport = ASGITransport(app=application)
+    async with AsyncClient(transport=transport,
+                           base_url="http://test") as c:
+        resp = await c.post(
+            "/api/v1/task-data-supply/coverage",
+            json=_scope_payload(),
+            headers={"X-Session-Token": "not-the-token"})
+    assert resp.status_code == 404

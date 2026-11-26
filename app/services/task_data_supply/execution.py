@@ -128,15 +128,19 @@ async def execute_plan_steps(
     *,
     roles: Optional[set] = None,
     planner: Optional[SupplyPlanner] = None,
+    caller_identity: Optional[Tuple[Optional[str], Optional[str]]] = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """执行计划步骤（幂等）：返回 (results, skipped)。
 
-    幂等语义（R1 评审 B P1-4）：已 completed/partial 的步骤跳过不重跑
-    （回执 skipped 可见）；executing 状态抢占（同计划并发第二请求 →
-    typed busy）。局部失败如实回写 partial/failed，合法产物保留。
+    幂等语义（R1 评审 B P1-4 + R2 评审 B 修正）：已 completed/partial
+    的步骤跳过不重跑（回执 skipped 可见）；并发互斥用 ``plan.in_flight``
+    旗标（不再复用 state 字段——roles 过滤执行曾把计划楔死在 executing，
+    R2-B 运行时复现）。``caller_identity``（R2 评审 C P1）：REST 入口
+    显式传入 ``(user_id, org_id)``——工具执行上下文只在 agent 链路绑定，
+    REST 不传会对非全局 fabric 源 fail-closed。
     """
     planner = planner or SupplyPlanner()
-    if plan.state == "executing":
+    if plan.in_flight:
         return [{"role": "*", "outcome": "failed",
                  "code": "TASK_SUPPLY_PLAN_BUSY",
                  "error": "计划正在执行中（并发抢占）"}], []
@@ -145,8 +149,7 @@ async def execute_plan_steps(
                  "code": "TASK_SUPPLY_PLAN_NEEDS_CONFIRMATION",
                  "error": "存在未决策事项"}], []
 
-
-    plan.state = "executing"
+    plan.in_flight = True
     results: List[Dict[str, Any]] = []
     skipped: List[Dict[str, Any]] = []
     try:
@@ -168,7 +171,7 @@ async def execute_plan_steps(
                 continue
             try:
                 outcome, receipt, rows, disc = await _execute_step(
-                    session_id, step)
+                    session_id, step, caller_identity=caller_identity)
                 planner.record_outcome(
                     plan, step.role, outcome=outcome, receipt_ref=receipt,
                     rows_written=rows, disclosure=disc)
@@ -182,12 +185,13 @@ async def execute_plan_steps(
                                 "code": "TASK_SUPPLY_MATERIALIZATION_FAILED",
                                 "error": str(e)[:200]})
     finally:
-        if plan.state == "executing":
-            planner._refresh_state(plan)
+        plan.in_flight = False
+        planner._refresh_state(plan)
     return results, skipped
 
 
-async def _execute_step(session_id: str, step: SupplyStep):
+async def _execute_step(session_id: str, step: SupplyStep,
+                        *, caller_identity=None):
     """单步骤真实执行：走既有 MaterializationService 生产数据面。
 
     - acquire + fabric 通道 → id 解析 + 租户校验 + QuerySpec 投影后
@@ -210,7 +214,10 @@ async def _execute_step(session_id: str, step: SupplyStep):
     from app.core.database import SessionLocal
     from app.services.data_fabric.manager import DataFabricManager
 
-    caller_user_id, caller_org_id = _caller_identity()
+    if caller_identity is not None:
+        caller_user_id, caller_org_id = caller_identity
+    else:
+        caller_user_id, caller_org_id = _caller_identity()
     spec = _query_spec_from_ads(step.ads_request)
     disclosure_parts: List[str] = []
     if (step.ads_request.get("bbox") is not None
@@ -240,7 +247,13 @@ async def _execute_step(session_id: str, step: SupplyStep):
         result = await DataFabricManager.materialize_catalog_item(
             db, session_id, item_id=item.id, query_spec=spec)
     ref = str(result.get("ref_id") or result.get("ref") or "")
-    rows = result.get("rows") if isinstance(result.get("rows"), int) else None
+    # materialize_catalog_item 回执的行数字段是 feature_count（R2-B P3）
+    rows = None
+    for k in ("feature_count", "rows"):
+        v = result.get(k)
+        if isinstance(v, int) and v >= 0:
+            rows = v
+            break
     if not ref:
         return ("failed", "", None,
                 f"物化未返回产物 ref（如实失败）: {str(result)[:160]}")

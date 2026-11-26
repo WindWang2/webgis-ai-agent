@@ -352,6 +352,13 @@ def register_task_data_supply_tools(registry: ToolRegistry) -> None:
         from app.services.task_data_supply.execution import (
             execute_plan_steps)
         results, skipped = await execute_plan_steps(sid, plan, roles=wanted)
+        gate = next((r for r in results
+                     if isinstance(r.get("code"), str)
+                     and r["code"].startswith("TASK_SUPPLY_PLAN_")
+                     and r.get("role") == "*"), None)
+        if gate is not None:
+            return {"success": False, "code": gate["code"],
+                    "message": str(gate.get("error", ""))[:300]}
         return {"success": True, "plan_id": plan.plan_id,
                 "plan_state": plan.state, "results": results[:16],
                 "skipped": skipped[:16],

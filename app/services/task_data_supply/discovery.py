@@ -110,41 +110,54 @@ def entry_to_candidate(entry: CatalogEntry) -> CoverageCandidate:
 
 
 def _parse_bbox_arg(bbox: Any) -> Optional[List[float]]:
-    """"minx,miny,maxx,maxy" | list → 校验后的 bbox；坏形状 None。"""
+    """"minx,miny,maxx,maxy" | list → 校验后的 bbox。
+
+    R2 评审 C P2-1：**已提供但解析失败**（形状/数值/NaN）→ 类型化拒绝，
+    不再静默降级为无范围需求（静默会让 LLM 无法自纠）。
+    """
     if bbox in (None, ""):
         return None
     if isinstance(bbox, str):
         parts = [p.strip() for p in bbox.split(",")]
         if len(parts) != 4:
-            return None
+            raise ValueError(
+                f"REQUIREMENT_SCOPE_INVALID: bbox 字符串需 4 个逗号分隔"
+                f"数值，得到 {len(parts)} 个: {str(bbox)[:64]!r}")
         bbox = parts
     if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
         try:
             vals = [float(b) for b in bbox]
         except (TypeError, ValueError):
-            return None
+            raise ValueError(
+                f"REQUIREMENT_SCOPE_INVALID: bbox 分量不可解析为数值: "
+                f"{str(bbox)[:64]!r}")
         if any(v != v or v in (float("inf"), float("-inf")) for v in vals):
-            return None
+            raise ValueError(
+                "REQUIREMENT_SCOPE_INVALID: bbox 含 NaN/±Inf 分量")
         if vals[1] > vals[3]:
-            return None
+            raise ValueError("REQUIREMENT_SCOPE_INVALID: bbox miny > maxy")
         return vals  # minx>maxx 允许（跨日期线，TaskScope 再校验其余）
-    return None
+    raise ValueError(
+        f"REQUIREMENT_SCOPE_INVALID: bbox 形状错误: {type(bbox).__name__}")
 
 
 def _parse_time_arg(time_range: Any) -> Optional[List[str]]:
-    """"2024-01-01,2024-12-31" | list → [start, end]；坏形状 None。"""
+    """"2024-01-01,2024-12-31" | list → [start, end]（坏输入类型化拒绝）。"""
     if time_range in (None, ""):
         return None
     if isinstance(time_range, str):
         parts = [p.strip() for p in time_range.split(",")]
         if len(parts) != 2:
-            return None
+            raise ValueError(
+                f"REQUIREMENT_TIME_INVALID: time_range 字符串需 2 个逗号"
+                f"分隔端点，得到 {len(parts)} 个: {str(time_range)[:64]!r}")
         time_range = parts
     if isinstance(time_range, (list, tuple)) and len(time_range) == 2:
         out = [str(t).strip() for t in time_range]
         if all(out):
             return out
-    return None
+    raise ValueError(
+        "REQUIREMENT_TIME_INVALID: time_range 形状错误（需 [start, end]）")
 
 
 async def discover_task_candidates(
