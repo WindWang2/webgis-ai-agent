@@ -82,11 +82,16 @@
      （vendor 该字段可选，未设 = 线上 `strict:false`）→ GIS 工具当前全部
      以非 strict 发送，#12049 降级路径**尚未被触发**；本车道是「预接入
      卫生」+ 存量债披露，不是现存缺陷的修复声称。
-   - native 前门 7 工具中 `query_local_poi` 违规（`bbox`/`polygon` 无
-     注解）→ xfail(strict=True) 钉住（修复注解会改变冻结 native 工具的
-     参数校验面，超本轮授权；修好时 XPASS 翻红强制摘标）；长尾
-     ~136/529 工具（#12049 裸节点 + v1.5.2 既有 keyword 节点两桶）→
-     计数披露测试。修复注解是后续独立 pass，不是本轮 silent-green。
+   - native 前门 7 工具中 **2 例违规** → xfail(strict=True) 钉住：
+     `query_local_poi`（bbox/polygon 无注解，#12049 裸节点）与
+     `webgis_component_update`（5 个自由对象参数走 anyOf 结构化联合 +
+     additionalProperties:true，v1.5.2 既有类）；修复会改变冻结 native
+     工具的参数校验面，超本轮授权；修好时 XPASS 翻红强制摘标。长尾按上游
+     **完整**拒绝谓词实测 **252/529** 工具（177 个 #12049 裸节点 + 2 个
+     keyword 节点 + 261 个既有类节点：additionalProperties≠false 与结构化
+     anyOf 联合为主）→ 分桶计数披露测试；该总数即某工具 opt-in
+     `strict:"prefer"` 后的真实 fallout 清单。修复注解是后续独立 pass，
+     不是本轮 silent-green。
 
 ## Consequences
 
