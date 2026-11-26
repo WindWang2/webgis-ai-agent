@@ -58,6 +58,19 @@ describe('C2 layout IR golden（ADR-0160 双端对拍）', () => {
     expect(validateLayoutIr(fixture.expected as never)).toEqual([]);
   });
 
+  it('fail-closed：NaN frame 几何被拒绝', () => {
+    for (const field of ['x', 'y', 'width', 'height'] as const) {
+      const ir = buildLayoutIr({
+        canvas: { widthPx: 100, heightPx: 100 },
+        components: [
+          { id: 'c1', kind: 'title', frame: { x: 0, y: 0, width: 40, height: 10, z: 1 } },
+        ],
+      });
+      ir.components[0].frame[field] = Number.NaN;
+      expect(validateLayoutIr(ir)).toContain('c1: frame 几何必须非负');
+    }
+  });
+
   it('fail-closed：非法 kind / 出界 frame / 重复 id 被拒绝', () => {
     const ir = buildLayoutIr({
       canvas: { widthPx: 100, heightPx: 100 },

@@ -28,11 +28,15 @@ export interface MapCaptureResult {
 
 type CaptureFn = () => Promise<MapCaptureResult | null>;
 
-let activeCapture: CaptureFn | null = null;
+let activeCapture: { capture: CaptureFn } | null = null;
 
 /** MapPanel 注册/释放（mount → register；unmount/map 重建 → 重注册）。 */
-export function registerMapCapture(fn: CaptureFn | null): void {
-  activeCapture = fn;
+export function registerMapCapture(fn: CaptureFn | null): () => void {
+  const registration = fn ? { capture: fn } : null;
+  activeCapture = registration;
+  return () => {
+    if (activeCapture === registration) activeCapture = null;
+  };
 }
 
 /** 当前主图是否可采集（不可采集时 UI 显示禁用原因）。 */
@@ -41,9 +45,10 @@ export function mapCaptureAvailable(): boolean {
 }
 
 export async function captureCurrentMap(): Promise<MapCaptureResult | null> {
-  if (!activeCapture) return null;
+  const capture = activeCapture?.capture;
+  if (!capture) return null;
   try {
-    return await activeCapture();
+    return await capture();
   } catch {
     return null;
   }

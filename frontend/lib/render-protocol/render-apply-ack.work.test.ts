@@ -67,6 +67,21 @@ describe('work echo', () => {
     });
   });
 
+  it('echoes the full carto-sha256 work fingerprint without truncation', () => {
+    const workFingerprint = `carto-sha256:${'a'.repeat(64)}`;
+    const ack = buildRenderApplyAck({
+      spec: spec(LAYERS),
+      applied: spec(LAYERS),
+      revision: 5,
+      mapIdle: true,
+      work: envelope({
+        data_dependencies: [],
+        work_fingerprint: workFingerprint,
+      }),
+    });
+    expect(ack.work?.work_fingerprint).toBe(workFingerprint);
+  });
+
   it('never echoes stale-generation envelope', () => {
     const ack = buildRenderApplyAck({
       spec: spec(LAYERS),

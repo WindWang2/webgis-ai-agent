@@ -264,11 +264,11 @@ export function buildRenderApplyAck({
   // 只能 pending（诚实缺席），绝不虚构 failed。
   const hasMountedBasis = !!mountedComponentIds && mountedComponentIds.size > 0;
   for (const comp of spec?.layout?.components ?? []) {
+    if (!comp || comp.enabled === false) continue;
     if (components.length >= MAX_ACK_COMPONENTS) {
       discardedComponents += 1;
       continue;
     }
-    if (!comp || comp.enabled === false) continue;
     const cid = String(comp.id || '');
     if (!cid) continue;
     const mounted = mountedComponentIds?.has(cid) ?? false;

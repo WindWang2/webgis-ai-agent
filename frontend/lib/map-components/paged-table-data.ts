@@ -161,7 +161,15 @@ export function usePagedLayerTable({ layer, sort, searchText, bbox }: UsePagedTa
 
   // 首页（查询身份变化即重取并作废旧请求）。
   useEffect(() => {
-    if (!refId || !sessionId) return;
+    if (!refId || !sessionId) {
+      abortRef.current?.abort();
+      setColumnsState([]);
+      setState((s) => ({
+        ...s, status: 'error', rows: [], columns: [], nextCursor: null,
+        error: { kind: 'network', currentRevision: null }, loadingMore: false,
+      }));
+      return;
+    }
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;

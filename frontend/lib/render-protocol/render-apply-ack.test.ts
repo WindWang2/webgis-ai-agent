@@ -253,6 +253,30 @@ describe('buildRenderApplyAck', () => {
     expect(ack.status).toBe('partial');
   });
 
+  it('disabled or null components after the budget do not inflate discarded', () => {
+    const comps = [
+      ...Array.from({ length: MAX_ACK_COMPONENTS }, (_, i) => ({
+        id: `c${i}`,
+        type: 'title' as const,
+        enabled: true,
+      })),
+      { id: 'disabled', type: 'title' as const, enabled: false },
+      null as never,
+    ];
+    const ack = buildRenderApplyAck({
+      spec: spec({ layout: { components: comps } }),
+      applied: applied(['l1', 'l2']),
+      revision: 5,
+      mapIdle: true,
+      mountedComponentIds: new Set(
+        Array.from({ length: MAX_ACK_COMPONENTS }, (_, i) => `c${i}`),
+      ),
+    });
+    expect(ack.components).toHaveLength(MAX_ACK_COMPONENTS);
+    expect(ack.partial_apply.discarded).toBe(0);
+    expect(ack.status).toBe('applied');
+  });
+
   it('reconcile error downgrades transaction (never claims fully applied)', () => {
     const ack = buildRenderApplyAck({
       spec: spec(),

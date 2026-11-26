@@ -3,9 +3,8 @@
  *
  * 渲染管线的前置纯函数：解析组件 → 缺项主动补全（P2）→ 冲突自愈
  * （P1 策略链）→ 产出可渲染列表 + CompositionDescriptor（版面描述
- * 中间层）。安全网（W5 起为 autofill 主动补全，`__fallback_*` 前缀退役；
- * 老工件 id 仍在 origin 映射中兼容读）：autofill 之后仍缺
- * chrome 族才触发 —— 每次命中都是补全规则的失败信号（计数进 decisions）。
+ * 中间层）。chrome 族缺项由 required-components 主动补全（`__autofill_*`）；
+ * 老工件 id 仍在 origin 映射中兼容读。
  *
  * 诚实渲染边界：仅 chrome 族（scale_bar/north_arrow/attribution 占位）
  * 可自动注入 —— 数据承载件（title/legend/graticule/inset）无数据可填时
@@ -100,35 +99,14 @@ export function composeMapLayout(input: ComposeMapLayoutInput): ComposeMapLayout
   };
   const wanted = autofillComponents(purpose, present, content);
 
-  // V11 W5（G2，ADR-0165）：安全网从「特批 __fallback_* 直插渲染面」改为
-  // **主动补全** —— 并入 autofill 候选流（同 id 规范、同注入路径、同 origin），
-  // 决策以 kind='fallback_hit' 保留安全网审计语义；`__fallback_` 前缀归零。
-  // 位置纪律（评审 finding）：并入必须在**注入循环之前** —— 否则 wanted
-  // 不被消费，决策会声称 after:'present' 而渲染面什么也没有。
-  const presentAfter = new Set(present);
-  for (const item of wanted) {
-    if (AUTOINJECTABLE_TYPES.has(item.type)) presentAfter.add(item.type);
-  }
-  const safetyNetTypes: Array<'north_arrow' | 'scale_bar'> = [];
-  if (!presentAfter.has('north_arrow')) safetyNetTypes.push('north_arrow');
-  if (!presentAfter.has('scale_bar')) safetyNetTypes.push('scale_bar');
-  const safetyNetIds = new Set(safetyNetTypes.map((t) => `__autofill_${t}`));
-  for (const type of safetyNetTypes) {
-    wanted.push({
-      id: `__autofill_${type}`, type,
-      reason: '安全网主动补全（autofill 未覆盖）',
-    });
-  }
-
   const decisions: CompositionDecision[] = [];
-  // 渲染面 = enabled 组件 + 补全/兜底件（presence 判定用全量 —— 显式
+  // 渲染面 = enabled 组件 + 补全件（presence 判定用全量 —— 显式
   // disabled 的类型不注入，『不要 compass』语义保持）。
   const renderable: MapSpecComponent[] = components.filter(
     (c) => !!c && typeof c === 'object' && c.enabled !== false,
   );
   let step = 0;
   for (const item of wanted) {
-    const isSafetyNet = safetyNetIds.has(item.id);
     if (AUTOINJECTABLE_TYPES.has(item.type)) {
       const text = item.placeholderOptions?.['text'];
       renderable.push({
@@ -138,9 +116,7 @@ export function composeMapLayout(input: ComposeMapLayoutInput): ComposeMapLayout
         ...(typeof text === 'string' ? { options: { text } } : {}),
       } as MapSpecComponent);
       decisions.push({
-        step: step++,
-        kind: isSafetyNet ? 'fallback_hit' : 'autofill',
-        componentId: item.id,
+        step: step++, kind: 'autofill', componentId: item.id,
         componentType: item.type, after: 'present',
         reason: item.reason,
       });

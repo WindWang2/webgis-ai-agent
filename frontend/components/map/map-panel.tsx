@@ -477,6 +477,8 @@ export function MapPanel({
   }, [])
 
   const mapRef = useRef<MapRef>(null)
+  // G36：仅释放本 MapPanel 登记的采集函数，避免分屏时先卸载者清掉仍存活的地图。
+  const mapCaptureReleaseRef = useRef<(() => void) | null>(null)
   // G25：主图活实例登记句柄（onLoad 注册 / mapKey 重建与卸载时释放 ——
   // 画幅网格预算仲裁把主图计入总数，A09）。
   const mainInstanceHandleRef = useRef<{ release: () => void } | null>(null)
@@ -485,7 +487,8 @@ export function MapPanel({
       mainInstanceHandleRef.current?.release()
       mainInstanceHandleRef.current = null
       // G36：卸载时释放聊天附图采集登记（迟到的采集不得命中已销毁实例）。
-      registerMapCapture(null)
+      mapCaptureReleaseRef.current?.()
+      mapCaptureReleaseRef.current = null
     }
   }, [])
   const processLayers = useHudStore((s: HudState) => s.processLayers)
@@ -2018,7 +2021,10 @@ export function MapPanel({
             mainInstanceHandleRef.current = mapInstanceRegistry.register("main", "main");
             // G36（ADR-0291）：登记聊天附图采集函数（活实例；mapKey 重建时
             // 重新 onLoad → 重注册，卸载时释放）。
-            registerMapCapture(makeMapCapture(mapRef.current?.getMap() ?? null));
+            mapCaptureReleaseRef.current?.()
+            mapCaptureReleaseRef.current = registerMapCapture(
+              makeMapCapture(mapRef.current?.getMap() ?? null),
+            )
           }}
           onError={handleMapError}
           style={{ position: "absolute", inset: 0 }}

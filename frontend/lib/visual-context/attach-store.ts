@@ -24,13 +24,17 @@ export interface VisualAttachmentDraft {
   viewportHash?: string;
 }
 
+export type VisualAttachAddResult =
+  | { ok: true }
+  | { ok: false; reason: 'session-unarmed' | 'duplicate' | 'full' };
+
 interface VisualAttachState {
   sessionId: string | null;
   drafts: VisualAttachmentDraft[];
   /** 发起一次草稿采集（上传完成由调用方 add/update）。 */
   begin: (sessionId: string) => void;
   setSession: (sessionId: string | null) => void;
-  addDraft: (draft: VisualAttachmentDraft) => void;
+  addDraft: (draft: VisualAttachmentDraft) => VisualAttachAddResult;
   updateDraft: (evidenceId: string, patch: Partial<VisualAttachmentDraft>) => void;
   removeDraft: (evidenceId: string) => void;
   /** 发送时消费：返回当前草稿并清空（原子）。 */
@@ -53,10 +57,13 @@ export const useVisualAttachStore = create<VisualAttachState>((set, get) => ({
   },
   addDraft: (draft) => {
     const { sessionId, drafts } = get();
-    if (!sessionId) return;
-    if (drafts.some((d) => d.evidenceId === draft.evidenceId)) return;
-    if (drafts.length >= MAX_DRAFTS) return;
+    if (!sessionId) return { ok: false, reason: 'session-unarmed' };
+    if (drafts.some((d) => d.evidenceId === draft.evidenceId)) {
+      return { ok: false, reason: 'duplicate' };
+    }
+    if (drafts.length >= MAX_DRAFTS) return { ok: false, reason: 'full' };
     set({ drafts: [...drafts, draft].slice(0, MAX_DRAFTS) });
+    return { ok: true };
   },
   updateDraft: (evidenceId, patch) => {
     set({

@@ -109,18 +109,18 @@ def check_vendor() -> Report:
         facts["expected_config_generation"] = config_generation() or None
     except Exception:  # noqa: BLE001 — 观测面缺席不阻断诊断
         facts["expected_config_generation"] = None
+    if ident.meets_floor is False:
+        return Report(
+            "vendor", FAIL,
+            f"Pi {ident.describe} is below the bridge protocol floor {PI_MIN_VENDOR_TAG}",
+            "upgrade the submodule pin together with the bridge contract tests", facts,
+        )
     if ident.matches_expected_pin is False:
         return Report(
             "vendor", WARN,
             f"working tree ({ident.head_commit}) drifted off recorded gitlink "
             f"({ident.expected_pin})",
             "git -C vendor/pi checkout <recorded-pin>", facts,
-        )
-    if ident.meets_floor is False:
-        return Report(
-            "vendor", FAIL,
-            f"Pi {ident.describe} is below the bridge protocol floor {PI_MIN_VENDOR_TAG}",
-            "upgrade the submodule pin together with the bridge contract tests", facts,
         )
     if ident.head_commit is None:
         return Report(
@@ -403,16 +403,16 @@ def check_rpc() -> Report:
                 stdout=subprocess.DEVNULL, stderr=fh,
                 env={**os.environ, "DOCTOR_STUB_PORT": "0"},
             )
-        deadline = time.monotonic() + 10
-        stub_port = None
-        while time.monotonic() < deadline:
-            m = re.search(r"STUB_READY (\d+)", stub_err_file.read_text())
-            if m:
-                stub_port = m.group(1)
-                break
-            time.sleep(0.1)
-        assert stub_port, "doctor stub LLM failed to boot"
         try:
+            deadline = time.monotonic() + 10
+            stub_port = None
+            while time.monotonic() < deadline:
+                m = re.search(r"STUB_READY (\d+)", stub_err_file.read_text())
+                if m:
+                    stub_port = m.group(1)
+                    break
+                time.sleep(0.1)
+            assert stub_port, "doctor stub LLM failed to boot"
             time.sleep(0.6)
             rc, out = _run([
                 "node", str(probe_js), str(ident.entry_path), str(EXTENSION_PATH),

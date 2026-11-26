@@ -1,13 +1,23 @@
 /**
  * table-data（§10）契约：载荷规整 / 行 id 稳定 / 截断有界。
  */
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildTableModel,
+  getCachedTableArtifact,
+  loadTableArtifact,
   MAX_TABLE_ROWS,
   normalizeTablePayload,
+  resetTableArtifactCache,
   resolveRowId,
 } from './table-data';
+
+const apiFetchMock = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/api/transport', () => ({ apiFetch: apiFetchMock }));
+vi.mock('@/lib/mapspec/session-cursor', () => ({
+  getMapSpecSessionCursor: () => ({ sessionId: 'sid-table-test', ownerToken: null }),
+}));
+vi.mock('@/lib/utils/logger', () => ({ devOnly: { warn: vi.fn() } }));
 
 const records = [
   { district: '武侯区', count: 10 },
@@ -74,5 +84,36 @@ describe('normalizeTablePayload', () => {
     expect(normalizeTablePayload(null)).toBeNull();
     expect(normalizeTablePayload({ table: [] })).toBeNull();
     expect(normalizeTablePayload({ table: { rows: [] } })).toBeNull();
+  });
+});
+
+describe('table artifact cache bounds', () => {
+  beforeEach(() => {
+    apiFetchMock.mockReset();
+    resetTableArtifactCache();
+  });
+
+  it('evicts the oldest successful payload after 16 refs', async () => {
+    apiFetchMock.mockResolvedValue({ table: records });
+    for (let i = 0; i < 17; i++) {
+      await expect(loadTableArtifact(`ref:table-${i}`)).resolves.toEqual(records);
+    }
+
+    expect(getCachedTableArtifact('ref:table-0')).toBeUndefined();
+    expect(getCachedTableArtifact('ref:table-16')).toEqual(records);
+    await expect(loadTableArtifact('ref:table-0')).resolves.toEqual(records);
+    expect(apiFetchMock).toHaveBeenCalledTimes(18);
+  });
+
+  it('evicts failure timestamps with their payloads after 16 refs', async () => {
+    apiFetchMock.mockRejectedValue(new Error('offline'));
+    for (let i = 0; i < 17; i++) {
+      await expect(loadTableArtifact(`ref:table-fail-${i}`)).resolves.toBeNull();
+    }
+
+    expect(getCachedTableArtifact('ref:table-fail-0')).toBeUndefined();
+    expect(getCachedTableArtifact('ref:table-fail-16')).toBeNull();
+    await expect(loadTableArtifact('ref:table-fail-0')).resolves.toBeNull();
+    expect(apiFetchMock).toHaveBeenCalledTimes(18);
   });
 });

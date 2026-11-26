@@ -97,13 +97,20 @@ export function VisualAttachBar({ sessionId, ownerToken }: {
     if (!sessionId) return;
     // 上传中占位（临时 id；回执后替换为真实 evidence id）。
     const tempId = `pending-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
-    addDraft({
+    const pendingAdd = addDraft({
       evidenceId: tempId,
       sourceType: opts.sourceType,
       label: opts.label,
       thumbUrl: opts.localThumb,
       uploading: true,
     });
+    if (!pendingAdd.ok) {
+      if (opts.localThumb) URL.revokeObjectURL(opts.localThumb);
+      setNotice(pendingAdd.reason === 'full'
+        ? t('sidebar.chat.visualAttach.draftFull')
+        : t('sidebar.chat.visualAttach.uploadFailed'));
+      return;
+    }
     const { revision, fingerprint } = mapIdentity();
     try {
       const dto = await uploadVisualEvidence({
@@ -119,7 +126,7 @@ export function VisualAttachBar({ sessionId, ownerToken }: {
         crop: opts.crop,
       });
       removeDraft(tempId);
-      addDraft({
+      const readyAdd = addDraft({
         evidenceId: dto.evidence_id,
         sourceType: opts.sourceType,
         label: opts.label || dto.label || '',
@@ -127,12 +134,18 @@ export function VisualAttachBar({ sessionId, ownerToken }: {
         mapspecRevision: dto.mapspec_revision ?? null,
         viewportHash: dto.viewport_hash,
       });
+      if (!readyAdd.ok) {
+        if (opts.localThumb) URL.revokeObjectURL(opts.localThumb);
+        setNotice((current) => current || (readyAdd.reason === 'full'
+          ? t('sidebar.chat.visualAttach.draftFull')
+          : t('sidebar.chat.visualAttach.uploadFailed')));
+      }
     } catch (err) {
       const reason = err instanceof Error && err.message ? err.message.slice(0, 120) : 'upload_failed';
       updateDraft(tempId, { uploading: false, error: reason });
       window.setTimeout(() => removeDraft(tempId), 6000);
     }
-  }, [sessionId, ownerToken, addDraft, removeDraft, updateDraft, mapIdentity]);
+  }, [sessionId, ownerToken, addDraft, removeDraft, updateDraft, mapIdentity, t]);
 
   const attachMap = useCallback(async () => {
     setMenuOpen(false);
