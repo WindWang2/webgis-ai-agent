@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import copy
+import json
 
 import pytest
 
@@ -940,3 +941,34 @@ class TestR2Fixes:
         impact = plan["impact"]
         neighbor_wfids = {n["wfid"] for n in impact["affected_neighbors"]}
         assert "wf-B" in neighbor_wfids, "容差模式邻接不漏报"
+
+
+class TestR3Fixes:
+    def test_multipath_members_all_mutated(self) -> None:
+        """R3-P1 回归：共享节点存在于同一要素的多个 path（MultiLineString
+        共端点 / 壳+洞共点）时，**每个 path** 都必须同步变异。"""
+        ml = {
+            "type": "Feature",
+            "geometry": {"type": "MultiLineString", "coordinates": [
+                [[lon(0), lat(0)], [lon(2), lat(0)]],
+                [[lon(2), lat(0)], [lon(2), lat(3)]],
+            ]},
+            "properties": {"_wfid": "wf-ML"},
+        }
+        data = fc(ml)
+        index = indexed(data)
+        node, _ = index.node_at(lon(2), lat(0))
+        assert node is not None
+        paths_of_node = {(m[1], m[3]) for m in node.members}
+        assert len(paths_of_node) == 2, "两 part 的端点是同一节点"
+        deltas, findings, _s = move_shared_vertex(
+            data, index, {"op": "move_shared_vertex", "at": [lon(2), lat(0)], "dx_m": 5.0, "dy_m": 0.0}
+        )
+        assert findings == [], findings
+        parts = deltas[0]["geometry_after"]["coordinates"]
+        assert parts[0][-1][0] == parts[1][0][0] != lon(2), "两个 part 的共享端点同步移动"
+        # 逆元恒等：多 path delta 的 undo 仍恢复原字节
+        from app.services.feature_edit.journal import apply_deltas_to_features, invert_deltas
+        applied, _wf = apply_deltas_to_features(json.loads(json.dumps(data["features"])), deltas)
+        restored, _wf2 = apply_deltas_to_features(applied, invert_deltas(deltas))
+        assert restored == data["features"]

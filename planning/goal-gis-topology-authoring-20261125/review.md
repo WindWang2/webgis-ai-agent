@@ -25,5 +25,35 @@
   all-or-nothing、op 级容差全链、信封层级守卫）。
 
 ## R2 复审（另一独立 reviewer，从 diff 与自有探针验证修复）
-- 状态：进行中
-- 结果：（待填）
+- 结论：**fix-then-approve**。R1 五项 P1 + 两项 P2 全部 FIXED-VERIFIED
+  （reviewer 自有探针逐项确认：rename wire 契约、索引失效、严重度感知
+  分离、MultiLineString part 隔离、all-or-nothing、op 级参数达索引、
+  信封 level_field、注入面限定、截断披露）；两项基线缺陷修复判定正确；
+  单一写路径/plan.safe/鉴权/journal 闸全部 VERIFIED；suites+lint 干净、
+  无修复轮回归。
+- 新发现：N1(P1，修复轮引入) commit_plan 重求值缺 shared_level_field →
+  信封层级数据集预览/提交分歧；N2(P2，既有门) 提交期拓扑门未用严重度
+  感知分离 → 存量披露在 approve 被 400；N3–N6(P3，既有)；N7(账本卫生)。
+- 修复轮 `54ab9a2bc`：N1 提交一致性（+批准链路回归）、N2 提交门与预览
+  同语义（共享 op 基线/新增分离；非共享 op 语义不变）、N3 闭环删除陈旧
+  重复、N4 Point 成员崩溃（视图归一 + typed 拒绝）、N5 impact 索引参数。
+- 修复轮验证：feature_edit 202 passed；feature_proposals 45 passed；
+  field_contracts + tools 112 passed；registry rationalization 208 passed
+  （组合）；ruff 干净。
+
+## R3 聚焦复审（仅验证 54ab9a2bc 增量）
+- 结论：**fix**。N1–N5 全部 FIXED-VERIFIED（reviewer 自有 REST 探针
+  对 parent commit 作判别：N1 父提交 changed_wfids=2 → 修复后=1；N2 父
+  提交 approve=400 → 修复后=200；N3/N4 父提交陈旧重复/TypeError → 修复后
+  正确；N5 容差邻接如实回报）；202 passed、ruff 干净，非共享 op 语义
+  保持不变。
+- 新发现：P1（修复轮引入）R2-N4 编辑时 mutate/环同步块被错误移出
+  内层 per-path 循环 → 多 path 要素（MultiLineString 共端点、MultiPolygon
+  触点、Polygon 壳+洞共点）只动最后一个 path，零 findings 静默撕裂几何。
+- 修复（待提交）：将 mutate/Point 归一/环同步完整放回 per-path 循环，
+  保留 R1-F5 all-or-nothing；新增 MultiLineString 双 part 共端点回归
+  （两 part 同步移动 + undo 原字节恢复）。
+- 修复后验证：feature_edit **203 passed**；ruff 干净。
+- 其余 P3 follow-up：feature_proposals.candidate 重放缺 shared_level_field
+  （当前无共享 op/level_field 提案入口，未达路径）；提交期存量违规不重复
+  投影（preview.topology_context 已是披露面）。

@@ -660,31 +660,34 @@ def _apply_vertex_edit(
             target_coords = _coords_at(new_geometry, addr)
             if target_coords is None or k >= len(target_coords):
                 continue
-        was_closed = kind == "ring" and len(target_coords) >= 4 and target_coords[0] == target_coords[-1]
-        # Point/MultiPoint 成员的坐标是扁平 [x,(z)]（R2-N4：直接送入
-        # list-of-lists 变换会 TypeError）—— 归一为单顶点视图，mutate 后写回。
-        is_flat_point = (
-            kind == "point"
-            and bool(target_coords)
-            and isinstance(target_coords[0], (int, float))
-        )
-        view: List[List[Any]] = [list(target_coords)] if is_flat_point else target_coords
-        if _has_z(view) and not z_allowed:
-            findings.append(
-                finding("invalid_op", f"{op_name} on Z-coordinate path is not supported", wfid=wfid)
+            was_closed = kind == "ring" and len(target_coords) >= 4 and target_coords[0] == target_coords[-1]
+            # Point/MultiPoint 成员的坐标是扁平 [x,(z)]（R2-N4：直接送入
+            # list-of-lists 变换会 TypeError）—— 归一为单顶点视图，mutate 后写回。
+            is_flat_point = (
+                kind == "point"
+                and bool(target_coords)
+                and isinstance(target_coords[0], (int, float))
             )
-            return []
-        seen_paths.add(path_i)
-        if mutate(view, "point" if is_flat_point else kind, (path_i, 0 if is_flat_point else k)) is False:
-            refused.append(wfid)
-            continue
-        if is_flat_point:
-            target_coords[:] = view[0]
-        # 环闭合同步：索引按逻辑顶点登记（闭环首尾只记 0 位），移动共享
-        # 顶点后必须把闭合重复点同步为最新坐标，否则环开口。
-        if was_closed and target_coords[0] != target_coords[-1]:
-            target_coords[-1] = list(target_coords[0])
-        applied = True
+            view: List[List[Any]] = [list(target_coords)] if is_flat_point else target_coords
+            if _has_z(view) and not z_allowed:
+                findings.append(
+                    finding("invalid_op", f"{op_name} on Z-coordinate path is not supported", wfid=wfid)
+                )
+                return []
+            seen_paths.add(path_i)
+            # R3-P1：mutate/环同步必须在**每个 path** 上执行 —— 多 part 要素
+            # （MultiLineString 共端点 / MultiPolygon 触点 / 壳+洞共点）漏掉
+            # 任一 path 就是静默撕裂几何。
+            if mutate(view, "point" if is_flat_point else kind, (path_i, 0 if is_flat_point else k)) is False:
+                refused.append(wfid)
+                continue
+            if is_flat_point:
+                target_coords[:] = view[0]
+            # 环闭合同步：索引按逻辑顶点登记（闭环首尾只记 0 位），移动共享
+            # 顶点后必须把闭合重复点同步为最新坐标，否则环开口。
+            if was_closed and target_coords[0] != target_coords[-1]:
+                target_coords[-1] = list(target_coords[0])
+            applied = True
         if refused:
             break  # all-or-nothing：任一拒绝即放弃
         if not applied:
