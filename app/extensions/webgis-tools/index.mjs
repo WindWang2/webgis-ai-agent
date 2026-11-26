@@ -599,6 +599,24 @@ export default function webgisToolsExtension(pi) {
       return {};
     });
 
+    // ADR-0301 D5 / WP5（v1.6.1 C24）：provider HTTP 响应观测 —— 该事件对
+    // 失败（4xx/5xx）与每次重试尝试都会触发。只记**有界整数化**的 status 与
+    // retry-after 到 stderr（宿主 PiStderrDiagnostics 有界环消费），不透传
+    // 任何其他 header（authorization/cookie 类内容永不出现在诊断面）、不记
+    // 请求全文。成功响应不记（噪音为零）；环形覆盖由宿主侧有界性保证。
+    pi.on("after_provider_response", async (event) => {
+      const status = Number(event?.status);
+      if (!Number.isFinite(status) || status < 400) return undefined;
+      const retryAfterRaw = event?.headers?.["retry-after"];
+      const retryAfter = Number(Array.isArray(retryAfterRaw) ? retryAfterRaw[0] : retryAfterRaw);
+      console.error(
+        `[webgis-tools] provider_response status=${Number(status)} retry_after=${
+          Number.isFinite(retryAfter) ? Number(retryAfter) : "-"
+        }`,
+      );
+      return undefined;
+    });
+
     pi.on("before_agent_start", async (event) => {
       const current = event.systemPrompt || "";
       let rewritten = `${GIS_IDENTITY}\n\n${current}`;

@@ -154,10 +154,29 @@ const srv = http.createServer((req, res) => {
     // model actually saw. Appended as JSON lines to STUB_LOG when set.
     if (process.env.STUB_LOG) {
       const toolNames = (parsed.tools || []).map((t) => t.function?.name || t.name);
+      const msgs = parsed.messages || [];
+      const lastUser = [...msgs].reverse().find((m) => m.role === 'user');
+      const rawContent = lastUser?.content;
+      const lastUserText = (typeof rawContent === 'string' ? rawContent
+        : Array.isArray(rawContent) ? rawContent.map((c) => c?.text || c?.type || '').join(' ')
+        : JSON.stringify(rawContent ?? '')).slice(-120);
       fs.appendFileSync(process.env.STUB_LOG,
-        JSON.stringify({ req: requests.length, tools: toolNames }) + '\n');
+        JSON.stringify({ req: requests.length, tools: toolNames,
+          lastUser: lastUserText }) + '\n');
     }
     const reqIdx = requests.length;
+    // ADR-0301 WP5 / C24：429×2 → 第三次成功（vendor auto-retry 观测面）。
+    // always-429：重试耗尽的诚实失败分支（auto_retry_end success=false）。
+    if (mode === 'always-429') {
+      res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '0' });
+      res.end(JSON.stringify({ error: { message: 'rate limited (stub)', type: 'rate_limit_error' } }));
+      return;
+    }
+    if (mode === 'provider-fail-then-succeed' && reqIdx <= 2) {
+      res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '0' });
+      res.end(JSON.stringify({ error: { message: 'rate limited (stub)', type: 'rate_limit_error' } }));
+      return;
+    }
     let toolCall = null;
     let toolCalls = null; // #9986 abort-batch lane: 2 tool_calls in ONE completion
     if (mode === 'tool-then-text') {
@@ -195,6 +214,8 @@ const srv = http.createServer((req, res) => {
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     const sse = (o) => res.write(`data: ${JSON.stringify(o)}\n\n`);
     const id = 'c' + reqIdx;
+    const firstDelayS = Number(process.env.STUB_DELAY_FIRST_S || 0);
+    if (firstDelayS > 0 && reqIdx === 1) { await new Promise((r) => setTimeout(r, firstDelayS * 1000)); }
     if (toolCall || toolCalls) {
       const calls = toolCalls || [toolCall];
       // Real OpenAI-completions shape: one delta per tool_call, each carrying
@@ -242,6 +263,9 @@ const slowTool = process.argv.includes('--slow-tool');
 // #10470 lane: exercise the new_session RPC (session runtime rebuild +
 // extension rebind) BEFORE the scripted prompt — the surface must survive.
 const withNewSession = process.argv.includes('--with-new-session');
+const compactAfterSettled = process.argv.includes('--compact-after-settled');
+const steerMidTurn = process.argv.includes('--steer-mid-turn');
+const continuityCheck = process.argv.includes('--continuity-check');
 
 const agentDir = mkdtempSync(join(tmpdir(), 'pi-contract-'));
 writeFileSync(join(agentDir, 'models.json'), JSON.stringify({
@@ -284,6 +308,16 @@ if (withNewSession) {
 const prompt = readFileSync(promptFile, 'utf8');
 send({ id: '2', type: 'prompt', sessionId: 'contract-session', message: prompt });
 
+// ADR-0301 WP6 gate：运行中 steer —— 首 LLM 响应被 STUB_DELAY_FIRST_S 拖慢，
+// steer 在 agent 运行中到达（vendor 语义：当前 assistant turn 的工具跑完后、
+// 下一次 LLM 调用前注入）。
+let steerSent = false;
+if (steerMidTurn) {
+  await sleep(700);
+  send({ id: 'st', type: 'steer', message: 'STEER-MARKER change course' });
+  steerSent = true;
+}
+
 let aborted = false;
 if (abortAfterTool) {
   const dl = Date.now() + 20000;
@@ -296,10 +330,59 @@ if (abortAfterTool) {
   aborted = true;
 }
 
-const deadline = Date.now() + 30000;
+const countHits = (hay, needle) => hay.split(needle).length - 1;
+const settleTarget = 1; // steer 注入当前 run（vendor 语义），不新起 run
+const deadline = Date.now() + 45000;
 while (Date.now() < deadline) {
   await sleep(120);
-  if (out.includes('agent_settled')) break;
+  if (countHits(out, 'agent_settled') >= settleTarget) break;
+}
+if (continuityCheck) {
+  // ADR-0301 WP6 gate S6：同 worker 进程内 turn journal 连续性 ——
+  // 第二 turn 的 messageCount 必须单调增长（历史保持）。
+  send({ id: 'c1', type: 'get_state' });
+  await sleep(300);
+  send({ id: 'c2', type: 'prompt', sessionId: 'contract-session', message: 'continuity turn 2' });
+  const dl = Date.now() + 30000;
+  while (Date.now() < dl) {
+    await sleep(120);
+    if (countHits(out, 'agent_settled') >= 2) break;
+  }
+  send({ id: 'c3', type: 'get_state' });
+  await sleep(400);
+}
+if (compactAfterSettled) {
+  // ADR-0301 WP4 / C23：手动 compact 契约。vendor keepRecentTokens(20k)
+  // 从尾部保留；**单条超限消息会整条进保留区**（切点前无可摘要内容 →
+  // 诚实拒绝 "session too small"），因此用 N 个中等 turn 累积可摘要历史。
+  const compactTurns = Number(process.env.STUB_COMPACT_TURNS || 10);
+  const fillerUnit = 'compaction filler sentence with deterministic tokens. '
+    .repeat(700); // ≈ 35k chars/turn
+  let settledWanted = 1;
+  for (let i = 1; i <= compactTurns; i++) {
+    settledWanted += 1;
+    send({ id: '3b' + i, type: 'prompt', sessionId: 'contract-session',
+           message: `bulk history turn ${i}\n\n` + fillerUnit });
+    const dl = Date.now() + 60000;
+    while (Date.now() < dl) {
+      await sleep(100);
+      if (countHits(out, 'agent_settled') >= settledWanted) break;
+    }
+  }
+  send({ id: '4', type: 'compact' });
+  const dl2 = Date.now() + 30000;
+  while (Date.now() < dl2) {
+    await sleep(120);
+    if (out.includes('"command":"compact"')) break;
+  }
+  send({ id: '5', type: 'prompt', sessionId: 'contract-session', message: 'post-compaction follow-up turn' });
+  const dl3 = Date.now() + 30000;
+  while (Date.now() < dl3) {
+    await sleep(120);
+    if (countHits(out, 'agent_settled') >= settledWanted + 1) break;
+  }
+  send({ id: '6', type: 'get_state' });
+  await sleep(400);
 }
 await sleep(400);
 child.kill('SIGKILL');
@@ -307,8 +390,10 @@ child.kill('SIGKILL');
 const lines = out.split('\n').filter(Boolean);
 const parsed = [];
 for (const line of lines) { try { parsed.push(JSON.parse(line)); } catch { parsed.push({ unparseable: line.slice(0, 120) }); } }
+const providerEvents = err.split('\n').filter((l) => l.includes('provider_response')).slice(-8);
 process.stderr.write('RESULT=' + JSON.stringify({
   lines: parsed, stderrHead: err.split('\n').slice(0, 5).join(' | ').slice(0, 400), aborted,
+  providerEvents, steerSent,
 }) + '\n');
 """
 
@@ -398,6 +483,8 @@ class _VendorHarness:
 
     def run_turn(self, prompt: str, *, abort_after_tool: bool = False,
                  with_new_session: bool = False,
+                 compact_after: bool = False, steer: bool = False,
+                 continuity: bool = False,
                  api_base: str = "http://127.0.0.1:9") -> dict:
         prompt_file = self.tmp / f"prompt_{time.monotonic_ns()}.txt"
         prompt_file.write_text(prompt, encoding="utf-8")
@@ -409,6 +496,12 @@ class _VendorHarness:
             args.append("--abort-after-tool-start")
         if with_new_session:
             args.append("--with-new-session")
+        if compact_after:
+            args.append("--compact-after-settled")
+        if steer:
+            args.append("--steer-mid-turn")
+        if continuity:
+            args.append("--continuity-check")
         env = {**self.stub_env, "WEBGIS_API_BASE": api_base}
         res = subprocess.run(
             args, capture_output=True, text=True, timeout=90, env=env,
@@ -949,6 +1042,114 @@ async def test_codemode_nested_calls_carry_parent_tool_call_id(make_harness):
     assert codemode_end is not None
     settled = [e for e in events if e.get("type") == "agent_settled"]
     assert len(settled) == 1
+
+
+async def test_manual_compaction_contract_and_post_compaction_usability(make_harness):
+    """C23（ADR-0301 WP4）：手动 compact 的 v1.6.1 wire 契约。
+
+    锁定：`compact` 命令 → `compaction_start`（reason="manual"）→
+    `compaction_end`（result 含 summary/tokensBefore/estimatedTokensAfter，
+    aborted 不得为 true）→ response(success=true, data=result 形状) →
+    **压缩后回话仍可用**（第二次 prompt 正常 settle）→ `get_state` 一致。
+    这是 GIS 会话上下文可恢复性的 vendor 侧前提（宿主 compaction 投影在
+    turn_journal 域，有自己的车道）。
+
+    尺寸前提：vendor `keepRecentTokens` 默认 20000 —— 最近 ~20k token 的
+    内容保留不摘要，会话必须超过该窗口才有可压缩内容（"session too small"
+    是 vendor 的诚实拒绝，本测试以确定性 filler 越过窗口）。
+    """
+    # 未脚本化的 stub 模式：对一切请求（含 vendor 摘要请求）回纯文本 ——
+    # 摘要 LLM 调用因此真实成功，而不是被 stub 的工具调用倾向打回。
+    # 首 prompt 为中等 filler；其余 bulk turn 由 probe 按 STUB_COMPACT_TURNS 自建。
+    filler = "compaction filler sentence with deterministic tokens. " * 700
+    harness = make_harness(mode="warmup-text")
+    result = harness.run_turn(
+        "compaction contract warmup turn\n\n" + filler, compact_after=True)
+    lines = result["lines"]
+
+    compaction_start = next(
+        (r for r in lines if r.get("type") == "compaction_start"), None)
+    assert compaction_start is not None, "compaction_start missing"
+    assert compaction_start.get("reason") == "manual", compaction_start
+
+    compaction_end = next(
+        (r for r in lines if r.get("type") == "compaction_end"), None)
+    assert compaction_end is not None, "compaction_end missing"
+    assert compaction_end.get("aborted") is not True, compaction_end
+    assert not compaction_end.get("errorMessage"), compaction_end
+    compaction_result = compaction_end.get("result") or {}
+    assert isinstance(compaction_result.get("summary"), str), compaction_result
+    assert compaction_result["summary"], "summary must be non-empty"
+    assert isinstance(compaction_result.get("tokensBefore"), int), compaction_result
+    assert isinstance(compaction_result.get("estimatedTokensAfter"), int), compaction_result
+
+    compact_resp = next(
+        (r for r in lines
+         if r.get("type") == "response" and r.get("command") == "compact"
+         and r.get("id") == "4"), None)
+    assert compact_resp is not None and compact_resp.get("success") is True, compact_resp
+
+    # 压缩后回话：bulk turns + 首轮 + 压缩后轮全部收敛。
+    settled_count = sum(1 for r in lines if r.get("type") == "agent_settled")
+    assert settled_count >= 12, f"post-compaction turn did not settle: {settled_count}"
+    state = next(
+        (r for r in lines
+         if r.get("type") == "response" and r.get("command") == "get_state"
+         and r.get("id") == "6"), None)
+    assert state is not None and state.get("success") is True, state
+    state_data = state.get("data") or {}
+    assert isinstance(state_data.get("messageCount"), int), state_data
+
+
+async def test_provider_429_retry_observability(make_harness):
+    """C24（ADR-0301 WP5）：provider 429 → vendor auto-retry → 分层可观测。
+
+    事件面（真实 v1.6.1 wire）：auto_retry_start ×2（attempt 1,2）→
+    auto_retry_end(success) → agent_settled 恰一次且非 aborted。
+    扩展面：after_provider_response（v1.6.1 起覆盖 4xx/5xx 与每次重试）
+    → 扩展有界 stderr 行 `provider_response status=429`（宿主
+    PiStderrDiagnostics 有界环消费——provider 失败证据进诊断面，不含
+    任何 header 原文/请求全文）。
+    """
+    harness = make_harness(mode="provider-fail-then-succeed")
+    result = harness.run_turn("429 retry observability turn")
+    events = _events(result)
+    starts = [e for e in events if e.get("type") == "auto_retry_start"]
+    assert len(starts) == 2, [e.get("type") for e in events]
+    assert [s.get("attempt") for s in starts] == [1, 2], starts
+    ends = [e for e in events if e.get("type") == "auto_retry_end"]
+    assert len(ends) == 1 and ends[0].get("success") is True, ends
+    settled = [e for e in events if e.get("type") == "agent_settled"]
+    assert len(settled) == 1 and settled[0].get("aborted") is not True, settled
+    provider_lines = [
+        line for line in result.get("providerEvents", [])
+        if "status=429" in line
+    ]
+    assert provider_lines, result.get("providerEvents")
+
+
+async def test_provider_429_exhaustion_fails_honestly(make_harness):
+    """C24 负分支：持续 429 → vendor 重试预算耗尽 → 诚实失败终态。
+
+    锁定：auto_retry_start ×3（attempts 1..3）→ auto_retry_end(success=false)
+    携带非空 finalError → agent_settled 恰一次（不挂死、不伪成功）→
+    扩展 stderr 观测到 ≥3 次 status=429。治理侧（retry budget/no-progress）
+    以这些权威证据推进——本测试钉住证据源本身。"""
+    harness = make_harness(mode="always-429")
+    result = harness.run_turn("429 exhaustion honest failure turn")
+    events = _events(result)
+    starts = [e for e in events if e.get("type") == "auto_retry_start"]
+    assert len(starts) >= 3, [e.get("type") for e in events]
+    ends = [e for e in events if e.get("type") == "auto_retry_end"]
+    assert ends and ends[-1].get("success") is False, ends
+    assert str(ends[-1].get("finalError") or ""), ends[-1]
+    settled = [e for e in events if e.get("type") == "agent_settled"]
+    assert len(settled) == 1, settled
+    provider_lines = [
+        line for line in result.get("providerEvents", [])
+        if "status=429" in line
+    ]
+    assert len(provider_lines) >= 3, provider_lines
 
 
 async def test_graceful_stdin_eof_shutdown_and_adjacent_sigterm(harness):

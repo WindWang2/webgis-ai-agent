@@ -16,7 +16,7 @@ import subprocess
 
 import pytest
 
-from app.services.chat import pi_compat
+from app.services.chat import pi_compat, pi_rpc_client
 from app.services.chat.pi_compat import (
     PI_VENDOR_CAPABILITIES,
     PiVendorIdentity,
@@ -31,9 +31,9 @@ from app.services.chat.pi_compat import (
 def _clear_probe_cache():
     """模块级 mtime 缓存按 entry 路径键控；tmp_path 各测试互不重叠，仍显式
     清空以保证测试间无隐式顺序依赖。"""
-    pi_compat._RUNTIME_VERSION_CACHE.clear()
+    pi_rpc_client._ENTRY_VERSION_OUTPUT.clear()
     yield
-    pi_compat._RUNTIME_VERSION_CACHE.clear()
+    pi_rpc_client._ENTRY_VERSION_OUTPUT.clear()
 
 
 def _identity(entry_path: str | None, entry_kind: str | None) -> PiVendorIdentity:

@@ -70,4 +70,34 @@ if [[ "$ok" != "0" ]]; then
   exit 1
 fi
 
+# Build manifest (ADR-0301 D3): machine-local build facts for pi_compat /
+# pi_doctor cross-checks. Lives inside the submodule working tree, so the
+# superproject index (gitlink SHA only) never sees it. Idempotent: rewritten
+# only when the content changes.
+ENTRY_ABS="$(cd "$(dirname "$BUNDLE_ENTRY")" && pwd)/$(basename "$BUNDLE_ENTRY")"
+ENTRY_SHA16="$(sha256sum "$ENTRY_ABS" | cut -c1-16)"
+LOCK_SHA16=""
+[[ -f package-lock.json ]] && LOCK_SHA16="$(sha256sum package-lock.json | cut -c1-16)"
+NODE_VERSION="$(node --version)"
+BUILD_MANIFEST="$VENDOR_PI/.build-manifest.json"
+MANIFEST_TMP="$VENDOR_PI/.build-manifest.json.tmp"
+cat > "$MANIFEST_TMP" <<EOF
+{
+  "pin": "$(git rev-parse HEAD)",
+  "describe": "$(git describe --tags 2>/dev/null || echo unknown)",
+  "node_version": "$NODE_VERSION",
+  "lockfile_sha256_16": "$LOCK_SHA16",
+  "entry": "packages/coding-agent/dist/bundle/rpc-entry.js",
+  "entry_sha256_16": "$ENTRY_SHA16",
+  "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "builder": "scripts/build-vendor-pi.sh (ADR-0301)"
+}
+EOF
+if [[ -f "$BUILD_MANIFEST" ]] && cmp -s "$MANIFEST_TMP" "$BUILD_MANIFEST"; then
+  rm -f "$MANIFEST_TMP"
+else
+  mv "$MANIFEST_TMP" "$BUILD_MANIFEST"
+fi
+echo "[build-vendor-pi] manifest: $BUILD_MANIFEST (pin $(git rev-parse --short HEAD), entry sha16 $ENTRY_SHA16)"
+
 echo "[build-vendor-pi] done (pin $PIN). Verify with: python scripts/pi_doctor.py"

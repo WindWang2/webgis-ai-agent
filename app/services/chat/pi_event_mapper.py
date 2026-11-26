@@ -55,6 +55,108 @@ def _extract_error_text(result: Any) -> str:
     return _sanitize_for_client(raw)
 
 
+# ── v1.6.x 诊断事件（ADR-0301 D5 / C18、C20）────────────────────────────────
+#
+# `extension_error`（v1.6.1 RPC 事件，json.md:193）与未知事件**不是** turn 终态、
+# 不进 SSE（用户面噪音为零），但必须可观测：有界计数 + 脱敏摘录，供 doctor /
+# 运维诊断消费。这里是有界记录的唯一权威；不假设任何事件的 success 语义。
+
+#: 未知事件统计上限（防异常 vendor 刷爆内存）。
+_DIAG_MAX_RECENT = 32
+
+
+class _BoundedEventStats:
+    """进程级有界事件统计：计数按类型聚合，摘录环形保留。"""
+
+    #: 不同 kind 键数上界（R1-P3-9：防异常 vendor 用无限新类型撑爆 dict；
+    #: 词表封闭时远达不到）。
+    MAX_KINDS = 64
+
+    def __init__(self, max_recent: int = _DIAG_MAX_RECENT) -> None:
+        import threading
+
+        self._lock = threading.Lock()
+        self._counts: dict[str, int] = {}
+        self._recent: list[dict[str, str]] = []
+        self._max_recent = max_recent
+
+    def record(self, kind: str, detail: dict[str, str]) -> None:
+        with self._lock:
+            if kind not in self._counts and len(self._counts) >= self.MAX_KINDS:
+                kind = "_overflow"
+            self._counts[kind] = self._counts.get(kind, 0) + 1
+            self._recent.append(detail)
+            del self._recent[:-self._max_recent]
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            return {
+                "counts": dict(self._counts),
+                "recent": list(self._recent),
+            }
+
+    def reset(self) -> None:
+        with self._lock:
+            self._counts.clear()
+            self._recent.clear()
+
+
+_diag_stats = _BoundedEventStats()
+
+
+def vendor_event_diagnostics() -> dict:
+    """extension_error / 未知事件的进程级有界快照（doctor 与运维消费）。"""
+    return _diag_stats.snapshot()
+
+
+def reset_vendor_event_diagnostics() -> None:
+    """测试隔离用；生产路径不调用。"""
+    _diag_stats.reset()
+
+
+def _handle_unknown_event(
+    event: dict,
+    session_id: str,
+    cache_lookup: Optional[Callable[[str], Optional[Any]]] = None,
+    turn_stats: Optional[Callable[[], dict]] = None,
+) -> Optional[str]:
+    """vendor 新增事件词表的有界记录（v1.6.x 演进前瞻）：不假设 success、
+    不进 SSE。已知但本仓有意不映射的高频事件（queue_update /
+    bash_execution_update 等，见 ``KNOWN_UNMAPPED_EVENTS``）只静默跳过；
+    真正未知的类型才 WARN + 计数（防刷屏）。"""
+    event_type = str(event.get("type", "") or "unknown")[:64]
+    if event_type in KNOWN_UNMAPPED_EVENTS:
+        return None
+    logger.warning("pi event of unmapped type received: %s", event_type)
+    _diag_stats.record("unmapped_event", {"type": event_type})
+    return None
+
+
+#: vendor 文档化的词表里、本仓**有意不映射**为 SSE 的事件（高频/宿主侧
+#: 自行处理）。集合依据 v1.6.1 docs/json.md 事件总表；vendor 新增的
+#: 未文档化事件不会命中集合 → 走 WARN 计数路径。
+#: agent_start/turn_*/message_start/message_end 是每 turn 必达的文档化
+#: 事件（宿主从 agent_end/agent_settled/message_update 取权威值，这五个
+#: 的冗余投影不进 SSE）——漏列会让每个 turn 刷 9 条 WARN 并冲空诊断
+#: 摘录环（R1-P1-1 实测）。
+KNOWN_UNMAPPED_EVENTS = frozenset({
+    "agent_start",
+    "turn_start",
+    "turn_end",
+    "message_start",
+    "message_end",
+    "tool_execution_update",
+    "queue_update",
+    "bash_execution_update",
+    "entry_appended",
+    "session_info_changed",
+    "thinking_level_changed",
+    "summarization_retry_scheduled",
+    "summarization_retry_attempt_start",
+    "summarization_retry_finished",
+})
+
+
 def _text_from_content_blocks(content: Any) -> str:
     """Join text out of an AssistantMessage ``content`` value (string or block list)."""
     if isinstance(content, str):
@@ -349,6 +451,16 @@ def _handle_auto_retry_start(event: dict, session_id: str, cache_lookup: Optiona
     ``agent_end{willRetry:true}`` and the retried run.
     """
     error = _sanitize_for_client(str(event.get("errorMessage", "") or "unknown error"))
+    # ADR-0301 D5 / WP5：provider 失败/重试进有界诊断（typed 计数 + 脱敏
+    # 摘录）——SSE 面之外，运维/治理可观测，不记录请求全文。
+    try:
+        _diag_stats.record("auto_retry_start", {
+            "attempt": str(int(event.get("attempt", 0) or 0)),
+            "max_attempts": str(int(event.get("maxAttempts", 0) or 0)),
+            "error": error[:160],
+        })
+    except Exception:  # noqa: BLE001 — 诊断绝不影响 SSE 主路径
+        pass
     content = AUTO_RETRY_START_FMT.format(
         delay=float(event.get("delayMs", 0) or 0) / 1000.0,
         attempt=int(event.get("attempt", 0) or 0),
@@ -366,7 +478,17 @@ def _handle_auto_retry_end(event: dict, session_id: str, cache_lookup: Optional[
     cancelled). The turn itself still ends on ``agent_settled``.
     """
     attempt = int(event.get("attempt", 0) or 0)
-    if event.get("success"):
+    success = bool(event.get("success"))
+    # ADR-0301 D5 / WP5：重试结果进有界诊断（finalError 脱敏截断）。
+    try:
+        end_detail = {"attempt": str(attempt), "success": "1" if success else "0"}
+        if not success:
+            end_detail["final_error"] = _sanitize_for_client(
+                str(event.get("finalError", "") or "unknown error"))[:160]
+        _diag_stats.record("auto_retry_end", end_detail)
+    except Exception:  # noqa: BLE001 — 诊断绝不影响 SSE 主路径
+        pass
+    if success:
         content = AUTO_RETRY_END_OK_FMT.format(attempt=attempt)
     else:
         error = _sanitize_for_client(str(event.get("finalError", "") or "unknown error"))
@@ -406,7 +528,8 @@ def _handle_extension_error(event: dict, session_id: str, cache_lookup: Optional
     （agent_pi_bridge.py ``record_sse_event``）无差别写入 turn evidence ring，
     断面恢复/审计可重放 —— 本层不重复造缝。
     """
-    ext_path = str(event.get("extensionPath", "") or "")[:_EXTENSION_ERROR_PATH_CAP]
+    ext_path = str(event.get("extensionPath") or "unknown").replace("\\", "/")
+    ext_name = ext_path.rsplit("/", 1)[-1][:_EXTENSION_ERROR_PATH_CAP] or "unknown"
     inner = event.get("event")
     if isinstance(inner, dict):
         event_kind = str(inner.get("type", "") or "")[:80]
@@ -418,15 +541,18 @@ def _handle_extension_error(event: dict, session_id: str, cache_lookup: Optional
     if isinstance(raw_error, dict):
         raw_error = raw_error.get("message", raw_error)
     # redact_paths：错误消息里不得出现宿主文件系统路径（无路径穿越）。
-    error_msg = redact_paths(str(raw_error if raw_error not in (None, "") else "unknown"))
+    error_msg = _sanitize_for_client(str(raw_error if raw_error not in (None, "") else "unknown"))
     error_msg = error_msg[:_EXTENSION_ERROR_MSG_CAP]
     logger.warning(
         "[PiEventMapper] extension_error (dropped from SSE, visible in logs/turn evidence): "
         "extension=%s event=%s error=%s",
-        ext_path,
+        ext_name,
         event_kind,
         error_msg,
     )
+    _diag_stats.record("extension_error", {
+        "extension": ext_name, "event": event_kind[:64], "error": error_msg[:200],
+    })
     return None
 
 
@@ -514,5 +640,5 @@ def map_event_to_sse(
     event_type = event.get("type", "")
     handler = _EVENT_HANDLERS.get(event_type)
     if handler is None:
-        return None
+        return _handle_unknown_event(event, session_id)
     return handler(event, session_id, cache_lookup, turn_stats=turn_stats)
