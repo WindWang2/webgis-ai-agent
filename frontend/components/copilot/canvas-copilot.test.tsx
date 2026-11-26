@@ -527,6 +527,24 @@ describe('信封与 stream 捎带', () => {
     expect(result.dispatched).toBe(false);
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it('reportAffordance 在无 AbortSignal.timeout 的旧浏览器仍同步上报（不抛）', () => {
+    // 旧 Safari/Firefox：AbortSignal.timeout 缺失 → 未做特性检测时
+    // reportAffordance 同步 TypeError，手势回调被打断。
+    const originalTimeout = AbortSignal.timeout;
+    AbortSignal.timeout = undefined as unknown as typeof AbortSignal.timeout;
+    try {
+      const result = reportAffordance(
+        buildEnvelope([{ action_id: 'a-y', kind: 'highlight' }]),
+      );
+      expect(result.dispatched).toBe(true);
+      const fetchMock = vi.mocked(globalThis.fetch);
+      const [, init] = fetchMock.mock.calls[0];
+      expect((init as { signal?: unknown }).signal).toBeUndefined();
+    } finally {
+      AbortSignal.timeout = originalTimeout;
+    }
+  });
 });
 
 /* ─── copilotSlice 行为 ─── */
@@ -568,5 +586,22 @@ describe('widget-binding', () => {
     const body = JSON.parse(String(init?.body));
     expect(body.actions[0].kind).toBe('widget_reply');
     expect(body.actions[0].meta.widget_reply.value).toEqual({ selected: ['c1'] });
+  });
+
+  it('sendWidgetReply 在无 AbortSignal.timeout 的旧浏览器仍执行本地回调', () => {
+    const originalTimeout = AbortSignal.timeout;
+    AbortSignal.timeout = undefined as unknown as typeof AbortSignal.timeout;
+    try {
+      const onReply = vi.fn();
+      const result = sendWidgetReply(
+        { widget_id: 'w-9', kind: 'candidate_picker' },
+        { selected: ['c1'] },
+        onReply,
+      );
+      expect(onReply).toHaveBeenCalledWith({ selected: ['c1'] });
+      expect(result.dispatched).toBe(true);
+    } finally {
+      AbortSignal.timeout = originalTimeout;
+    }
   });
 });

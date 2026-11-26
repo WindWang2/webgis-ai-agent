@@ -134,12 +134,29 @@ export function resetRegistryForTests(): void {
 }
 
 /**
+ * ref 间接层：把调用方 defs 包装为代理 def，run/when 调用时才按 id 从
+ * ref.current 取最新 def。否则注册表持有 effect 运行时的挂载快照，捕获
+ * 变化状态的闭包（如 when 依赖的会话/图层状态）在 deps 不变时会一直陈旧。
+ */
+function liveCommandDefs(ref: { current: readonly CommandDef[] }): CommandDef[] {
+  return ref.current.map((def): CommandDef => {
+    const latest = (): CommandDef => ref.current.find((d) => d.id === def.id) ?? def;
+    return {
+      ...def,
+      when: def.when ? () => latest().when?.() ?? true : undefined,
+      run: (ctx, input) => latest().run(ctx, input),
+    };
+  });
+}
+
+/**
  * React 便捷钩子：挂载期注册、卸载期反注册。deps 变化即重注册（先卸旧再
- * 挂新）；defs 每次渲染字面重建是允许的，注册表以 ref 持有最新值。
+ * 挂新）；defs 每次渲染字面重建是允许的——注册的 run/when 经 ref 间接层
+ * 调用，始终命中最新渲染的闭包，deps 未声明变化也不会陈旧。
  */
 export function useRegisterCommands(defs: CommandDef[], deps: unknown[] = []): void {
   const ref = useRef(defs);
   ref.current = defs;
   // eslint-disable-next-line react-hooks/exhaustive-deps -- deps 由调用方显式声明
-  useEffect(() => registerCommands(ref.current), deps);
+  useEffect(() => registerCommands(liveCommandDefs(ref)), deps);
 }

@@ -148,6 +148,19 @@ describe('buildPreviewMapSpec', () => {
     expect(spec.sources['flow-f-edges-source']).toMatchObject({ type: 'geojson', url: 'ref:geojson-e' });
     expect(spec.sources['flow-f-edges-source']).not.toHaveProperty('inlineData');
   });
+
+  it('family_id 含 nodes 时 edges 源仍填 edgeGeoJSON（后缀判定）', () => {
+    const tricky = {
+      sources: {
+        'flow-x_nodes-edges-source': { type: 'geojson', url: 'ref:geojson-e' },
+        'flow-x_nodes-nodes-source': { type: 'geojson', url: 'ref:geojson-n' },
+      },
+      layers: [{ id: 'flow-x_nodes-edges', type: 'line', source: 'flow-x_nodes-edges-source' }],
+    };
+    const spec = buildPreviewMapSpec(tricky, { type: 'FeatureCollection', features: [{ id: 'e1' }] }, { type: 'FeatureCollection', features: [{ id: 'n1' }] });
+    expect(spec.sources['flow-x_nodes-edges-source']).toMatchObject({ inlineData: { features: [{ id: 'e1' }] } });
+    expect(spec.sources['flow-x_nodes-nodes-source']).toMatchObject({ inlineData: { features: [{ id: 'n1' }] } });
+  });
 });
 
 describe('flowStatsView', () => {

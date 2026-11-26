@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderHook } from '@testing-library/react';
 import {
   detectShortcutConflicts,
   getCommandById,
@@ -7,6 +8,7 @@ import {
   recordRecentCommand,
   registerCommands,
   resetRegistryForTests,
+  useRegisterCommands,
 } from './registry';
 import type { CommandDef } from './types';
 
@@ -78,6 +80,42 @@ describe('command registry', () => {
     const when = vi.fn(() => false);
     registerCommands([cmd({ id: 'gated', when })]);
     expect(getCommandById('gated')?.when).toBe(when);
+  });
+});
+
+describe('useRegisterCommands', () => {
+  it('默认 deps=[] 时重渲染后 run/when 命中最新闭包而非挂载快照', async () => {
+    const runs: string[] = [];
+    const { rerender, unmount } = renderHook(
+      ({ value }: { value: string }) =>
+        useRegisterCommands([
+          {
+            id: 'hook.live',
+            title: 'live',
+            group: '测试',
+            when: () => value !== 'hidden',
+            run: () => {
+              runs.push(value);
+            },
+          },
+        ]),
+      { initialProps: { value: 'first' } },
+    );
+
+    const registered = getCommandById('hook.live');
+    expect(registered?.id).toBe('hook.live');
+
+    // deps 未声明（默认 []）：调用方只是重建了 defs 字面量
+    rerender({ value: 'second' });
+    expect(registered?.when?.()).toBe(true);
+    await registered?.run({ source: 'api' });
+    expect(runs).toEqual(['second']);
+
+    rerender({ value: 'hidden' });
+    expect(registered?.when?.()).toBe(false);
+
+    unmount();
+    expect(getCommandById('hook.live')).toBeUndefined();
   });
 });
 

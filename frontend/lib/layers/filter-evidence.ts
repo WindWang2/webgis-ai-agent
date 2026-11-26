@@ -258,9 +258,13 @@ export function deriveFilterEvidence({
   const nonTrivial = sublayerFilters.filter((f) => Array.isArray(f) && f.length > 0);
   if (nonTrivial.length === 0) return { status: 'inactive', at };
   if (!features || !Array.isArray(features)) return { status: 'unknown', at };
+  // 元素未校验（unknown[] → FeatureLike[] 裸转型）：null/非对象元素会让
+  // getValue(62)/has(90) 解引用 f.properties 抛 TypeError，派生在渲染路径
+  // 直接崩。剔除坏元素而非冒泡 —— 它们不参与样本与计数扫描。
+  const safeFeatures = features.filter((f): f is FeatureLike => typeof f === 'object' && f !== null);
 
   // invalid：所有带过滤子层引用的字段在样本中都不存在
-  const sample = features.slice(0, FIELD_SAMPLE) as FeatureLike[];
+  const sample = safeFeatures.slice(0, FIELD_SAMPLE);
   const referenced = new Set<string>();
   for (const f of nonTrivial) collectFilterFields(f, referenced);
   if (referenced.size > 0) {
@@ -277,14 +281,14 @@ export function deriveFilterEvidence({
     }
   }
 
-  if (features.length > FILTER_SCAN_LIMIT) {
-    return { status: 'unknown', at, scanned: features.length };
+  if (safeFeatures.length > FILTER_SCAN_LIMIT) {
+    return { status: 'unknown', at, scanned: safeFeatures.length };
   }
   // 逐子层计数（有界：features ≤ 上限 × 子层数 ≤ 5，表达式求值 O(1)）
   const counts = nonTrivial.map((filter) => {
     let count = 0;
     let unknown = false;
-    for (const feat of features as FeatureLike[]) {
+    for (const feat of safeFeatures) {
       const r = evaluateFilterBounded(filter, feat);
       if (r === null) { unknown = true; break; }
       if (r) count += 1;
@@ -299,12 +303,12 @@ export function deriveFilterEvidence({
   }
   if (hasUnknownOp && allEmpty) {
     // 过滤里混有未知算子且已知部分全空 —— 不能断言 empty
-    return { status: 'unknown', at, scanned: features.length };
+    return { status: 'unknown', at, scanned: safeFeatures.length };
   }
   return {
     status: allEmpty ? 'empty' : 'active',
     matched_count: maxMatched,
-    scanned: features.length,
+    scanned: safeFeatures.length,
     at,
   };
 }
