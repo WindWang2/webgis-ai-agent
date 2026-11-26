@@ -162,10 +162,11 @@ def test_execute_missing_tool_name_rejects():
 #
 # 车道做两件事：
 #   1. front-door（native 7，常驻声明面）硬闸（完整谓词三桶）—— 当前两例：
-#      query_local_poi 的 bbox/polygon 无注解 → #12049 裸节点；
-#      webgis_component_update 的 5 个自由对象参数 → anyOf 结构化联合 +
-#      additionalProperties:true（v1.5.2 既有类）。故 xfail **strict** 标注：
-#      全部修好后 XPASS 会翻红，强制摘除标记（修复时以 reason 清单为准）；
+#      query_local_poi 已补 typed args_model（WP3，bare/keyword 清零；
+#      剩余 typed union 为真实语义）；webgis_component_update 的
+#      5 个自由对象参数 → anyOf 结构化联合 + additionalProperties:true
+#      （v1.5.2 既有类）。故 xfail **strict** 标注：全部修好后 XPASS 会翻红，
+#      强制摘除标记（修复时以 reason 清单为准）；
 #   2. 长尾披露 —— 全量扫描 v4 spawn dump，按拒绝类分桶输出工具清单与计数
 #      （不锁死精确数字，任何 schema 改动不误伤；披露可见即可）。
 
@@ -308,11 +309,15 @@ def _spawn_dump() -> tuple[dict, dict]:
 @pytest.mark.xfail(
     strict=True,
     reason="strict-hostile front-door nodes (pre-engagement hygiene): "
-           "query_local_poi bbox/polygon 无 type 注解（#12049 裸节点）；"
+           "query_local_poi 已补 typed args_model（goal-pi-native-decision-"
+           "governance WP3：bare/keyword 桶清零，"
+           "tests/unit/test_pi_schema_poi_typed.py 锁定），剩余违规为 subtype OR "
+           "列表与坐标数组的 typed union（真实语义，C20 纪律禁止删约束换 strict）；"
            "webgis_component_update 的 placement/style/options/chart/stats "
            "五个自由对象参数为 anyOf[{type:object, additionalProperties:true}]"
-           "（v1.5.2 既有 structured_union + additional_properties_not_false）"
-           "——修好后 XPASS 翻红 → 摘除本标记",
+           "（v1.5.2 既有 structured_union + additional_properties_not_false，"
+           "开放字典为组件样式合并的语义必需）"
+           "——全部修复后 XPASS 翻红 → 摘除本标记",
 )
 def test_native_frontdoor_schemas_are_openai_strict_clean():
     """front-door（native 7，每个会话常驻声明面）schema 必须 OpenAI strict

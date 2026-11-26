@@ -4,7 +4,9 @@
 （如 adcode=510104 与 "510104"），注解一律 Union 两栖 + 边界处归一。
 """
 import logging
-from typing import List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
+
+from pydantic import BaseModel, Field, model_validator
 
 from app.services.local_poi import gd_poi_catalog, query_gd_poi
 from app.services.local_yearbook import (
@@ -16,6 +18,48 @@ from app.services.local_yearbook import (
 from app.tools.registry import ToolExecutionPolicy, ToolRegistry, tool
 
 logger = logging.getLogger(__name__)
+
+
+class QueryLocalPoiArgs(BaseModel):
+    """``query_local_poi`` typed 参数面（WP3 provider-aware schema 卫生）。
+
+    此前该工具无 args_model：``bbox``/``polygon`` 无注解 → JSON schema
+    无类型节点（上游 strict 谓词 bare 桶，任何 provider 的受约束解码都
+    失去锚点）。本模型按模块「Union 两栖 + 边界归一」惯例补齐类型：
+    输入面与旧签名**等价**（str/列表两栖、null→缺省、int adcode→str），
+    仅把类型显式化；subtype 的 OR 列表语义（G-8 #872）保留为 typed
+    union —— 因此该工具归入 ``typed_non_strict``（strict 需要闭集且
+    禁止删约束换 strict，见 PI_UPSTREAM_COMPAT_MATRIX C20）。
+    """
+
+    bbox: Union[str, List[Union[int, float]]] = Field(
+        "", description="WGS84 矩形边界框 [minx,miny,maxx,maxy]")
+    name_like: str = ""
+    category: str = ""
+    subtype: Union[str, List[str]] = ""
+    adcode: Union[str, int] = ""
+    district: str = ""
+    polygon: Union[str, Dict[str, Any],
+                   List[Union[int, float]],
+                   List[List[Union[int, float]]],
+                   List[List[List[Union[int, float]]]]] = Field(
+        "", description="任意矢量区域：GeoJSON（str/dict）或坐标数组（4 数 bbox / 裸坐标环 / 嵌套环）")
+    limit: Union[int, str] = 2000
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_none_and_empty(cls, data: Any) -> Any:
+        """null/缺省归一：显式 None 与缺省等价（旧签名 None 默认的等价面）。"""
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        for key in ("bbox", "name_like", "category", "subtype", "adcode",
+                    "district", "polygon"):
+            if normalized.get(key) is None:
+                normalized[key] = ""
+        if normalized.get("limit") is None:
+            normalized["limit"] = 2000
+        return normalized
 
 
 def _to_int(value: Union[int, str, None], default: int = 0) -> int:
@@ -148,6 +192,7 @@ def register_local_stats_tools(registry: ToolRegistry):
         summary="全国高德 POI 库（5174 万点，WGS84）检索主力：bbox/行政区/名称/大类过滤，返回 FeatureCollection。",
         examples=["锦江区所有三甲医院的坐标", "成都的小学分布"],
         anti_examples=["查境外 POI", "不给 bbox/district/adcode 任何过滤做全库扫描"],
+        args_model=QueryLocalPoiArgs,
     )
     def query_local_poi(
         bbox="",
@@ -174,7 +219,9 @@ def register_local_stats_tools(registry: ToolRegistry):
             subtype=subtype,
             adcode=_to_str(adcode) or None,
             district=district,
-            polygon=polygon,
+            # typed 参数面把缺省归一为 ""（None/缺省等价）；服务层以 None
+            # 判「未提供 polygon」，边界处还原，避免 "" 触发 polygon 格式错误。
+            polygon=(polygon or None),
             limit=_to_int(limit, 2000),
         ), district)
         if isinstance(res, dict) and "error" in res and ("未生成" in str(res.get("error")) or "缺失" in str(res.get("error"))):
