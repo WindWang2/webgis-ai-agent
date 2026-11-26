@@ -120,7 +120,8 @@ export function EmbodiedHud() {
     <div
       className="fixed bottom-0 left-0 right-0 z-50 flex flex-col overflow-hidden border-t border-edge-subtle bg-surface-panel text-ink shadow-overlay"
       style={{
-        height: hudOpen ? 210 : 24,
+        height: 'var(--workspace-hud-edge, var(--stH))',
+        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
         transition: 'height 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
       }}
     >
@@ -153,7 +154,7 @@ export function EmbodiedHud() {
         }}
       >
         {/* Telemetry Stats */}
-        <div className="flex items-center gap-4">
+        <div className="flex min-w-0 items-center gap-4 overflow-x-auto">
           {[
             { label: t('telemetry.coordinates'), value: 'WGS84' },
             { label: 'LNG', value: lng.toFixed(5) },
@@ -162,7 +163,7 @@ export function EmbodiedHud() {
             { label: t('telemetry.basemap'), value: baseLayerLabel(baseLayer) },
             { label: t('telemetry.layers'), value: `${visibleLayerCount}/${layers.length}` }
           ].map((item) => (
-            <div key={item.label} className="flex items-center gap-1">
+            <div key={item.label} className="flex shrink-0 items-center gap-1">
               <span className="eyebrow">{item.label}</span>
               <span className="font-mono text-meta text-ink-secondary">
                 {item.value}
@@ -173,7 +174,7 @@ export function EmbodiedHud() {
 
         {/* Neural Wave representation in Docked State */}
         {!hudOpen && (
-          <div className="flex h-full flex-1 items-center gap-2 overflow-hidden" style={{ marginLeft: 24 }}>
+          <div className="hidden h-full flex-1 items-center gap-2 overflow-hidden md:flex" style={{ marginLeft: 24 }}>
             <span className="text-caption text-ink-disabled">|</span>
             <Activity
               size={10}
@@ -197,7 +198,7 @@ export function EmbodiedHud() {
         <div className="flex-1" />
 
         {/* Right Buttons */}
-        <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+        <div className="flex shrink-0 items-center gap-2" onClick={(e) => e.stopPropagation()}>
           {/* V7 Phase F：执行详情面板开关（停靠右侧区；Agent 执行可观察）。 */}
           <button
             type="button"
@@ -249,7 +250,7 @@ export function EmbodiedHud() {
           （opsLog/causalChain 展示）已移除：两路 state 全仓零生产者，面板永远
           空态，属于假数据面板（对齐 #551 诚实性原则）。 */}
       {hudOpen && (
-        <div className="grid min-h-0 flex-1 grid-cols-[1fr_1.1fr] gap-4 px-4 py-3 text-body">
+        <div className="grid min-h-0 flex-1 grid-cols-[1fr_1.1fr] gap-4 overflow-y-auto px-4 py-3 text-body">
           {/* COLUMN 1: SENSORY PERCEPTION (感知系统) */}
           <div className="flex min-h-0 flex-col gap-2 border-r border-edge-subtle pr-3">
             <div className="flex items-center gap-1.5 font-semibold text-ink-secondary" style={{ letterSpacing: '0.04em' }}>

@@ -11,7 +11,6 @@ export const DEMO_MESSAGES = [
     id: '1',
     role: 'assistant' as const,
     // F5（#1559）：欢迎语文案归 i18n catalog（chat.welcomeExtended，zh+en），
-    // 与 use-sse-stream 的欢迎 seeding 共用同一键，杜绝双份硬编码。
     // 命令式 t() 不能在模块级调用（locale 会冻结在 import 时刻）—— demo
     // seed 是静态样例数据，取默认 locale 的 catalog 值即等价。
     content: messages[DEFAULT_LOCALE].chat.welcomeExtended,

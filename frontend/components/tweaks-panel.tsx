@@ -2,7 +2,7 @@
 
 import { useId, useRef } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
-import { sidebarWidthLimit } from '@/lib/store/slices/uiSlice';
+import { useSidebarWidthLimit } from '@/lib/hooks/use-sidebar-width-limit';
 import { useInertWhenClosed } from '@/lib/hooks/use-inert';
 import ToggleSwitch from '@/components/shared/toggle-switch';
 import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
@@ -125,6 +125,7 @@ export function TweaksPanel({ children }: TweaksPanelProps) {
   const ragPanelOpen = useHudStore((s) => s.ragPanelOpen);
   const setRagPanelOpen = useHudStore((s) => s.setRagPanelOpen);
   const sidebarWidth = useHudStore((s) => s.sidebarWidth);
+  const widthLimit = useSidebarWidthLimit();
   const setSidebarWidth = useHudStore((s) => s.setSidebarWidth);
 
   const panelRef = useRef<HTMLDivElement>(null);
@@ -225,8 +226,8 @@ export function TweaksPanel({ children }: TweaksPanelProps) {
             label={t('sidebarWidth')}
             value={sidebarWidth}
             suffix="px"
-            min={sidebarWidthLimit().min}
-            max={sidebarWidthLimit().max}
+            min={widthLimit.min}
+            max={widthLimit.max}
             step={10}
             onChange={(v) => setSidebarWidth(Math.round(v))}
           />

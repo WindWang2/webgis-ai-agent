@@ -755,3 +755,11 @@ textarea {
     min-height: 44px;
   }
 }
+
+/* The map already reserves the status strip. Its chrome only needs the
+   additional HUD height, the mobile rail (if present), and a breathing gap. */
+.workspace-shell {
+  --workspace-status-edge: calc(var(--stH) + env(safe-area-inset-bottom, 0px));
+  --workspace-hud-edge: calc(var(--workspace-hud-height) + env(safe-area-inset-bottom, 0px));
+  --map-chrome-bottom: calc(var(--workspace-hud-height) - var(--stH) + var(--workspace-bottom-rail) + 10px);
+}

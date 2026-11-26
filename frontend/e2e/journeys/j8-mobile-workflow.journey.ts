@@ -41,6 +41,30 @@ const MOBILE = { width: 390, height: 844 };
 test.describe('journey-8 移动档主流程（≤768px）', () => {
   test.use({ viewport: MOBILE, hasTouch: true });
 
+  test('map readout clears mobile navigation with the HUD open or closed', async ({ page }) => {
+    test.skip(MODE !== 'mock', MOCK_ONLY_REASON);
+    await bootstrapMock(page, defaultWorld());
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+    const rail = page.locator('nav[data-rail-variant="bottom"]');
+    const readout = page.getByLabel('地图视图状态', { exact: true });
+    await expect(rail).toBeVisible();
+
+    for (const viewport of [MOBILE, { width: 320, height: 640 }, { width: 667, height: 375 }]) {
+      await page.setViewportSize(viewport);
+      for (const toggle of ['展开状态栏', '收起状态栏']) {
+        await expect.poll(async () => {
+          const [box, nav] = await Promise.all([readout.boundingBox(), rail.boundingBox()]);
+          return !!box && !!nav && box.x >= 0 && box.x + box.width <= viewport.width
+            && box.y >= 42 && box.y + box.height <= nav.y - 8;
+        }).toBe(true);
+        await page.getByRole('button', { name: toggle, exact: true }).click();
+        await expect(page.getByRole('button', {
+          name: toggle === '展开状态栏' ? '收起状态栏' : '展开状态栏', exact: true,
+        })).toBeVisible();
+      }
+    }
+  });
+
   test('@smoke mock：mobile 档布局 → chat bottom-sheet → 分析出图 → 地图全屏无 inset', async ({ page }) => {
     test.skip(MODE !== 'mock', MOCK_ONLY_REASON);
     const world = defaultWorld();

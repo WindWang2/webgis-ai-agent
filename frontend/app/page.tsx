@@ -24,8 +24,7 @@ import { mapInsetLeftStyle, mapChromeLeft, effectivePanelWidth } from '@/lib/uti
 import {
   TOP_BAR_HEIGHT_PX,
   STATUS_BAR_HEIGHT_PX,
-  MAP_CHROME_BOTTOM_HUD_OPEN_PX,
-  MAP_CHROME_BOTTOM_IDLE_PX,
+  EXPANDED_HUD_HEIGHT,
 } from '@/lib/layout/shell-metrics';
 import { ConfirmDialog } from '@/components/shared/confirm-dialog';
 import { setLayerDataSession } from '@/lib/store/layer-data';
@@ -39,6 +38,7 @@ import { useSearchDrawerStore } from '@/lib/hooks/use-search-drawer';
 import { useUndoHistoryStore } from '@/lib/hooks/use-undo-history';
 import { UndoFlash, UndoHistoryPanel } from '@/components/workbench/undo-history-panel';
 import { OnboardingRoot } from '@/components/onboarding/onboarding-root';
+import { HintQueue } from '@/components/onboarding/hint-queue';
 import { useT } from '@/lib/i18n/useT';
 import { useLayoutMode } from '@/lib/hooks/use-layout-mode';
 
@@ -111,7 +111,6 @@ function MapLoadingHint() {
 
 export default function Home() {
   const t = useT('layout');
-  const tChat = useT('chat');
   const tCmd = useT('commands');
   // P5 三档布局：desktop 现状 / thin 覆盖 / mobile sheet + 地图全屏
   const layoutMode = useLayoutMode();
@@ -268,19 +267,10 @@ export default function Home() {
   const handleCloseTemplates = useCallback(() => setTemplatesOpen(false), [setTemplatesOpen]);
 
   const startFreshSession = useCallback(() => {
-    startNewSession(() => {
-      setMessages([
-        {
-          id: '1',
-          role: 'assistant',
-          content: tChat('welcome'),
-          timestamp: new Date(),
-        },
-      ]);
-    });
+    startNewSession(() => setMessages([]));
     setHistoryOpen(false);
     setConfirmNewSession(false);
-  }, [startNewSession, setMessages, setHistoryOpen, tChat]);
+  }, [startNewSession, setMessages, setHistoryOpen]);
 
   const handleNewSession = useCallback(() => {
     // #553: 新会话会清空工作区（图层/标注/日志/结果/transcript）。仅当确实
@@ -415,8 +405,12 @@ export default function Home() {
 
   return (
     <div
-      className='h-screen w-screen flex flex-col overflow-hidden bg-surface-canvas'
-      style={{ fontSize: `${fontSize}px` }}
+      className='workspace-shell flex h-dvh w-full flex-col overflow-hidden bg-surface-canvas'
+      style={{
+        fontSize: `${fontSize}px`,
+        ['--workspace-hud-height' as string]: hudOpen ? EXPANDED_HUD_HEIGHT : STATUS_BAR_HEIGHT_PX + 'px',
+        ['--workspace-bottom-rail' as string]: isMobile ? 'var(--railW)' : '0px',
+      }}
     >
       {/* Wave 11（audit 07 P1）：skip link —— 键盘用户 Tab 首停即「跳到地图」，
           不必穿越 rail/panel 的数十个停靠点。可见性：聚焦即现（sr-only 常规态）。 */}
@@ -440,20 +434,12 @@ export default function Home() {
           position: 'relative',
           overflow: 'hidden',
           marginTop: TOP_BAR_HEIGHT_PX,
-          marginBottom: STATUS_BAR_HEIGHT_PX,
+          marginBottom: 'var(--workspace-status-edge)',
           // UI V4：地图 chrome（图例等）的水平避让偏移。地图容器真实收缩后
           // （见下方 wrapper），展开时 chrome 只需呼吸间距；收起时避开 rail。
           // 只有面板真实推挤地图（desktop 档展开）时 chrome 才只需呼吸间距；
           // thin 覆盖档/收起时避开竖排 rail，mobile 档 rail 在底部。
           ['--map-chrome-left' as string]: `${mapChromeLeft(insetOpen, { railVisible: !isMobile })}px`,
-          // UI V4：地图 chrome 的底部基线。workspace 已经预留状态条
-          // （STATUS_BAR_HEIGHT_PX），HUD 展开到 210px 时需要再抬
-          // MAP_CHROME_BOTTOM_HUD_OPEN_PX。所有底部 chrome（读数条、比例尺、
-          // 热力图例、专题图例）都从这一个变量堆叠，因此不会互相压盖 ——
-          // 审计发现浮动图例与专题图例此前固定在同一 left/bottom 上必然重叠。
-          ['--map-chrome-bottom' as string]: hudOpen
-            ? `${MAP_CHROME_BOTTOM_HUD_OPEN_PX}px`
-            : `${MAP_CHROME_BOTTOM_IDLE_PX}px`,
         }}
       >
         {/* Map Panel — 左栏展开时容器真实收缩（ContextPanel 不再悬浮遮挡）：
@@ -499,6 +485,7 @@ export default function Home() {
                 面移入停靠区渲染，dock 状态与语义组件状态分离）。 */}
             <PanelDockHost />
           </MapErrorBoundary>
+          <HintQueue />
         </div>
 
         {/* Floating heatmap legend — bottom-RIGHT, stacked above the scale bar.
@@ -509,7 +496,7 @@ export default function Home() {
         {layers.find((l) => l.visible && l.type === 'heatmap') && !specHasColorbar && (
           <div
             className='absolute right-3 z-10 transition-[bottom] duration-300'
-            style={{ bottom: 'calc(var(--map-chrome-bottom, 10px) + 66px)' }}
+            style={{ bottom: 'calc(var(--map-chrome-bottom, 10px) + var(--map-readout-height, 22px) + 44px)' }}
           >
             <MemoFloatingLegend />
           </div>
@@ -541,8 +528,12 @@ export default function Home() {
         {/* Map status readout: centre coordinate, zoom, CRS, attribution.
             Anchors the bottom-right chrome column. */}
         <div
-          className='absolute right-3 z-10 transition-[bottom] duration-300'
-          style={{ bottom: 'var(--map-chrome-bottom, 10px)' }}
+          className='pointer-events-none absolute z-10 w-max transition-[bottom] duration-300'
+          style={{
+            bottom: 'var(--map-chrome-bottom, 10px)',
+            right: 'max(12px, env(safe-area-inset-right, 0px))',
+            maxWidth: 'calc(100% - max(12px, env(safe-area-inset-left, 0px)) - max(12px, env(safe-area-inset-right, 0px)))',
+          }}
         >
           <MemoMapStatusReadout />
         </div>

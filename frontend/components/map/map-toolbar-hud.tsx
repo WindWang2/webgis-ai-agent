@@ -7,7 +7,8 @@ import {
   subscribeMapSpecLive,
 } from '@/lib/mapspec/session-cursor'
 
-import React, { useState, useEffect, useCallback, useMemo, useRef, useSyncExternalStore } from 'react'
+import React, { useState, useEffect, useCallback, useId, useMemo, useRef, useSyncExternalStore } from 'react'
+import { useLayoutMode } from '@/lib/hooks/use-layout-mode'
 import {
   ZoomIn,
   ZoomOut,
@@ -21,6 +22,7 @@ import {
   X,
   ChevronUp,
   ChevronDown,
+  PencilRuler,
   RotateCcw,
   SquareDashedMousePointer,
   MapPin,
@@ -67,6 +69,7 @@ export interface MapToolbarHUDProps {
 
 const EMPTY_ANNOTATIONS: any[] = []
 const EMPTY_POINTS: [number, number][] = []
+const EDIT_TOOLS = new Set<MapToolId>(['draw_point', 'draw_line', 'draw_polygon', 'edit_vertices', 'delete_feature', 'edit_labels', 'split_feature'])
 
 export function MapToolbarHUD({
   mapRef,
@@ -85,11 +88,24 @@ export function MapToolbarHUD({
   const [uncontrolledMeasureTool, setUncontrolledMeasureTool] = useState<MeasureMode>('none')
   const t = useT();
   const [uncontrolledMeasurePoints, setUncontrolledMeasurePoints] = useState<[number, number][]>(EMPTY_POINTS)
-  const [collapsed, setCollapsed] = useState(false)
+  const mobile = useLayoutMode() === 'mobile'
+  const mode = mobile ? 'mobile' : 'wide'
+  const [expandedModes, setExpandedModes] = useState({ mobile: false, wide: true })
+  const expanded = expandedModes[mode]
+  const [editingOpen, setEditingOpen] = useState(false)
+  const editingId = useId()
+  const editButtonRef = useRef<HTMLButtonElement>(null)
+  const secondaryToolsId = useId()
   const [feedbackToast, setFeedbackToast] = useState<string | null>(null)
 
   const is3D = useHudStore((s: HudState) => Boolean(s?.is3D))
   const annotations = useHudStore((s: HudState) => s?.annotations ?? EMPTY_ANNOTATIONS)
+  const editingActive = useHudStore((s: HudState) => Boolean(s?.editTarget || (s?.activeMapTool && EDIT_TOOLS.has(s.activeMapTool))))
+
+  const closeEditing = () => {
+    setEditingOpen(false)
+    editButtonRef.current?.focus({ preventScroll: true })
+  }
 
   const activeMode = controlledMeasureTool !== undefined ? controlledMeasureTool : uncontrolledMeasureTool
   const points = useMemo(() => {
@@ -311,7 +327,8 @@ export function MapToolbarHUD({
       // 右侧 chrome 列：指北针占 top-3 槽（MapDecorations / MapSpec 右上槽），
       // 工具条从其下方起（12 + 30 + 10 = 52px），二者不再互相压盖；
       // 场景控制器移到指北针左侧（见 scene-controller）。
-      className={`absolute right-3 top-[52px] z-30 flex flex-col items-end gap-2 font-sans select-none pointer-events-none ${className}`}
+      className={`pointer-events-none absolute right-3 top-[52px] z-30 flex max-w-[calc(100%_-_24px)] flex-col items-end gap-2 select-none font-sans ${className}`}
+      style={{ bottom: 'calc(var(--map-chrome-bottom, 10px) + var(--map-readout-height, 22px) + 8px)' }}
       data-testid="map-toolbar-hud"
     >
       {/* Toast Feedback */}
@@ -327,7 +344,7 @@ export function MapToolbarHUD({
       {/* Measurement Mode Live Floating HUD Panel */}
       {activeMode !== 'none' && (
         <div
-          className="map-chrome pointer-events-auto flex w-64 max-w-[calc(100vw-32px)] flex-col gap-1.5 p-3"
+          className="map-chrome pointer-events-auto flex max-h-[65%] w-64 max-w-[calc(100vw-32px)] shrink-0 flex-col gap-1.5 overflow-y-auto overscroll-contain p-3"
           data-testid="measurement-active-hud"
         >
           <div className="flex items-center justify-between border-b border-edge-subtle pb-1.5">
@@ -400,41 +417,52 @@ export function MapToolbarHUD({
           bg-surface-raised/90 在 Tailwind 3 下对 var() 颜色不生成任何规则，
           工具条在影像底图上实际是透明的；backdrop-blur 在持续重绘的画布上
           也是最贵的滤镜。 */}
-      <div className="map-chrome pointer-events-auto flex flex-col items-center p-1 transition-all">
-        {/* Collapse Toggle for compact viewports */}
-        <button
-          type="button"
-          aria-label={collapsed ? t('map.toolbar.expandToolbar') : t('map.toolbar.collapseToolbar')}
-          title={collapsed ? t('map.toolbar.expandToolbar') : t('map.toolbar.collapseToolbar')}
-          onClick={() => setCollapsed(!collapsed)}
-          className="flex h-7 w-7 items-center justify-center rounded-sm text-ink-muted hover:bg-surface-hover hover:text-ink md:hidden transition-colors"
-        >
-          {collapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
-        </button>
+      <div
+        className="flex min-h-0 max-w-full flex-1 flex-row-reverse items-start gap-2"
+        onKeyDown={(event) => {
+          if (event.key === 'Escape' && expanded && editingOpen) {
+            event.preventDefault()
+            event.stopPropagation()
+            closeEditing()
+          }
+        }}
+      >
+        <div className="map-chrome pointer-events-auto flex max-h-full shrink-0 flex-col items-center gap-0.5 overflow-y-auto overscroll-contain p-1 [scrollbar-width:thin] [&_button]:shrink-0">
+          <button
+            type="button"
+            aria-label={t('map.toolbar.zoomIn')}
+            title={t('map.toolbar.zoomInTitle')}
+            onClick={handleZoomIn}
+            className="flex h-8 w-8 items-center justify-center rounded-sm text-ink-secondary hover:bg-surface-hover hover:text-ink active:bg-surface-selected transition-colors"
+          >
+            <ZoomIn className="h-4 w-4" />
+          </button>
 
-        {!collapsed && (
-          <div className="flex flex-col items-center gap-1">
-            {/* Group 1: Navigation Controls */}
-            <button
-              type="button"
-              aria-label={t('map.toolbar.zoomIn')}
-              title={t('map.toolbar.zoomInTitle')}
-              onClick={handleZoomIn}
-              className="flex h-8 w-8 items-center justify-center rounded-sm text-ink-secondary hover:bg-surface-hover hover:text-ink active:bg-surface-selected transition-colors"
-            >
-              <ZoomIn className="h-4 w-4" />
-            </button>
+          <button
+            type="button"
+            aria-label={t('map.toolbar.zoomOut')}
+            title={t('map.toolbar.zoomOutTitle')}
+            onClick={handleZoomOut}
+            className="flex h-8 w-8 items-center justify-center rounded-sm text-ink-secondary hover:bg-surface-hover hover:text-ink active:bg-surface-selected transition-colors"
+          >
+            <ZoomOut className="h-4 w-4" />
+          </button>
 
-            <button
-              type="button"
-              aria-label={t('map.toolbar.zoomOut')}
-              title={t('map.toolbar.zoomOutTitle')}
-              onClick={handleZoomOut}
-              className="flex h-8 w-8 items-center justify-center rounded-sm text-ink-secondary hover:bg-surface-hover hover:text-ink active:bg-surface-selected transition-colors"
-            >
-              <ZoomOut className="h-4 w-4" />
-            </button>
-
+          <button
+            type="button"
+            aria-expanded={expanded}
+            aria-controls={secondaryToolsId}
+            aria-label={expanded ? t('map.toolbar.collapseToolbar') : t('map.toolbar.expandToolbar')}
+            title={expanded ? t('map.toolbar.collapseToolbar') : t('map.toolbar.expandToolbar')}
+            onClick={() => {
+              setExpandedModes((current) => ({ ...current, [mode]: !current[mode] }))
+              if (expanded) setEditingOpen(false)
+            }}
+            className="flex h-8 w-8 items-center justify-center rounded-sm text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+          >
+            {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          </button>
+          <div id={secondaryToolsId} hidden={!expanded} className={expanded ? 'flex flex-col items-center gap-0.5 border-t border-edge-subtle pt-1' : undefined}>
             <button
               type="button"
               aria-label={t('map.toolbar.resetNorth')}
@@ -524,22 +552,44 @@ export function MapToolbarHUD({
             >
               <Trash2 className="h-4 w-4" />
             </button>
+            <button
+              type="button"
+              ref={editButtonRef}
+              aria-label={t('map.toolbar.editTools')}
+              title={t('map.toolbar.editTools')}
+              aria-expanded={editingOpen && expanded}
+              aria-controls={editingId}
+              onClick={() => setEditingOpen((open) => !open)}
+              className={`flex h-8 w-8 items-center justify-center rounded-sm transition-colors ${editingOpen || editingActive ? 'bg-status-accent-soft text-status-accent' : 'text-ink-secondary hover:bg-surface-hover hover:text-ink'}`}
+            >
+              <PencilRuler className="h-4 w-4" />
+            </button>
           </div>
-        )}
+        </div>
 
-        {/* V7：草图编辑工具组 —— 激活态/吸附读 toolSlice（全局工具唯一真相），
-            可用性按状态推导（edit/delete 需要草图要素存在）。 */}
-        {!collapsed && <SketchToolGroup />}
-
-        {/* G14：真实图层编辑入口（目标层选择 + 分割工具；独立组件最小接入）。 */}
-        {!collapsed && <FeatureEditToolGroup />}
+        <section
+          id={editingId}
+          aria-label={t('map.toolbar.editTools')}
+          hidden={!expanded || !editingOpen}
+          className="map-chrome pointer-events-auto max-h-full w-56 min-w-0 overflow-y-auto overscroll-contain p-2 [scrollbar-width:thin]"
+        >
+          <div className="mb-1 flex items-center justify-between pl-1">
+            <h2 className="text-meta font-semibold text-ink">{t('map.toolbar.editTools')}</h2>
+            <button type="button" aria-label={t('map.toolbar.closeEditTools')} title={t('map.toolbar.closeEditTools')} onClick={closeEditing}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-sm text-ink-secondary hover:bg-surface-hover hover:text-ink">
+              <X aria-hidden className="h-4 w-4" />
+            </button>
+          </div>
+          <SketchToolGroup onSelect={mobile ? closeEditing : undefined} />
+          <FeatureEditToolGroup />
+        </section>
       </div>
     </div>
   )
 }
 
 /** 草图工具组（V7 Phase E）：draw point/line/polygon + vertex edit + delete + snapping。 */
-function SketchToolGroup() {
+function SketchToolGroup({ onSelect }: { onSelect?: () => void }) {
   const t = useT();
   const activeTool = useHudStore((s: HudState) => s.activeMapTool)
   const snappingEnabled = useHudStore((s: HudState) => s.snappingEnabled)
@@ -564,7 +614,8 @@ function SketchToolGroup() {
   const toggleTool = useCallback((tool: MapToolId) => {
     const store = useHudStore.getState()
     store.setActiveMapTool(store.activeMapTool === tool ? null : tool)
-  }, [])
+    onSelect?.()
+  }, [onSelect])
 
   const tools: Array<{
     id: MapToolId
@@ -605,7 +656,7 @@ function SketchToolGroup() {
   ]
 
   return (
-    <div className="mt-0.5 flex flex-col items-center gap-1 border-t border-edge-subtle pt-1">
+    <div className="grid grid-cols-2 gap-1">
       {tools.map(({ id, label, title, icon: Icon, disabled, disabledReason }) => {
         const active = activeTool === id
         return (
@@ -617,13 +668,14 @@ function SketchToolGroup() {
             title={disabled ? disabledReason : title}
             disabled={disabled}
             onClick={() => toggleTool(id)}
-            className={`flex h-8 w-8 items-center justify-center rounded-sm transition-colors ${
+            className={`flex min-h-8 items-center gap-1.5 rounded-sm px-1.5 text-left text-meta transition-colors ${
               active
                 ? 'bg-status-accent-soft text-status-accent font-bold ring-1 ring-status-accent'
                 : 'text-ink-secondary hover:bg-surface-hover hover:text-ink'
             } disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent`}
           >
-            <Icon className="h-4 w-4" />
+            <Icon aria-hidden className="h-4 w-4 shrink-0" />
+            <span>{label}</span>
           </button>
         )
       })}
@@ -633,13 +685,14 @@ function SketchToolGroup() {
         aria-pressed={snappingEnabled}
         title={snappingEnabled ? t('map.toolbar.snappingOnTitle') : t('map.toolbar.snappingOffTitle')}
         onClick={() => useHudStore.getState().toggleSnapping()}
-        className={`flex h-8 w-8 items-center justify-center rounded-sm transition-colors ${
+        className={`col-span-2 flex min-h-8 items-center gap-1.5 rounded-sm px-1.5 text-left text-meta transition-colors ${
           snappingEnabled
             ? 'bg-status-accent-soft text-status-accent'
             : 'text-ink-secondary hover:bg-surface-hover hover:text-ink'
         }`}
       >
-        <Magnet className="h-4 w-4" />
+        <Magnet aria-hidden className="h-4 w-4 shrink-0" />
+        <span>{t('map.toolbar.snapping')}</span>
       </button>
       {/* 草图行存在性只用于可用性提示语义；计数变化经 sketchVersion 触发。 */}
       <span className="sr-only" aria-live="polite">

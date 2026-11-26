@@ -84,7 +84,7 @@ export interface WorkbenchSlice {
   /** agent 切换前用户所在模式（一键返回的目标；用户切换时不清除）。 */
   userModeBeforeAgent: WorkbenchMode;
   /** 切换模式。tab 缺省用该模式记忆值（无记忆用组合首个）。 */
-  setWorkbenchMode: (mode: WorkbenchMode, origin?: WorkbenchModeOrigin) => void;
+  setWorkbenchMode: (mode: WorkbenchMode, origin?: WorkbenchModeOrigin, openPanel?: boolean) => void;
 
   /* ─── Layer Selection（批量操作选择真相）─── */
   selectedLayerIds: string[];
@@ -179,7 +179,7 @@ export const createWorkbenchSlice: StateCreator<HudState, [], [], Partial<HudSta
     // activeLeftTab 落到该模式的记忆 tab（无记忆用组合首个），保证
     // activeLeftTab ∈ MODE_TABS[mode] 对用户与 agent 路径同时成立
     // （此前只有 NavRail 用户路径做协调，agent set_mode 会留下界外 tab）。
-    setWorkbenchMode: (mode, origin = 'user') =>
+    setWorkbenchMode: (mode, origin = 'user', openPanel = true) =>
       set((s) => {
         if (s.mode === mode) {
           return s.modeOrigin === origin ? s : { modeOrigin: origin };
@@ -189,7 +189,7 @@ export const createWorkbenchSlice: StateCreator<HudState, [], [], Partial<HudSta
           mode,
           modeOrigin: origin,
           activeLeftTab: remembered as typeof s.activeLeftTab,
-          leftPanelOpen: true,
+          leftPanelOpen: openPanel,
           // agent 切换时记录用户此前所在模式（MINOR-8：一键返回语义）。
           userModeBeforeAgent: origin === 'agent' ? s.mode : s.userModeBeforeAgent,
         };

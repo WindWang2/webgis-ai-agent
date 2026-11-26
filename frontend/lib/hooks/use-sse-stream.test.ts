@@ -72,6 +72,11 @@ async function sendAndGetMapState() {
   return bridgeMock.send.mock.calls[0][1] as Record<string, unknown>;
 }
 
+it('keeps a new transcript empty so the workbench can offer its starting actions', () => {
+  const { result } = renderStream();
+  expect(result.current.messages).toHaveLength(0);
+});
+
 describe('resolveParentLayerId (FE-4 design §7)', () => {
   it('longest-prefix match fixes poi vs poi_schools mis-attribution', () => {
     expect(resolveParentLayerId('poi_schools__fill', ['poi', 'poi_schools'])).toBe('poi_schools');

@@ -7,7 +7,7 @@
  * 这里只决定是否值得弹一次确认。
  */
 
-/** 页面初始欢迎气泡的消息 id（app/page.tsx startFreshSession 写入）。 */
+/** 旧版工作台写入的初始欢迎气泡 id。 */
 const WELCOME_MESSAGE_ID = '1';
 
 export function hasWorkspaceContent(

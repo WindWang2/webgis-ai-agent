@@ -112,6 +112,22 @@ describe('TopBar 右侧集群窄档折叠（#1667）', () => {
     delete (window as unknown as { matchMedia?: unknown }).matchMedia;
   });
 
+  it('320px keeps the session identity alongside the new-session and location controls', async () => {
+    installMatchMedia(320);
+    const newSession = vi.fn();
+    const location = vi.fn();
+    const user = userEvent.setup();
+    render(<TopBar sessionName="长江洪水分析" onNewSession={newSession} onRequestLocation={location} />);
+
+    const bar = within(screen.getByRole('banner'));
+    expect(bar.getByText('GeoAgent')).toBeVisible();
+    expect(bar.getByText('长江洪水分析')).toBeVisible();
+    await user.click(bar.getByRole('button', { name: '新建会话' }));
+    await user.click(bar.getByRole('button', { name: '请求当前位置' }));
+    expect(newSession).toHaveBeenCalledOnce();
+    expect(location).toHaveBeenCalledOnce();
+  });
+
   it('390px：「设置」内联可达 —— 点击调 setSettingsOpen(true)（验收 1 命中入口）', async () => {
     installMatchMedia(390);
     const user = userEvent.setup();
@@ -176,6 +192,7 @@ describe('TopBar 右侧集群窄档折叠（#1667）', () => {
     expect(screen.getByRole('menu', { name: '更多操作' })).toBeInTheDocument();
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('menu', { name: '更多操作' })).toBeNull();
+    expect(screen.getByRole('button', { name: '更多操作' })).toHaveFocus();
   });
 
   it('宽档（1440px）：右侧集群维持全内联布局（折叠不回归）', () => {

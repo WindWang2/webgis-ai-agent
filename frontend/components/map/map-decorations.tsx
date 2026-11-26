@@ -57,7 +57,7 @@ export const MapDecorations = React.memo(function MapDecorations({ show, title, 
       <div
         data-testid="scale-bar"
         className="map-chrome absolute right-3 z-30 flex items-center gap-2 px-2 py-1 text-caption font-medium tabular-nums transition-[bottom] duration-300"
-        style={{ bottom: 'calc(var(--map-chrome-bottom, 10px) + 30px)' }}
+        style={{ bottom: 'calc(var(--map-chrome-bottom, 10px) + var(--map-readout-height, 22px) + 8px)' }}
         aria-label={t('chrome.scaleBarAria', { distance: formatMeters(meters) })}
       >
         <div
