@@ -116,3 +116,21 @@ S10 selection handle 单 (session,ref,revision) 绑定（per-source 多 handle �
 - master 上 `test_api_compatibility` 本就红（6 项既有 breaking 源于
   #2266/#2281 等已合并改动的快照未刷新）；本线 additive 新路由按仓库规则
   `API_SNAPSHOT_UPDATE=1` 显式刷新（快照含既有漂移一并落盘，PR 说明）。
+
+## WP6 终验（2026-11-27，HEAD abd98fc74）
+
+| 命令 | 结果 |
+|---|---|
+| 后端全域（G46 单元 5 文件 + 多源单元 3 文件 + 集成 3 文件 + 审查回归 1 文件） | **177 passed**（10.5s） |
+| 前端 multi-source-scope 组件测试 | 5 passed（精确文案断言） |
+| 前端 i18n key-completeness | 本线新增键全绿（chat.figureTopValues 1 项 master 既有红） |
+| tsc --noEmit | 0 错误 |
+| eslint 本域 | 净 |
+| Ruff 本域 | 全绿 |
+| Pi journey（opt-in） | 6/11 gate 真实通过；余 5 gate 被 2 项 master 既有基线缺陷阻塞（见上） |
+
+### 并发 PR 活动核查（交付前）
+
+- master 未动（59eb3f527）；新开放 PR #2283（01 线 Pi 决策治理，17 文件）、
+  #2284（主树 zcode/full-code-review-fixes 全量修复，100 文件）。
+- **#2284 与本线文件重叠 = 0**（脚本核对）；#2283 无交集。PR 正文已注明。
