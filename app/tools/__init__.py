@@ -146,6 +146,14 @@ _TOOL_MODULES = [
     # 独立模块防并发冲突；执行真相=registry.dispatch）
     ("app.tools.analysis_workflow_tools", "register_analysis_workflow_tools"),
     ("app.tools.model_authoring_tools", "register_model_authoring_tools"),
+    # 02 任务：科学评价原语工具面（插值分块 CV / 密度守恒边界诊断 / 聚类
+    # 稳定性；方法实验引擎的 trial dispatch 目标；独立模块防并发冲突）
+    ("app.tools.science_eval_primitives",
+     "register_science_eval_primitive_tools"),
+    # 02 任务：方法实验工作台工具面（inspect/plan/run/status/compare/adopt；
+    # 执行真相=registry.dispatch；独立模块防并发冲突）
+    ("app.tools.method_experiment_tools",
+     "register_method_experiment_tools"),
     # Track B（M14）：图层浏览/聚合只读工具面（分页/typed 过滤/视口统计）
     ("app.tools.layer_browse_tools", "register_layer_browse_tools"),
     # GOAL 01：空间语义与量纲可信契约只读工具面（inspect_spatial_semantics；

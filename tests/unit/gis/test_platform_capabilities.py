@@ -87,7 +87,15 @@ PLATFORM_BINDINGS = {
         "gis_skill_job_start",
         "gis_skill_job_status",
         "webgis_requirement_compile",
-        "webgis_goal_repair_start"],
+        "webgis_goal_repair_start",
+        # 02 任务：方法实验工作台六工具（与 algorithms/platform.py 声明一致，
+        # 测试侧冗余清单防两处漂移）。
+        "webgis_method_experiment_inspect",
+        "webgis_method_experiment_plan",
+        "webgis_method_experiment_run",
+        "webgis_method_experiment_status",
+        "webgis_method_experiment_compare",
+        "webgis_method_experiment_adopt"],
     "scenario_simulation": [
         "spatial_decision_v2", "spatial_reasoning", "what_if_simulate"],
     "meta_tool_surface": [
