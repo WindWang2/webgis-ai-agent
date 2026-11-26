@@ -7,6 +7,9 @@ if not, why?* Reports, per domain, PASS / WARN / FAIL with concrete remediation.
 Checks (fail-open = WARN only; fail-closed = FAIL exit code):
   1. vendor      submodule pin vs superproject gitlink, describe/tag, protocol
                  floor (>= v1.5.0)                      → WARN on drift
+                 + WP1 版本握手：`node rpc-entry --version` 产物自报版本，
+                 三方对账（runtime vs describe vs gitlink）→ WARN on 漂移
+                 （checkout 升级 / 产物旧构建 = 忘 rebuild 的真实漂移）
   2. build       dist/bundle rpc-entry presence (+ node engine >= 22.19)
                  → FAIL when missing (Pi cannot start; bridge silently falls
                  back to ChatEngine — the #400 failure mode this tool kills)
@@ -92,12 +95,15 @@ def _live_registry() -> ToolRegistry | None:
 def check_vendor() -> Report:
     from app.services.chat.pi_compat import (
         GITLINK_MODE,
+        attach_runtime_version,
+        parse_vendor_version,
+        vendor_capabilities,
         PI_MIN_VENDOR_TAG,
         pi_capability_snapshot,
         pi_vendor_identity,
     )
 
-    ident = pi_vendor_identity()
+    ident = attach_runtime_version(pi_vendor_identity())
     # R1-P3-5：复用 identity 已探明的版本事实（identity 内部已 spawn 探针），
     # 不对同一入口重复 spawn。
     caps = pi_capability_snapshot(
@@ -111,6 +117,9 @@ def check_vendor() -> Report:
         "expected_pin": ident.expected_pin,
         "entry": ident.entry_kind,
         "node": ident.node_version,
+        "runtime_version": ident.runtime_version,
+        "runtime_version_source": ident.runtime_version_source,
+        "capabilities": vendor_capabilities(ident.runtime_version),
         "tree_mode": ident.tree_mode,
         "vendor_dir_source": ident.vendor_dir_source,
         "observed_version": ident.observed_version,
@@ -141,13 +150,17 @@ def check_vendor() -> Report:
             "--cacheinfo 160000,<pin>,vendor/pi && git submodule update --init vendor/pi",
             facts,
         )
-    if ident.matches_expected_pin is False:
-        return Report(
-            "vendor", WARN,
-            f"working tree ({ident.head_commit}) drifted off recorded gitlink "
-            f"({ident.expected_pin})",
-            "git -C vendor/pi checkout <recorded-pin>", facts,
-        )
+    # 三方对账：runtime probe（构建产物自报）vs describe（checkout 所在 tag）
+    # vs expected pin（superproject gitlink）。pin 漂移由下方既有 WARN 表达
+    # （describe≠pin 时 probe-vs-describe 的结论已无意义）；此处补的是
+    # probe-vs-describe：「checkout 已升级、产物还是旧构建（忘 rebuild）」
+    # —— wire 行为由产物决定，describe 说哪个 tag 都不算数。
+    runtime = ident.runtime_version
+    probe_drift = False
+    if runtime is not None and ident.describe:
+        rt = parse_vendor_version(runtime)
+        de = parse_vendor_version(ident.describe)
+        probe_drift = rt is not None and de is not None and rt != de
     if ident.manifest_state == "pin_mismatch":
         return Report(
             "vendor", FAIL,
@@ -160,6 +173,36 @@ def check_vendor() -> Report:
             "vendor", FAIL,
             f"Pi {ident.describe} is below the bridge protocol floor {PI_MIN_VENDOR_TAG}",
             "upgrade the submodule pin together with the bridge contract tests", facts,
+        )
+    if ident.matches_expected_pin is False:
+        message = (
+            f"working tree ({ident.head_commit}) drifted off recorded gitlink "
+            f"({ident.expected_pin})"
+        )
+        if probe_drift:
+            message += (
+                f"; built entry self-reports {runtime} while checkout describe "
+                f"is {ident.describe} (stale build?)"
+            )
+        return Report(
+            "vendor", WARN,
+            message,
+            "git -C vendor/pi checkout <recorded-pin> && bash scripts/build-vendor-pi.sh",
+            facts,
+        )
+    if probe_drift:
+        return Report(
+            "vendor", WARN,
+            f"built entry self-reports {runtime} but checkout describe is "
+            f"{ident.describe} — stale build (submodule moved without rebuild?)",
+            "bash scripts/build-vendor-pi.sh", facts,
+        )
+    if ident.entry_built and runtime is None:
+        return Report(
+            "vendor", WARN,
+            "runtime version probe unavailable for a built entry — cannot "
+            "attest which version the artifact was built from",
+            "node <rpc-entry> --version；check build logs / PATH", facts,
         )
     if ident.head_commit is None and ident.manifest_state in ("absent", "unparsed"):
         return Report(

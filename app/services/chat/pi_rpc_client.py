@@ -117,30 +117,35 @@ PI_RPC_ENTRY = resolve_pi_rpc_entry()
 PI_VERSION_PROBE_TIMEOUT = 10.0
 
 
-def probe_pi_entry_version(entry: Path | None = None) -> tuple[str | None, str]:
-    """Run the *actual* RPC entry with ``--version`` and return ``(version,
-    source)``. Source is ``"entry_probe"`` on success, ``"unknown"`` otherwise
-    (missing node, unbuilt entry, timeout). This is the vendor's own answer
-    about itself — the strongest runtime version evidence short of an RPC
-    handshake, and the same entry the bridge will spawn."""
-    target = Path(entry) if entry is not None else resolve_pi_rpc_entry()
-    if not target.is_file():
-        return None, "unknown"
+_ENTRY_VERSION_OUTPUT: dict[tuple[str, int], str | None] = {}
+
+
+def pi_entry_version_output(target: Path, *, timeout: float) -> str | None:
+    """Cache version output (including failed probes) until the entry changes."""
     try:
-        res = subprocess.run(
-            ["node", str(target), "--version"],
-            capture_output=True,
-            text=True,
-            timeout=PI_VERSION_PROBE_TIMEOUT,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None, "unknown"
-    if res.returncode != 0:
-        return None, "unknown"
-    m = re.fullmatch(r"(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)", res.stdout.strip())
-    if not m:
-        return None, "unknown"
-    return m.group(1), "entry_probe"
+        key = (str(target), target.stat().st_mtime_ns)
+    except OSError:
+        return None
+    if key not in _ENTRY_VERSION_OUTPUT:
+        try:
+            result = subprocess.run(
+                ["node", str(target), "--version"],
+                capture_output=True, text=True, timeout=timeout,
+            )
+            output = result.stdout.strip() if result.returncode == 0 else None
+        except (OSError, subprocess.SubprocessError):
+            output = None
+        _ENTRY_VERSION_OUTPUT[key] = output
+    return _ENTRY_VERSION_OUTPUT[key]
+
+
+def probe_pi_entry_version(entry: Path | None = None) -> tuple[str | None, str]:
+    """Return an exact version reported by the actual RPC entry and its provenance."""
+    target = Path(entry) if entry is not None else resolve_pi_rpc_entry()
+    output = pi_entry_version_output(target, timeout=PI_VERSION_PROBE_TIMEOUT)
+    if output and re.fullmatch(r"(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)", output):
+        return output, "entry_probe"
+    return None, "unknown"
 
 
 PI_AGENT_DIR = REPO_ROOT / ".pi" / "agent"
@@ -163,6 +168,33 @@ MAX_STDOUT_LINE_BYTES = int(os.environ.get("PI_MAX_STDOUT_LINE_BYTES", 16 * 1024
 # (blocking the reader) backpressures Pi's stdout pipe and can hang the
 # subprocess, which is worse.
 MAX_EVENT_QUEUE_SIZE = int(os.environ.get("PI_MAX_EVENT_QUEUE_SIZE", 1024))
+
+# ── v1.6.0 stderr 诊断行识别（观测面增量）────────────────────────────────
+# vendor/packages/coding-agent/src/modes/diagnostics-stderr.ts（v1.6.0）：
+# writeDiagnosticsToStderr 把 runtime 诊断写成 `Error: {message}` /
+# `Warning: {message}` / 无前缀 dim info 行。RPC 模式 rebind 后经
+# rpc-mode.ts setRebindSession 落 stderr（stdout 永远只走 RPC 协议）。
+# chalk 在管道（非 TTY）下退化为纯文本；FORCE_COLOR 存在时整行包 ANSI
+# 码 —— 匹配前先剥 ANSI，两种形态都命中。
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
+_STDERR_DIAGNOSTIC_PREFIXES = ("Error: ", "Warning: ")
+# 诊断消息可能列举多个文件/模型回退详情 —— 比普通 stderr 行给更宽的界。
+_STDERR_DIAG_LOG_CAP = 300
+
+
+def is_stderr_diagnostic_line(line: "str | bytes") -> bool:
+    """Pure predicate: does this stderr line carry a vendor runtime diagnostic?
+
+    Matches ``writeDiagnosticsToStderr``'s actual output format exactly
+    (``Error: ``/``Warning: `` prefixes after ANSI stripping). Bare info
+    lines carry no prefix in the vendor format — they stay DEBUG rather
+    than risk false positives on arbitrary stderr noise. Accepts bytes
+    (real pipes are binary) or str.
+    """
+    if isinstance(line, bytes):
+        line = line.decode("utf-8", errors="replace")
+    plain = _ANSI_ESCAPE_RE.sub("", line).strip()
+    return plain.startswith(_STDERR_DIAGNOSTIC_PREFIXES)
 
 
 # ── Config (CONFIG-04: env-tunable with safe defaults) ──────────────────────
@@ -784,6 +816,12 @@ class PiRpcClient:
         """Read and log stderr lines from Pi subprocess to prevent OS pipe deadlock.
 
         G37（世代钉扎）：与 _read_responses 同款 —— 只读自己代际的 stderr。
+
+        v1.6.0 起 RPC 模式 rebind 后运行时诊断经 ``writeDiagnosticsToStderr``
+        写 stderr（vendor/packages/coding-agent/src/modes/diagnostics-stderr.ts：
+        ``Error: {message}`` / ``Warning: {message}`` / 无前缀 info 行，chalk
+        上色在管道下退化为纯文本、FORCE_COLOR 时带 ANSI 码）——诊断行升级为
+        WARNING（模型回退/设置告警观测面），其余保持 DEBUG。
         ADR-0301 D5：v1.6.x RPC 模式把启动/会话替换/扩展诊断写到 stderr
         （print/JSON/RPC 模式同语义）——除 debug 日志外进入有界诊断环，
         供 stop 对账与运维快照（不进协议流、不假设语义）。
@@ -797,8 +835,14 @@ class PiRpcClient:
                     break
                 line = line.strip()
                 if line:
-                    self._stderr_diagnostics.record(line)
-                    logger.debug(f"[PiStderr] {line[:200]}")
+                    # 二进制管道 → bytes；诊断匹配/日志前先解码（errors=replace
+                    # 保证坏字节不炸读循环）。
+                    text = line.decode("utf-8", errors="replace") if isinstance(line, bytes) else line
+                    self._stderr_diagnostics.record(text)
+                    if is_stderr_diagnostic_line(text):
+                        logger.warning("[PiStderrDiagnostic] %s", text[:_STDERR_DIAG_LOG_CAP])
+                    else:
+                        logger.debug("[PiStderr] %s", text[:200])
         except asyncio.CancelledError:
             raise
         except Exception as e:

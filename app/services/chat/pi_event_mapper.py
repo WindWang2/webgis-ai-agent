@@ -114,33 +114,6 @@ def reset_vendor_event_diagnostics() -> None:
     _diag_stats.reset()
 
 
-def _handle_extension_error(
-    event: dict,
-    session_id: str,
-    cache_lookup: Optional[Callable[[str], Optional[Any]]] = None,
-    turn_stats: Optional[Callable[[], dict]] = None,
-) -> Optional[str]:
-    """v1.6.x：扩展 handler 抛错 → RPC `extension_error`（有界、脱敏、非终态）。
-
-    `extensionPath` 只留 basename（内部路径不出诊断面）；error 经 SSE 同款
-    脱敏并截断；不映射 SSE（turn 语义不被扩展错误改写——vendor 语义是记录
-    后继续，`agent_settled` 仍是唯一终判）。
-    """
-    ext = str(event.get("extensionPath", "") or "unknown")
-    ext_name = ext.rsplit("/", 1)[-1].rsplit("\\", 1)[-1][:120] or "unknown"
-    vendor_event = str(event.get("event", "") or "unknown")[:64]
-    error = _sanitize_for_client(str(event.get("error", "") or "unknown error"))[:200]
-    logger.warning(
-        "pi extension error: extension=%s event=%s error=%s", ext_name, vendor_event, error
-    )
-    _diag_stats.record("extension_error", {
-        "extension": ext_name,
-        "event": vendor_event,
-        "error": error,
-    })
-    return None
-
-
 def _handle_unknown_event(
     event: dict,
     session_id: str,
@@ -537,6 +510,52 @@ def _handle_compaction_end(event: dict, session_id: str, cache_lookup: Optional[
     })
 
 
+# extension_error 观测面字段上界（宿主完整性信号 —— 有界记录，不转发 SSE）。
+_EXTENSION_ERROR_PATH_CAP = 120
+_EXTENSION_ERROR_MSG_CAP = 300
+
+
+def _handle_extension_error(event: dict, session_id: str, cache_lookup: Optional[Callable], *, turn_stats: Optional[Callable[[], dict]] = None) -> Optional[str]:
+    """extension runner 的宿主完整性信号（#11264，v1.6.0 起 RPC 模式事件化）。
+
+    Vendor 形状（rpc-mode.ts onError）：``{type: "extension_error",
+    extensionPath, event, error}`` —— ``error`` 是 message 字符串，vendor 在
+    RPC 重发时已丢弃 ``stack``，本层同样只收 message、不收堆栈。
+
+    **丢弃 ≠ 吞掉**：返回 None（这是宿主/扩展完整性信号，不是会话内容，
+    绝不污染 SSE 流），但必须经 logger.warning 结构化落盘，让模型回退、
+    扩展 hook 崩溃等在观测面可见。原始事件本体由 bridge drain 循环
+    （agent_pi_bridge.py ``record_sse_event``）无差别写入 turn evidence ring，
+    断面恢复/审计可重放 —— 本层不重复造缝。
+    """
+    ext_path = str(event.get("extensionPath") or "unknown").replace("\\", "/")
+    ext_name = ext_path.rsplit("/", 1)[-1][:_EXTENSION_ERROR_PATH_CAP] or "unknown"
+    inner = event.get("event")
+    if isinstance(inner, dict):
+        event_kind = str(inner.get("type", "") or "")[:80]
+    elif inner:
+        event_kind = str(inner)[:80]
+    else:
+        event_kind = "<unknown>"
+    raw_error = event.get("error")
+    if isinstance(raw_error, dict):
+        raw_error = raw_error.get("message", raw_error)
+    # redact_paths：错误消息里不得出现宿主文件系统路径（无路径穿越）。
+    error_msg = _sanitize_for_client(str(raw_error if raw_error not in (None, "") else "unknown"))
+    error_msg = error_msg[:_EXTENSION_ERROR_MSG_CAP]
+    logger.warning(
+        "[PiEventMapper] extension_error (dropped from SSE, visible in logs/turn evidence): "
+        "extension=%s event=%s error=%s",
+        ext_name,
+        event_kind,
+        error_msg,
+    )
+    _diag_stats.record("extension_error", {
+        "extension": ext_name, "event": event_kind[:64], "error": error_msg[:200],
+    })
+    return None
+
+
 def _handle_extension_ui_request(event: dict, session_id: str, cache_lookup: Optional[Callable], *, turn_stats: Optional[Callable[[], dict]] = None) -> Optional[str]:
     """G29：原生 dialog 请求 → ``pi_interaction`` 卡片投影。
 
@@ -585,13 +604,13 @@ _EVENT_HANDLERS: dict[str, Callable[..., Optional[str]]] = {
     "auto_retry_end": _handle_auto_retry_end,
     "compaction_start": _handle_compaction_start,
     "compaction_end": _handle_compaction_end,
+    # #11264（v1.6.0）：extension runner 完整性信号 —— 只观测不转发 SSE。
+    "extension_error": _handle_extension_error,
     # G29：原生 UI 子协议合成事件（sink 侧富化，本层纯翻译）。
     "extension_ui_request": _handle_extension_ui_request,
     "extension_ui_update": _handle_extension_ui_update,
     "extension_ui_fire": _handle_extension_ui_fire,
     "pi_steer_disposition": _handle_pi_turn_message,
-    # v1.6.x 诊断事件（ADR-0301 D5）：有界记录、非终态、不进 SSE。
-    "extension_error": _handle_extension_error,
 }
 
 

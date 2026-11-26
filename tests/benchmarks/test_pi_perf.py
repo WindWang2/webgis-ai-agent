@@ -166,6 +166,10 @@ class TestPiRuntimeTimingLanes:
         client._process_died_event = asyncio.Event()
         client._reader_task = None
         client._stderr_task = None
+        # __new__ 旁路 __init__：spawn/runtime 代际字段（ADR-0288 W08）必须
+        # 手工补齐，否则 start() 的 spawn_epoch += 1 直接 AttributeError。
+        client.spawn_epoch = 0
+        client.runtime_epoch = ""
 
         # 桩全部阻塞/子进程步骤；reader task 桩成即时完成。
         async def _noop():
@@ -174,8 +178,8 @@ class TestPiRuntimeTimingLanes:
         client._spawn_process = lambda: None
         client._wait_for_ready = _noop
 
-        async def _stub_reader(self_):
-            return None
+        async def _stub_reader(self_, *_args):
+            return None  # start() 现以 (proc) 位置参调 reader —— 签名跟随
 
         monkeypatch.setattr(
             "app.services.chat.pi_rpc_client.PiRpcClient._read_responses",

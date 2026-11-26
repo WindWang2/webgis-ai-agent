@@ -43,11 +43,11 @@ import logging
 import os
 import re
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 
-from app.services.chat.pi_rpc_client import PI_VENDOR_DIR_ENV, probe_pi_entry_version
+from app.services.chat.pi_rpc_client import PI_VENDOR_DIR_ENV, pi_entry_version_output, probe_pi_entry_version
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +59,61 @@ VENDOR_PI_DIR = REPO_ROOT / "vendor" / "pi"
 # v1.5.1（ADR-0288）：native tool discovery（tool_search/codemode 内置扩展）、
 # nested parentToolCallId 事件、clear_queue/有序停机。
 PI_MIN_VENDOR_TAG = "v1.5.1"
+
+# ── 运行时版本握手（WP1）：探针 + 能力表 ──────────────────────────────────
+#
+# 事实模型：构建产物（rpc-entry.js）是唯一承载 wire 行为的东西 —— describe
+# 说的是「checkout 处于哪个 tag」，`node rpc-entry.js --version` 说的是「这份
+# 产物实际构建自哪个版本」。两者会真实漂移（改了 submodule 忘了 rebuild），
+# 所以 pi_doctor 的 vendor 域做三方对账（runtime probe vs describe vs
+# superproject gitlink）。
+#
+# 与 spawn 接缝的关系：RPC ``get_state`` 无版本字段（v1.5.x/v1.6.0 实测），
+# host spawn 时设 PI_SKIP_VERSION_CHECK=1 跳过 vendor 自检 —— 版本握手的
+# 唯一通道就是这条 spawn `--version` 探针。
+
+#: `node <entry> --version` 探针预算。cold start（冷 node 进程 + 大 bundle
+#: 的 require 链）实测 <2s；10s 是诊断路径的宽上限，不是 turn 路径预算。
+_RUNTIME_PROBE_TIMEOUT_S = 10.0
+
+_SEMVER_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)")
+
+
+def parse_vendor_version(text: str | None) -> tuple[int, int, int] | None:
+    """从任意 vendor 版本表述里取前三个 semver 数字。
+
+    接受探针输出（``1.6.0``）、describe（``v1.6.0`` / ``v1.6.0-3-gabc``）。
+    解析不出 → ``None``（调用方按未知版本处理，绝不猜）。
+    """
+    if not text:
+        return None
+    m = _SEMVER_RE.search(text)
+    if not m:
+        return None
+    return int(m.group(1)), int(m.group(2)), int(m.group(3))
+
+
+def vendor_capabilities(version: str | None) -> dict[str, bool]:
+    """版本字符串 → 能力位。纯函数，单一定义点。
+
+    ``None``（探测失败/未探测）→ 全 False 并以键名直说：诊断出口必须把
+    「未知」呈现为「未知」，不得暗示「已确认具备」。
+    """
+    snapshot = capabilities_for_version(version)
+    return {name: snapshot.has(cap) for name, cap in _DIAGNOSTIC_CAPABILITIES.items()}
+
+
+def probe_vendor_runtime_version(entry_path: Path) -> str | None:
+    """Spawn ``node <entry> --version`` 并解析构建产物自报的版本。
+
+    同步 subprocess（调用方负责 offload / 或接受诊断路径的一次性成本），
+    语义与 ``pi_rpc_client`` 的 spawn 对齐（同为 PATH 上的 ``node``）。
+    失败（文件缺失/node 缺失/超时/输出无 semver）→ ``None``，绝不抛。
+    """
+    output = pi_entry_version_output(Path(entry_path), timeout=_RUNTIME_PROBE_TIMEOUT_S)
+    match = _SEMVER_RE.search(output or "")
+    return match.group(0) if match else None
+
 
 # Superproject-recorded submodule pin (gitlink). Read lazily; ``None`` when the
 # deployment ships without git metadata (e.g. production image) — identity then
@@ -112,6 +167,18 @@ _CAPABILITY_MIN_VERSION: dict[PiCapability, str] = {
     PiCapability.PROVIDER_FAILURE_EVENTS: "v1.6.1",
     PiCapability.DECISION_MODEL_CLASSIFY: "v1.6.1",
     PiCapability.RPC_LINE_SCAN_FIX: "v1.6.1",
+}
+
+
+# Stable field names consumed by pi_doctor's JSON report.
+_DIAGNOSTIC_CAPABILITIES = {
+    "clear_queue_ordered_shutdown": PiCapability.ORDERED_SHUTDOWN,
+    "prompt_disposition": PiCapability.PROMPT_DISPOSITION,
+    "nested_parent_tool_call_id": PiCapability.NESTED_TOOL_EVENTS,
+    "abort_batch_tool_results": PiCapability.ABORT_BATCH_TERMINAL,
+}
+PI_VENDOR_CAPABILITIES = {
+    name: _CAPABILITY_MIN_VERSION[cap] for name, cap in _DIAGNOSTIC_CAPABILITIES.items()
 }
 
 
@@ -253,6 +320,9 @@ class PiVendorIdentity:
     entry_sha256_16: str | None = None  # first 16 hex of the entry file digest
     manifest_state: str = "unknown"  # "absent"|"consistent"|"manifest_only"|"pin_mismatch"|"entry_drift"|"unparsed"
     manifest_pin: str | None = None  # pin recorded by .build-manifest.json
+    # Optional diagnostic view of the entry's self-reported version.
+    runtime_version: str | None = None
+    runtime_version_source: str = "unavailable"  # "runtime_probe" | "unavailable"
 
     @property
     def entry_built(self) -> bool:
@@ -287,11 +357,13 @@ class PiVendorIdentity:
         return got >= floor
 
     def summary_line(self) -> str:
+        runtime = self.runtime_version or "?"
         return (
             f"pi vendor: head={self.head_commit or '?'}"
             f"({self.head_commit_source}) describe={self.describe or '?'} "
             f"expected={self.expected_pin or '?'} match={self.matches_expected_pin} "
             f"entry={self.entry_kind or 'UNBUILT'} node={self.node_version or '?'} "
+            f"runtime={runtime}({self.runtime_version_source}) "
             f"floor={PI_MIN_VENDOR_TAG} meets_floor={self.meets_floor} "
             f"tree_mode={self.tree_mode or '?'} version={self.observed_version or '?'}"
             f"({self.observed_version_source}) manifest={self.manifest_state} "
@@ -478,6 +550,24 @@ def pi_vendor_identity() -> PiVendorIdentity:
         entry_sha256_16=entry_digest,
         manifest_state=manifest_state,
         manifest_pin=manifest_pin,
+    )
+
+
+def attach_runtime_version(identity: PiVendorIdentity) -> PiVendorIdentity:
+    """对已构建 entry 跑一次 ``--version`` 探针，回填 identity 的版本字段。
+
+    只在 ``entry_built`` 时 probe；未构建/探针失败 → ``unavailable``（字段
+    保持诚实：没有测量就没有数字）。返回新 dataclass（frozen，原对象不动）。
+    """
+    if not identity.entry_built or not identity.entry_path:
+        return identity
+    version = probe_vendor_runtime_version(Path(identity.entry_path))
+    if version is None:
+        return identity
+    return replace(
+        identity,
+        runtime_version=version,
+        runtime_version_source="runtime_probe",
     )
 
 

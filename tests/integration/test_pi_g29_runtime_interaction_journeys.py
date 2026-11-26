@@ -322,18 +322,25 @@ def _start_fake_redis():
     import threading as _th
 
     import fakeredis
-    import fakeredis._tcp_server as _tcp
+    try:
+        import fakeredis._tcp_server as _tcp  # 旧 fakeredis：模块在包顶层
+    except ImportError:
+        _tcp = None  # fakeredis ≥2.4x：模块移至 fakeredis._clients._tcp_server
 
-    # fakeredis TcpFakeServer 默认 Resp3Writer —— redis-py 默认 RESP2 客户端
-    # 收到 `_`（RESP3 null）即 Protocol Error。补丁：连接 writer 换 Resp2
-    # （真实 redis-server 对 RESP2 客户端就是这个行为；仅 driver 进程内生效）。
-    _orig_setup = _tcp.TCPFakeRequestHandler.setup
+    if _tcp is not None:
+        # 旧形状补丁：TcpFakeServer 默认 Resp3Writer —— redis-py 默认 RESP2
+        # 客户端收到 `_`（RESP3 null）即 Protocol Error。连接 writer 换 Resp2
+        # （真实 redis-server 对 RESP2 客户端就是这个行为；仅 driver 进程内生效）。
+        _orig_setup = _tcp.TCPFakeRequestHandler.setup
 
-    def _resp2_setup(self):
-        _orig_setup(self)
-        self.writer = _tcp.Resp2Writer(self.client_address, self.wfile, self)
+        def _resp2_setup(self):
+            _orig_setup(self)
+            self.writer = _tcp.Resp2Writer(self.client_address, self.wfile, self)
 
-    _tcp.TCPFakeRequestHandler.setup = _resp2_setup
+        _tcp.TCPFakeRequestHandler.setup = _resp2_setup
+    # 新形状（fakeredis ≥2.4x）：连接默认 RESP2 起步（_INTERNAL_CONNECTION_KWARGS
+    # protocol=2，仅客户端显式协商才升级 RESP3）—— 旧 ProtocolError 面原生
+    # 消除，无需补丁。
 
     server = fakeredis.TcpFakeServer(("127.0.0.1", 0))
     _th.Thread(target=server.serve_forever, daemon=True).start()

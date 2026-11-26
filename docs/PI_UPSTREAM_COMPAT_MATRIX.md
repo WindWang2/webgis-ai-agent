@@ -1,6 +1,7 @@
 # Pi 上游兼容矩阵（PI_UPSTREAM_COMPAT_MATRIX）
 
 > G01-PI-NATIVE-RUNTIME / PI-10；G12 更新（ADR-0288）；G22 升级 v1.5.2；
+> 01 线升级 v1.6.0（ADR-0300）。
 > goal-pi-native-gis-host-20261125 升级 v1.6.1（ADR-0301）。
 > 当前 pin：**v1.6.1**（gitlink `ef4a1cfcca62b77ad3558337ff3e1c7f6beeadfe`，
 > 上游 `earendil-works/pi`，原 `badlogic/pi-mono`；lightweight tag，
@@ -14,6 +15,9 @@
 > （#2169 symlink 回归类 → doctor FAIL，§4.5 C17）。
 > 纪律：**不擅自升级**——升级需先更新本矩阵 + contract tests，走 feature-gated
 > adapter（ADR-0282 语义）。
+> 注：2026-11-16 ~ 2026-11-25 期间 master 的 vendor/pi 曾是 broken symlink
+> （1b3f9e415 误把 gitlink 换成本机绝对路径 symlink）；01 线先恢复 gitlink
+> （v1.5.2）再升级 v1.6.0。
 
 ## 1. 依赖的 v1.5.1 契约面（本仓库消费的 API/协议）
 
@@ -35,6 +39,10 @@
 | C14 | `clear_queue` RPC（Esc 语义：先清 steer/follow-up 队列再 abort）；abort 等 idle 后响应；停机：首 SIGTERM/SIGHUP 有序清理（dispose 等 tool settlement + credential writes，可数秒），第二信号立即强退，EOF 后信号不中断清理 | `PiBridge.abort`（用户级完全停止）、`PiRpcClient.stop`（EOF→有界等待→terminate→kill） | W07 单测 + chaos 回归 |
 | C15 | `registerTool` 原生 exposure/namespace/annotations/reachesTools 字段（`ToolExposure = direct|model-only|codemode|deferred|hidden`；annotations 为 MCP 语义提示，**不是授权事实**） | dump v4 + `index.mjs` 注册透传 | `test_pi_dynamic_surface.py` v4 用例 |
 | C16 | v1.5.1 根 `package-lock.json` 存在（v1.5.0 无）→ `build-vendor-pi.sh` 走 `npm ci`（可复现）；`jiti` 仍 `2.7.0`（bundle 加载锁版不变） | `scripts/build-vendor-pi.sh` | 构建产物 + 隔离包旅程 |
+| C17 | v1.6.0 abort 批量终态（#9986）：abort 时批量中未执行的工具也拿到 "Operation aborted" error tool result（两路批次循环不再 abort break；`runToolCall` 先查 aborted 再跑 hooks）→ transcript 每个 toolCallId 都有终态；`emitToolExecutionEnd` 对未 start 的调用只发 end 不补 start | `PiBridge.abort`（CONC-F1 快照不变）、`pi_event_mapper._handle_tool_execution_end`（无 start 无 cache → 诚实 step_error） | 契约车道 abort-batch 用例（v1.5.2 红/v1.6.0 绿）+ mapper 单测 |
+| C18 | v1.6.0 RPC 会话替换（#10470）：`new_session`/`switch_session`/`fork`/`clone` 的扩展 `session_start`/`resources_discover` 单次触发；订阅先于 `bindExtensions`（session_start handler 发出的事件可达 RPC 客户端）；rebind 后运行时诊断写 **stderr**（`takeUnreportedDiagnostics()` 为 SDK-host API，不经 RPC 可达） | `_isolate_vendor_session`（new_session 消费点）、`index.mjs session_start`（幂等激活）、`pi_rpc_client._read_stderr`（诊断行 WARNING，并保留有界统计） | 契约车道 new_session 工具面存活用例 |
+| C19 | v1.6.0 扩展错误事件化（#11264）：`pi.events` handler 异常在 RPC 模式发 `extension_error` 事件（`{type, extensionPath, event, error}`）；`enabledModels` 类告警不再逐命令重复刷 stderr | `pi_event_mapper`（告警日志和有界事件统计） | 事件词表复核（§3 清单第 5 步） |
+| C20 | v1.6.0 provider 容错：#12049 增量谓词（`constrained-sampling.ts makeJsonSchemaNodeStrict`）——节点无 `type` 且无 `anyOf` 且无 `enum`（裸 `const` 不算 typed）→ strict 静默降级 non-strict；`$ref`/`oneOf` 等 keyword 拒绝 v1.5.2 已存在（非增量）。#12067 Anthropic non-strict 显式执行额外参数禁令。socket 错误（ECONNRESET/EPIPE/ETIMEDOUT）与 "Connection closed." 触发自动重试 | dump schema 卫生（`test_pi_native_surface.py` 上游完整谓词移植、分桶披露：native 前门 xfail(strict) 钉 `query_local_poi` + `webgis_component_update`；长尾 opt-in fallout 252/529）。**接入条件**：扩展 `registerTool` 未设 `constrainedSampling` → 线上 `strict:false`，#12049 降级路径尚未触发，车道为预接入卫生 | schema 卫生车道 + chaos provider failure 用例 |
 
 ## 2. 引擎/环境下限
 
@@ -56,6 +64,33 @@
    嵌套事件形状、内置扩展激活面。
 6. **禁止**：在新版发布证据（tag/release notes + 上述测试绿）之前引入未发布
    API；禁止跳过矩阵直接升 pin。
+
+## 4b. v1.5.2 → v1.6.0 差异裁决（ADR-0300，2026-11-25）
+
+四栏口径：
+
+- **已消费协议**：`rpc.md`/`json.md`/`rpc-extension-ui.md` 与 v1.5.2
+  **逐字节一致**（本机 diff 核实）；`rpc-commands.md` 差 1 行纯文档
+  （未消费命令 `get_last_assistant_text` 补记 #12119 行为）→ wire 兼容；
+  变化全部是行为修复：C17（abort 批量终态）、C18（会话替换单次
+  session_start + 订阅先于 bindExtensions + 诊断走 stderr）、C19
+  （`extension_error` 事件化）、C20（strict 降级/schema 卫生、socket 重试）。
+- **新能力（本仓消费）**：C17/C18/C19/C20；`get_last_assistant_text` 跳过
+  abort 后无文本消息（#12119，本仓未消费，记录在案）；
+  `AgentSessionRuntime.takeUnreportedDiagnostics()`（SDK-host API，不经
+  RPC 可达，不消费）。
+- **破坏性变化（评估不触及本仓消费面）**：扩展组件 `render()` 返回
+  `readonly string[]`（本仓扩展 headless，无 render/Component 使用）；
+  `openai` 传递依赖 7.19.0 → 7.59.0（重建必须 `--reinstall`）；Qwen Token
+  Plan 网关更名（本仓 provider 走 openai-completions + 管理员目录投影）。
+- **项目采纳**：**升级 pin v1.5.2 → v1.6.0**（tag `faac58588`）。
+  证据：pi_doctor 六域 no-FAIL（529 tools / native 7/7 / 活体 RPC）；
+  `test_pi_vendor_contract.py` 13 passed（含 C17/C18 新用例）；8 文件 Pi
+  批次 47 passed；`--version` 产物自报 1.6.0 与 describe 对账一致。
+- **回退**：gitlink 回 `b4afdddf4`（v1.5.2）+ `build-vendor-pi.sh
+  --reinstall` + doctor/契约复跑（floor 不动）。C17 依赖方（mapper 合成
+  end 路径）在 v1.5.2 下自然回到「无 end」行为——mapper fallback 分支
+  两条路径都已单测覆盖。
 
 ## 4. v1.5.0 → v1.5.1 差异裁决（ADR-0288，2026-11-10）
 
@@ -147,4 +182,5 @@
 | v1.5.0 | PR #1973（ADR-0282） | 两段加载/prompt disposition/pi-schema 校验等契约面以此为准 |
 | v1.5.1 | G12（ADR-0288） | 原生工具发现/嵌套调用/有序停机契约面（C11–C16）以此为准；floor 下限 |
 | v1.5.2 | G22（2026-11-11） | pin-only 升级；消费面零漂移（§4 正式裁决）；interactive missing-cwd UX/导入清理不触及 rpc 面 |
+| v1.6.0 | 01 线（ADR-0300，2026-11-25） | 行为修复升级（C17–C20）；wire 文档零漂移；前置修复 master broken symlink（1b3f9e415 回归） |
 | **v1.6.1**（当前） | goal-pi-native-gis-host-20261125（ADR-0301，2026-11-26） | 先修 #2169 symlink 回归再升 pin；消费面零漂移（§4.5 裁决，json/rpc/rpc-extension-ui 文档逐字节一致）；新契约面 C17–C24（供应链守卫/manifest/版本探针/能力快照/v1.6.x 生命周期与 provider 事件）|
