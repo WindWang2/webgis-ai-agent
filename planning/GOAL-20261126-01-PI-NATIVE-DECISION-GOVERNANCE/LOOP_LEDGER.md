@@ -38,3 +38,24 @@
 - 主机 16 核，load≈10（五线并发）；本线 pytest 单进程；vendor build 独立
   worktree 目录；无共享可写 node_modules。
 - 单测全文件约 2.5–4.5 min（含 entry_probe spawn），集成车道待实测。
+
+## R2（2026-11-27）WP2 + WP3 实现
+
+**事实**
+- WP2 核心提交 6f60d2c35（pi_decision.py + 46 用例）；接线提交 f65abd221
+  （pi_decision_wiring.py + map_plan_tools 接线 + 8 用例 + 既有回归 6 passed）。
+- WP3 提交 6c58d83bc（query_local_poi typed args_model，bare 桶清零；
+  xfail reason 同步；15 用例；回归 62 passed + 1 xfailed）。
+- 架构裁定：classify 不适合 dispatch 内同步往返（扩展被占用）→ opt-in
+  协议 + 传输注入点留白，如实披露；docs/PI_UPSTREAM_COMPAT_MATRIX.md §6 已记。
+
+**验证**
+- tests/unit/test_pi_decision.py 46 passed；test_pi_decision_wiring.py 8 passed；
+  test_pi_schema_poi_typed.py 15 passed；test_pi_native_surface.py 14 passed +
+  1 xfailed；test_local_stats_data/test_pi_tool_spec/test_pi_surface_parity 62 passed；
+  cartography/test_map_plan_tools_v1.py 6 passed。Ruff 全绿。
+- stub journey 旗舰车道后台运行中（PI_JOURNEY_E2E=1）。
+
+**通过？** WP2/WP3 本地闸 ✅（journey 待回填）。
+
+**下一步**：WP4 审计结论落账 → 独立 review 子代理 → 修复 → PR。
