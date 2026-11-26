@@ -45,6 +45,7 @@ import zhFieldCompute from '@/messages/zh-CN/fieldCompute.json'
 import zhRasterSampling from '@/messages/zh-CN/rasterSampling.json'
 import zhGeoreferencing from '@/messages/zh-CN/georeferencing.json'
 import zhTopology from '@/messages/zh-CN/topology.json'
+import zhTopologyEditing from '@/messages/zh-CN/topologyEditing.json'
 import zhMarket from '@/messages/zh-CN/market.json'
 import zhFlow from '@/messages/zh-CN/flow.json'
 import zhDataDelivery from '@/messages/zh-CN/dataDelivery.json'
@@ -95,6 +96,7 @@ import enFieldCompute from '@/messages/en-US/fieldCompute.json'
 import enRasterSampling from '@/messages/en-US/rasterSampling.json'
 import enGeoreferencing from '@/messages/en-US/georeferencing.json'
 import enTopology from '@/messages/en-US/topology.json'
+import enTopologyEditing from '@/messages/en-US/topologyEditing.json'
 import enMarket from '@/messages/en-US/market.json'
 import enFlow from '@/messages/en-US/flow.json'
 import enDataDelivery from '@/messages/en-US/dataDelivery.json'
@@ -153,6 +155,7 @@ export interface AppMessages {
   rasterSampling: typeof zhRasterSampling
   georeferencing: typeof zhGeoreferencing
   topology: typeof zhTopology
+  topologyEditing: typeof zhTopologyEditing
   cartogram: typeof zhCartogram
   modelBuilder: typeof zhModelBuilder
 }
@@ -185,6 +188,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     rasterSampling: zhRasterSampling,
     georeferencing: zhGeoreferencing,
     topology: zhTopology,
+    topologyEditing: zhTopologyEditing,
     story: zhStory,
     geoai: zhGeoai,
     commands: zhCommands,
@@ -236,6 +240,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     rasterSampling: enRasterSampling as unknown as AppMessages['rasterSampling'],
     georeferencing: enGeoreferencing as unknown as AppMessages['georeferencing'],
     topology: enTopology as unknown as AppMessages['topology'],
+    topologyEditing: enTopologyEditing as unknown as AppMessages['topologyEditing'],
     story: enStory as unknown as AppMessages['story'],
     geoai: enGeoai as unknown as AppMessages['geoai'],
     commands: enCommands as unknown as AppMessages['commands'],

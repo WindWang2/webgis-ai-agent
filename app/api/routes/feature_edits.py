@@ -11,12 +11,15 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 
 from app.models.db_model import Conversation
 from app.schemas.feature_edit_schema import (
+    ConstraintsInspectRequest,
     DatasetCreateRequest,
     EditableCopyRequest,
     FeatureEditPreviewRequest,
+    ImpactPreviewRequest,
     PlanDecisionRequest,
     PolicyPutRequest,
     PromoteSketchRequest,
+    RevalidateRequest,
 )
 from app.services.auth_history_bridge import require_owned_session
 from app.services.distributed_lock import (
@@ -47,7 +50,7 @@ async def preview_feature_edit(
     req: FeatureEditPreviewRequest,
     _conv: Conversation = Depends(require_owned_session),
 ) -> Dict[str, Any]:
-    ops = [op.model_dump(by_alias=True, exclude_none=True) for op in req.ops]
+    ops = [op.model_dump_op() for op in req.ops]
     # 预览编排统一走 service（与工具路径同一条：目标解析/IR 投影 try 守卫/
     # snap 预取字段名 ref_id —— R1 P1-1/P2-6：路由侧第二份实现曾用旧字段名
     # target_ref，导致 REST 面 snap 预览恒被拒）。
@@ -335,3 +338,60 @@ async def get_feature_lineage(
         if len(events) >= max(1, min(limit, 50)):
             break
     return {"ref_id": ref_id, "events": events[: max(1, min(limit, 50))], "queried_wfid": wfid}
+
+
+# ── 共享拓扑约束面（goal-gis-topology-authoring / ADR-0300；全部只读） ─────
+
+@router.post("/sessions/{session_id}/feature-edits/{ref_id}/constraints/inspect")
+async def inspect_feature_edit_constraints(
+    session_id: str,
+    ref_id: str,
+    req: ConstraintsInspectRequest,
+    _conv: Conversation = Depends(require_owned_session),
+) -> Dict[str, Any]:
+    """约束面检查：声明规则 + 共享结构摘要 + 基线违规 + 邻接视图（有界）。"""
+    result = await fe_service.inspect_edit_constraints(
+        session_id,
+        ref_id,
+        tolerance_m=req.tolerance_m,
+        level_field=req.level_field,
+        neighbor_wfids=req.wfids,
+    )
+    if not result.get("success") and result.get("code") in ("dataset_not_found",):
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    return result
+
+
+@router.post("/sessions/{session_id}/feature-edits/{ref_id}/impact")
+async def preview_feature_edit_impact(
+    session_id: str,
+    ref_id: str,
+    req: ImpactPreviewRequest,
+    _conv: Conversation = Depends(require_owned_session),
+) -> Dict[str, Any]:
+    """候选 op 的有界影响投影（纯读，不落 plan store —— 与 preview 互补）。"""
+    result = await fe_service.impact_preview(
+        session_id,
+        ref_id,
+        req.ops,
+        feature_ids=req.feature_ids,
+        tolerance_m=req.tolerance_m,
+        level_field=req.level_field,
+    )
+    if not result.get("success") and result.get("code") in ("dataset_not_found",):
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    return result
+
+
+@router.post("/sessions/{session_id}/feature-edits/{ref_id}/revalidate")
+async def revalidate_feature_edit_constraints(
+    session_id: str,
+    ref_id: str,
+    _req: RevalidateRequest,
+    _conv: Conversation = Depends(require_owned_session),
+) -> Dict[str, Any]:
+    """声明规则在当前修订版上的复检（编辑后质量闭环；只读）。"""
+    result = await fe_service.revalidate_edit_constraints(session_id, ref_id)
+    if not result.get("success") and result.get("code") in ("dataset_not_found",):
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    return result

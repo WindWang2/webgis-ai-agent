@@ -126,6 +126,193 @@ def summarize(plan: Dict[str, Any], findings: List[EditFinding]) -> PlanSummary:
     return summary
 
 
+# ── 共享拓扑约束面（goal-gis-topology-authoring；REST 与工具共用的只读编排） ──
+
+async def _constraint_payload(session_id: str, ref_id: str) -> Any:
+    payload = await session_data_manager.get(session_id, ref_id)
+    if payload is None:
+        return None
+    return payload
+
+
+def _apply_match_defaults(ops: List[Dict[str, Any]], tolerance_m: Any, level_field: Any) -> List[Dict[str, Any]]:
+    """调用级匹配规则默认注入（op 未显式声明时才补 —— op 级优先）。
+
+    仅注入**共享拓扑 op**（R1-F8：snap_to_ref 等既有 op 有自己的容差语义，
+    注入会让 impact 投影偏离真实 preview 路径）。
+    """
+    import copy as _copy
+
+    from app.services.feature_edit.contracts import SHARED_GEOMETRY_OPS
+
+    out = _copy.deepcopy(ops)
+    for op in out:
+        if not isinstance(op, dict) or op.get("op") not in SHARED_GEOMETRY_OPS:
+            continue
+        if tolerance_m is not None and op.get("tolerance_m") is None:
+            op["tolerance_m"] = tolerance_m
+        if level_field is not None and op.get("level_field") is None:
+            op["level_field"] = level_field
+    return out
+
+
+async def inspect_edit_constraints(
+    session_id: str,
+    ref_id: str,
+    *,
+    tolerance_m: Any = None,
+    level_field: Any = None,
+    neighbor_wfids: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """约束面检查（只读）：声明规则 + 共享结构摘要 + 基线违规 + 悬挂端点。"""
+    payload = await _constraint_payload(session_id, ref_id)
+    if payload is None:
+        return {"success": False, "code": "dataset_not_found", "message": f"ref not resolvable: {str(ref_id)[:48]}"}
+    from app.services.feature_edit.plan import extract_fc
+    from app.services.feature_edit.shared_topology import build_shared_index, inspect_shared_structure
+    from app.services.feature_edit.topology import check_topology, extract_topology_declaration
+
+    fc = extract_fc(payload)
+    if fc is None:
+        return {"success": False, "code": "dataset_not_editable", "message": "payload is not a geojson FeatureCollection"}
+    n_features = len(fc.get("features") or [])
+    if n_features > 20_000:
+        return {"success": False, "code": "dataset_too_large_to_edit", "message": "dataset exceeds editable size", "detail": {"features": n_features}}
+    # 索引对物化形态构建（与编辑路径同源）；未物化数据集先确定性物化。
+    from app.services.feature_edit.plan import needs_materialization
+    from app.services.feature_edit.identity import materialize_wfids
+    from app.services.data_ingest.pipeline import compute_payload_fingerprint
+
+    preview_fc = fc
+    if needs_materialization(fc):
+        preview_fc, _ = materialize_wfids(fc, compute_payload_fingerprint(payload))
+    index, index_findings = build_shared_index(preview_fc, tolerance_m=tolerance_m, level_field=level_field)
+    declaration = extract_topology_declaration(payload)
+    out: Dict[str, Any] = {
+        "ref_id": ref_id,
+        "declared_rules": list(declaration.get("rules") or []),
+        "topology_tolerance_m": declaration.get("tolerance_m"),
+    }
+    # 调用者的 wfids 可能是自然 id —— 归一到物化身份空间再查邻接。
+    resolved_neighbors: Optional[List[str]] = None
+    if neighbor_wfids:
+        from app.services.feature_edit.identity import natural_to_wfid_index
+
+        nat_index = natural_to_wfid_index(preview_fc)
+        resolved_neighbors = [nat_index.get(w, w) for w in neighbor_wfids]
+    if index is not None:
+        view = inspect_shared_structure(index, neighbor_wfids=resolved_neighbors)
+        out.update(view)
+    if index_findings:
+        # index_too_large / 容差非法等 typed 否定面照实披露（fail-closed 不降级）。
+        out["index_findings"] = index_findings[:8]
+    if declaration.get("rules"):
+        baseline = check_topology(preview_fc, list(index.paths) if index else [], declaration)
+        out["baseline_findings"] = baseline[:24]
+        out["baseline_total"] = len(baseline)
+    return {"success": True, **out}
+
+
+async def impact_preview(
+    session_id: str,
+    ref_id: str,
+    ops: List[Dict[str, Any]],
+    *,
+    feature_ids: Optional[List[str]] = None,
+    tolerance_m: Any = None,
+    level_field: Any = None,
+) -> Dict[str, Any]:
+    """get_impact：候选 op 的有界影响投影（纯读 —— 绝不落 plan store）。"""
+    payload = await _constraint_payload(session_id, ref_id)
+    if payload is None:
+        return {"success": False, "code": "dataset_not_found", "message": f"ref not resolvable: {str(ref_id)[:48]}"}
+    descriptor = await session_data_manager.get_ref_descriptor(session_id, ref_id) or {}
+    revision = int(descriptor.get("content_revision") or 0)
+    from app.services.data_ingest.pipeline import compute_payload_fingerprint
+    from app.services.feature_edit.plan import build_plan, summarize_plan
+
+    norm_ops = _apply_match_defaults(ops, tolerance_m, level_field)
+    plan, findings = build_plan(
+        ref_id=ref_id,
+        payload=payload,
+        ops=norm_ops,
+        requested_ids=feature_ids,
+        selection=None,
+        dataset_fingerprint=compute_payload_fingerprint(payload),
+        content_revision=revision,
+    )
+    out: Dict[str, Any] = {
+        "success": True,
+        "ref_id": ref_id,
+        "committable": bool(plan.get("committable")),
+        "findings": findings[:8],
+        "op_summaries": plan.get("op_summaries") or [],
+    }
+    impact = plan.get("impact")
+    if isinstance(impact, dict):
+        out["touched_features"] = impact.get("touched_features")
+        out["affected_neighbors"] = impact.get("affected_neighbors") or []
+        out["neighbors_truncated"] = impact.get("neighbors_truncated")
+        out["measure_delta"] = impact.get("measure_delta")
+        out["atomicity"] = impact.get("atomicity")
+    topology_context = plan.get("topology_context")
+    if isinstance(topology_context, dict):
+        out["new_violations"] = topology_context.get("new_violations")
+        out["existing_violations"] = topology_context.get("existing_violations")
+        out["existing"] = topology_context.get("existing") or []
+    summary = summarize_plan(plan)
+    out["preview"] = summary.get("preview") or []
+    return out
+
+
+async def revalidate_edit_constraints(session_id: str, ref_id: str) -> Dict[str, Any]:
+    """revalidate：当前修订版的声明规则复检（编辑后质量闭环；只读）。"""
+    payload = await _constraint_payload(session_id, ref_id)
+    if payload is None:
+        return {"success": False, "code": "dataset_not_found", "message": f"ref not resolvable: {str(ref_id)[:48]}"}
+    from app.services.feature_edit.identity import materialize_wfids
+    from app.services.feature_edit.plan import needs_materialization
+    from app.services.feature_edit.plan import extract_fc
+    from app.services.feature_edit.topology import check_topology, extract_topology_declaration
+    from app.services.data_ingest.pipeline import compute_payload_fingerprint
+
+    fc = extract_fc(payload)
+    if fc is None:
+        return {"success": False, "code": "dataset_not_editable", "message": "payload is not a geojson FeatureCollection"}
+    declaration = extract_topology_declaration(payload)
+    rules = list(declaration.get("rules") or [])
+    if not rules:
+        return {
+            "success": True,
+            "ref_id": ref_id,
+            "rules": [],
+            "findings": [],
+            "baseline_total": 0,
+            "note": "no topology rules declared on this dataset (declared-rules-only discipline)",
+        }
+    preview_fc = fc
+    if needs_materialization(fc):
+        preview_fc, _ = materialize_wfids(fc, compute_payload_fingerprint(payload))
+    from app.services.feature_edit.contracts import WFID_PROP as _WFID_PROP
+
+    all_wfids = []
+    for feature in preview_fc.get("features") or []:
+        if isinstance(feature, dict):
+            props = feature.get("properties")
+            wfid = props.get(_WFID_PROP) if isinstance(props, dict) else None
+            if isinstance(wfid, str):
+                all_wfids.append(wfid)
+    findings = check_topology(preview_fc, all_wfids, declaration)
+    return {
+        "success": True,
+        "ref_id": ref_id,
+        "rules": rules,
+        "findings": findings[:24],
+        "baseline_total": len(findings),
+        "checked_wfids": len(all_wfids),
+    }
+
+
 async def agent_commit(session_id: str, plan_id: str) -> Dict[str, Any]:
     """Agent 工具提交：policy 闸（safe 属性面）+ 幂等 + 同一 executor 路径。"""
     plan = await fe_executor.get_plan(session_id, plan_id)

@@ -10,9 +10,11 @@
 import { useT } from '@/lib/i18n/useT';
 
 import type {
+  FeatureEditImpactSummary,
   FeatureEditOpSummary,
   FeatureEditPreviewItem,
   FeatureEditProposalState,
+  FeatureEditTopologyContext,
 } from '@/lib/types/feature-edit';
 
 interface EditProposalCardProps {
@@ -42,6 +44,66 @@ function formatValue(v: unknown): string {
   if (v === null || v === undefined) return '∅';
   if (typeof v === 'string') return v.length > 48 ? `${v.slice(0, 48)}…` : v;
   return String(v);
+}
+
+/** 带符号的有界量值（服务端保留 3 位小数；展示收敛到 2 位 + 正号显式）。 */
+function formatSignedDelta(v: number): string {
+  const rounded = Math.round(v * 100) / 100;
+  return `${rounded > 0 ? '+' : ''}${rounded}`;
+}
+
+/**
+ * ADR-0300 共享拓扑影响段（additive：仅共享 op 的 plan 带这些字段）。
+ * 有界渲染：固定行数的计数/量值投影，不展开邻接清单 —— 权威传播范围以
+ * 服务端 plan summary 为准。
+ */
+function ImpactSection({
+  summary,
+  context,
+}: {
+  summary?: FeatureEditImpactSummary;
+  context?: FeatureEditTopologyContext;
+}) {
+  const t = useT('topologyEditing');
+  const newViolations = context?.new_violations ?? 0;
+  const existingViolations = context?.existing_violations ?? 0;
+  const crossDatasetBlocked = summary?.atomicity?.cross_dataset === 'blocked';
+  return (
+    <div
+      data-testid="edit-proposal-impact"
+      className="mb-2 space-y-0.5 rounded border border-neutral-700/60 bg-neutral-900/40 px-2 py-1.5 text-xs"
+    >
+      <div className="text-neutral-300">
+        {t('impactSection.touched', { count: summary?.touched_features ?? 0 })}
+        {' · '}
+        {t('impactSection.neighbors', { count: summary?.affected_neighbors ?? 0 })}
+        {summary?.neighbors_truncated ? (
+          <span className="ml-1 text-amber-400">{t('impactSection.truncated')}</span>
+        ) : null}
+      </div>
+      {summary?.area_delta_m2 != null ? (
+        <div className="text-sky-400">{t('impactSection.areaDelta', { delta: formatSignedDelta(summary.area_delta_m2) })}</div>
+      ) : null}
+      {summary?.length_delta_m != null ? (
+        <div className="text-sky-400">{t('impactSection.lengthDelta', { delta: formatSignedDelta(summary.length_delta_m) })}</div>
+      ) : null}
+      {context ? (
+        <div className="flex items-center gap-1.5 text-neutral-300">
+          <span aria-hidden className={newViolations > 0 ? 'text-red-400' : 'text-emerald-400'}>●</span>
+          <span className={newViolations > 0 ? 'text-red-400' : 'text-emerald-400'}>
+            {t('impactSection.newViolations', { count: newViolations })}
+          </span>
+          <span aria-hidden>/</span>
+          <span className="text-neutral-400">
+            {t('impactSection.existingViolations', { count: existingViolations })}
+          </span>
+        </div>
+      ) : null}
+      {crossDatasetBlocked ? (
+        <div className="text-amber-400">{t('impactSection.blockedCrossDataset')}</div>
+      ) : null}
+    </div>
+  );
 }
 
 function DiffRows({ preview }: { preview: FeatureEditPreviewItem[] }) {
@@ -93,6 +155,12 @@ export function EditProposalCard({ proposal, disabled, onDecide }: EditProposalC
     replace_geometry: t('chat.editProposal.opReplaceGeometry'),
     split_feature: t('chat.editProposal.opSplitFeature'),
     merge_features: t('chat.editProposal.opMergeFeatures'),
+    // ADR-0300 共享拓扑 op（词表 additive；标签来自新 namespace，chat.json 不动）
+    move_shared_vertex: t('topologyEditing.ops.moveSharedVertex'),
+    insert_shared_vertex: t('topologyEditing.ops.insertSharedVertex'),
+    delete_shared_vertex: t('topologyEditing.ops.deleteSharedVertex'),
+    reshape_shared_edge: t('topologyEditing.ops.reshapeSharedEdge'),
+    connect_endpoint: t('topologyEditing.ops.connectEndpoint'),
   };
   const terminal = ['applied', 'rejected', 'stale', 'conflicted', 'expired'].includes(proposal.status);
   const busy = proposal.status === 'approving';
@@ -132,6 +200,10 @@ export function EditProposalCard({ proposal, disabled, onDecide }: EditProposalC
       </ul>
 
       {proposal.preview.length > 0 ? <DiffRows preview={proposal.preview} /> : null}
+
+      {proposal.impact_summary || proposal.topology_context ? (
+        <ImpactSection summary={proposal.impact_summary} context={proposal.topology_context} />
+      ) : null}
 
       {proposal.status === 'applied' && proposal.receipt ? (
         <div className="mt-2 text-xs text-emerald-400" data-testid="edit-proposal-applied-receipt">
