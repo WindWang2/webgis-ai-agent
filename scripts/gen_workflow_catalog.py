@@ -148,10 +148,6 @@ def _all_with_workflow(registry):
             if registry.get(rid) is not None and registry.get(rid).workflow is not None]
 
 
-def _domain_of(registry, module: str) -> str:
-    return module
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true",

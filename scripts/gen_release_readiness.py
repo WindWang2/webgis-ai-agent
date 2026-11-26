@@ -101,9 +101,16 @@ def _load_runner_evidence(path: str | None) -> dict:
         "sha256": hashlib.sha256(p.read_bytes()).hexdigest(),
         "total_s": report.get("total_s"),
     }
+    raw_lanes = report.get("lanes", [])
+    if not isinstance(raw_lanes, list) or not all(
+            isinstance(ln, dict) for ln in raw_lanes):
+        # lanes 是 JSON 对象 / 条目非 dict：不可信 → not-run 降级（不伪造
+        # pass，也不 traceback —— 文档承诺的降级路径）
+        return {"lanes": {lane: "not-run" for lane in KNOWN_LANES},
+                "reason": f"报告 lanes 结构不符: {path}", "evidence": None}
     lanes = {}
     for lane in KNOWN_LANES:
-        entry = next((ln for ln in report.get("lanes", [])
+        entry = next((ln for ln in raw_lanes
                       if ln.get("lane") == lane), None)
         if entry is None:
             lanes[lane] = "not-run"

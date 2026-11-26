@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import io
+import json
 
 import pytest
 
@@ -216,3 +217,97 @@ def test_blocking_predicate_matches_adr_0065_tiers():
     assert mod._is_blocking("pr-blocking") is True
     assert mod._is_blocking("nightly-only") is False
     assert mod._is_blocking("quarantine") is False
+
+
+# ── verify 逐场景异常兜底（review 修复：单场景崩溃不中断整轮） ──────────────
+
+
+def _load_golden_baseline_verify_module():
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    script = Path(__file__).resolve().parents[2] / "scripts" / "golden_baseline.py"
+    spec = importlib.util.spec_from_file_location("golden_baseline_verify_mod", script)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault("golden_baseline_verify_mod", mod)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _make_golden(root, scenario: str, promotion: str) -> None:
+    gdir = root / scenario / "golden"
+    gdir.mkdir(parents=True)
+    (gdir / "map.png").write_bytes(_png_bytes((240, 240, 240)))
+    (gdir / "golden.json").write_text(
+        json.dumps({"scenario": scenario, "ink_ratio": 0.02}), encoding="utf-8")
+    (gdir / "status.json").write_text(
+        json.dumps({"promotion": promotion}), encoding="utf-8")
+
+
+def _patch_verify_env(mod, monkeypatch, root):
+    """把 cmd_verify 的渲染/diff/账本面换成确定性替身（不碰真实浏览器）。"""
+    import app.lib.cartography.golden_diff as golden_diff
+    import app.services.cartography_metrics_store as metrics_store
+
+    monkeypatch.setattr(golden_diff, "image_diff",
+                        lambda base, now: {"pass": True, "within_ratio": 1.0,
+                                           "max_channel_diff": 0,
+                                           "pass_ratio_required": 0.98})
+    monkeypatch.setattr(golden_diff, "ink_ratio", lambda png: 0.02)
+    monkeypatch.setattr(metrics_store, "record_quality_run_sync",
+                        lambda **kwargs: None)
+    monkeypatch.setattr(mod, "_browser_contract_ok", lambda result, scenario: True)
+    monkeypatch.setattr(mod, "FIXTURE_ROOT", root)
+
+
+def test_cmd_verify_blocking_scenario_crash_does_not_abort_run(tmp_path, monkeypatch, capsys):
+    """pr-blocking 场景 validator/probes 抛错：记账为阻断（退出码 1）且其余场景照验。
+
+    未修复代码：_run_scenario 异常直接冲出 cmd_verify，后续场景不验，
+    退出码脱离 0/1/2 文档语义（traceback + 解释器默认非零码）。
+    """
+    import argparse
+
+    mod = _load_golden_baseline_verify_module()
+    root = tmp_path / "fixtures"
+    _make_golden(root, "a-crash", "pr-blocking")
+    _make_golden(root, "b-ok", "pr-blocking")
+    _patch_verify_env(mod, monkeypatch, root)
+
+    def fake_run(scenario):
+        if scenario == "a-crash":
+            raise RuntimeError("validator blew up")
+        return {"map_loaded": True, "map_idle": True, "fatal_error": None,
+                "page_errors": 0, "console_errors": 0,
+                "probe_results": [{"type": "marker", "pass": True}],
+                "canvas_blank": False, "score": 1.0, "seconds": 1.0,
+                "png_bytes": _png_bytes((240, 240, 240))}
+
+    monkeypatch.setattr(mod, "_run_scenario", fake_run)
+    rc = mod.cmd_verify(argparse.Namespace(scenarios="a-crash,b-ok", smoke=False))
+    assert rc == 1  # 阻断失败仍走文档语义，而非 traceback
+    assert (root / "b-ok" / "golden" / "last_verify.json").exists()
+    out = capsys.readouterr().out
+    assert "a-crash: 场景执行异常 RuntimeError" in out
+    assert (root / "a-crash" / "golden" / "last_failure.json").exists()
+
+
+def test_cmd_verify_nonblocking_scenario_crash_is_warning_only(tmp_path, monkeypatch, capsys):
+    """nightly-only 场景崩溃：只报告不拦截（退出码 0），样本落 last_failure.json。"""
+    import argparse
+
+    mod = _load_golden_baseline_verify_module()
+    root = tmp_path / "fixtures"
+    _make_golden(root, "c-crash", "nightly-only")
+    _patch_verify_env(mod, monkeypatch, root)
+
+    def fake_run(scenario):
+        raise RuntimeError("probes.json missing")
+
+    monkeypatch.setattr(mod, "_run_scenario", fake_run)
+    rc = mod.cmd_verify(argparse.Namespace(scenarios="c-crash", smoke=False))
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "c-crash: 场景执行异常 RuntimeError" in out
+    assert (root / "c-crash" / "golden" / "last_failure.json").exists()

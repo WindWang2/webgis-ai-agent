@@ -57,12 +57,12 @@ FILE_ALLOWLIST: dict[str, str] = {
 # 01/02 线领地：只报告不拦截
 REPORT_ONLY = {"app/services/gis_harness/"}
 
-# 扫描三条正则：method 赋值、palette 字面量赋值 与 k 赋值（词边界，避免误伤普通字符串）
+# 扫描三条正则：method 赋值、palette 字面量赋值 与 k 赋值（前边界排除字母数字，容忍 legend_palette 等下划线复合名）
 RE_METHOD_KW = re.compile(
-    r"\b(?:method|recommended_method|default_method)\s*=\s*[\"'](quantiles|equal_interval|natural_breaks|std_dev|head_tail)[\"']"
+    r"(?<![A-Za-z0-9])(?:method|recommended_method|default_method)\s*=\s*[\"'](quantiles|equal_interval|natural_breaks|std_dev|head_tail)[\"']"
 )
 RE_PALETTE_KW = re.compile(
-    r"\b(?:palette|fallback|default_palette)\s*=\s*[\"'](YlOrRd|Blues|Greens|Reds|Oranges|Purples|RdYlGn|RdBu|PuOr|Set1|Set2|Dark2|Pastel1|Viridis|Magma|Inferno|Plasma|Gray)[\"']"
+    r"(?<![A-Za-z0-9])(?:palette|fallback|default_palette)\s*=\s*[\"'](YlOrRd|Blues|Greens|Reds|Oranges|Purples|RdYlGn|RdBu|PuOr|Set1|Set2|Dark2|Pastel1|Viridis|Magma|Inferno|Plasma|Gray)[\"']"
 )
 RE_K_ASSIGN = re.compile(r"\bk\s*=\s*(\d+)\b")
 

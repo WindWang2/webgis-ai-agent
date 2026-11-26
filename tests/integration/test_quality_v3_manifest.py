@@ -11,7 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from app.lib.integration.manifest import build_manifest, changed_files
+from app.lib.integration.manifest import (IntegrationManifest,
+                                          build_manifest, changed_files)
 from app.lib.integration.ownership import OwnershipDocument, OwnershipRule
 
 
@@ -148,6 +149,35 @@ def test_changed_files_missing_branch_raises(synthetic_repo: Path):
 
     with pytest.raises(RuntimeError):
         changed_files("feat/does-not-exist", "master", synthetic_repo)
+
+
+def test_manifest_script_out_of_repo_out_exits_zero(tmp_path, monkeypatch):
+    """--out 指向仓库外：manifest 已写成功，不得以 traceback + 退出码 1 收场。
+
+    P3：``out_path.relative_to(REPO)`` 曾对仓库外路径抛未捕获 ValueError
+    （文件已落盘 :55 之后才炸），共享缓存/CI artifact 目录作 --out 即触发。
+    """
+    import importlib.util
+    import sys
+
+    from app.lib.integration import manifest as manifest_lib
+
+    spec = importlib.util.spec_from_file_location(
+        "gen_integration_manifest_under_test",
+        Path(__file__).resolve().parents[2] / "scripts/gen_integration_manifest.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    fake = IntegrationManifest(branch="HEAD", base="origin/master",
+                               git_commit="0" * 40)
+    monkeypatch.setattr(manifest_lib, "build_manifest", lambda *a, **k: fake)
+    monkeypatch.setattr(mod, "REPO", tmp_path / "repo")
+    outside = tmp_path / "outside"
+    monkeypatch.setattr(sys, "argv", [
+        "gen_integration_manifest.py", "--out", str(outside)])
+
+    assert mod.main() == 0
+    assert (outside / "HEAD.json").is_file(), "manifest 必须已写成功"
 
 
 def test_manifest_real_repo_self_check():

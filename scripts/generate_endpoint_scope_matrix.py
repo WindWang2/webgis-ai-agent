@@ -195,18 +195,6 @@ def _load_app():
     return app
 
 
-def _direct_dep_names(route) -> list[str]:
-    """端点直接依赖的 qualname（route 级 dependencies 已并入 dependant）。"""
-    names = []
-    for dep in route.dependant.dependencies:
-        call = dep.call
-        qualname = getattr(call, "__qualname__", None)
-        if qualname is None:  # 可调用对象（非函数）—— 本生成器不识别
-            qualname = repr(call)
-        names.append(qualname)
-    return names
-
-
 def _explicit_scope(call) -> str | None:
     """require_scope(scope) 闭包的 scope 字符串（词表内 str cell）。"""
     from app.core import scopes

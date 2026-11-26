@@ -53,7 +53,12 @@ def main() -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     out_path = args.out / f"{safe}.json"
     out_path.write_text(manifest.to_json(), encoding="utf-8")
-    print(f"manifest → {out_path.relative_to(REPO)}")
+    try:
+        shown = out_path.relative_to(REPO)
+    except ValueError:
+        # --out 指向仓库外：manifest 已写成功，展示绝对路径而非 traceback
+        shown = out_path
+    print(f"manifest → {shown}")
     print(f"  branch={manifest.branch} base={manifest.base} "
           f"files={len(manifest.files_changed)} risk={manifest.risk_level} "
           f"suites={','.join(manifest.required_suites)}")

@@ -40,6 +40,15 @@ def _error(reason_code: str) -> str:
     }, separators=(",", ":"), sort_keys=True)
 
 
+def _emit(payload: str, destination: str) -> None:
+    if destination == "-":
+        print(payload)
+        return
+    target = Path(destination)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(payload + "\n", encoding="utf-8")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
@@ -56,16 +65,13 @@ def main(argv: list[str] | None = None) -> int:
             mode=args.mode,
             max_bytes=args.max_bytes,
         )
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        print(_error("invalid_input"))
+    # 输入异常与渲染器异常（KeyError 等）一律收敛为有界 invalid_input：
+    # 绝不 traceback，且 --output PATH 时同样落盘（目标文件不得为空）。
+    except Exception:
+        _emit(_error("invalid_input"), args.output)
         return 2
 
-    if args.output == "-":
-        print(payload)
-    else:
-        target = Path(args.output)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(payload + "\n", encoding="utf-8")
+    _emit(payload, args.output)
     report = json.loads(payload)
     return 2 if report.get("reason_code") == "permission_denied" else 0
 

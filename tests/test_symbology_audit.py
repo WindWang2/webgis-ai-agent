@@ -21,3 +21,25 @@ def test_hardcoded_k_is_reported(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "k 硬编码 '5'" in out
     assert "app/example.py:2" in out
+
+
+def test_compound_name_keyword_assignments_are_reported(tmp_path, monkeypatch, capsys):
+    """legend_palette= / symbology_method= 等下划线复合名必须命中（\b 前边界曾整行漏报）。"""
+    target = tmp_path / "app" / "example.py"
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        "def build_spec(data):\n"
+        '    legend_palette = "Blues"\n'
+        '    symbology_method = "quantiles"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(audit, "ROOT", tmp_path)
+    monkeypatch.setattr(sys, "argv", ["symbology_audit.py"])
+
+    assert audit.main() == 1
+
+    out = capsys.readouterr().out
+    assert "palette 硬编码 'Blues'" in out
+    assert "method 硬编码 'quantiles'" in out
+    assert "app/example.py:2" in out
+    assert "app/example.py:3" in out

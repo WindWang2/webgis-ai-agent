@@ -92,3 +92,54 @@ def test_diagnostic_cli_runs_local_json_contract(tmp_path):
     )
     assert denied.returncode == 2
     assert json.loads(denied.stdout)["reason_code"] == "permission_denied"
+
+
+def test_diagnostic_cli_writes_invalid_input_report_to_output_file(tmp_path):
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text("{not json", encoding="utf-8")
+    output_path = tmp_path / "nested" / "report.json"
+    script = Path(__file__).resolve().parents[2] / "scripts" / "harness_journey_diagnose.py"
+    completed = subprocess.run(
+        [
+            sys.executable, str(script), "--input", str(trace_path),
+            "--session-id", "sess-journey", "--turn-id", "turn-journey",
+            "--output", str(output_path),
+        ],
+        capture_output=True, text=True, timeout=30,
+    )
+
+    assert completed.returncode == 2, completed.stderr
+    assert completed.stdout.strip() == ""
+    report = json.loads(output_path.read_text(encoding="utf-8"))
+    assert report["schema_version"] == "gis_journey_diagnostic.v1"
+    assert report["overall"] == "blocked"
+    assert report["reason_code"] == "invalid_input"
+    assert report["truncated"] is False
+
+
+def test_diagnostic_cli_bounds_renderer_exception_without_traceback(tmp_path, monkeypatch, capsys):
+    import scripts.harness_journey_diagnose as diagnose
+
+    def exploding_renderer(*args, **kwargs):
+        raise KeyError("stages")
+
+    monkeypatch.setattr(diagnose, "render_journey_diagnostic", exploding_renderer)
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(json.dumps(_trace_without_render()), encoding="utf-8")
+    output_path = tmp_path / "report.json"
+
+    exit_code = diagnose.main([
+        "--input", str(trace_path),
+        "--session-id", "sess-journey", "--turn-id", "turn-journey",
+        "--output", str(output_path),
+    ])
+
+    assert exit_code == 2
+    assert capsys.readouterr().out.strip() == ""
+    report = json.loads(output_path.read_text(encoding="utf-8"))
+    assert report["schema_version"] == "gis_journey_diagnostic.v1"
+    assert report["reason_code"] == "invalid_input"

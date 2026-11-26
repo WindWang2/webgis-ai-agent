@@ -22,8 +22,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 REPO = Path(__file__).resolve().parents[1]
-DEFAULT_MD = Path("docs/quality/QUALITY_REPORT.md")
-DEFAULT_JSON = Path("docs/quality/quality-report.json")
+DEFAULT_MD = REPO / "docs/quality/QUALITY_REPORT.md"
+DEFAULT_JSON = REPO / "docs/quality/quality-report.json"
 
 
 def _load_json(rel: str) -> dict:
