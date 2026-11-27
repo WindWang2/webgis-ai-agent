@@ -27,6 +27,8 @@ from app.lib.gis.algorithms import modelops as _modelops_mod
 from app.lib.gis.algorithms import multiscale as _multiscale_mod
 from app.lib.gis.algorithms import sampling as _sampling_mod
 from app.lib.gis.algorithms import statistics as _statistics_mod
+# GOAL-20261127-03：概率抽样调查域（帧/设计/估计；与 sampling 布点域边界见模块 docstring）。
+from app.lib.gis.algorithms import survey_sampling as _survey_sampling_mod
 from app.lib.gis.algorithms import temporal as _temporal_mod
 from app.lib.gis.algorithms import terrain as _terrain_mod
 # G06 / M5：新原语的参数契约域包（ALGORITHMS 为空，不改变算法注册表计数）。
@@ -38,7 +40,7 @@ _ALL_MODULES = (
     _statistics_mod, _point_pattern_mod, _interpolation_mod, _network_mod,
     _terrain_mod, _raster_mod, _remote_mod, _temporal_mod, _decision_mod,
     _platform_mod, _sampling_mod, _ecology_mod, _modelops_mod, _multiscale_mod,
-    _capability_ecosystem_mod,
+    _capability_ecosystem_mod, _survey_sampling_mod,
 )
 
 

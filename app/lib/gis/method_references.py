@@ -267,6 +267,13 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
             "Cochran, W. G. (1977). Sampling Techniques (3rd ed.). John Wiley & Sons.",
         ),
         MethodReference(
+            "olofsson2014",
+            "Good practices for estimating area and assessing accuracy of land change",
+            "Olofsson, P., Foody, G. M., Herold, M., Stehman, S. V., Woodcock, C. E., "
+            "& Wulder, M. A. (2014). Remote Sensing of Environment, 148, 42–57. "
+            "DOI 10.1016/j.rse.2014.02.015",
+        ),
+        MethodReference(
             "teitz_bart1968",
             "Teitz-Bart p-median heuristic",
             "Teitz, M. B., & Bart, P. (1968). Heuristic Methods for Estimating "
