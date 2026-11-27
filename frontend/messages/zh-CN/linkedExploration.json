@@ -70,5 +70,17 @@
   },
   "commands": {
     "openPanel": "打开联合探索工作台"
+  },
+  "multiSource": {
+    "primary": "主源",
+    "propKeys": "传播键数",
+    "propNone": "上游未过滤：不限制",
+    "propUnfiltered": "上游无生效条件：本关系不产生传播限制",
+    "propagation": "传播",
+    "keys": "键",
+    "unprojected": "复合键传播：地图不可精确投影（统计精确）",
+    "handleSkipped": "范围句柄不可表达：结果表不提供（防过宽冒充）",
+    "unavailable": "不可用",
+    "empty": "多源计划预览后在此显示逐源范围与指标"
   }
 }

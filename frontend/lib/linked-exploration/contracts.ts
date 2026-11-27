@@ -257,3 +257,153 @@ export interface OpenViewResponse {
   preview?: Record<string, unknown>;
   stale_reason?: { code: string; message: string; current_revision?: number };
 }
+
+// ─── 多源（v3）：计划绑定 / 关系 / 指标 / 计划预览回执 ─────────────────
+
+export interface SourceBindingJson {
+  source_id: string;
+  anchor: { ref_id: string; content_revision: number; content_fingerprint?: string | null };
+  role: 'primary' | 'context';
+  granularity_note?: string;
+  hierarchy?: { parent_field: string; parent_source_id?: string | null; level_note?: string } | null;
+}
+
+export interface LinkSpecJson {
+  link_id: string;
+  kind: 'attribute' | 'spatial_within';
+  left_source_id: string;
+  right_source_id: string;
+  keys?: Array<{ left_field: string; right_field: string; transform?: 'trim' | 'casefold' | 'zfill' | null; zfill_width?: number }>;
+  predicate?: 'within' | 'within_or_boundary' | null;
+  cardinality: 'one_to_one' | 'many_to_one' | 'one_to_many';
+  propagate: 'none' | 'left_to_right' | 'right_to_left';
+  note?: string;
+}
+
+export interface MetricSpecJson {
+  metric_id: string;
+  op: 'count' | 'distinct_count' | 'sum' | 'mean' | 'weighted_mean' | 'rate' | 'median';
+  source_id?: string | null;
+  value_field?: string | null;
+  weight_field?: string | null;
+  weight_by_area?: boolean;
+  denominator_field?: string | null;
+  denominator_source_id?: string | null;
+  link_id?: string | null;
+  group_field?: string | null;
+  scale?: number | null;
+  unit?: string;
+  title?: string;
+}
+
+export interface MultiSourcePlanJson {
+  schema_version: 2 | 3;
+  anchor?: { ref_id: string; content_revision: number; content_fingerprint?: string | null };
+  sources?: SourceBindingJson[];
+  links?: LinkSpecJson[];
+  metrics?: MetricSpecJson[];
+  charts: Array<Record<string, unknown>>;
+  conditions: Array<Record<string, unknown>>;
+  base_scope_note?: string;
+}
+
+export interface PropagationDisclosure {
+  link_id: string;
+  from_source: string;
+  target_fields: string[];
+  key_count: number;
+  from_unfiltered: boolean;
+  skipped_missing?: number;
+  skipped_invalid?: number;
+  map_filter?: unknown[] | null;
+}
+
+export interface SourceScopeEntry {
+  source_id: string;
+  role: 'primary' | 'context';
+  granularity_note?: string;
+  anchor: { ref_id: string; content_revision: number; content_fingerprint?: string | null };
+  total: number;
+  match_count: number;
+  match_count_exact: boolean;
+  own_where: FilterAst | null;
+  propagations: PropagationDisclosure[];
+  map_filter: unknown[] | null;
+  map_filter_projected: boolean;
+  map_filter_note?: string;
+  selection_handle?: { handle: string; count: number | null; count_exact: boolean; ttl_seconds: number; scope?: string };
+  selection_handle_skipped?: { reason: string; note: string };
+}
+
+export interface MetricGroupResult {
+  key: string | number | boolean | null;
+  key_label: string;
+  value: number | null;
+  available: boolean;
+  unavailable_reason?: string | null;
+  numerator?: number | null;
+  denominator?: number | null;
+  count: number;
+  numeric_count?: number;
+  null_count?: number;
+  non_numeric_count?: number;
+  invalid_weight_count?: number;
+}
+
+export interface MetricResult {
+  metric_id: string;
+  op: MetricSpecJson['op'];
+  source_id?: string | null;
+  grain_source_id?: string | null;
+  unit: string;
+  scale: number | null;
+  title: string;
+  groups: MetricGroupResult[];
+  truncated: boolean;
+  disclosure: Record<string, unknown>;
+}
+
+export interface SelectionRefDisclosure {
+  selection_ref: string;
+  source_id: string;
+  id_field: string;
+  claimed_epoch_seq?: number | null;
+  id_count: number;
+  matched_count?: number | null;
+  ids_truncated: boolean;
+  layer_id?: string | null;
+  note: string;
+}
+
+export interface PlanPreviewResponse {
+  schema_version: number;
+  primary_source_id: string;
+  anchors: Record<string, SourceAnchor>;
+  conditions_digest: string;
+  plan_digest: string;
+  selection_ref_resolved?: SelectionRefDisclosure;
+  per_source: Record<string, SourceScopeEntry>;
+  charts: Array<ChartPreview & { source_id?: string | null }>;
+  metrics: MetricResult[];
+  completeness: string;
+}
+
+export interface DrillResponse {
+  plan: MultiSourcePlanJson;
+  drill: {
+    source_id: string;
+    direction: 'down' | 'up';
+    parent_field: string;
+    parent_value?: string | number | boolean | null;
+    hierarchy_note?: string;
+    groups: Array<{ key: unknown; label: string; count: number | null }>;
+    group_count: number;
+    truncated: boolean;
+    matched_in_scope?: number | null;
+    denominator_note?: string | null;
+  };
+  preview_brief: {
+    conditions_digest: string;
+    per_source: Record<string, { match_count: number; total: number }>;
+  };
+}

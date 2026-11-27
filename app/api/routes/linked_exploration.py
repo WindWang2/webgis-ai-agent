@@ -114,7 +114,7 @@ async def inspect_source(
     conv: Conversation = Depends(require_owned_session),
     x_session_token: Optional[str] = Header(default=None, alias="X-Session-Token"),
 ) -> Dict[str, Any]:
-    session_id = str(conv.session_id)
+    session_id = str(conv.id)
     try:
         return await service.inspect_source(
             session_id, body.ref, _actor(conv, x_session_token, session_id))
@@ -129,7 +129,7 @@ async def preview_conditions(
     conv: Conversation = Depends(require_owned_session),
     x_session_token: Optional[str] = Header(default=None, alias="X-Session-Token"),
 ) -> Dict[str, Any]:
-    session_id = str(conv.session_id)
+    session_id = str(conv.id)
     charts = [_chart_model(c) for c in body.charts]
     if len(charts) > contract.MAX_CHARTS:
         raise HTTPException(status_code=422, detail={
@@ -149,6 +149,60 @@ async def preview_conditions(
         raise _fail(e)
 
 
+# ─── 多源（v3）：计划预览 / 层级钻取 ─────────────────────────────────────
+
+class PlanPreviewBody(BaseModel):
+    plan: Dict[str, Any]
+    create_handle: bool = True
+    selection_ref: Optional[str] = Field(default=None, max_length=32)
+    selection_source_id: Optional[str] = Field(default=None, max_length=64)
+
+
+class DrillBody(BaseModel):
+    plan: Dict[str, Any]
+    source_id: str = Field(min_length=1, max_length=64)
+    direction: str = Field(description="down | up")
+    parent_value: Optional[Any] = None
+    create_handle: bool = False
+
+
+@router.post("/plan-preview")
+async def preview_plan(
+    session_id: str,
+    body: PlanPreviewBody,
+    conv: Conversation = Depends(require_owned_session),
+    x_session_token: Optional[str] = Header(default=None, alias="X-Session-Token"),
+) -> Dict[str, Any]:
+    """多源联动预览权威面（逐源同代 + 传播键集 + facets + 指标）。"""
+    session_id = str(conv.id)
+    try:
+        return await service.preview_plan(
+            session_id, body.plan, _actor(conv, x_session_token, session_id),
+            create_handle=body.create_handle,
+            selection_ref=body.selection_ref,
+            selection_source_id=body.selection_source_id)
+    except LinkedExplorationError as e:
+        raise _fail(e)
+
+
+@router.post("/drill")
+async def drill_plan(
+    session_id: str,
+    body: DrillBody,
+    conv: Conversation = Depends(require_owned_session),
+    x_session_token: Optional[str] = Header(default=None, alias="X-Session-Token"),
+) -> Dict[str, Any]:
+    """按计划内显式层级做一次钻取/上卷，返回改写后的计划与逐父级计数。"""
+    session_id = str(conv.id)
+    try:
+        return await service.drill_plan(
+            session_id, body.plan, _actor(conv, x_session_token, session_id),
+            source_id=body.source_id, direction=body.direction,
+            parent_value=body.parent_value, create_handle=body.create_handle)
+    except LinkedExplorationError as e:
+        raise _fail(e)
+
+
 # ─── 视图 CRUD ─────────────────────────────────────────────────────────────
 
 @router.get("/views")
@@ -158,7 +212,7 @@ async def list_views(
     x_session_token: Optional[str] = Header(default=None, alias="X-Session-Token"),
     include_archived: bool = Query(default=False),
 ) -> Dict[str, Any]:
-    session_id = str(conv.session_id)
+    session_id = str(conv.id)
     views = await service.list_views(
         session_id, _actor(conv, x_session_token, session_id),
         include_archived=include_archived)
@@ -172,7 +226,7 @@ async def save_view(
     conv: Conversation = Depends(require_owned_session),
     x_session_token: Optional[str] = Header(default=None, alias="X-Session-Token"),
 ) -> Dict[str, Any]:
-    session_id = str(conv.session_id)
+    session_id = str(conv.id)
     try:
         return await service.save_view(
             session_id, _actor(conv, x_session_token, session_id),
@@ -188,7 +242,7 @@ async def get_view(
     conv: Conversation = Depends(require_owned_session),
     x_session_token: Optional[str] = Header(default=None, alias="X-Session-Token"),
 ) -> Dict[str, Any]:
-    session_id = str(conv.session_id)
+    session_id = str(conv.id)
     try:
         return await service.get_view(
             view_id, session_id, _actor(conv, x_session_token, session_id))
@@ -204,7 +258,7 @@ async def update_view(
     conv: Conversation = Depends(require_owned_session),
     x_session_token: Optional[str] = Header(default=None, alias="X-Session-Token"),
 ) -> Dict[str, Any]:
-    session_id = str(conv.session_id)
+    session_id = str(conv.id)
     try:
         return await service.update_view(
             view_id, session_id, _actor(conv, x_session_token, session_id),
@@ -222,7 +276,7 @@ async def delete_view(
     x_session_token: Optional[str] = Header(default=None, alias="X-Session-Token"),
     expected_revision: int = Query(ge=1),
 ) -> Dict[str, Any]:
-    session_id = str(conv.session_id)
+    session_id = str(conv.id)
     try:
         return await service.delete_view(
             view_id, session_id, _actor(conv, x_session_token, session_id),
@@ -238,7 +292,7 @@ async def open_view(
     conv: Conversation = Depends(require_owned_session),
     x_session_token: Optional[str] = Header(default=None, alias="X-Session-Token"),
 ) -> Dict[str, Any]:
-    session_id = str(conv.session_id)
+    session_id = str(conv.id)
     try:
         return await service.open_view(
             view_id, session_id, _actor(conv, x_session_token, session_id))
@@ -254,7 +308,7 @@ async def apply_view(
     conv: Conversation = Depends(require_owned_session),
     x_session_token: Optional[str] = Header(default=None, alias="X-Session-Token"),
 ) -> Dict[str, Any]:
-    session_id = str(conv.session_id)
+    session_id = str(conv.id)
     try:
         return await service.apply_view_to_mapspec(
             view_id, session_id, _actor(conv, x_session_token, session_id),
@@ -283,7 +337,7 @@ async def export_exploration(
 
     try:
         return await run(
-            str(conv.session_id),
+            str(conv.id),
             _actor(conv, x_session_token, session_id),
             fmt=body.fmt, dpi=body.dpi, view_id=body.view_id,
             plan_raw=body.plan, title=body.title)
