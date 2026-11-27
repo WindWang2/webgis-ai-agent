@@ -28,6 +28,17 @@
 - 编译/测试资源纪律：CMAKE_BUILD_PARALLEL_LEVEL=4 / MAKEFLAGS=-j4 / MAX_JOBS=4 上限，竞争时降 -j2/-j1；pytest 低并发；显式限制 BLAS/OMP/GDAL 线程。
 - 同机并行任务：约 15 个兄弟 worktree 活跃；共享资源池，默认单重进程，独立端口/namespace/临时目录。
 
-## 基线既有失败（测试基线，运行后回填）
+## 基线既有失败（运行后回填）
 
-- [ ] 待运行 `pytest` 相关子集 + `vitest` 相关子集后记录既有失败清单。
+- report 分享基线：`tests/test_report_api.py + test_report_share_expiry_tz.py` → **12 passed**（无既有失败）。
+- `tests/test_endpoint_scope_matrix.py::test_every_route_is_in_matrix` → 在原版 master（f34cb69dd，
+  /tmp/wg-parity-check 实测）同样失败：331 个他线路由未登记（briefs/scenario/cartographic-assets 等）。
+  本线 13 个端点已全部登记；该失败为基线既有债务，非本线引入。
+- 前端 `tsc -p tsconfig.test.json`：`lib/mapspec/live-spec.test.ts` 'tiles' 类型错 → 在 master 检出
+  （/tmp/pub-baseline-check，共享本线 node_modules）原样复现 —— 基线既有，非本线引入。
+- runtime manifest strict 启动失败（webgis_diagram_symbol/scenario/paper_scale 的 capability 悬空）
+  → master 原样（这些工具均为已合并的他线产物）；旅程用文档化 `GIS_MANIFEST_STRICT=0` 降级启动。
+- `scripts/check_tool_descriptor_coverage.py` capabilities 80%（missing 122）与
+  `tests/test_tool_meta_contract.py` 2 failed → 与 master 基线输出完全一致（missing 计数未变），
+  非本线引入。
+- cartography 基线：`tests/cartography/test_publishing.py` → **6 passed**（本线改动后无回归）。
