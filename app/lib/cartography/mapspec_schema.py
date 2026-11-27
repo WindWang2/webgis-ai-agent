@@ -1622,6 +1622,7 @@ SCHEMA_EXPORT_MODELS: Tuple[Tuple[str, type], ...] = (
     ("ClusterSourceConfig", ClusterSourceConfig),
     ("MapSpecLayer", MapSpecLayer),
     ("MapSpecLayerFlow", MapSpecLayerFlow),
+    ("MapSpecLayerTrajectory", MapSpecLayerTrajectory),
     ("MapSpecLayerExtrusion", MapSpecLayerExtrusion),
     ("MapSpecLayerVisibility", MapSpecLayerVisibility),
     ("MapSpecLayerBivariate", MapSpecLayerBivariate),
