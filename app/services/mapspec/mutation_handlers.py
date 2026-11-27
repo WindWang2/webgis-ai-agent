@@ -193,6 +193,12 @@ async def _handle_applyflowproduct(ctx: MutationContext) -> HandlerOut:
     return await apply_flow_product(ctx)
 
 
+async def _handle_applytrajectoryproduct(ctx: MutationContext) -> HandlerOut:
+    from app.services.moving_object.mutation import apply_trajectory_product
+
+    return await apply_trajectory_product(ctx)
+
+
 async def _handle_patchlayerpresentation(ctx: MutationContext) -> HandlerOut:
     """PatchLayerPresentationIntent 分支体（逐字迁移，见模块 docstring 的适配清单）。"""
     origin = ctx.origin

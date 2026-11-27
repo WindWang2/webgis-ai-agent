@@ -21,7 +21,6 @@ Scenarios (mapped to the WP6 fixture list):
 """
 from __future__ import annotations
 
-import math
 import random
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -59,7 +58,7 @@ def straight_line_oracle(
     speed_mps: float = 10.0,  # 36 km/h
     start_lon: float = 116.0,
     start_lat: float = 39.0,
-    start_epoch_s: int = 1_700_000_000,
+    start_epoch_s: float = 1_700_000_000.0,
     azimuth_deg: float = 90.0,
     entity_id: str = "ORACLE-1",
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
@@ -214,8 +213,6 @@ def static_noise_oracle(
     """Parked vehicle with bounded jitter → one dwell; then a fast exit."""
     rng = random.Random(seed)
     feats: List[Dict] = []
-    base = _GEOD.fwd(116.0, 39.0, 90.0, 500.0)  # jump east 500m first
-    # park
     lon0, lat0 = 116.0, 39.0
     from datetime import datetime, timezone, timedelta
     t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)

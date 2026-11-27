@@ -23,6 +23,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
 
 from app.schemas.mapspec_mutation_schema import (
     ApplyFlowProductBody,
+    ApplyTrajectoryProductBody,
     DuplicateComponentBody,
     InitProjectBody,
     PatchComponentBody,
@@ -46,6 +47,7 @@ from app.schemas.mapspec_mutation_schema import (
 from app.services.mapspec import mutation_handlers as _h
 from app.services.mapspec.intents import (
     ApplyFlowProductIntent,
+    ApplyTrajectoryProductIntent,
     ApplyVisualHealPatchIntent,
     CheckpointIntent,
     DuplicateComponentIntent,
@@ -148,6 +150,12 @@ def _lt_flow_product(intent: ApplyFlowProductIntent) -> Tuple[List[str], List[st
     from app.services.flow_product.mutation import flow_layer_ids
 
     return (flow_layer_ids(intent.family_id), [])
+
+
+def _lt_trajectory_product(intent: ApplyTrajectoryProductIntent) -> Tuple[List[str], List[str]]:
+    from app.services.moving_object.presentation import trajectory_layer_ids
+
+    return (trajectory_layer_ids(intent.family_id), [])
 
 
 def _lt_visual_heal(intent: ApplyVisualHealPatchIntent) -> Tuple[List[str], List[str]]:
@@ -254,6 +262,10 @@ def _pd_label_authoring(intent: PatchLayerLabelAuthoringIntent) -> Dict[str, Any
 #     含全部 ValueError 消息原文 —— 路由层 400 消息零漂移） ─────────────────────
 def _codec_apply_flow_product(req: Any) -> MutationIntent:
     return ApplyFlowProductIntent(product_ref=req.product_ref, family_id=req.family_id)
+
+
+def _codec_apply_trajectory_product(req: Any) -> MutationIntent:
+    return ApplyTrajectoryProductIntent(product_ref=req.product_ref, family_id=req.family_id)
 
 
 def _codec_patch_layer_style(req: Any) -> MutationIntent:
@@ -545,6 +557,12 @@ def _build_default_registry() -> MutationRegistry:
         touches_layers=True, auto_checkpoint=True, op_label="应用 OD 流图",
         lock_targets=_lt_flow_product, provenance_detail=_pd_none,
     ), body_cls=ApplyFlowProductBody, body_codec=_codec_apply_flow_product)
+    reg.register(IntentDescriptor(
+        intent_cls=ApplyTrajectoryProductIntent,
+        handler=_h._handle_applytrajectoryproduct,
+        touches_layers=True, auto_checkpoint=True, op_label="应用轨迹图",
+        lock_targets=_lt_trajectory_product, provenance_detail=_pd_none,
+    ), body_cls=ApplyTrajectoryProductBody, body_codec=_codec_apply_trajectory_product)
     reg.register(IntentDescriptor(
         intent_cls=ApplyVisualHealPatchIntent,
         handler=_h._handle_applyvisualhealpatch,

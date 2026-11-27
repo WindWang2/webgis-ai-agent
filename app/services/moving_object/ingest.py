@@ -58,13 +58,11 @@ def parse_event_time(
     Returns (None, False) when unparseable. Raises nothing; callers count
     failures per row.
     """
-    naive_assumed = False
     if val is None:
         return None, False
     if isinstance(val, datetime):
         if val.tzinfo is not None:
             return _coerce_utc(val), False
-        naive_assumed = True
         return _coerce_utc(val.replace(tzinfo=tz)), True
     if isinstance(val, date):
         # Date-only: midnight in the declared assumed timezone.

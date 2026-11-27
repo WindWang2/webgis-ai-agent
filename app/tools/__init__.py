@@ -97,6 +97,8 @@ _TOOL_MODULES = [
     ("app.tools.project_tools", "register_project_tools"),
     ("app.tools.network_tools", "register_network_tools"),
     ("app.tools.temporal_tools", "register_temporal_tools"),
+    # GOAL-20261127-02：移动对象轨迹/时空事件工具面（独立模块防并发冲突）。
+    ("app.tools.moving_object_tools", "register_moving_object_tools"),
     ("app.tools.spatial_decision_tools", "register_spatial_decision_tools"),
     # ADR-0214：组合契约工具面（discover/apply_composition/plan_replace）
     ("app.tools.composition_tools", "register_composition_tools"),

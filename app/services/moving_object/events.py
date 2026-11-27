@@ -41,15 +41,13 @@ Geometry discipline:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import timezone
 from typing import Dict, List, Optional, Tuple
 
 import shapely
 from shapely import (
     LineString,
-    MultiPolygon,
     Point,
-    Polygon,
     contains as shp_contains,
     covers as shp_covers,
     intersects as shp_intersects,
@@ -60,10 +58,8 @@ from shapely.geometry.base import BaseGeometry
 from shapely.strtree import STRtree
 
 from app.services.moving_object.contracts import (
-    EVENT_TYPES,
     MAX_ENTITIES,
     MAX_EVENTS,
-    MAX_PREVIEW_FEATURES,
     MovingObjectError,
     ObsPoint,
     RegionEventConfig,
@@ -536,9 +532,12 @@ def region_summaries(
         row["entities"].add(ev.entity_id)
         row[ev.event_type] = row.get(ev.event_type, 0) + 1
         if ev.event_type == "dwell":
-            t0 = _dt.fromisoformat(ev.t_interval_start or ev.t_exact)
-            t1 = _dt.fromisoformat(ev.t_interval_end or ev.t_exact)
-            row["dwell_s"] += max(0.0, (t1 - t0).total_seconds())
+            t0_s = ev.t_interval_start or ev.t_exact
+            t1_s = ev.t_interval_end or ev.t_exact
+            if t0_s and t1_s:
+                t0 = _dt.fromisoformat(t0_s)
+                t1 = _dt.fromisoformat(t1_s)
+                row["dwell_s"] += max(0.0, (t1 - t0).total_seconds())
 
     for (entity_id, rid), n in analysis.inside_fixes.items():
         row = per_region.setdefault(rid, {

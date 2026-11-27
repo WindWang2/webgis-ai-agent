@@ -15,7 +15,6 @@ from app.services.moving_object.builder import (
 )
 from app.services.moving_object.contracts import (
     IngestConfig,
-    MovingObjectError,
     ObsPoint,
     SegmentationConfig,
 )
@@ -85,7 +84,7 @@ def test_distance_symmetry_and_triangle_inequality() -> None:
 
 
 def test_coincident_points_zero_distance_and_bearing_guard() -> None:
-    from app.services.moving_object.motion import geodesic_bearing_deg, interval_motion
+    from app.services.moving_object.motion import interval_motion
     assert geodesic_distance_m(10.0, 10.0, 10.0, 10.0) == 0.0
     # PROJ defines azimuth 180 for coincident points; the interval layer
     # must NOT expose it — undefined bearing → None.

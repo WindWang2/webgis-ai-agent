@@ -12,6 +12,8 @@ from app.lib.gis.capabilities.ecology import CAPABILITIES as _ecology
 from app.lib.gis.capabilities.geometry import CAPABILITIES as _geometry
 from app.lib.gis.capabilities.interpolation import CAPABILITIES as _interpolation
 from app.lib.gis.capabilities.modelops import CAPABILITIES as _modelops
+# GOAL-20261127-02：移动对象轨迹能力包。
+from app.lib.gis.capabilities.moving_object import CAPABILITIES as _moving_object
 from app.lib.gis.capabilities.multiscale import CAPABILITIES as _multiscale
 from app.lib.gis.capabilities.network import CAPABILITIES as _network
 from app.lib.gis.capabilities.platform import CAPABILITIES as _platform
@@ -31,5 +33,5 @@ def iter_capability_packs() -> Iterable[List[CapabilityDescriptor]]:
         _data_access, _geometry, _aggregation, _density, _statistics,
         _interpolation, _network, _terrain, _raster, _temporal, _decision,
         _platform, _sampling, _ecology, _modelops, _rs_cube, _scene3d,
-        _multiscale, _frame_product, _workbench_lifecycle,
+        _multiscale, _frame_product, _workbench_lifecycle, _moving_object,
     )

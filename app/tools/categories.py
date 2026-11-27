@@ -111,6 +111,7 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.subagent": "debug_internal",
     "app.tools.templates": "rendering",                 # 模板/主题组合
     "app.tools.temporal_tools": "analysis",
+    "app.tools.moving_object_tools": "analysis",  # GOAL-20261127-02 轨迹域
     "app.tools.science_temporal_tools": "analysis",  # science-v5 物候/立方体/异常
     "app.tools.temporal_view_tools": "rendering",  # GOAL 03：时态视图控制（MapSpec temporal 写面/时间轴驱动）
     "app.tools.terrain_analysis": "analysis",

@@ -8,7 +8,6 @@ from app.services.moving_object.contracts import (
     RegionEventConfig,
 )
 from app.services.moving_object.events import (
-    EventAnalysis,
     RegionGeometryError,
     analyze_region_events,
     event_features,

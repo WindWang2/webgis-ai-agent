@@ -24,7 +24,7 @@ Complexity: O(n) geodesic checks per entity; no pairwise passes.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 from app.services.moving_object.contracts import (
     DwellConfig,

@@ -52,7 +52,8 @@ def test_dwell_config_bounds() -> None:
 
 def test_time_window_requires_tz_aware() -> None:
     with pytest.raises(ValidationError):
-        TimeWindow(start=datetime(2026, 1, 1))  # naive
+        naive = datetime(2026, 1, 1, tzinfo=timezone.utc).replace(tzinfo=None)
+        TimeWindow(start=naive)  # naive datetime → typed rejection
     w = TimeWindow(
         start=datetime(2026, 1, 1, tzinfo=timezone.utc),
         end=datetime(2026, 1, 2, tzinfo=timezone.utc),
@@ -63,7 +64,7 @@ def test_time_window_requires_tz_aware() -> None:
 def test_region_event_config_requires_regions_ref() -> None:
     with pytest.raises(ValidationError):
         RegionEventConfig(regions_ref="")
-    cfg = RegionEventConfig(regions_ref="ref:geojson-test")
+    assert RegionEventConfig(regions_ref="ref:geojson-test")
     # ref_cursor declaration: registry passes the ref string untouched
     extra = RegionEventConfig.model_fields["regions_ref"].json_schema_extra
     assert isinstance(extra, dict) and extra.get("ref_cursor") is True

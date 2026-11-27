@@ -16,8 +16,7 @@ Rules:
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -28,7 +27,6 @@ from app.services.moving_object.contracts import (
     MAX_PREVIEW_FEATURES,
     ObsPoint,
 )
-from app.services.moving_object.ingest import preview_features
 
 
 class SamplingIntervalStats(BaseModel):
