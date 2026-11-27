@@ -380,4 +380,3 @@ def register_publication_tools(registry: ToolRegistry) -> None:
         if verdict is None:
             return {"error": "发布不存在", "code": "publication_not_found"}
         return {"status": "validated", **verdict}
-
