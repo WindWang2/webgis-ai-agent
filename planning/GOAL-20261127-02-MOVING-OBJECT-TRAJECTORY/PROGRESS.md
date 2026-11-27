@@ -79,3 +79,8 @@
 - 全部修复于 commit 1c103c518，新增 test_r1_closures.py 11 用例，J2 强化家族替换断言
 - 修复后复验: moving_object 89 passed；契约族 125 passed；conformance fail 14=master 基线；前端 16 passed；typecheck/eslint 新代码清洁
 - R2 复核子代理已启动（finding→closed 核验 + 修复无新问题 + 旅程重跑）
+
+## 终验（2026-11-28）
+
+- origin/master 仍 f34cb69dd，本分支无分歧；开放 PR #2290（零交集）/#2291（5 个共享注册文件追加行，无逻辑冲突）
+- 终验回归 192 passed；R1/R2 全闭环；git diff --check 干净；冲突标记扫描干净

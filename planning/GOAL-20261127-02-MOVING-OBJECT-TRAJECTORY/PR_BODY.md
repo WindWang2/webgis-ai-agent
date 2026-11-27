@@ -23,7 +23,7 @@
 
 ## 测试与性能数据
 
-- 后端：`tests/unit/moving_object` **78 passed**（含必过旅程 J1-J4）；MapSpec 契约族 155 passed；mutation registry 一致性 17 passed；parity corpus 74 passed（新 intent case 已入 corpus）；ADR 编号契约 3 passed
+- 后端：`tests/unit/moving_object` **90 passed**（含必过旅程 J1-J4 与 R1/R2 闭环测试）；终验回归 192 passed（moving_object+registry+parity+ADR+tool_registry）；MapSpec 契约族 155 passed；mutation registry 一致性 17 passed；parity corpus 74 passed（新 intent case 已入 corpus）；ADR 编号契约 3 passed
 - 工具门禁：executable 613；conformance overall=fail 14 **与 master 基线持平（14=14）**，trajectory 工具 0 fail；descriptor coverage 的 capabilities 80% FAIL 为 master 既有（122 missing 无新增）
 - 前端：16 个新 vitest 全绿（lib 投影 11 + 面板组件 5）；新文件 eslint/typecheck 清洁
 - 规模：100k 修复 ingest 346ms / build 1.3s / dwell 180ms / events 361ms（详 TEST_MATRIX.md）
@@ -46,5 +46,9 @@
 
 ## Review
 
-- R1 独立逐行审查（独立上下文子代理，非作者）：见 planning/GOAL-20261127-02-*/REVIEW_R1.md（P0/P1 全部修复后回归）
-- R2 复核：REVIEW_R2.md（重新 diff + 关闭证据 + 旅程重跑）
+- **R1 独立逐行审查**（独立上下文子代理，非作者；含 600 次反经线差分模糊测试 0 错配）：科学核心判定 sound；2×P1 + 4×P2 + ~14×P3 → **全部闭环**（commit 1c103c518 + ecb36d2e3），新增 12 个闭环测试（test_r1_closures.py），详 REVIEW_R1.md
+- **R2 复核**（另一独立上下文）：逐项 CLOSED 判定（file:line 证据）+ 6 项非阻断跟进（其中 5 项当场修复：时区 typed 拒绝/驻留间隙参数透传/残留清理）；结论 **GO**，详 REVIEW_R2.md
+
+## 与并行线的冲突边界（终验）
+
+终验时开放 PR：#2290（01 线 Pi 自适应）与 #2291（03 线 概率抽样）。#2290 与本分支变更文件**零交集**；#2291 交集仅 5 个共享注册文件（app/tools/__init__.py、categories.py、algorithms/capabilities __init__、frontend messages.ts）——双方均为独立模块登记的追加行，无逻辑冲突；先合并方无需动作，后合并方按行解决登记顺序即可。origin/master 终验时仍为 f34cb69dd（本分支无分歧，无需 rebase）。
