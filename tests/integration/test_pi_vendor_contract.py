@@ -390,7 +390,7 @@ child.kill('SIGKILL');
 const lines = out.split('\n').filter(Boolean);
 const parsed = [];
 for (const line of lines) { try { parsed.push(JSON.parse(line)); } catch { parsed.push({ unparseable: line.slice(0, 120) }); } }
-const providerEvents = err.split('\n').filter((l) => l.includes('provider_response')).slice(-8);
+const providerEvents = err.split('\n').filter((l) => l.includes('provider-obs') || l.includes('provider_response')).slice(-8);
 process.stderr.write('RESULT=' + JSON.stringify({
   lines: parsed, stderrHead: err.split('\n').slice(0, 5).join(' | ').slice(0, 400), aborted,
   providerEvents, steerSent,

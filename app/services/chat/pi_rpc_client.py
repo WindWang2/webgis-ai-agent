@@ -219,6 +219,42 @@ def is_stderr_diagnostic_line(line: "str | bytes") -> bool:
     return plain.startswith(_STDERR_DIAGNOSTIC_PREFIXES)
 
 
+# ── WP2（GOAL-20261127-01）：provider 观测结构化行 ─────────────────────────
+#
+# 扩展 after_provider_response（v1.6.1 C24：对失败与每次重试尝试都触发）的
+# 唯一宿主可达通道是 stderr（RPC stdout 不转发该事件）。行格式由扩展固定：
+#   [webgis-tools][provider-obs] status=NNN retry_after=X|-
+# 这里只做**纯解析**（有界整数/浮点、越界拒收），消费（健康表回写）由桥侧
+# 注入的 sink 承担 —— 与 set_ui_request_sink 同款注入模式，本模块不感知路由。
+
+_PROVIDER_OBS_RE = re.compile(
+    r"\[webgis-tools\]\[provider-obs\]\s+status=(\d{3})(?:\s+retry_after=(-?\d+(?:\.\d+)?|-))?"
+)
+
+
+def parse_provider_observation(line: "str | bytes") -> Optional[dict]:
+    """stderr 行 → 有界观测 dict（{status, retry_after}）或 None（非观测行）。
+
+    status 必须 400-599（该事件在宿主侧只对失败有意义；扩展已过滤 <400，
+    解析侧再钉一次边界）。retry_after 缺席/"-" → None（诚实未知）。
+    """
+    if isinstance(line, bytes):
+        line = line.decode("utf-8", errors="replace")
+    match = _PROVIDER_OBS_RE.search(_ANSI_ESCAPE_RE.sub("", line))
+    if match is None:
+        return None
+    status = int(match.group(1))
+    if not (400 <= status <= 599):
+        return None
+    retry_after: Optional[float] = None
+    raw_ra = match.group(2)
+    if raw_ra and raw_ra != "-":
+        value = float(raw_ra)
+        if 0 <= value <= 3600:  # 有界：超过 1h 的 retry-after 不采信
+            retry_after = value
+    return {"status": status, "retry_after": retry_after}
+
+
 # ── Config (CONFIG-04: env-tunable with safe defaults) ──────────────────────
 
 def _env_float(name: str, default: float) -> float:
@@ -359,6 +395,9 @@ class PiRpcClient:
         # G29（WP02）：extension_ui_request sink。stdout 读到原生 UI 请求时
         # 回调（sync，绝不能阻塞读循环）。None = 无人消费（丢弃并告警）。
         self._ui_request_sink = None
+        # WP2（GOAL-20261127-01）：provider 失败观测 sink（stderr 结构化行 →
+        # 桥 → 路由健康表）。None = 无人消费（诊断环照常记录，仅缺健康回写）。
+        self._provider_observation_sink = None
         # G29（WP02）：stdin 单行写锁。issue()（RPC 命令）与 send_ui_response()
         # （原生 UI 单向回答）都经 executor 写 stdin；无锁时两段 write+flush
         # 可交错撕裂 JSON 行。answer 与 steer/abort 并发是 G29 的常态路径。
@@ -455,6 +494,15 @@ class PiRpcClient:
         协议层（pi_ui_protocol）抛 UiProtocolError，读循环捕获记日志继续。
         """
         self._ui_request_sink = sink
+
+    def set_provider_observation_sink(self, sink) -> None:
+        """WP2（GOAL-20261127-01）：注册 provider 失败观测消费者（桥 → 路由健康表）。
+
+        sink(obs: dict) -> None —— 同步回调，在 stderr 读循环内执行：obs 为
+        :func:`parse_provider_observation` 的有界产物（{status, retry_after}）。
+        消费方不得抛出（读循环吞异常记 debug）；本类不感知路由/健康语义。
+        """
+        self._provider_observation_sink = sink
 
     def is_alive(self) -> bool:
         """Check if the Pi child process is running and healthy.
@@ -874,6 +922,19 @@ class PiRpcClient:
                     # 保证坏字节不炸读循环）。
                     text = line.decode("utf-8", errors="replace") if isinstance(line, bytes) else line
                     self._stderr_diagnostics.record(text)
+                    # WP2：结构化 provider 观测行 → 注入 sink（消费方为桥，
+                    # 回写路由健康表）。解析失败/非观测行零开销直通。
+                    _obs = parse_provider_observation(text)
+                    if _obs is not None:
+                        _sink = self._provider_observation_sink
+                        if _sink is not None:
+                            try:
+                                _sink(_obs)
+                            except Exception:  # noqa: BLE001 — 观测绝不打断读循环
+                                logger.debug(
+                                    "[PiRpcClient] provider observation sink failed",
+                                    exc_info=True,
+                                )
                     if is_stderr_diagnostic_line(text):
                         logger.warning("[PiStderrDiagnostic] %s", text[:_STDERR_DIAG_LOG_CAP])
                     else:
