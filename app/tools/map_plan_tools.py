@@ -177,6 +177,9 @@ def register_map_plan_tools(registry: ToolRegistry):
         # 返回，异常不穿出工具面（dispatch 只记指标并原样重抛）。
         try:
             intent, _clar = resolve_intent_adaptive(query, use_llm=False)
+            from app.services.chat.pi_decision_wiring import assist_map_request_intent
+
+            intent, decision_meta = await assist_map_request_intent(query, intent, scope=sid)
             planner = MapProductPlanner()
             plan = planner.plan_from_intent(intent, use_memo=False)
 
@@ -213,6 +216,8 @@ def register_map_plan_tools(registry: ToolRegistry):
             summary = _bounded_summary(result, finalization)
             summary["plan_id"] = getattr(plan, "plan_id", "")
             summary["recipe_id"] = getattr(plan, "recipe_id", "")
+            if decision_meta.get("assists"):
+                summary["decision_assist"] = decision_meta
             return summary
         except Exception as exc:  # noqa: BLE001 — 编译链失败 → 结构化错误回执
             logger.warning("webgis_compile_map_plan chain failed session=%s",
