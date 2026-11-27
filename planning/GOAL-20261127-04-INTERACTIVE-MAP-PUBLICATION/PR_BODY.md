@@ -76,9 +76,22 @@ UI（作者面板 + /p/[code] 读者页）与 Pi（工具族）共用同一领�
 - 与开放 PR #2290（01 线 Pi host/provider/model-routing）文件零交集；其迁移 g5201 不在 master，
   本线迁移锚 master head —— 合并顺序无关；PR 前重新 fetch 复核。
 - 同域已合并（#2274/#2278/#2287/#2289）零重写、零冲突面。
+- 开放 PR #2291/#2292/#2293 交集仅加性接线点（app/main.py include、app/tools/__init__.py
+  _TOOL_MODULES、i18n messages 注册、#2292 另有 map-studio-tab）——相邻行加性变更，
+  合并序无关；后合并者平凡解决。
 
 ## R1 / R2
 
-- R1：独立审查者（非作者）逐行 diff 审查（访问隔离/撤销缓存/许可/科学语义/读者隔离/契约回归）——
-  发现与处置见 `REVIEW_R1.md`；P0/P1 全部修复后回归。
-- R2：复审关闭证据 + 重跑关键旅程 + 冲突复检，见 `REVIEW_R2.md`。
+- R1：独立审查者（非作者）逐行 diff 审查（九维度：访问隔离/撤销缓存/许可/科学语义/读者隔离/
+  契约回归等）——结论 **无 P0/P1**；4×P2 + 13×P3 全部处置：
+  - P2-1 base 谱系挂靠补归属校验（403，不继承他人 meta/license）
+  - P2-2 Pi validate 补三元组+运行时会话双链归属
+  - P2-3 发布门搬进 executor CAS 单点（retry/第二提交面无门路径消除）
+  - P2-4 reader spec 源按层重写（共享源兄弟层不再错配）
+  - P3：DB 级 CAS 消除 revoke×publish 复活窗口、summary 非数值/NaN 诚实化（全序列化
+    allow_nan=False）、红线正则补全+typed 422、版本竞态重试、物化-快照漂移 typed 失败、
+    layer_id 404 同语义、限流分桶（meta 120/data 600）、撤销清产物、死键清理
+  处置表见 `REVIEW_R1.md`；新增回归测试 7 项。
+- R2：关闭证据复查 + 关键旅程重跑（真实服务旅程 ok + 浏览器桌面/无 WebGL 全绿）+
+  门禁终态（71 passed；唯一失败为 master 原样基线）+ 冲突复检（master 未动；与
+  #2290-#2293 交集仅加性接线点），见 `REVIEW_R2.md`。
