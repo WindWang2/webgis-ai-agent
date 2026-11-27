@@ -39,4 +39,5 @@
 变更文件与 01/02/03/04 线无写面交集（Pi host/provider、移动对象、抽样、图符/出版导出均未触碰）；共享接线仅 main.py/include_router、tools/__init__.py/_TOOL_MODULES 各一条 additive 行。PR 前重新 fetch 复核（R2）。
 
 ## R1/R2
-R1：独立审阅代理逐行 diff（维度：科学正确性/状态事务/权限安全/跨端契约/性能/回归），发现与处置见 planning/goal-05-portable-project-exchange/REVIEW_R1.md；R2：重读 diff + 关键 journey 复跑 + 远端复核，见 REVIEW_R2.md。
+**R1**（独立审阅代理逐行 diff + 运行时实验）：1×P0（manifest 引用路径任意文件读取）+ 4×P1（回滚死代码/路由 user 键错/回执 schema 500/gpkg 中间态哈希）+ 8×P2 + 8×P3 —— **全部 P0/P1/P2 修复**并锁定回归（tests/unit/project_exchange/test_r1_fixes.py 10 例 + 全量 90 例绿）；P3 除幂等竞态一项记录为与 data_delivery 同款已知取舍外全部修复。明细与逐项关闭证据见 planning/goal-05-portable-project-exchange/REVIEW_R1.md / REVIEW_R2.md。
+**R2**：远端复核无漂移；冲突矩阵（#2290 零交集；#2291/#2292 仅共享 3-4 个一行式 additive 注册文件）；关键 journey 复跑绿；`git diff --check` 干净。
