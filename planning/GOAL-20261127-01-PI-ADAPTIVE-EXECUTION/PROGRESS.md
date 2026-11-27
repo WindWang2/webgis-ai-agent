@@ -51,5 +51,5 @@
   G37 journey 35.51s PASS / affected 114 + bridge+governor 281 passed）
   + 基线冲突复核（master 未动、分支为后代、0 开放 PR、diff --check 干净、
   vendor pin 零 diff）→ REVIEW_R2.md 结论：可交付
-- 交付：单 PR 创建（base master）
+- 交付：**PR #2290 已创建**（base master，head zcode/goal-pi-adaptive-execution-20261127，正文含全部要求项）；临时 detached 基线 worktree 已清理
 
