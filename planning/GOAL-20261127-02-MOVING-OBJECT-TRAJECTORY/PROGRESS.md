@@ -63,3 +63,12 @@
 - 必过旅程 1-4 后端验证脚本 + Pi RPC 同链验证
 - R1 独立 review（上下文隔离）+ 修复
 - R2 复核 + PR
+
+## 追加（2026-11-28 R1 前状态）
+
+- 必过旅程 J1-J4 全过（tests/unit/moving_object/test_journeys.py，78 总绿）
+- 旅程抓到并修复真 bug: oracle 腿采样失真（4m/30s→驻留误判）、constant 速度域 interpolate stops 非严格递增（MapSpec 校验器拒绝）
+- MapSpec 2.3 bump 回归修复: component_graph 版本钉住、carto_ir corpus manifest+5 fixture 期望
+- cartography 全目录: 4073 passed / 5 failed（全部为 pristine master 既有，逐一对照核实）
+- 前端: 16 vitest 绿；typecheck 仅剩 master 既有 live-spec tiles；全量 50 失败经 master parity worktree 核实为基线
+- diff: 67 files, +7914/-74; git diff --check 干净
