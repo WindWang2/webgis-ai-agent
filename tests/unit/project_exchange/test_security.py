@@ -201,17 +201,20 @@ class TestFormatHonesty:
 
         from app.services.project_exchange.importer import _register_dataset
 
+        import hashlib
+
+        stub = b"PAR1stub"
+        real_digest = hashlib.sha256(stub).hexdigest()
         dataset_entry = pc.ManifestDataset(
             logical_id="ds-t", name="t", classification="embedded",
             crs="EPSG:4326",
             payload=pc.DatasetPayloadRef(
                 path="standard/tables/ds-t.parquet",
-                sha256="0" * 64, bytes=16))
+                sha256=real_digest, bytes=len(stub)))
         created_files: list = []
         staging = Path(str(settings.DATA_DIR))
         (staging / "standard" / "tables").mkdir(parents=True, exist_ok=True)
-        (staging / "standard" / "tables" / "ds-t.parquet").write_bytes(
-            b"PAR1stub")
+        (staging / "standard" / "tables" / "ds-t.parquet").write_bytes(stub)
 
         with SessionLocal() as db:
             result = _register_dataset(

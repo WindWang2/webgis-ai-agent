@@ -102,7 +102,7 @@ async def inspect_project_exchange(
         from app.services.project_service import ProjectService
 
         if ProjectService.get_project_with_auth(
-                db, project_id, user_id=str(user.get("id") or ""),
+                db, project_id, user_id=str(user.get("user_id") or ""),
                 org_id=user.get("org_id")) is None:
             raise pc.PackageError(pc.ERR_PROJECT_NOT_FOUND, "项目不存在或无权访问")
         return inspect_project(db, project_id,
@@ -129,7 +129,7 @@ async def plan_project_exchange(
         from app.services.project_service import ProjectService
 
         if ProjectService.get_project_with_auth(
-                db, project_id, user_id=str(user.get("id") or ""),
+                db, project_id, user_id=str(user.get("user_id") or ""),
                 org_id=user.get("org_id")) is None:
             raise pc.PackageError(pc.ERR_PROJECT_NOT_FOUND, "项目不存在或无权访问")
         return plan_project(db, project_id,
@@ -178,8 +178,7 @@ async def export_receipt(
     from app.services.project_exchange.importer import get_export_receipt
 
     try:
-        receipt = await _run_sync(get_export_receipt, package_id,
-                                  _actor(user, owner_token))
+        receipt = await _run_sync(get_export_receipt, package_id)
         project = await _authorize_project(receipt.get("project_id", ""),
                                            _actor(user, owner_token))
         if project is None:
@@ -209,8 +208,7 @@ async def export_receipt_by_job(
         if not package_id:
             raise pc.PackageError(pc.ERR_JOB_NOT_FOUND,
                                   "任务尚未产出 package_id（进行中或失败）")
-        receipt = await _run_sync(get_export_receipt, package_id,
-                                  _actor(user, owner_token))
+        receipt = await _run_sync(get_export_receipt, package_id)
     except pc.PackageError as e:
         raise _map_error(e) from e
     return receipt
@@ -233,8 +231,7 @@ async def import_receipt_by_job(
         if not import_id:
             raise pc.PackageError(pc.ERR_JOB_NOT_FOUND,
                                   "任务尚未产出 import_id（进行中或失败）")
-        receipt = await _run_sync(get_import_receipt, import_id,
-                                  _actor(user, owner_token))
+        receipt = await _run_sync(get_import_receipt, import_id)
     except pc.PackageError as e:
         raise _map_error(e) from e
     return receipt
@@ -388,8 +385,7 @@ async def import_receipt(
     from app.services.project_exchange.importer import get_import_receipt
 
     try:
-        receipt = await _run_sync(get_import_receipt, import_id,
-                                  _actor(user, owner_token))
+        receipt = await _run_sync(get_import_receipt, import_id)
         project = await _authorize_project(receipt.get("project_id", ""),
                                            _actor(user, owner_token))
         if project is None:

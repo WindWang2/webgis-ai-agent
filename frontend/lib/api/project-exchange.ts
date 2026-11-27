@@ -41,7 +41,13 @@ export interface ExchangeInspection {
   exportable: boolean;
 }
 
-export interface ExchangePlan extends ExchangeInspection {
+export interface ExchangePlan {
+  project_id: string;
+  project_name: string;
+  selection: Record<string, unknown>;
+  reproduction_level: ExchangeInspection['reproduction_level'];
+  estimated_payload_bytes: number;
+  estimated_unknown_bytes_count: number;
   datasets: Array<Record<string, unknown>>;
   workflows: Array<Record<string, unknown>>;
   artifacts: Array<Record<string, unknown>>;

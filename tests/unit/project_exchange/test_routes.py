@@ -72,8 +72,10 @@ class TestUploadGuard:
 
         app = FastAPI()
         app.include_router(routes.router, prefix="/api/v1")
+        # 真实 get_current_user 返回形态：{"user_id", "role", "org_id", ...}
+        # （R1 P1-3：此前塞 "id" 掩盖了路由取键错误）
         app.dependency_overrides[get_current_user] = lambda: {
-            "user_id": _OWNER, "id": _OWNER, "org_id": None}
+            "user_id": _OWNER, "role": "editor", "org_id": None}
         async with AsyncClient(
                 transport=ASGITransport(app=app),
                 base_url="http://test") as ac:
@@ -91,8 +93,10 @@ class TestUploadGuard:
 
         app = FastAPI()
         app.include_router(routes.router, prefix="/api/v1")
+        # 真实 get_current_user 返回形态：{"user_id", "role", "org_id", ...}
+        # （R1 P1-3：此前塞 "id" 掩盖了路由取键错误）
         app.dependency_overrides[get_current_user] = lambda: {
-            "user_id": _OWNER, "id": _OWNER, "org_id": None}
+            "user_id": _OWNER, "role": "editor", "org_id": None}
         async with AsyncClient(
                 transport=ASGITransport(app=app),
                 base_url="http://test") as ac:

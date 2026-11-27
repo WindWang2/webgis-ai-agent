@@ -127,7 +127,7 @@ def plan_project(
             "payload": None,
         }
         if node.classification == pc.CLASS_EMBEDDED and node.upload_path:
-            if (node.upload_path or "").endswith(".tif"):
+            if (node.upload_path or "").endswith((".tif", ".tiff")):
                 path = f"{pc.RASTERS_DIR}{lid}.tif"
                 raster_files.append({"logical_id": lid, "path": path})
             else:

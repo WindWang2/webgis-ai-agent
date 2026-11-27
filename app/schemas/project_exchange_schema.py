@@ -177,6 +177,7 @@ class ImportStatusResponse(BaseModel):
     model_config = _Bounded
 
     import_id: str
+    job_id: str = ""   # receipt 含 job_id（R1 P1-4：extra=forbid 下必须显式声明）
     package_id: str
     project_id: str
     target_name: str

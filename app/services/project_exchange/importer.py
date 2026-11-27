@@ -20,7 +20,7 @@ import tempfile
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.services.project_exchange import contracts as pc
@@ -105,11 +105,10 @@ def resolve_package_upload(package_upload_id: str, actor) -> Tuple[Path, Dict[st
     except (OSError, ValueError) as e:
         raise pc.PackageError(pc.ERR_IMPORT_SOURCE_INVALID,
                               f"上传元数据损坏: {e}") from e
+    # R1 P2-12：工程包是完整数据内容 —— owner-only（org 兜底会让同 org
+    # 成员绕过项目级分享拿到全部载荷；org 共享留待显式开关）。
     owner = meta.get("owner") or ""
     if actor.user_id and owner == actor.user_id:
-        return zip_path, meta
-    if actor.org_id is not None and meta.get("org_id") is not None \
-            and str(meta.get("org_id")) == str(actor.org_id):
         return zip_path, meta
     raise pc.PackageError(pc.ERR_UNAUTHORIZED, "无权访问该上传")
 
@@ -328,9 +327,19 @@ async def _run_import_job(job_id: str, zip_path: Path, actor,
                 raise OperationCancelled("import cancelled")
 
         _progress(12, "受控解包与哈希对账")
-        extract_zip(zip_path, inspection, staging,
-                    expected_hashes=expected,
-                    progress=lambda p, m: _progress(p, m))
+        extracted = extract_zip(zip_path, inspection, staging,
+                                expected_hashes=expected,
+                                progress=lambda p, m: _progress(p, m))
+        # R1 P2-7：台账（manifest.files）是唯一放行面 —— 未声明条目解压后
+        # 立即删除并披露，不给 manifest 内部引用留可指目标。
+        declared = set(expected)
+        undeclared = [e.target_rel for e in extracted
+                      if e.target_rel not in declared]
+        for rel in undeclared:
+            (staging / rel).unlink(missing_ok=True)
+        undeclared_count = len(undeclared)
+        # R1 P0：任何 DB 写入前，全量校验 manifest 引用路径（fail-fast）
+        _validate_manifest_paths(manifest, staging)
 
         _progress(55, "拓扑序注册（隔离新项目）")
         created_files: List[Path] = []
@@ -341,9 +350,11 @@ async def _run_import_job(job_id: str, zip_path: Path, actor,
             mapping = ImportMapping()
             with SessionLocal() as db:
                 try:
-                    mapping = _register_all(
+                    # R1 P1-2：mapping 引用传入、边注册边填充 —— 异常路径
+                    # 上补偿逻辑能看到已建 project_id（否则补偿是死代码）。
+                    _register_all(
                         db, manifest, staging, actor, target_name,
-                        session_id, created_files, cancel_check)
+                        session_id, created_files, cancel_check, mapping)
                     db.commit()
                 except Exception:
                     db.rollback()
@@ -391,6 +402,7 @@ async def _run_import_job(job_id: str, zip_path: Path, actor,
             "import_id": import_id,
             "job_id": job_id,
             "package_id": manifest.package_id,
+            "undeclared_entries_removed": undeclared_count,
             "project_id": mapping.project_id,
             "target_name": target_name,
             "mapping": {
@@ -406,9 +418,16 @@ async def _run_import_job(job_id: str, zip_path: Path, actor,
         }
         out_dir = _imports_root() / import_id
         shutil.rmtree(out_dir / "staging", ignore_errors=True)
-        (out_dir / "receipt.json").write_text(
-            json.dumps(receipt, ensure_ascii=False, indent=1, default=str),
-            encoding="utf-8", newline="\n")
+        try:
+            (out_dir / "receipt.json").write_text(
+                json.dumps(receipt, ensure_ascii=False, indent=1,
+                           default=str),
+                encoding="utf-8", newline="\n")
+        except OSError:
+            # R1 P2-6：项目已提交而回执写盘失败 —— 补偿删除隔离项目，
+            # 不留「导入失败却多出真实项目」的不一致终态。
+            _compensate_project(mapping, created_files)
+            raise
 
         from app.core.database import SessionLocal
         from app.services.jobs.lifecycle import JobStatus
@@ -446,17 +465,73 @@ async def _run_import_job(job_id: str, zip_path: Path, actor,
 
 # ── 注册（单事务体；异常由调用方回滚）─────────────────────────────────
 
+def _compensate_project(mapping: "ImportMapping",
+                        created_files: List[Path]) -> None:
+    """项目级补偿删除（R1 P2-6/P1-2）：提交后的失败路径也能清场。"""
+    from app.models.project import Project
+
+    if mapping.project_id:
+        try:
+            from app.core.database import SessionLocal
+
+            with SessionLocal() as cleanup_db:
+                row = cleanup_db.get(Project, mapping.project_id)
+                if row is not None:
+                    cleanup_db.delete(row)
+                from app.models.upload import UploadRecord
+
+                for info in mapping.datasets.values():
+                    upload_id = info.get("upload_id")
+                    if upload_id and str(upload_id).isdigit():
+                        up = cleanup_db.get(UploadRecord, int(upload_id))
+                        if up is not None:
+                            cleanup_db.delete(up)
+                cleanup_db.commit()
+        except Exception:  # noqa: BLE001 — 补偿失败如实日志，不掩盖原错误
+            logger.warning("[project-exchange] compensate delete failed for %s",
+                           mapping.project_id, exc_info=True)
+    for path in created_files:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _validate_manifest_paths(manifest: pc.PackageManifest,
+                             staging: Path) -> None:
+    """R1 P0 修复的前置闸：解包后、任何 DB 写入前，全量校验 manifest
+    引用路径的包容性与存在性（fail-fast，零副作用）。"""
+    referenced: List[str] = []
+    for entry in manifest.datasets:
+        if entry.payload is not None:
+            referenced.append(entry.payload.path)
+    for entry in manifest.workflows:
+        if entry.graph_spec_path:
+            referenced.append(entry.graph_spec_path)
+    for entry in manifest.artifacts:
+        if entry.payload is not None:
+            referenced.append(entry.payload.path)
+    for entry in manifest.maps:
+        if entry.mapspec_path:
+            referenced.append(entry.mapspec_path)
+    for rel in referenced[:pc.MAX_PACKAGE_ENTRIES]:
+        path = _safe_staging_path(staging, rel)
+        if not path.is_file():
+            raise pc.PackageError(
+                pc.ERR_IMPORT_SOURCE_INVALID,
+                f"manifest 引用的包内文件缺失: {rel[:80]}")
+
+
 def _register_all(
     db, manifest: pc.PackageManifest, staging: Path, actor,
     target_name: str, session_id: Optional[str],
-    created_files: List[Path], cancel_check,
-) -> ImportMapping:
+    created_files: List[Path], cancel_check, mapping: "ImportMapping",
+) -> None:
     from app.models.project import (
         MapProductVersion, Workflow, WorkflowRevision,
     )
     from app.services.project_service import ProjectService
 
-    mapping = ImportMapping()
     project = ProjectService.create_project(
         db, name=(target_name or manifest.project.name)[:255],
         description=(manifest.project.description or "")[:2000],
@@ -470,11 +545,8 @@ def _register_all(
     )
     if project is None:
         raise pc.PackageError(pc.ERR_WRITE_FAILED, "隔离项目创建失败")
+    # 边注册边填充：任何后续步骤失败，调用方的补偿路径都能拿到 project_id
     mapping.project_id = str(project.id)
-    mapping.datasets = {}
-    mapping.workflows = {}
-    mapping.artifacts = {}
-    mapping.maps = {}
 
     real_id_by_logical = _build_real_id_index(manifest)
     new_ds_by_logical: Dict[str, str] = {}
@@ -516,7 +588,8 @@ def _register_all(
         cancel_check()
         graph = entry.graph_spec
         if not graph and entry.graph_spec_path:
-            graph = _read_json(staging / entry.graph_spec_path)
+            graph = _read_json(_safe_staging_path(
+                staging, entry.graph_spec_path))
         remap = _build_remap_table(manifest, mapping, real_id_by_logical)
         remapped, edits = _remap_graph(graph, remap)
         workflow = Workflow(
@@ -565,7 +638,8 @@ def _register_all(
     # 4) map products（mapspec 快照 + 栅格引用重写计划）
     for entry in manifest.maps:
         cancel_check()
-        mapspec = _read_json(staging / entry.mapspec_path) \
+        mapspec = _read_json(_safe_staging_path(
+            staging, entry.mapspec_path)) \
             if entry.mapspec_path else {}
         rewrite_plan = _plan_map_raster_rewrite(mapspec, session_id is not None)
         for plan_item in rewrite_plan:
@@ -607,7 +681,6 @@ def _register_all(
             "version_no": 1,
             "raster_rewrites": len(rewrite_plan),
         }
-    return mapping
 
 
 def _build_real_id_index(manifest: pc.PackageManifest) -> Dict[str, Dict[str, str]]:
@@ -692,7 +765,7 @@ def _register_dataset(
     payload = entry.payload
     if payload is None:
         return None
-    src = staging / payload.path
+    src = _safe_staging_path(staging, payload.path)
     if not src.is_file():
         return None
     if payload.path != pc.LAYERS_GPKG_PATH and src.suffix.lower() == ".png":
@@ -702,7 +775,8 @@ def _register_dataset(
         db, entry, staging, payload, created_files)
     if upload_id is None:
         return None
-    crs = entry.crs or "EPSG:4326"
+    # R1 P2-11：CRS 未声明时保留空（诚实未评估），绝不捏造 EPSG:4326
+    crs = (entry.crs or "").strip()
     schema_profile = entry.schema_profile or {}
     dataset = ProjectDataset(
         id=f"ds_{_uuid.uuid4().hex[:16]}",
@@ -737,7 +811,14 @@ def _write_upload_file(
     """包内载荷 → uploads/<id>/original.<ext> + UploadRecord 行。"""
     from app.models.upload import UploadRecord
 
-    src = staging / payload.path
+    src = _safe_staging_path(staging, payload.path)
+    # R1 P0 修复：载荷摘要强制对账 —— manifest 声明的 sha256 必须与
+    # 实际字节一致（gpkg 成员 = 终态整文件哈希；导出侧统一回填）。
+    actual_digest = pc.sha256_file(src)
+    if not payload.sha256 or actual_digest != payload.sha256:
+        raise pc.PackageError(
+            pc.ERR_HASH_MISMATCH,
+            f"数据集 {entry.logical_id} 载荷摘要与 manifest 不符")
     if payload.member:
         features = _gpkg_layer_to_features(src, payload.member)
         if features is None:
@@ -772,7 +853,7 @@ def _write_upload_file(
         original_name=(entry.name or entry.logical_id)[:255] + ext,
         file_type=file_type,
         format=fmt,
-        crs=entry.crs or "EPSG:4326",
+        crs=(entry.crs or "").strip(),
         geometry_type=geometry_type or None,
         feature_count=feature_count,
         bbox=bbox,
@@ -858,12 +939,12 @@ def _register_artifact(
     content_type = "json"
     data: Optional[bytes] = None
     if payload is not None:
-        src = staging / payload.path
+        src = _safe_staging_path(staging, payload.path)
         if not src.is_file():
             return None
         raw = src.read_bytes()
         digest = hashlib.sha256(raw).hexdigest()
-        if payload.sha256 and digest != payload.sha256:
+        if not payload.sha256 or digest != payload.sha256:
             raise pc.PackageError(
                 pc.ERR_HASH_MISMATCH,
                 f"产物 {entry.logical_id} 载荷哈希与 manifest 不符")
@@ -1017,12 +1098,18 @@ def _find_map_raster_package_path(
     for entry in manifest.maps:
         if entry.logical_id != map_lid:
             continue
-        for idx, binding in enumerate(entry.source_bindings):
+        # R1 P2-10：idx 口径与导出侧一致 —— 只对 raster_ref 非空的绑定计数
+        #（导出侧 idx 只数含 imageRef 的源）。
+        idx = 0
+        for binding in entry.source_bindings:
+            if not binding.raster_ref:
+                continue
             if binding.raster_ref == original:
                 candidate = staging / "standard" / "rasters" / (
                     f"{map_lid}-r{idx}.png")
                 if candidate.is_file():
                     return candidate
+            idx += 1
     return None
 
 
@@ -1047,7 +1134,8 @@ def _load_ref_payload(staging: Path, item: Dict[str, Any]) -> Optional[Any]:
 
 # ── 状态查询 ─────────────────────────────────────────────────────────────
 
-def get_import_receipt(import_id: str, actor) -> Dict[str, Any]:
+def get_import_receipt(import_id: str) -> Dict[str, Any]:
+    """导入回执（授权由 REST 路由层经项目归属校验后调用）。"""
     if not re.fullmatch(r"imp-[0-9a-f]{16}", import_id or ""):
         raise pc.PackageError(pc.ERR_JOB_NOT_FOUND, "import_id 形态非法")
     path = _imports_root() / import_id / "receipt.json"
@@ -1061,7 +1149,8 @@ def get_import_receipt(import_id: str, actor) -> Dict[str, Any]:
     return receipt
 
 
-def get_export_receipt(package_id: str, actor) -> Dict[str, Any]:
+def get_export_receipt(package_id: str) -> Dict[str, Any]:
+    """导出回执（授权由 REST 路由层经项目归属校验后调用）。"""
     from app.services.project_exchange.exporter import package_dir
 
     _pkg_gate(package_id)
@@ -1110,6 +1199,37 @@ def _max_package_bytes() -> int:
 
 def _next_upload_row(db) -> int:
     return 0  # UploadRecord id 由 DB 自增分配（_write_upload_file 内 flush 取号）
+
+
+def _safe_staging_path(staging: Path, rel: str) -> Path:
+    """manifest 引用路径 -> staging 内绝对路径（R1 P0 修复：包容校验）。
+
+    manifest 是不可信数据：payload.path / graph_spec_path / mapspec_path
+    一律经此校验 —— 拒绝绝对路径、".." 穿越、反斜杠、NUL、控制字符；
+    resolve 后强制仍在 staging 内。任何越界 = typed 拒绝（整包 fatal）。
+    """
+    if not rel or len(rel) > 256 or "\x00" in rel:
+        raise pc.PackageError(pc.ERR_PATH_UNSAFE, "manifest 引用路径非法")
+    normalized = rel.replace("\\", "/")
+    pure = PurePosixPath(normalized)
+    if pure.is_absolute() or normalized.startswith("/"):
+        raise pc.PackageError(pc.ERR_PATH_UNSAFE,
+                              f"manifest 引用绝对路径拒绝: {rel[:80]}")
+    for part in pure.parts:
+        if part in ("", "."):
+            continue
+        if part == "..":
+            raise pc.PackageError(pc.ERR_PATH_UNSAFE,
+                                  f"manifest 引用穿越拒绝: {rel[:80]}")
+        if any(ord(c) < 32 for c in part):
+            raise pc.PackageError(pc.ERR_PATH_UNSAFE,
+                                  f"manifest 引用控制字符拒绝: {rel[:80]}")
+    base = staging.resolve()
+    resolved = (base / normalized).resolve()
+    if not str(resolved).startswith(str(base) + os.sep):
+        raise pc.PackageError(pc.ERR_PATH_UNSAFE,
+                              f"manifest 引用越界拒绝: {rel[:80]}")
+    return resolved
 
 
 def _read_json(path: Path) -> Dict[str, Any]:

@@ -11,6 +11,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { downloadWithAuth } from '@/lib/api/authenticated-download';
 import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
 import { useT } from '@/lib/i18n/useT';
 import { useToastStore } from '@/components/ui/toast';
@@ -301,12 +302,20 @@ export function PackageExchangeDialog({
                 <p className="font-semibold text-ink">{t('packageReady')}</p>
                 <p>{t('shaLabel')}: <code className="break-all">{exportReceipt.sha256}</code></p>
                 <p>{formatBytes(exportReceipt.bytes)} · {exportReceipt.filename}</p>
-                <a
-                  href={exportReceipt.download_path}
+                <button
+                  type="button"
+                  onClick={() => {
+                    // R1 P2-13：下载走鉴权 fetch→blob（裸 <a> 不带 Bearer
+                    // 头，生产登录态必 401/403）。
+                    void downloadWithAuth(exportReceipt.download_path, {
+                      filename: exportReceipt.filename,
+                      fallbackFilename: exportReceipt.filename,
+                    });
+                  }}
                   className="inline-block rounded-sm border border-edge-subtle px-3 py-1.5 text-meta text-ink hover:bg-surface-hover"
                 >
                   {t('downloadPackage')}
-                </a>
+                </button>
               </div>
             )}
           </div>

@@ -112,9 +112,16 @@ async def submit_export(
         raise pc.PackageError(pc.ERR_UNAUTHORIZED,
                               "无权访问该项目（或项目不存在）")
     selection = _normalize_selection(selection)
+    await asyncio.to_thread(_sweep_stale_staging)
     closure = await asyncio.to_thread(
         _read_closure_sync, project_id, selection)
-    if not closure.embedded_dataset_count() and not closure.maps:
+    # R1 P3-16：session_ref 在计划期是暂态 —— 执行期可解析为 embedded，
+    # 预检口径与执行期一致（否则纯会话 ref 项目被误拒）。
+    has_session_payloads = any(
+        node.classification == "session_ref"
+        for node in closure.datasets.values())
+    if (not closure.embedded_dataset_count() and not closure.maps
+            and not has_session_payloads):
         raise pc.PackageError(
             pc.ERR_EMPTY_SELECTION,
             "闭包内没有可打包的数据载荷或地图 —— 请先物化数据为项目产物/上传")
@@ -291,6 +298,28 @@ def _cancel_check(token) -> Callable[[], None]:
     return check
 
 
+_STAGING_TTL_SECONDS = 24 * 3600
+
+
+def _sweep_stale_staging() -> None:
+    """R1 P3-18：崩溃遗留 staging/导入暂存的 TTL 清扫（>24h；尽力而为）。"""
+    import time
+
+    now = time.time()
+    for root in (packages_root(), packages_root() / "imports"):
+        if not root.is_dir():
+            continue
+        for child in root.iterdir():
+            if not (child.name.endswith(".staging")
+                    or child.name.startswith("imp-")):
+                continue
+            try:
+                if now - child.stat().st_mtime > _STAGING_TTL_SECONDS:
+                    shutil.rmtree(child, ignore_errors=True)
+            except OSError:
+                continue
+
+
 def _discard_staging(package_id: str) -> None:
     staging = packages_root() / f"{package_id}.staging"
     if staging.exists():
@@ -328,7 +357,10 @@ async def _resolve_all_payloads(
                 classification=pc.CLASS_MISSING, reason="数据集已摘除")
             continue
         if node.classification == pc.CLASS_EMBEDDED and node.upload_path:
-            outcomes[real_id] = resolve_upload_payload(node)
+            # R1 P2-8：文件 sha256/上传探测是 O(payload) IO —— 卸载到
+            # worker 线程，绝不阻塞事件循环。
+            outcomes[real_id] = await asyncio.to_thread(
+                resolve_upload_payload, node)
         elif node.classification == "session_ref":
             outcomes[real_id] = await resolve_session_payload(session_id, node)
         elif node.classification == pc.CLASS_EXTERNAL_REFERENCE:
@@ -341,7 +373,9 @@ async def _resolve_all_payloads(
         if token.cancelled:
             raise OperationCancelled("export cancelled")
     for real_id, node in closure.artifacts.items():
-        outcomes[f"art:{real_id}"] = resolve_artifact_payload(node)
+        # 产物读回 + 摘要校验同为 O(payload) IO（R1 P2-8）
+        outcomes[f"art:{real_id}"] = await asyncio.to_thread(
+            resolve_artifact_payload, node)
     return outcomes
 
 
@@ -369,6 +403,7 @@ def _execute_export_sync(
     try:
         mat = PackageMaterializer(staging)
         dataset_entries: List[pc.ManifestDataset] = []
+        gpkg_member_indices: List[int] = []
         counts = {c: 0 for c in pc.CLASSIFICATIONS}
 
         total_ds = len(closure.datasets)
@@ -413,6 +448,9 @@ def _execute_export_sync(
             if classification == pc.CLASS_EMBEDDED and payload is not None:
                 entry.payload = _materialize_dataset(
                     mat, lid, node, payload, cancel_check)
+                if (entry.payload is not None
+                        and entry.payload.path == pc.LAYERS_GPKG_PATH):
+                    gpkg_member_indices.append(len(dataset_entries))
             elif classification == pc.CLASS_EXTERNAL_REFERENCE:
                 entry.external = pc.ExternalRef(
                     uri=node.source_ref[:4096] if node.source_ref.startswith("http") else "",
@@ -422,6 +460,17 @@ def _execute_export_sync(
             if idx % 5 == 0:
                 progress(20 + int(40 * (idx + 1) / max(1, total_ds)),
                          f"数据集物化 {idx + 1}/{total_ds}")
+
+        if gpkg_member_indices:
+            # R1 P1-5：多图层共写一个 gpkg —— 逐数据集时刻的哈希是中间态。
+            # 统一以终态整文件哈希回填全部成员条目（导入侧按此对账）。
+            gpkg_digest = pc.sha256_file(mat._gpkg_path)
+            gpkg_bytes = mat._gpkg_path.stat().st_size
+            for i in gpkg_member_indices:
+                ref = dataset_entries[i].payload
+                assert ref is not None
+                ref.sha256 = gpkg_digest
+                ref.bytes = gpkg_bytes
 
         progress(65, "产物与地图物化")
         artifact_entries = _materialize_artifacts(
@@ -494,6 +543,12 @@ def _execute_export_sync(
         filename = _package_filename(package_name, package_id)
         zip_bytes_total, zip_sha = _write_zip(staging, filename, job_id)
         progress(93, "原子发布")
+        # R1 P3-21：session 主体走签名 URL（裸路径对匿名导出永不可下载）
+        from app.services.export_storage import export_download_url
+
+        owner = actor.user_id or (f"session:{session_id}" if session_id
+                                  else "")
+        download_path = export_download_url(filename, owner or "user:none")
         receipt = {
             "package_id": package_id,
             "filename": filename,
@@ -503,7 +558,7 @@ def _execute_export_sync(
             "reproduction": repro.model_dump(),
             "counts": {k: v for k, v in counts.items() if v},
             "created_at": created_at,
-            "download_path": f"/api/v1/export/download/{filename}",
+            "download_path": download_path,
         }
         out_dir = package_dir(package_id)
         (out_dir / "receipt.json").write_text(
@@ -532,33 +587,33 @@ def _materialize_dataset(
     """单数据集载荷 → 包内标准形态（gpkg 图层 / 栅格拷贝 / CSV）。"""
     if payload.kind == "featurecollection":
         feats = fc_features_from_payload(payload.data or {})
+        # R1 P2-11：CRS 未声明传 None（gdal 不标 CRS），不捏造 4326
+        feats_crs = (node.crs or "").strip() or None
         total, _fields = mat.write_vector_dataset(
-            lid, feats, crs=node.crs or "EPSG:4326",
+            lid, feats, crs=feats_crs or "",
             geometry_type=payload.geometry_type or "Unknown",
             cancel_check=cancel_check)
         if total == 0:
-            mat.write_empty_vector_layer(lid, crs=node.crs or "EPSG:4326",
+            mat.write_empty_vector_layer(lid, crs=feats_crs or "",
                                          geometry_type=payload.geometry_type or "Unknown")
-        digest = pc.sha256_file(mat._gpkg_path)
+        # sha256/bytes 由数据集循环结束后的终态回填统一写入（P1-5）
         return pc.DatasetPayloadRef(
-            path=pc.LAYERS_GPKG_PATH, member=lid, sha256=digest,
-            bytes=mat._gpkg_path.stat().st_size)
+            path=pc.LAYERS_GPKG_PATH, member=lid, sha256="", bytes=0)
     if payload.kind == "file":
         path = payload.path
         ext = (path.suffix.lower() if path else ".geojson")
         if ext == ".geojson":
             feats = stream_fc_features(path)
+            feats_crs = (node.crs or "").strip() or None
             total, _fields = mat.write_vector_dataset(
-                lid, feats, crs=node.crs or "EPSG:4326",
+                lid, feats, crs=feats_crs or "",
                 geometry_type=payload.geometry_type or "Unknown",
                 cancel_check=cancel_check)
             if total == 0:
                 mat.write_empty_vector_layer(
-                    lid, crs=node.crs or "EPSG:4326")
-            digest = pc.sha256_file(mat._gpkg_path)
+                    lid, crs=feats_crs or "")
             return pc.DatasetPayloadRef(
-                path=pc.LAYERS_GPKG_PATH, member=lid, sha256=digest,
-                bytes=mat._gpkg_path.stat().st_size)
+                path=pc.LAYERS_GPKG_PATH, member=lid, sha256="", bytes=0)
         if ext in (".tif", ".tiff", ".png"):
             mat.write_raster_copy(lid, path, ext, crs=node.crs or "")
             target = (mat.root / "standard" / "rasters" / f"{lid}{ext}")

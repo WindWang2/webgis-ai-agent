@@ -113,8 +113,12 @@ def inspect_zip(zip_path: Path, *, manifest: Optional[dict] = None
         if not inspection.manifest_present:
             raise pc.PackageError(
                 pc.ERR_PACKAGE_FORMAT, f"包根缺少 {pc.MANIFEST_PATH}")
-        # manifest 先读（≤1MiB 守卫在 format_gate）
-        raw = zf.read(pc.MANIFEST_PATH)
+        # manifest 先读（≤1MiB 守卫在 format_gate）；按原始 arcname 读
+        #（R1 P3-15："./manifest.json" 等归一化等价名不命中字面常量）。
+        manifest_arcname = next(
+            (e.arcname for e in inspection.entries
+             if e.target_rel == pc.MANIFEST_PATH), pc.MANIFEST_PATH)
+        raw = zf.read(manifest_arcname)
         if len(raw) > pc.MAX_MANIFEST_BYTES:
             raise pc.PackageError(pc.ERR_MANIFEST_TOO_LARGE,
                                   "manifest 超过 1MiB")

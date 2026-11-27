@@ -270,7 +270,7 @@ class TestRoundtripJourney:
         with SessionLocal() as db:
             record = DurableJobStore.get_sync(db, int(job_id))
             import_id = record.parameters["import_id"]
-        receipt = get_import_receipt(import_id, actor)
+        receipt = get_import_receipt(import_id)
         new_pid = receipt["project_id"]
         assert new_pid and new_pid != _SRC_PID
         verification = receipt["verification"]
