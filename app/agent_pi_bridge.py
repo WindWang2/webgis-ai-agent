@@ -1830,11 +1830,15 @@ class PiBridge:
         result,
         *,
         collector,
+        provider_retry_attempts: int = 0,
+        last_provider_failure_kind: str = "",
     ) -> None:
         """G37（WP07/WP08）：回执 + usage 落盘（fire-and-forget，绝不阻塞流）。
 
         幂等（turn_id upsert + (turn_id, call_seq) 冲突跳过）；失败时
         collector.write_failures 置位 → 汇总 complete=False → 面 incomplete。
+        WP3：attempt 链元数据（vendor auto-retry 次数 + 路由理由码 + 最后
+        provider 失败分类）随行落盘 —— 不建新表，与 usage 明细共聚一行。
         """
         try:
             from app.services.chat.model_runtime.usage_ledger import (
@@ -1856,6 +1860,11 @@ class PiBridge:
                 status=result.status,
                 failure_reason=(result.reason_detail or None) if not result.ok else None,
                 finalize=True,
+                provider_retry_attempts=max(0, int(provider_retry_attempts or 0)),
+                route_reason_codes="|".join(
+                    str(c) for c in (getattr(result, "strategy_codes", None) or ())[:8]
+                ),
+                last_provider_failure_kind=str(last_provider_failure_kind or "")[:32],
             )
         except Exception:  # noqa: BLE001 — 回执落盘是增值面
             collector.write_failures += 1
@@ -2220,6 +2229,16 @@ class PiBridge:
                     session_id, turn_id,
                 )
                 await self._safe_kernel_end_turn(session_id, turn_id, status)
+        # WP2/WP3（GOAL-20261127-01）：turn 结局 → 路由健康表的**成功**回写
+        # （completed = provider 真实完成了本 turn → 清冷却/失败计数，与
+        # ChatEngine observe_outcome 成功语义同源）。失败方向不在此记录 ——
+        # provider 失败已由 stderr 结构化观测 / auto_retry 兜底通道精确回写，
+        # turn 级失败（超时/停顿/取消）混入会把非 provider 故障错挂到模型。
+        if status == "completed":
+            self._observe_retry_success(
+                self._last_confirmed_model
+                or str(getattr(self._rpc, "spawn_model_id", "") or "")
+            )
         if tracker_task_id:
             try:
                 from app.services.chat.engine_instance import try_get_chat_engine
@@ -3608,6 +3627,9 @@ class PiBridge:
                 # 本 turn 生效模型（健康回写归属；S3 随账本持久化）。
                 _provider_retry_attempts = 0
                 _turn_effective_model = ""
+                # WP3：本 turn 观察到的最后 provider 失败分类（失败种类随
+                # 回执落盘；分类来自 stderr 结构化观测 + auto_retry 兜底）。
+                _turn_last_failure_kind = ""
                 try:
                     from app.services.chat.model_runtime.usage_ledger import (
                         TurnUsageCollector,
@@ -4012,6 +4034,9 @@ class PiBridge:
                                 _ar_type = str(event.get("type") or "")
                                 if _ar_type == "auto_retry_start":
                                     _provider_retry_attempts += 1
+                                    _turn_last_failure_kind = self.classify_retry_error_text(
+                                        str(event.get("errorMessage") or "")
+                                    )
                                     self._observe_retry_health(
                                         model=(
                                             _turn_effective_model
@@ -4333,6 +4358,8 @@ class PiBridge:
                     if _model_result is not None and _usage_collector is not None:
                         self._persist_turn_runtime_receipt(
                             _model_result, collector=_usage_collector,
+                            provider_retry_attempts=_provider_retry_attempts,
+                            last_provider_failure_kind=_turn_last_failure_kind,
                         )
                     # Clear the active-turn markers AFTER the abort above (abort reads
                     # them to cancel the token) and before releasing the lock.

@@ -123,6 +123,9 @@ class SessionUsageResponse(BaseModel):
     cost_source: str = "unknown"
     recent_turns: List[SessionUsageTurn] = Field(default_factory=list)
     coverage: Dict[str, Any] = Field(default_factory=dict)
+    # WP3/B6（GOAL-20261127-01）：预算块（cap=生效上限；None=无预算控制；
+    # used/remaining 仅在 cap 有界时出现）—— 与 budget_admission 同一权威。
+    budget: Dict[str, Any] = Field(default_factory=dict)
 
 
 # ── G43 上下文资料视图 ────────────────────────────────────────────────────

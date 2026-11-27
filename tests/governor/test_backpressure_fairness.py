@@ -294,11 +294,21 @@ class TestSessionBudgetLedger:
         assert snap["session"]["cumulative"][Dimension.WALL_TIME_S.value] == 12.0
 
     def test_cumulative_accumulates_across_reservations(self):
+        """context：session 维 keep-latest（整段组装 prompt 含历史，跨 turn
+        求和会重复计入并虚增 trip cap —— 24655bf3a 的有意语义）；turn/global
+        维求和。output（WP3/B4 回流）：每次 turn 的输出都是新增量 → 全 scope
+        求和。"""
         led = self._ledger()
         led.record_context_tokens("s1", "t1", 5000)
         led.record_context_tokens("s1", "t2", 7000)
         snap = led.snapshot("s1")
-        assert snap["session"]["cumulative"][Dimension.CONTEXT_TOKENS.value] == 12000
+        assert snap["session"]["cumulative"][Dimension.CONTEXT_TOKENS.value] == 7000
+        snap_t1 = led.snapshot("s1", turn_id="t1")
+        assert snap_t1["turn"]["cumulative"][Dimension.CONTEXT_TOKENS.value] == 5000
+        led.record_output_tokens("s1", "t1", 100)
+        led.record_output_tokens("s1", "t2", 70)
+        snap2 = led.snapshot("s1")
+        assert snap2["session"]["cumulative"][Dimension.OUTPUT_TOKENS.value] == 170
 
     def test_provisional_budgets_flagged(self):
         led = self._ledger()

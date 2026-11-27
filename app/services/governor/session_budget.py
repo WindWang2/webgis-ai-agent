@@ -279,6 +279,27 @@ class SessionBudgetLedger:
                 ledger.last_activity = time.monotonic()
             self._evict_idle_ledgers_locked()
 
+    def record_output_tokens(self, session_id: str, turn_id: str,
+                             tokens: int) -> None:
+        """WP3（GOAL-20261127-01/B4）：账本结算的**真实** output tokens 回流。
+
+        与 ``record_context_tokens`` 的语义分叉有据：输出 token 每次 turn
+        都是新增量（不像组装 prompt 会重复计入历史）→ 全 scope 求和。
+        来源 = usage 账本结算实数（provider message_end），非估算。
+        """
+        if tokens <= 0:
+            return
+        with self._lock:
+            for scope, sid in (("turn", turn_id), ("session", session_id),
+                               ("global", "global")):
+                if not sid:
+                    continue
+                ledger = self._ledgers[scope].setdefault(sid, _ScopeLedger())
+                ledger.cumulative[Dimension.OUTPUT_TOKENS] = (
+                    ledger.cumulative.get(Dimension.OUTPUT_TOKENS, 0.0) + tokens)
+                ledger.last_activity = time.monotonic()
+            self._evict_idle_ledgers_locked()
+
     # ── 观测 ─────────────────────────────────────────────────────────
 
     def snapshot(self, session_id: str, turn_id: str = "",
