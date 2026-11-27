@@ -1334,6 +1334,11 @@ app.include_router(storymap_routes.router, prefix="/api/v1", tags=["StoryMap"])
 from app.api.routes import brief as brief_routes  # noqa: E402
 
 app.include_router(brief_routes.router, prefix="/api/v1", tags=["MapBrief"])
+# 05 线工程包交换与可移植复现（inspect/plan/export 双入口挂载 + 导入面）
+from app.api.routes import project_exchange as project_exchange_routes  # noqa: E402
+
+app.include_router(project_exchange_routes.router, prefix="/api/v1", tags=["Project Exchange / 工程包交换"])
+app.include_router(project_exchange_routes.exchange_sub, prefix="/api/v1", tags=["Project Exchange / 工程包交换"])
 app.include_router(pi_tools.router, tags=["PI工具"])
 app.include_router(pi_interactions_routes.router, prefix="/api/v1", tags=["AI对话"])  # G29 运行中交互用户面
 app.include_router(pi_interactions_routes.pi_router, tags=["PI工具"])  # G29 扩展回调面（bridge secret）

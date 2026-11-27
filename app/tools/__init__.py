@@ -212,6 +212,9 @@ _TOOL_MODULES = [
     ("app.tools.map_series_tools", "register_map_series_tools"),
     # 系列出版生产（同一 goal WP5；durable job 提交面）
     ("app.tools.series_production_tools", "register_series_production_tools"),
+    # 05 线：工程包交换与可移植复现（检视/导出计划/导出/导入预检/导入计划/导入；
+    # deferred 超集注册，绝不进 NATIVE_TOOL_NAMES；独立模块防并发冲突）
+    ("app.tools.project_exchange_tools", "register_project_exchange_tools"),
 
 ]
 
