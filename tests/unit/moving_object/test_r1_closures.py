@@ -104,6 +104,32 @@ async def test_unparseable_window_bound_is_typed_rejection() -> None:
 
 
 @pytest.mark.asyncio
+async def test_invalid_timezone_is_typed_rejection_not_500() -> None:
+    """R2 follow-up: invalid assumed_timezone (with or without a window)
+    must surface as TRAJECTORY_TIMEZONE_INVALID, never a raw 500."""
+    sid = f"r1-tz-{uuid.uuid4().hex[:8]}"
+    fc = {"type": "FeatureCollection", "features": [
+        _feat("A", "2026-01-01T00:00:00Z", 0, 0),
+        _feat("A", "2026-01-01T00:01:00Z", 0.001, 0),
+    ]}
+    ref = await session_data_manager.store(sid, fc, prefix="geojson")
+    await session_data_manager.set_alias(sid, ref, "pts")
+    with pytest.raises(TrajectoryServiceError) as exc_window:
+        await preview_trajectory_product(sid, TrajectoryProductConfig(
+            dataset="pts", assumed_timezone="Not/AZone",
+            time_start="2026-01-01T00:00:00+00:00"))
+    assert exc_window.value.code == "TRAJECTORY_TIMEZONE_INVALID"
+    # No window: the rejection comes from ingest and is classified as
+    # INPUT_INVALID — still a typed 4xx, never a raw 500 (R2-1 concern).
+    with pytest.raises(TrajectoryServiceError) as exc_plain:
+        await preview_trajectory_product(sid, TrajectoryProductConfig(
+            dataset="pts", assumed_timezone="Not/AZone"))
+    assert exc_plain.value.code in (
+        "TRAJECTORY_TIMEZONE_INVALID", "TRAJECTORY_INPUT_INVALID")
+    await session_data_manager.clear_session(sid)
+
+
+@pytest.mark.asyncio
 async def test_scale_cap_maps_to_typed_service_error(monkeypatch) -> None:
     """Lowering the region-event cap must surface as a typed service error
     (TRAJECTORY_SCALE_EXCEEDED), not a raw MovingObjectError → 500."""

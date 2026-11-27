@@ -13,7 +13,8 @@ One domain service shared verbatim by the Pi tool face and the REST API
 - paged query over stored products.
 
 Staleness contract: a product records ``source_revision``; apply refuses
-(TrajectoryProductStale) when the source has moved on — no silent reuse.
+(``TRAJECTORY_SOURCE_STALE``) when the source has moved on — no silent
+reuse.
 """
 from __future__ import annotations
 
@@ -90,6 +91,7 @@ class TrajectoryProductConfig(BaseModel):
     dwell_radius_m: float = Field(50.0, gt=0)
     dwell_min_dwell_s: float = Field(120.0, gt=0)
     dwell_min_points: int = Field(3, ge=2, le=10_000)
+    dwell_max_gap_s: float = Field(3600.0, gt=0, le=86400 * 366)
     # region events (optional)
     regions_ref: Optional[str] = Field(None, max_length=160,
                                        json_schema_extra={"ref_cursor": True})
@@ -98,6 +100,7 @@ class TrajectoryProductConfig(BaseModel):
     detect_cross: bool = True
     region_dwell_min_s: float = Field(60.0, gt=0)
     detect_region_dwell: bool = True
+    region_dwell_max_gap_s: float = Field(3600.0, gt=0, le=86400 * 366)
     # window + filter
     time_start: Optional[str] = None
     time_end: Optional[str] = None
@@ -133,6 +136,7 @@ class TrajectoryProductConfig(BaseModel):
             radius_m=self.dwell_radius_m,
             min_dwell_s=self.dwell_min_dwell_s,
             min_points=self.dwell_min_points,
+            max_gap_s=self.dwell_max_gap_s,
         )
 
     def region_config(self) -> RegionEventConfig:
@@ -148,6 +152,7 @@ class TrajectoryProductConfig(BaseModel):
             detect_cross=self.detect_cross,
             detect_dwell=self.detect_region_dwell,
             min_dwell_s=self.region_dwell_min_s,
+            dwell_max_gap_s=self.region_dwell_max_gap_s,
         )
 
 
@@ -220,7 +225,13 @@ def _apply_window(feats: List[Dict[str, Any]], cfg: TrajectoryProductConfig) -> 
     from app.services.moving_object.ingest import parse_event_time
     from zoneinfo import ZoneInfo
 
-    tz = ZoneInfo(cfg.assumed_timezone)
+    try:
+        tz = ZoneInfo(cfg.assumed_timezone)
+    except Exception as e:
+        raise TrajectoryServiceError(
+            "TRAJECTORY_TIMEZONE_INVALID",
+            f"invalid assumed_timezone {cfg.assumed_timezone!r}: {e}",
+        ) from e
     if cfg.time_start:
         start = parse_event_time(cfg.time_start, tz)[0]
         if start is None:

@@ -64,6 +64,8 @@ class TrajectoryBuildArgs(BaseModel):
     dwell_radius_m: float = Field(50.0, gt=0)
     dwell_min_dwell_s: float = Field(120.0, gt=0)
     dwell_min_points: int = Field(3, ge=2, le=10000)
+    dwell_max_gap_s: float = Field(3600.0, gt=0, le=86400 * 366,
+                                   description="驻留游程最大观测间隙（秒，超限拆分——不把未观测间隙伪装成驻留）")
     regions_ref: Optional[str] = Field(
         None, max_length=160, json_schema_extra={"ref_cursor": True},
         description="可选区域面 ref（ref:geojson-*，Polygon/MultiPolygon）——给定时同轮产出区域事件")
@@ -71,6 +73,7 @@ class TrajectoryBuildArgs(BaseModel):
     boundary_rule: str = Field("closed", description="closed|open（边界归属规则，结果内披露）")
     detect_cross: bool = True
     region_dwell_min_s: float = Field(60.0, gt=0)
+    region_dwell_max_gap_s: float = Field(3600.0, gt=0, le=86400 * 366)
     detect_region_dwell: bool = True
     time_start: Optional[str] = Field(None, description="分析窗起点（ISO-8601，含时区）")
     time_end: Optional[str] = Field(None, description="分析窗终点（ISO-8601，含时区）")
@@ -113,11 +116,13 @@ def _config_from_args(a: TrajectoryBuildArgs) -> TrajectoryProductConfig:
         dwell_radius_m=a.dwell_radius_m,
         dwell_min_dwell_s=a.dwell_min_dwell_s,
         dwell_min_points=a.dwell_min_points,
+        dwell_max_gap_s=a.dwell_max_gap_s,
         regions_ref=a.regions_ref,
         region_id_field=a.region_id_field,
         boundary_rule=a.boundary_rule,
         detect_cross=a.detect_cross,
         region_dwell_min_s=a.region_dwell_min_s,
+        region_dwell_max_gap_s=a.region_dwell_max_gap_s,
         detect_region_dwell=a.detect_region_dwell,
         time_start=a.time_start,
         time_end=a.time_end,
@@ -241,11 +246,13 @@ def register_moving_object_tools(registry: ToolRegistry) -> None:
         dwell_radius_m: float = 50.0,
         dwell_min_dwell_s: float = 120.0,
         dwell_min_points: int = 3,
+        dwell_max_gap_s: float = 3600.0,
         regions_ref: Optional[str] = None,
         region_id_field: str = "region_id",
         boundary_rule: str = "closed",
         detect_cross: bool = True,
         region_dwell_min_s: float = 60.0,
+        region_dwell_max_gap_s: float = 3600.0,
         detect_region_dwell: bool = True,
         time_start: Optional[str] = None,
         time_end: Optional[str] = None,
@@ -271,11 +278,13 @@ def register_moving_object_tools(registry: ToolRegistry) -> None:
             dwell_radius_m=dwell_radius_m,
             dwell_min_dwell_s=dwell_min_dwell_s,
             dwell_min_points=dwell_min_points,
+            dwell_max_gap_s=dwell_max_gap_s,
             regions_ref=regions_ref,
             region_id_field=region_id_field,
             boundary_rule=boundary_rule,
             detect_cross=detect_cross,
             region_dwell_min_s=region_dwell_min_s,
+            region_dwell_max_gap_s=region_dwell_max_gap_s,
             detect_region_dwell=detect_region_dwell,
             time_start=time_start,
             time_end=time_end,

@@ -334,8 +334,7 @@ def analyze_region_events(
     numbers are 1-based per (entity, region), chronological.
     """
     pts = sorted(_filter_window(points, window), key=lambda p: (p.t, p.order))
-    # Build the STRtree once for candidate pruning.
-    regions._tree = STRtree(regions.geoms) if regions.geoms else None  # type: ignore[attr-defined]
+    # The candidate STRtree is built once in load_regions (single owner).
 
     analysis = EventAnalysis(
         n_regions=len(regions.ids),
@@ -417,23 +416,22 @@ def _walk_pair(
 
     def _emit_region_dwell_span(span, duration) -> None:
         nonlocal seq
-        if True:
-            if duration >= cfg.min_dwell_s:
-                        seq += 1
-                        analysis.events.append(RegionEventModel(
-                            entity_id=entity_id,
-                            region_id=rid,
-                            event_type="dwell",
-                            t_exact=span[0].t.isoformat(),
-                            t_interval_start=span[0].t.isoformat(),
-                            t_interval_end=span[-1].t.isoformat(),
-                            inferred=False,
-                            lon=span[0].lon,
-                            lat=span[0].lat,
-                            from_row=span[0].source_row_id,
-                            to_row=span[-1].source_row_id,
-                            sequence=seq,
-                        ))
+        if duration >= cfg.min_dwell_s:
+            seq += 1
+            analysis.events.append(RegionEventModel(
+                entity_id=entity_id,
+                region_id=rid,
+                event_type="dwell",
+                t_exact=span[0].t.isoformat(),
+                t_interval_start=span[0].t.isoformat(),
+                t_interval_end=span[-1].t.isoformat(),
+                inferred=False,
+                lon=span[0].lon,
+                lat=span[0].lat,
+                from_row=span[0].source_row_id,
+                to_row=span[-1].source_row_id,
+                sequence=seq,
+            ))
 
     for cur in stream:
         try:
