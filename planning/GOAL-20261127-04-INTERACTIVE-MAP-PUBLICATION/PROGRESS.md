@@ -46,3 +46,11 @@
   （331 个他线未登记端点，master 原样失败）；tsc tsconfig.test.json 的
   lib/mapspec/live-spec.test.ts 'tiles' 类型错（master 原样）；runtime manifest strict 的
   capability 悬空（journey 用文档化 GIS_MANIFEST_STRICT=0 启动）。
+
+## 交付
+
+- 分支：`zcode/goal-interactive-map-publication-20261127`（14 commits，52 文件 +7.9k 行）
+- PR：**#2294**（`gh pr create --base master`，2026-11-28）— 不自动合并
+- worktree 保留：`/home/kevin/projects/webgis/webgis-interactive-map-publication-20261127`
+- 最终门禁：71 pytest passed（唯一失败=master 原样基线 scope-matrix）/ vitest 18 passed /
+  tsc+eslint（本线文件）/ mypy 棘轮 clean / ruff（本线文件）clean / next build 成功
