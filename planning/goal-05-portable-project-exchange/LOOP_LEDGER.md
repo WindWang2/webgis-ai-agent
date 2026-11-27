@@ -18,3 +18,7 @@ R2 | 性能基线：3×1000 要素包全程 <0.5s（解析 0.01/物化+ZIP 0.35/
 R3 | R1 独立审查启动（general-purpose 审阅代理逐行 diff，非作者身份）| 代理运行中 | — | 等待发现清单
 R3 | 远端复核：origin/master 无漂移（f34cb69d）；新 PR #2292（02 线）与本文三个共享文件（main.py/tools 注册/i18n 注册）均为 additive 一行式，无逻辑冲突 | gh pr view + comm 交集 | 记录 PR 正文 | R1 修复
 R3 | 前置自查修复：UploadRecord 词表无 parquet/png 诚实标签 → 拒载披露（此前误标 csv/geotiff）+ 负例锁定；i18n key 完整性失败甄别为 chat 命名空间基线既有（本分支 chat.json 与 master 零差异）| pytest 80 passed | 通过 | R1 修复
+R4 | R1 修复：P0 路径包容前置闸+载荷强制对账；P1×4（mapping 增量填充/路由 user_id 键/回执 schema/gpkg 终态哈希回填）；P2×8；P3×7（幂等竞态记录为与 data_delivery 同款取舍）| test_r1_fixes.py 10 例 + 全量 90 passed | 全部 P0/P1/P2 关闭 | R2
+R4 | 事故插曲：全仓 ruff --fix 误改域外文件 raster_tile_service.py → 立即 checkout 恢复；共享 stash 误弹事件已恢复（对方 stash 完好）| git status 复核 | 域外零改动确认 | R2
+R5 | R2 复审：远端无漂移；冲突矩阵（#2290 零交集/#2291·#2292 一行式共享）；journey 复跑 33+5 绿；diff --check 干净 | 实测 | REVIEW_R2.md | PR
+R6 | PR 创建：https://github.com/WindWang2/webgis-ai-agent/pull/2293（分支推送成功，正文含基线/pin/去重/测试/性能/披露/R1R2）| gh pr create | 完成 | 收尾披露

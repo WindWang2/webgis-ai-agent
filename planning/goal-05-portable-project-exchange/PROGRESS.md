@@ -41,12 +41,17 @@
 - scripts/debt_ratchet.py（registry.py/remote_sensing.py god_modules 棘轮，基线漂移）
 - scripts/check_dependency_bounds.py（pandas/sqlalchemy 上界收紧要求，master 既有）
 
-## 必过旅程状态
-1. ✅ 原生包往返（T6 test_roundtrip.py：导出→受控上传→真实 runner→重映射→校验 semantic）
-2. ✅ 标准交换独立读回（T7：geopandas + ogrinfo CLI + manifest 台账哈希对账）
-3. ✅ 恶意/越权/取消矩阵（T8：篡改哈希/跨 owner/许可披露/取消无半成品/无覆盖入口）
-4. ✅ 双入口（REST + Pi 工具同 services 层；T9/T10；UI 对话框 + 会话面板自动纳入）
+## 必过旅程状态（R1/R2 后终态）
+1. ✅ 原生包往返（T6：导出→受控上传→真实 runner→IDs/refs 重映射→导入后校验 semantic_equivalent）。**诚实披露**：「显式重算」以 verify_reproduction 的指标对比函数单元级验证（计数/CRS/bbox 逐项对账）+ 往返 E2E 验证重映射与指纹保持；真实 workflow 引擎在导入项目上的完整重算 E2E 未执行（工具 dispatch 需要会话上下文与真实工具面，超出本轮 E2E 范围，已列为后续工作）。
+2. ✅ 标准交换独立读回（T7：geopandas + ogrinfo CLI + manifest 台账逐文件 sha256 对账）
+3. ✅ 恶意/越权/取消矩阵（T8 + T4 + T-r1fixes：篡改哈希/路径穿越/绝对路径/炸弹/跨 owner/许可披露/取消无半成品/无覆盖入口签名级断言）
+4. ✅ 双入口（REST + Pi 工具同 services 层；UI 对话框 + 会话面板自动纳入；鉴权下载通道）
 
-## 剩余
-- R1 独立审查（逐行 diff + 邻接权威）→ 修复
-- R2 复审 + 关键 journey 复跑 + PR
+## R1/R2
+- R1（独立审阅代理逐行 diff）：1×P0 + 4×P1 + 8×P2 + 8×P3 —— P0/P1/P2 全部修复并锁定回归（90 测试绿）；明细见 REVIEW_R1.md / REVIEW_R2.md
+- PR：#2293（分支 zcode/goal-portable-project-exchange-20261127）
+
+## 剩余（诚实清单）
+- 真实 workflow 引擎重算 E2E（见旅程 1 披露）
+- 浏览器级 Playwright journey（UI 为既有页面薄入口，REST/Pi 集成测试覆盖双入口语义）
+- 跨机真实部署恢复演练（本轮以隔离 DB + tmp DATA_DIR 的全新环境等价实现）
