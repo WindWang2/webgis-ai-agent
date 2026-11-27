@@ -189,6 +189,82 @@ async def export_receipt(
     return receipt
 
 
+@router.get("/jobs/{job_id}/export-receipt",
+            response_model=ExportStatusResponse,
+            tags=["Project Exchange / 工程包交换"])
+async def export_receipt_by_job(
+    job_id: str,
+    user: dict = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
+):
+    """按任务 ID 查导出回执（复用任务中心同款归属谓词，404 不泄露存在性）。"""
+    from app.services.project_exchange.importer import get_export_receipt
+
+    def _load_sync():
+        package_id = _job_param_sync(job_id, "package_id", user, owner_token)
+        return package_id
+
+    try:
+        package_id = await _run_sync(_load_sync)
+        if not package_id:
+            raise pc.PackageError(pc.ERR_JOB_NOT_FOUND,
+                                  "任务尚未产出 package_id（进行中或失败）")
+        receipt = await _run_sync(get_export_receipt, package_id,
+                                  _actor(user, owner_token))
+    except pc.PackageError as e:
+        raise _map_error(e) from e
+    return receipt
+
+
+@router.get("/jobs/{job_id}/import-receipt",
+            response_model=ImportStatusResponse,
+            tags=["Project Exchange / 工程包交换"])
+async def import_receipt_by_job(
+    job_id: str,
+    user: dict = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
+):
+    """按任务 ID 查导入恢复报告（归属谓词同任务中心）。"""
+    from app.services.project_exchange.importer import get_import_receipt
+
+    try:
+        import_id = await _run_sync(
+            _job_param_sync, job_id, "import_id", user, owner_token)
+        if not import_id:
+            raise pc.PackageError(pc.ERR_JOB_NOT_FOUND,
+                                  "任务尚未产出 import_id（进行中或失败）")
+        receipt = await _run_sync(get_import_receipt, import_id,
+                                  _actor(user, owner_token))
+    except pc.PackageError as e:
+        raise _map_error(e) from e
+    return receipt
+
+
+def _job_param_sync(job_id: str, key: str, user: dict,
+                    owner_token: Optional[str]) -> str:
+    """按任务中心同款三条归属证明链读取 job.parameters[key]（同步）。"""
+    from sqlalchemy import select as sa_select
+
+    from app.core.database import SessionLocal
+    from app.models.db_model import AnalysisTask
+    from app.services.jobs.store import normalize_owner_id, _ownership_predicate
+
+    text = str(job_id or "").strip()
+    if not text.isdigit():
+        raise pc.PackageError(pc.ERR_JOB_NOT_FOUND, "任务 ID 形态非法")
+    owner_id = normalize_owner_id(str(user.get("user_id") or "") or None)
+    with SessionLocal() as db:
+        stmt = sa_select(AnalysisTask).where(
+            AnalysisTask.id == int(text),
+            _ownership_predicate(owner_id, owner_token, None),
+        )
+        record = db.execute(stmt).scalar_one_or_none()
+        if record is None:
+            raise pc.PackageError(pc.ERR_JOB_NOT_FOUND, "任务不存在或无权访问")
+        params = dict(record.parameters or {})
+        return str(params.get(key) or "")
+
+
 # ── 导入侧 ───────────────────────────────────────────────────────────────
 
 @router.post("/packages/upload", response_model=PackageUploadResponse,

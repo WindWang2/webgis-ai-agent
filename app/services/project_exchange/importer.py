@@ -303,6 +303,12 @@ async def _run_import_job(job_id: str, zip_path: Path, actor,
 
         with SessionLocal() as db:
             ok = DurableJobStore.mark_running_sync(db, job_id, worker_id=worker_id)
+            if ok:
+                record = DurableJobStore.get_sync(db, job_id)
+                if record is not None:
+                    params = dict(record.parameters or {})
+                    params["import_id"] = import_id
+                    record.parameters = params
             db.commit()
         if not ok:
             return
