@@ -168,6 +168,19 @@ def _tin_loocv_residuals(
         mask[i] = False
         preds[i] = tin_predict(pts[mask], vals[mask], pts[i:i + 1], method=method)[0]
     finite = np.isfinite(preds)
+    if not finite.any():
+        # 全样本处于凸位置（恰 4 点、或共圆等 ≥4 个凸包顶点）：留一后每个
+        # 焦点都落在约化凸包之外 → 预测全 NaN、残差集为空。空数组的 mean
+        # 会产出 nan 证据（rmse/mae/bias=nan，uncertainty 的 quantile 同样
+        # 作用于空数组）—— 类型化拒绝，由调用方按既有约定披露为 skip
+        # （interpolation_compare 已捕获 DegenerateData）（P2 修复）。
+        raise DegenerateData(
+            "TIN LOOCV 无覆盖残差：全部样本处于凸位置（留一后每个焦点都在"
+            "约化凸包之外）——交叉验证证据未定义",
+            correction_hint="补充凸包内部采样点后重试 LOOCV，或接受无 CV "
+                            "证据的 TIN 表面（interpolation_compare 会诚实 "
+                            "skip 该方法）",
+        )
     if not finite.all():
         # hull vertices leave a hole behind when held out — those residuals
         # are undefined outside the reduced hull; disclose via count and
@@ -190,6 +203,12 @@ def tin_loocv(
     Returns ``{"rmse", "mae", "bias", "method": "loocv", "sample_count"}``;
     TIN has NO theoretical variance — this empirical residual evidence is
     the only honest uncertainty statement.
+
+    Raises:
+        InsufficientSamples: fewer than 4 samples.
+        DegenerateData: no covered residuals at all (every sample in convex
+            position — the held-out focus always falls outside the reduced
+            hull); fabricating NaN metrics would poison the evidence block.
     """
     resid, n_used = _tin_loocv_residuals(points_xy, values, method, max_points)
     return {
@@ -312,7 +331,10 @@ def tin_surface(
     if cross_validate:
         try:
             resid, n_used = _tin_loocv_residuals(pts_metric, values, method)
-        except InsufficientSamples as exc:
+        except (InsufficientSamples, DegenerateData) as exc:
+            # LOOCV 证据未定义（样本下限 / 全凸位置）→ 披露 note，不写 nan
+            # 证据块（validation/uncertainty 的 quantile 作用于空数组会产出
+            # 非法 NaN —— P2 修复）。
             metadata["validation_note"] = str(exc.detail)
         else:
             abs_res = np.abs(resid)

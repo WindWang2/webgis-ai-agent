@@ -257,6 +257,26 @@ def test_malformed_expression_arrays_do_not_crash():
                 assert math.isfinite(v)
 
 
+@pytest.mark.parametrize(
+    "condition",
+    [
+        ["get", "x"],
+        ["literal", True],
+        ["geometry-type"],
+        ["==", "x"],
+        42,
+        {"a": 1},
+    ],
+)
+def test_case_non_comparison_condition_fails_open(condition):
+    """``case`` 条件非比较型（``["get", …]`` / ``["literal", …]`` / 标量 /
+    对象）时按未命中跳过该分支，不得抛 IndexError 致导出失败 —— TS 孪生
+    ``evaluateFilterBounded`` 对同形状返回 null（≠ true）同口径。"""
+    expr = ["case", condition, "hit", "miss"]
+    assert _evaluate_map_libre_expression(expr, {"x": 1}, 8.0, "FB") == "miss"
+    assert _resolve_paint_value(expr, {"x": 1}, "FB") == "miss"
+
+
 def test_no_nan_in_output_for_unresolvable_expression():
     """``["get", missing]`` 输入的 radius → 缺省值，产物无 NaN。"""
     expr = ["interpolate", ["linear"], ["get", "absent"], 0, 10, 10, 50]

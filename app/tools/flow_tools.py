@@ -65,8 +65,12 @@ class ODFlowEdgesArgs(BaseModel):
     query_kind: str = "product"
     object_id: str = ""
     focus_direction: str = "both"
-    offset: int = 0
-    limit: int = 50
+    # Bounds mirror the declared parameters schema (limit∈[1,200]/offset≥0):
+    # dispatch validates through this args model, not the LLM-facing schema,
+    # so an unconstrained int would let an out-of-range paging value reach
+    # query_flow_product instead of surfacing a self-healing validation error.
+    offset: int = Field(0, ge=0)
+    limit: int = Field(50, ge=1, le=200)
     # NOTE: session_id is intentionally NOT a model field — the registry
     # injects it from the dispatch context AFTER validation, so an
     # LLM/workflow-authored session_id is rejected here instead of reaching

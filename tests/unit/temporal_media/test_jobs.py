@@ -197,6 +197,110 @@ def test_service_preview_submit_status_result_chain(service_env):
     asyncio.run(scenario())
 
 
+def test_status_offloads_durable_db_projection_to_worker_thread(media_env,
+                                                               small_plan,
+                                                               monkeypatch):
+    import threading
+
+    _seed_job(media_env, small_plan)
+    caller_thread = threading.get_ident()
+    seen = []
+
+    def fake_durable_status(durable_job_id):
+        seen.append((durable_job_id, threading.get_ident()))
+        return {"status": "running"}
+
+    monkeypatch.setattr(svc, "_durable_status", fake_durable_status)
+
+    async def scenario() -> None:
+        result = await svc.status(
+            JobRefArgs(session_id="sess-g35", job_id="g35-job-1"), PRINCIPAL)
+        assert result["durable_job"] == {"status": "running"}
+
+    asyncio.run(scenario())
+    assert seen == [("77", seen[0][1])]
+    assert seen[0][1] != caller_thread
+
+
+def test_cancel_offloads_durable_db_write_to_worker_thread(media_env,
+                                                           small_plan,
+                                                           monkeypatch):
+    import threading
+    from contextlib import contextmanager
+
+    import app.tools._utils as tool_utils
+    from app.services.jobs.store import DurableJobStore
+
+    _seed_job(media_env, small_plan)
+    caller_thread = threading.get_ident()
+    seen = []
+
+    @contextmanager
+    def fake_db_session():
+        seen.append(threading.get_ident())
+        yield object()
+
+    monkeypatch.setattr(tool_utils, "db_session", fake_db_session)
+    monkeypatch.setattr(
+        DurableJobStore, "request_cancel_sync", lambda db, job_id: (True, None))
+
+    async def scenario() -> None:
+        result = await svc.cancel(
+            JobRefArgs(session_id="sess-g35", job_id="g35-job-1"), PRINCIPAL)
+        assert result["status"] == "cancelled"
+
+    asyncio.run(scenario())
+    assert load_state(PRINCIPAL, "g35-job-1")["status"] == "cancelled"
+    assert seen and seen[0] != caller_thread
+
+
+def test_preview_storage_evicts_oldest_entries(media_env, small_plan,
+                                               monkeypatch):
+    from app.services.temporal_media import store
+    from app.services.temporal_media.contracts import TemporalMediaError
+
+    monkeypatch.setattr(store, "_MAX_PREVIEW_ENTRIES", 2, raising=False)
+    refs = []
+    for index in range(3):
+        _, _, plan = make_plan(width=640, height=360, dwell_ms=1000 + index)
+        refs.append(store.save_preview(PRINCIPAL, plan))
+
+    preview_dirs = list(store.job_dir(PRINCIPAL, "preview_" + refs[0]).parent.glob(
+        "preview_*"))
+    assert len(preview_dirs) == 2
+    with pytest.raises(TemporalMediaError) as exc:
+        store.resolve_preview(PRINCIPAL, refs[0])
+    assert exc.value.code == "PLAN_VERSION_MISMATCH"
+    assert store.resolve_preview(PRINCIPAL, refs[1])["plan_hash"]
+    assert store.resolve_preview(PRINCIPAL, refs[2])["plan_hash"]
+
+
+def test_preview_storage_expires_and_prunes_stale_plans(media_env, small_plan,
+                                                        monkeypatch):
+    import os
+    import time
+
+    from app.services.temporal_media import store
+    from app.services.temporal_media.contracts import TemporalMediaError
+
+    monkeypatch.setattr(store, "_PREVIEW_TTL_SECONDS", 60, raising=False)
+    ref = store.save_preview(PRINCIPAL, small_plan)
+    directory = store.job_dir(PRINCIPAL, "preview_" + ref)
+    plan_path = directory / "plan.json"
+    expired = time.time() - 120
+    os.utime(plan_path, (expired, expired))
+
+    with pytest.raises(TemporalMediaError) as exc:
+        store.resolve_preview(PRINCIPAL, ref)
+    assert exc.value.code == "PLAN_VERSION_MISMATCH"
+
+    _, _, fresh_plan = make_plan(width=640, height=360, dwell_ms=2000)
+    fresh_ref = store.save_preview(PRINCIPAL, fresh_plan)
+    assert not directory.exists()
+    assert store.resolve_preview(PRINCIPAL, fresh_ref)["plan_hash"] == \
+        fresh_plan["plan_hash"]
+
+
 def test_duplicate_submit_reuses_one_job_without_orphan_pending(service_env):
     async def scenario() -> None:
         args = MediaPlanArgs(session_id="sess-g35", width=480, height=270)

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import {
+  createInstance,
   getInstance,
   listInstances,
   listPackages,
@@ -67,6 +68,21 @@ describe('workflow-runtime typed client', () => {
     const inst = await getInstance('wi-1');
     expect(inst.instance_id).toBe('wi-1');
     expect(inst.explain).toBeDefined();
+  });
+
+  it('200 响应缺少 instance 时抛 typed 错误，而不是返回 undefined', async () => {
+    stubFetch([
+      { method: 'GET', path: '/api/v1/workflow-runtime/instances/wi-1', status: 200, body: { success: false } },
+      { method: 'POST', path: '/api/v1/workflow-runtime/instances', status: 200, body: { success: false } },
+    ]);
+    await expect(getInstance('wi-1')).rejects.toMatchObject({
+      name: 'WorkflowRuntimeApiError',
+      code: 'WORKFLOW_RUNTIME_ERROR',
+    });
+    await expect(createInstance({ package_id: 'p' })).rejects.toMatchObject({
+      name: 'WorkflowRuntimeApiError',
+      code: 'WORKFLOW_RUNTIME_ERROR',
+    });
   });
 
   it('owner 隔离 404 {"detail":"not found"} → INSTANCE_NOT_FOUND', async () => {

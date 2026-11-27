@@ -294,7 +294,12 @@ def register_component_update_tool(registry: ToolRegistry) -> None:
                     chart_options["selectionField"] = derived_selection_field
         if stats is not None:
             chart_options["stats"] = stats
-        merged_options = {**(options or {}), **chart_options} or None
+        # heatmap_palette 是工具内部控制键（上面已消费），不得随 patch 落进
+        # 组件 options（内部指令泄漏为持久化状态）。
+        _merged_input = {
+            k: v for k, v in (options or {}).items()
+            if k != "heatmap_palette"}
+        merged_options = {**_merged_input, **chart_options} or None
 
         spec = (
             _spec_early
@@ -309,10 +314,23 @@ def register_component_update_tool(registry: ToolRegistry) -> None:
             CartographyComponent,
             mutate_component,
         )
-        parsed = [
-            CartographyComponent.model_validate(dict(c))
-            for c in raw_components if isinstance(c, dict)
-        ]
+        parsed: list = []
+        for c in raw_components:
+            if not isinstance(c, dict):
+                continue
+            try:
+                parsed.append(CartographyComponent.model_validate(dict(c)))
+            except Exception:  # noqa: BLE001 — review P2-11：历史条目形状非法
+                # （type 出闭集词表 / position 非 Position 字面量 / placement
+                # 违反 model_post_init 约束）不得让整次调用向外抛
+                # pydantic ValidationError：引擎写侧只做结构性 id/type 检查
+                # （mutation_handlers.py SetLayoutIntent 分支），model 非法
+                # 但结构合法的条目可持久化；本次命中的是另一个合法组件时
+                # 照常完成。整表替换请走 webgis_layout_set。
+                logger.debug(
+                    "[component_update] skip unparseable component id=%s",
+                    str(c.get("id") or "")[:64],
+                )
         # v2 注记框架 / 插图：payload 有界校验在「合并既有 options 之后」
         # 执行 —— callout 可先设 text 再补 anchor（分步突变不被卡）；非法
         # 合并结果不进 MapSpec。

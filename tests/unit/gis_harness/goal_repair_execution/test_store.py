@@ -102,3 +102,35 @@ def test_ensure_attempt_typed_not_found():
     assert ei.value.code == "ATTEMPT_NOT_FOUND"
     with pytest.raises(GoalRepairErrorCode):
         store.ensure_attempt(999999)
+
+
+def _mark_completed(attempt_id: int) -> None:
+    from app.core.database import SessionLocal
+    from app.models.db_model import AnalysisTask
+    from sqlalchemy import select
+    import contextlib
+
+    with contextlib.closing(SessionLocal()) as db:
+        row = db.execute(select(AnalysisTask).where(
+            AnalysisTask.id == attempt_id)).scalar_one()
+        row.status = "completed"
+        db.commit()
+
+
+def test_find_attempts_not_crowded_out_by_other_goals():
+    """同会话其它 goal 的更新行不得把本 goal 的活跃 attempt 挤出 limit。"""
+    target = _submit(goal_id="g-target")
+    for i in range(9):
+        _submit(goal_id=f"g-other-{i}")
+    active = store.find_active_attempt("s-store", "g-target")
+    assert active is not None
+    assert active["attempt_id"] == target["view"]["attempt_id"]
+
+
+def test_next_retry_no_ignores_prefixed_goal_ids():
+    """goal_id/plan_version 互为前缀时不得互相多计 retry_no。"""
+    first = _submit(goal_id="g1", plan_version="v1")
+    _mark_completed(int(first["view"]["attempt_id"]))
+    other = _submit(goal_id="g1:v1", plan_version="v1")
+    _mark_completed(int(other["view"]["attempt_id"]))
+    assert store._next_retry_no("s-store", "g1", "v1") == 1

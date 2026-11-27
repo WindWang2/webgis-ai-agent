@@ -134,7 +134,10 @@ async def list_plans(
     session_id: str = Query(..., min_length=8, max_length=128),
     _conv: Conversation = Depends(require_owned_session),
 ):
-    return await service.list_plans_payload(session_id)
+    try:
+        return await service.list_plans_payload(session_id)
+    except RasterSamplingError as exc:
+        raise _fail(exc) from exc
 
 
 @router.post("/raster-sampling/plan/{plan_id}/preview", tags=["栅格采样"], response_model=RasterSamplingPreviewResponse)

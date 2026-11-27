@@ -303,23 +303,37 @@ describe('#1078(G-2) first-attempt failure keeps pending', () => {
   });
 
   it('非 409 的首试失败不再清除 pending —— reconcile 继续表达本地隐藏', async () => {
+    // 模拟 durability POST 首试网络失败（非 409）：apiFetch 走全局 fetch。
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new TypeError('network down');
+    }));
     setMapSpecSessionCursor('s1', 5, null);
     commitMapSpecDocument({
       layers: [{ id: 'ly-1', type: 'circle', source: 'src' }],
       sources: {},
     }, 5);
-    const { mergePendingPresentation, getPendingPresentation } = await import('@/lib/mapspec/session-cursor');
-    mergePendingPresentation('ly-1', { visible: false });
 
-    // 模拟 durability POST 首试网络失败（非 409）
-    const { apiFetch } = await import('@/lib/api/transport');
-    vi.spyOn({ apiFetch }, 'apiFetch').mockRejectedValue(new Error('network down'));
-    const mod = await import('./visibility-transaction');
-    // 直接调用 postPresentationWithRetry 等价入口：通过内部函数不可达时
-    // 退而验证公开契约 —— enqueueDurability 失败后 pending 仍在。
-    const outcome = await (mod as any).postPresentationWithRetry?.('ly-1', { visible: false }).catch(() => 'lost');
-    expect(['lost', undefined]).toContain(outcome);
+    const map = makeMockMaplibreMap();
+    map.addLayer({ id: 'ly-1__circle', type: 'circle' });
+    map.setLayoutProperty('ly-1__circle', 'visibility', 'visible');
+    const { ctx } = makeCtx(
+      { layer_id: 'ly-1', visible: false },
+      [{ id: 'ly-1', visible: true, group: 'analysis', _mapspecLayerId: 'ly-1' }],
+      map,
+    );
+
+    const result = layerCommands.layer_visibility_update.run(ctx) as any;
+    expect(result.status).toBe('succeeded');
+
+    // durability 提交在共享串行链后台执行 —— 冲刷微任务后验证 pending 仍在。
+    for (let i = 0; i < 10; i += 1) {
+      await Promise.resolve();
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const { getPendingPresentation } = await import('@/lib/mapspec/session-cursor');
     // pending 保留（此前失败分支会清掉，reconcile 把层复活）
     expect(getPendingPresentation()['ly-1']).toBeTruthy();
+    vi.unstubAllGlobals();
   });
 });

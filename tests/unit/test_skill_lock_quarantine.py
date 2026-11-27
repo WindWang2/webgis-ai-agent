@@ -8,6 +8,8 @@
 """
 import hashlib
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -121,6 +123,69 @@ def test_approve_runtime_skill_round_trip(tmp_path):
     reg = _Reg()
     skills_mod.load_skills(reg, skills_dir=str(tmp_path))
     assert reg.marker == "LOADED", "批准后应可加载"
+
+
+def test_approve_runtime_skill_serializes_concurrent_writes(tmp_path, monkeypatch):
+    first = tmp_path / "first.py"
+    second = tmp_path / "second.py"
+    first.write_text(GOOD_SKILL, encoding="utf-8")
+    second.write_text(EVIL_SKILL, encoding="utf-8")
+    _write_lock(tmp_path, {})
+
+    original_sha = skills_mod._sha256_file
+    first_hashing = threading.Event()
+    release_first = threading.Event()
+    second_hashing = threading.Event()
+
+    def gated_sha(path):
+        if path.endswith("first.py") and not first_hashing.is_set():
+            first_hashing.set()
+            assert release_first.wait(timeout=10)
+        elif path.endswith("second.py"):
+            second_hashing.set()
+        return original_sha(path)
+
+    monkeypatch.setattr(skills_mod, "_sha256_file", gated_sha)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first_result = pool.submit(
+            skills_mod.approve_runtime_skill,
+            "first.py", str(first), skills_dir=str(tmp_path),
+        )
+        try:
+            assert first_hashing.wait(timeout=5)
+            second_result = pool.submit(
+                skills_mod.approve_runtime_skill,
+                "second.py", str(second), skills_dir=str(tmp_path),
+            )
+            assert not second_hashing.wait(timeout=0.2), (
+                "second approval entered the read-modify-write section concurrently"
+            )
+        finally:
+            release_first.set()
+        assert first_result.result(timeout=5)
+        assert second_result.result(timeout=5)
+
+    locked = json.loads((tmp_path / "skills-lock.json").read_text(encoding="utf-8"))
+    assert locked["runtime_skills"] == {
+        "first.py": _sha(first),
+        "second.py": _sha(second),
+    }
+
+
+def test_approve_runtime_skill_failed_replace_keeps_lock_intact(tmp_path, monkeypatch):
+    skill = tmp_path / "approved.py"
+    skill.write_text(GOOD_SKILL, encoding="utf-8")
+    lock = _write_lock(tmp_path, {"existing.py": "unchanged"})
+    original = lock.read_bytes()
+
+    def fail_replace(*_args):
+        raise OSError("simulated replace failure")
+
+    monkeypatch.setattr(skills_mod.os, "replace", fail_replace)
+    assert not skills_mod.approve_runtime_skill(
+        "approved.py", str(skill), skills_dir=str(tmp_path))
+    assert lock.read_bytes() == original
+    assert list(tmp_path.glob(".skills-lock.json.*.tmp")) == []
 
 
 def test_quarantine_dir_is_not_scanned(tmp_path):

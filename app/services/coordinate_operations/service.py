@@ -1159,24 +1159,31 @@ async def _mint_display_copy(
                 tmp = Path(tf.name)
             import pyarrow.parquet as pq
 
-            pq.write_table(table, str(tmp), compression="zstd")
-            fab = outputs.register_fabric_parquet(
-                session_id, tmp, title=f"{plan.get('title') or run_id} · WGS84",
-                crs="EPSG:4326", rows=len(out_feats), run_id=run_id)
-            tmp.unlink(missing_ok=True)
-            from app.services.artifact_registry import register_artifact
+            try:
+                pq.write_table(table, str(tmp), compression="zstd")
+                fab = outputs.register_fabric_parquet(
+                    session_id, tmp, title=f"{plan.get('title') or run_id} · WGS84",
+                    crs="EPSG:4326", rows=len(out_feats), run_id=run_id)
+                from app.services.artifact_registry import register_artifact
 
-            await register_artifact(
-                session_id, artifact_id=fab["artifact_ref"],
-                artifact_type="fabric_geoparquet",
-                producer_capability="coordinate_operations",
-                producer_tool=contracts.TASK_TYPE,
-                descriptor={"title": fab["title"], "crs": "EPSG:4326",
-                            "rows": fab["rows"],
-                            "content_sha256": fab["content_sha256"],
-                            "display_copy_of": run_id},
-                metadata={"coordinate_operation_display": True})
-            result["display_fabric_ref"] = fab["artifact_ref"]
+                try:
+                    await register_artifact(
+                        session_id, artifact_id=fab["artifact_ref"],
+                        artifact_type="fabric_geoparquet",
+                        producer_capability="coordinate_operations",
+                        producer_tool=contracts.TASK_TYPE,
+                        descriptor={"title": fab["title"], "crs": "EPSG:4326",
+                                    "rows": fab["rows"],
+                                    "content_sha256": fab["content_sha256"],
+                                    "display_copy_of": run_id},
+                        metadata={"coordinate_operation_display": True})
+                except Exception:
+                    # 台账登记失败 → 删除已拷贝 blob，避免孤儿工件
+                    Path(fab["path"]).unlink(missing_ok=True)
+                    raise
+                result["display_fabric_ref"] = fab["artifact_ref"]
+            finally:
+                tmp.unlink(missing_ok=True)
         except ImportError:
             result["display_fabric_ref"] = None
         return result
@@ -1368,10 +1375,7 @@ async def cancel_run(session_id: str, run_id: str) -> Dict[str, Any]:
                     "already_terminal": True}
         DurableJobStore.request_cancel_sync(db, job_id)
         db.commit()
-    task = _RUNNERS.get(run_id)
-    if task is not None:
-        # 进程内执行体经看门狗 ≤2.5s+抖动感知；不强制 cancel 任务
-        pass
+    # 进程内执行体经看门狗 ≤2.5s+抖动感知；不强制 cancel 任务
     return {"run_id": run_id, "status": "cancelling"}
 
 
@@ -1440,16 +1444,25 @@ async def recover_all() -> Dict[str, Any]:
         except Exception as e:  # noqa: BLE001 — 单会话失败不阻断整体收敛
             logger.warning("[coord-ops] recover_all session %s failed: %s",
                            sid, e)
-    # 超龄 staging 兜底（run 已终态或行已不存在的遗留目录，>1h mtime）
+    # 超龄 staging 兜底（run 已终态或行已不存在的遗留目录，>1h mtime）；
+    # pending/running 的在飞 run 一律保留 —— 目录 mtime 不随文件 append 更新，
+    # 单凭 mtime 会误删长任务 staging（发布时 FileNotFound）。
     import shutil as _shutil
     from datetime import datetime, timedelta, timezone
 
     staging_root = outputs.domain_root() / ".staging"
     if staging_root.is_dir():
+        with SessionLocal() as db:
+            active_ids = set(db.execute(
+                select(CoordinateOperationRun.id).where(
+                    CoordinateOperationRun.status.in_(("pending", "running")))
+            ).scalars().all())
         cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
         for child in staging_root.iterdir():
             try:
-                if child.is_dir() and datetime.fromtimestamp(
+                if not child.is_dir() or child.name in active_ids:
+                    continue
+                if datetime.fromtimestamp(
                         child.stat().st_mtime, tz=timezone.utc) < cutoff:
                     _shutil.rmtree(child, ignore_errors=True)
             except OSError:

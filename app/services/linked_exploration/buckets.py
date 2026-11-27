@@ -153,6 +153,9 @@ def category_buckets(
             agg if agg != "count" else "count": (
                 _agg_value(agg, b["values"]) if agg != "count" else b["count"]
             ),
+            # 原始数值引用（不复制）：other 桶重算 mean 用 —— 均值不可由各组
+            # 均值再平均（各组 n 不同即为未加权平均，偏离全体均值）
+            "_values": b["values"],
         }
         for gkey, b in groups.items()
     ]
@@ -209,10 +212,16 @@ def category_buckets(
         }
         if agg != "count":
             vals: List[float] = []
-            for r in other_rows:
-                v = r.get(agg)
-                if v is not None:
-                    vals.append(float(v))
+            if agg == "mean":
+                # mean 只能由 other 各组的**原始数值**重算（fsum/count）：
+                # 取各组均值再平均是未加权平均（各组数值个数不同即偏离全体均值）。
+                for r in other_rows:
+                    vals.extend(r["_values"])
+            else:
+                for r in other_rows:
+                    v = r.get(agg)
+                    if v is not None:
+                        vals.append(float(v))
             row_other[agg] = _agg_value(agg, vals)
         rows.append(row_other)
     return {

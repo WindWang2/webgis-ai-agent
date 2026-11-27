@@ -342,7 +342,9 @@ def consume_answer(
             "domain": {"display": display, "value": chosen},
         }
     if answer_kind == "confirmed":
-        confirmed = display != "false"
+        # 扩展的 display 是序列化字符串；'False'/'0'/'no' 等非小写形态
+        # 同样是「否」（bool False 经 str() 即 'False'）。
+        confirmed = str(display).strip().lower() not in ("false", "0", "no")
         return {
             "ok": True,
             "code": "ANSWERED",

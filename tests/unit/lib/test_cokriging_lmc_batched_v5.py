@@ -61,14 +61,16 @@ def _reference_per_row_cokriging(
         out = np.zeros_like(h)
         for m, s1u, _, r in lmc.structures:
             out = out + s1u * struct_corr(m, h, r)
-        return np.where(h <= 0.0, nug1 + out, out + nug12)
+        # nugget 只在 h=0（对角）进入直接协方差；交叉块金 nug12 只属于
+        # C12 的 h=0 元（P2 修复：h>0 的 C11/C22 不得加 nug12）。
+        return np.where(h <= 0.0, nug1 + out, out)
 
     def C22(h):
         h = np.asarray(h, dtype=float)
         out = np.zeros_like(h)
         for m, _, s2u, r in lmc.structures:
             out = out + s2u * struct_corr(m, h, r)
-        return np.where(h <= 0.0, nug2 + out, out + nug12)
+        return np.where(h <= 0.0, nug2 + out, out)
 
     def C12(h):
         h = np.asarray(h, dtype=float)
@@ -76,7 +78,7 @@ def _reference_per_row_cokriging(
         for m, s1u, s2u, r in lmc.structures:
             out = out + rho * np.sqrt(max(s1u, 0.0) * max(s2u, 0.0)) \
                 * struct_corr(m, h, r)
-        return out + nug12
+        return np.where(h <= 0.0, out + nug12, out)
 
     C00 = float(C11(np.array([0.0]))[0])
     preds = np.empty(n_t)

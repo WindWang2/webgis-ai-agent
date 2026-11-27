@@ -119,6 +119,18 @@ def test_terminal_status_only_from_settling():
     assert t.to_dict()["illegal_transitions"] >= 1
 
 
+def test_terminal_transition_from_field_reflects_actual_phase():
+    """防御放行路径的审计转移不得硬编码 from=settling。"""
+    from app.services.chat.pi_turn_state import TurnPhase, TurnPhaseTracker
+
+    t = TurnPhaseTracker("turn-y")
+    t.transition(TurnPhase.STARTING)
+    assert t.record_terminal_status("completed") is True
+    transition = t.to_dict()["transitions"][-1]
+    assert transition["from"] == "starting"
+    assert transition["to"] == "settled"
+
+
 # ── seam 集成（bridge 边界 exactly-once + 未知词表防御）────────────────────
 
 @pytest.fixture

@@ -218,6 +218,33 @@ describe('renderer', () => {
       expect(sourceMock.setData.mock.calls[0][0].features.length).toBe(6); // 1000..1005
     });
 
+    it('W7: 视口 refresh token 按 map 记账 —— 对比视图下 map B 的 refresh 不作废 map A 的 apply', async () => {
+      // 旧实现 token 是模块级单值：map B 的 refresh ++token 会作废 map A
+      // 排队中的 idle apply → A 的内联源保留陈旧视口裁剪且无后续触发。
+      const sourceA = { setData: vi.fn() };
+      const sourceB = { setData: vi.fn() };
+      const makeMap = (id: string, source: { setData: ReturnType<typeof vi.fn> }) => ({
+        getSource: (sid: string) => (sid === id ? source : undefined),
+        getStyle: () => ({ sources: { [id]: { type: 'geojson' } }, layers: [] }),
+      });
+      const mapA = makeMap('big-a', sourceA);
+      const mapB = makeMap('big-b', sourceB);
+      const data = bigFC(2000);
+      addGeoJsonSource(mapA as never, 'big-a', data, { viewport: [0, 0, 10, 10] });
+      addGeoJsonSource(mapB as never, 'big-b', data, { viewport: [0, 0, 10, 10] });
+      expect(sourceA.setData).toHaveBeenCalledTimes(1);
+      expect(sourceB.setData).toHaveBeenCalledTimes(1);
+
+      refreshGeoJsonSourcesByViewport(mapA as never, [1000, 1000, 1005, 1005]);
+      refreshGeoJsonSourcesByViewport(mapB as never, [500, 500, 505, 505]);
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      // 两张图各自的视口 refresh 都必须落地
+      expect(sourceA.setData).toHaveBeenCalledTimes(2);
+      expect(sourceA.setData.mock.calls[1][0].features.length).toBe(6); // 1000..1005
+      expect(sourceB.setData).toHaveBeenCalledTimes(2);
+      expect(sourceB.setData.mock.calls[1][0].features.length).toBe(6); // 500..505
+    });
+
     it('does NOT re-setData when the viewport is unchanged (cached result)', () => {
       const sourceMock = { setData: vi.fn() };
       mapMock.getSource.mockReturnValue(sourceMock);
@@ -448,6 +475,13 @@ describe('renderer', () => {
       expect(mapMock.removeLayer).not.toHaveBeenCalledWith('custom-foo-other');
     });
 
+    it('returns false instead of throwing when getStyle throws (disposed map)', () => {
+      mapMock.getStyle.mockImplementation(() => {
+        throw new Error('Map is not initialized');
+      });
+      expect(removeLayerStack(mapMock, 'test-id')).toBe(false);
+    });
+
     it('should detach dependent layers before removing sources and clean up image textures', () => {
       mapMock.hasImage = vi.fn().mockReturnValue(true);
       mapMock.removeImage = vi.fn();
@@ -561,5 +595,9 @@ describe('resolveHeatmapRadiusPx — heatmap radius contract mirror', () => {
 
   it('nothing given → contract default 30px', () => {
     expect(resolveHeatmapRadiusPx({ id: 'x', source: 's' } as any)).toBe(30);
+  });
+
+  it('JSON null is not an explicit radius (falls back to default 30px)', () => {
+    expect(resolveHeatmapRadiusPx({ id: 'x', source: 's', radiusPx: null } as any)).toBe(30);
   });
 });

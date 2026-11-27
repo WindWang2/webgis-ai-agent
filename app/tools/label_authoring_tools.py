@@ -121,7 +121,7 @@ def register_label_authoring_tools(registry: ToolRegistry) -> None:
         capabilities=["map_label_authoring"],
         description=(
             "读取图层的要素级标注状态：覆写（隐藏/固定/偏移/文字/优先级）+ "
-            "每目标失效状态（active/stale/orphan）+ 有来源的未显示理由"
+            "每目标失效状态（active/stale/orphan/not_found）+ 有来源的未显示理由"
             "（hidden_by_user/below_scale/field_missing/stale_override），"
             "placement 族原因显式 not_evaluated（不冒充 live 观察）。"
         ),
@@ -194,9 +194,10 @@ def register_label_authoring_tools(registry: ToolRegistry) -> None:
                 feats = data["features"]
 
         targets: List[Dict[str, Any]] = []
-        wanted = [str(f) for f in feature_ids] if feature_ids else \
+        wanted_all = [str(f) for f in feature_ids] if feature_ids else \
             [str(o.get("featureId")) for o in overrides]
-        wanted = wanted[:_MAX_INSPECT_FEATURES]
+        wanted = wanted_all[:_MAX_INSPECT_FEATURES]
+        targets_truncated = len(wanted_all) > _MAX_INSPECT_FEATURES
         for fid in wanted:
             override = next((o for o in overrides
                              if str(o.get("featureId")) == fid), None)
@@ -210,7 +211,7 @@ def register_label_authoring_tools(registry: ToolRegistry) -> None:
             # R1-P3：ref 源（数据不可复核）→ unverified 如实披露
             # （与 ADR-0289 §7 消费侧权威口径一致；此前误报 active）。
             if feats is None:
-                status = "unverified" if override is not None else "unverified"
+                status = "unverified"
             elif override is not None:
                 status = _la.override_status(
                     override, feature_found=found,
@@ -219,7 +220,7 @@ def register_label_authoring_tools(registry: ToolRegistry) -> None:
                     feature_properties=props,
                 )
             else:
-                status = "active" if found else "orphan"
+                status = "active" if found else "not_found"
             entry: Dict[str, Any] = {
                 "featureId": fid,
                 "status": status,
@@ -234,9 +235,9 @@ def register_label_authoring_tools(registry: ToolRegistry) -> None:
                 entry["why_not_shown"] = _why_not_shown(
                     override=override, status=status,
                     layer_label=label_cfg, zoom=zoom)
-            elif status == "orphan":
+            elif status == "not_found":
                 entry["why_not_shown"] = [
-                    {"reason": "orphan_override", "source": "identity"}]
+                    {"reason": "feature_not_found", "source": "identity"}]
             targets.append(entry)
 
         # 有界摘要（情境投影口径：锁定数/冲突数不展开全列表）。
@@ -261,6 +262,7 @@ def register_label_authoring_tools(registry: ToolRegistry) -> None:
                 "hidden": hidden_n,
             },
             "targets": targets,
+            "targets_truncated": targets_truncated,
         }
 
     @tool(
@@ -337,18 +339,20 @@ def register_label_authoring_tools(registry: ToolRegistry) -> None:
                     known = data["features"]
             pv = _la.preview_authoring_ops(
                 current, ops, layer_id=layer_id, known_features=known)
+            reports = [
+                {"featureId": r.feature_id, "action": r.action,
+                 "idKey": r.id_key,
+                 "before": r.before, "after": r.after,
+                 "findings": r.findings}
+                for r in pv.reports
+            ]
             return {
                 "success": not pv.findings and not any(
                     r.action == "rejected" for r in pv.reports),
                 "layer_id": layer_id,
                 "preview": {
-                    "reports": [
-                        {"featureId": r.feature_id, "action": r.action,
-                         "idKey": r.id_key,
-                         "before": r.before, "after": r.after,
-                         "findings": r.findings}
-                        for r in pv.reports
-                    ][:_MAX_INSPECT_FEATURES],
+                    "reports": reports[:_MAX_INSPECT_FEATURES],
+                    "reports_truncated": len(reports) > _MAX_INSPECT_FEATURES,
                     "findings": pv.findings,
                     "unresolved_targets": pv.unresolved_targets,
                 },
@@ -366,10 +370,14 @@ def register_label_authoring_tools(registry: ToolRegistry) -> None:
         except Exception as exc:  # noqa: BLE001 — 工具边界如实透传
             logger.warning("webgis_label_author failed: %s", exc)
             return {"success": False, "message": str(exc)[:300]}
-        out: Dict[str, Any] = {
-            "success": bool(result.success if hasattr(result, "success") else
-                            not result.is_error),
-        }
+        if hasattr(result, "success"):
+            result_ok = bool(getattr(result, "success"))
+        elif hasattr(result, "is_error"):
+            result_ok = not bool(getattr(result, "is_error"))
+        else:
+            # 结果形状不可识别（既无 success 也无 is_error）→ fail-closed。
+            result_ok = False
+        out: Dict[str, Any] = {"success": result_ok}
         for key in ("mutation_revision", "mapspec_fingerprint", "checkpoint_id",
                     "correction_hint", "message"):
             val = getattr(result, key, None)
@@ -382,10 +390,19 @@ def register_label_authoring_tools(registry: ToolRegistry) -> None:
             spec_after = getattr(result, "mapspec", None)
             if isinstance(spec_after, dict):
                 # 有界回执：新覆写摘要（不回发全 spec —— 结果封套已有）。
-                for ly in spec_after.get("layers", []) or []:
+                layers_after = spec_after.get("layers")
+                for ly in (layers_after if isinstance(layers_after, list) else []):
                     if isinstance(ly, dict) and ly.get("id") == layer_id:
-                        a = (ly.get("label") or {}).get("authoring") or {}
-                        out["overrides_applied"] = len(a.get("overrides") or [])
+                        label_after = ly.get("label")
+                        authoring_after = (
+                            label_after.get("authoring")
+                            if isinstance(label_after, dict) else None)
+                        overrides_after = (
+                            authoring_after.get("overrides")
+                            if isinstance(authoring_after, dict) else None)
+                        out["overrides_applied"] = (
+                            len(overrides_after)
+                            if isinstance(overrides_after, list) else 0)
                         break
             out["summary"] = f"label authoring committed on {layer_id}"
         return out

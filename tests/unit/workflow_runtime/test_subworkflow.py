@@ -241,3 +241,53 @@ def test_obligation_merge_uses_v4_inheritance(env):
     assert chain["sources"] == 2
     assert chain["obligations"] == 0  # 无 recipe profile → 空义务（诚实）
     assert chain["obligation_chain_fp"]
+
+
+def test_exhausted_parent_deadline_is_typed_failure(env):
+    """父剩余 <=0：不给子全新时限（子 ≤ 父剩余不变量）。"""
+    e = env
+    executor = SW.SubworkflowExecutor(e.svc, owner_scope=_OWNER,
+                                      deadline_s=30.0)
+    node = {"node_id": "sub:child", "subworkflow_package_id": "child-x"}
+    result = asyncio.run(executor(
+        node, parent={"instance_id": "wi-missing", "package_id": "parent-x",
+                      "remaining_s": 0.0},
+        parent_visited=[], session_id="s1"))
+    assert result["ok"] is False
+    assert result["error_code"] == "SUBWORKFLOW_DEADLINE_EXHAUSTED"
+
+
+def test_run_exception_marks_child_failed_and_releases_lease(env, monkeypatch):
+    """driver.run 抛异常：子实例 FAILED + run 租约释放（不留 RUNNING 孤儿）。"""
+    e = env
+    e.register("parent_boom", _dag("child_boom"))
+    e.register("child_boom", _dag())
+    inst = e.svc.instantiate("parent_boom", owner_scope=_OWNER,
+                             session_id="s-boom")
+    data_ref = asyncio.run(_bind_data(e.svc, inst["instance_id"], "s-boom"))
+
+    class _ExplodingDriver:
+        def __init__(self, store, **kwargs):
+            self.store = store
+
+        async def run(self, instance_id, dag, **kwargs):
+            self.store.acquire_run_lease(
+                instance_id, owner_scope=_OWNER,
+                token=kwargs["run_token"])
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        "app.services.workflow_runtime.driver.Driver", _ExplodingDriver)
+    executor = SW.SubworkflowExecutor(e.svc, owner_scope=_OWNER)
+    node = {"node_id": "sub:child", "subworkflow_package_id": "child_boom"}
+    result = asyncio.run(executor(
+        node, parent={"instance_id": inst["instance_id"],
+                      "package_id": "parent_boom"},
+        parent_visited=[], session_id="s-boom", input_refs=[data_ref]))
+    assert result["ok"] is False
+    assert result["error_code"] == "SUBWORKFLOW_RUN_FAIL"
+    child = e.svc.store.get_instance(result["child_instance_id"], _OWNER)
+    assert child["status"] == C.InstanceStatus.FAILED
+    assert child["error_code"] == "SUBWORKFLOW_RUN_FAIL"
+    assert child["terminal_at"]
+    assert not child["run_lease_owner"]

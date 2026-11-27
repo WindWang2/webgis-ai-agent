@@ -323,3 +323,101 @@ async def test_plan_qualifier_change_is_replan(registry):
     steps = {s["step_id"]: s for s in st["steps"]}
     assert steps["change_diff"]["state"] == "pending"   # 新裁决持久化
     assert steps["change_diff"]["reason_code"] == ""    # 不再持旧 MISMATCH
+
+
+async def test_plan_reason_code_without_colon_does_not_crash(registry,
+                                                             monkeypatch):
+    """P2 钉扎：reason_code 只有族前缀无冒号 → blocked_next_steps 不得
+    IndexError（role 提取需冒号保护）。"""
+    from app.services.gis_harness.analysis_workflows import orchestrator
+    import app.tools.analysis_workflow_tools as awf_tools
+
+    real_plan = orchestrator.plan_workflow
+
+    def _fake_plan(family, **kwargs):
+        result = real_plan(family, **kwargs)
+        verdicts = list(result.step_verdicts)
+        idx = next(i for i, v in enumerate(verdicts)
+                   if v.verdict in ("blocked", "skipped"))
+        verdicts[idx] = orchestrator.StepPlanVerdict(
+            step_id=verdicts[idx].step_id, verdict="blocked",
+            reason_code="AWF_DATA_ROLE_MISSING")     # 刻意不带 ":<ROLE>"
+        return result.model_copy(update={"step_verdicts": verdicts})
+
+    monkeypatch.setattr(awf_tools, "plan_workflow", _fake_plan)
+    poi_ref, dist_ref = await _store_fixtures()
+    res = await registry.dispatch("webgis_analysis_workflow_plan", {
+        "family": "admin_facility_distribution",
+        "role_refs": json.dumps({"subject": poi_ref, "boundary": dist_ref}),
+        "session_id": SESSION}, session_id=SESSION)
+    assert res["success"] is True, res
+    entry = next(e for e in res["blocked_next_steps"]
+                 if e["reason_code"] == "AWF_DATA_ROLE_MISSING")
+    assert entry["next_step"]["action"] == "bind_role"
+
+
+async def test_recompute_corrupt_contract_snapshot_typed_decline(registry):
+    """P2 钉扎：损坏的契约快照 → AWF_CONTRACT_SNAPSHOT_CORRUPT 而非
+    ValidationError 冒泡。"""
+    from app.services.gis_harness.analysis_workflows.state import (
+        WorkflowRunState,
+        state_alias,
+        state_to_payload,
+    )
+    wf = "awf.corrupt.snapshot"
+    state = WorkflowRunState(
+        workflow_id=wf, family="admin_facility_distribution",
+        contract_snapshot={"workflow_id": wf})   # 缺 family 等必填 → 校验失败
+    ref = await session_data_manager.store(
+        SESSION, state_to_payload(state), prefix="awf-state")
+    await session_data_manager.set_alias(SESSION, ref, state_alias(wf))
+    res = await registry.dispatch("webgis_analysis_workflow_recompute", {
+        "workflow_id": wf, "session_id": SESSION}, session_id=SESSION)
+    assert res["success"] is False
+    assert res["reason_code"] == "AWF_CONTRACT_SNAPSHOT_CORRUPT"
+
+
+async def test_recompute_legacy_family_typed_decline(registry):
+    """P2 钉扎：快照携带已下线族 id → AWF_UNKNOWN_FAMILY 而非 KeyError。"""
+    from app.services.gis_harness.analysis_workflows.orchestrator import (
+        plan_workflow,
+    )
+    from app.services.gis_harness.analysis_workflows.state import (
+        WorkflowRunState,
+        state_alias,
+        state_to_payload,
+    )
+    wf = "awf.legacy.family"
+    result = plan_workflow(
+        "admin_facility_distribution", workflow_id=wf, bindings={},
+        include_optional_steps=True)
+    snapshot = result.contract.model_dump()
+    snapshot["family"] = "legacy_retired_family"
+    state = WorkflowRunState(
+        workflow_id=wf, family="legacy_retired_family",
+        contract_snapshot=snapshot)
+    ref = await session_data_manager.store(
+        SESSION, state_to_payload(state), prefix="awf-state")
+    await session_data_manager.set_alias(SESSION, ref, state_alias(wf))
+    res = await registry.dispatch("webgis_analysis_workflow_recompute", {
+        "workflow_id": wf, "session_id": SESSION}, session_id=SESSION)
+    assert res["success"] is False
+    assert res["reason_code"] == "AWF_UNKNOWN_FAMILY"
+
+
+async def test_recompute_invalid_role_kind_typed_decline(registry):
+    """P2 钉扎：recompute 传入越界 role_kind → AWF_INVALID_CONTRACT
+    而非 ContractValidationError 冒泡。"""
+    poi_ref, dist_ref = await _store_fixtures()
+    plan = await registry.dispatch("webgis_analysis_workflow_plan", {
+        "family": "admin_facility_distribution",
+        "role_refs": json.dumps({"subject": poi_ref, "boundary": dist_ref}),
+        "session_id": SESSION}, session_id=SESSION)
+    res = await registry.dispatch("webgis_analysis_workflow_recompute", {
+        "workflow_id": plan["workflow_id"],
+        "role_refs": json.dumps(
+            {"subject": {"ref": poi_ref, "role_kind": "bogus"}}),
+        "session_id": SESSION}, session_id=SESSION)
+    assert res["success"] is False
+    assert res["reason_code"] == "AWF_INVALID_CONTRACT"
+    assert res["next_step"]["action"] == "bind_role"

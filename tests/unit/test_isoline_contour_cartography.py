@@ -1,5 +1,6 @@
 """Unit tests for Isoline & Contour Cartographic Model & Runtime (ADR-0095)."""
 import numpy as np
+import pytest
 from app.lib.cartography.isoline_model import (
     IsolineContourSpec,
     resolve_contour_levels,
@@ -287,3 +288,10 @@ def test_isoline_metadata_envelope_semantic_qa():
     assert "CONTOUR_LEVELS_VALID" in checks
     assert checks["CONTOUR_LEVELS_VALID"].status == "pass"
 
+
+
+def test_index_contour_interval_rejects_zero():
+    """index_contour_interval=0 会让取模除零；schema 层必须 fail-closed。"""
+    with pytest.raises(Exception) as ei:
+        IsolineContourSpec(index_contour_interval=0)
+    assert "greater than or equal to 1" in str(ei.value)

@@ -53,6 +53,13 @@ def test_contract_deterministic_same_chapter_same_result():
     assert derive_facet_contract(chapter) == derive_facet_contract(chapter)
 
 
+def test_contract_missing_task_is_empty_not_string_none():
+    """P3：intent 缺 task / task=None 时 product_type 必须是空串，不得 'None'。"""
+    assert derive_facet_contract({"intent": {}}).product_type == ""
+    assert derive_facet_contract(
+        {"intent": {"task": None}}).product_type == ""
+
+
 def test_contract_chart_required_from_recipe_export_profile():
     """categorical_distribution recipe 声明 export_profile.chart=True ——
     契约直接从 recipe 推导（不再依赖手工注入 template_selection）。"""

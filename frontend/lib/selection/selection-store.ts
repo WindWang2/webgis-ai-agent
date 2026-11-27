@@ -252,6 +252,14 @@ function boundedPredicate(
   return { kind: 'in', field: predicate.field.slice(0, 64), values };
 }
 
+/** bbox 有界透传：仅接受长度 4 且数值有限的矩形（无效 → undefined）。 */
+function boundedBBox(bbox: SelectionContext['bbox']): SelectionContext['bbox'] {
+  if (!Array.isArray(bbox) || bbox.length !== 4) return undefined;
+  const [w, s, e, n] = bbox;
+  if (![w, s, e, n].every((v) => Number.isFinite(v))) return undefined;
+  return [w, s, e, n];
+}
+
 function recordEvent(kind: SelectionEventKind, context: SelectionContext | null): void {
   eventRing.push({ kind, source: context?.source ?? current?.source ?? 'map', at: Date.now(), context });
   if (eventRing.length > MAX_SELECTION_EVENTS) eventRing.shift();
@@ -312,7 +320,7 @@ export function publishSelection(
       ? Math.max(0, Math.floor(payload.handle_count as number))
       : undefined,
     handle_count_exact: payload.handle_count_exact === true ? true : undefined,
-    bbox: payload.bbox,
+    bbox: boundedBBox(payload.bbox),
     properties: boundedProperties(payload.properties),
     revision: ++revision,
   };

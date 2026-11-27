@@ -359,3 +359,40 @@ async def test_report_svg_compile_normal_path_still_embeds_real_svg(tmp_path):
     html = open(output_path, encoding="utf-8").read()
     assert "mapspec-vector-layers" in html
     assert 'r="25"' in html
+
+
+@pytest.mark.asyncio
+async def test_report_svg_compile_never_uses_loop_default_executor():
+    """P2 resource-leak 回归：``wait_for`` 超时只放弃 future，已提交的编译
+    线程仍会跑完。编译必须进报告专用有界池，绝不能占用 loop 的共享默认线程
+    池——否则多份报告同时超时，僵尸线程会耗尽默认池、阻塞全应用
+    ``asyncio.to_thread``。"""
+    import asyncio
+    import concurrent.futures
+
+    class _RefusingExecutor(concurrent.futures.ThreadPoolExecutor):
+        def submit(self, fn, *args, **kwargs):
+            raise AssertionError(
+                "report SVG compile used the loop's shared default executor"
+            )
+
+    comp = MagicMock()
+    comp.timed_out = False
+    comp.diagnostics = []
+    comp.svg = "<svg xmlns='http://www.w3.org/2000/svg'></svg>"
+
+    loop = asyncio.get_running_loop()
+    loop.set_default_executor(_RefusingExecutor())
+    try:
+        with patch.object(
+            report_service_mod,
+            "compile_mapspec_to_svg_detailed",
+            return_value=comp,
+        ):
+            result = await ReportService()._compile_vector_svg_bounded(
+                _MAPSPEC, timeout_s=5.0
+            )
+    finally:
+        loop.set_default_executor(concurrent.futures.ThreadPoolExecutor())
+
+    assert result is comp

@@ -1,6 +1,8 @@
 """Epic 11 —— Method Ranker V2 单测（abstention + 冻结语料基准钉值）。"""
 from __future__ import annotations
 
+import pytest
+
 from app.lib.gis.methodology.method_corpus import (
     MIN_METHOD_CORPUS_SIZE,
     METHOD_CORPUS,
@@ -120,3 +122,49 @@ def test_lexical_trap_beaten_by_structure() -> None:
                           category_id="accessibility_network")
     assert result.selected is not None
     assert result.selected.method_id == "network.service_area"
+
+
+def test_empty_candidate_pool_abstains_instead_of_silent_none() -> None:
+    """族内无候选（空族或全部被 exclude）时 selected=None 但必须
+    abstained=True —— 旧实现 abstained=False，「无选择」与成功无法区分。"""
+    from app.lib.gis.methodology.qualification import QualificationFacts
+    from app.lib.gis.methodology.ranking import rank_family_methods
+    from app.services.gis_harness.workflow_v4.methodology import (
+        get_methodology_registry,
+    )
+
+    registry = get_methodology_registry()
+    family = next(f for f in registry.families() if f.candidate_methods)
+    facts = QualificationFacts.from_profile({"featureCount": 100})
+
+    result = rank_family_methods(
+        "插值成面", family.family_id, facts,
+        methodology_registry=registry,
+        exclude=[m.method_id for m in family.candidate_methods],
+    )
+    assert result.selected is None
+    assert result.ranked == []
+    assert result.abstained is True
+    assert result.abstain_reason == ABSTAIN_NO_EVIDENCE
+    assert result.evidence["candidates"] == 0
+
+
+def test_english_uncertainty_query_triggers_uncertainty_constraint() -> None:
+    """英文不确定性查询（variance / uncertainty / confidence）与中文同权：
+    只收中文词时英文诉求静默丢掉 require_uncertainty 约束，无不确定性
+    产出的 interp.idw 得以压过克里金。"""
+    from app.lib.gis.methodology.ranking import _constraint_component
+
+    # uncertainty_support="none" 的 IDW 在两种语言下都受同一惩罚
+    zh = _constraint_component("interp.idw", {}, "生成插值预测方差的不确定性误差面")
+    en = _constraint_component("interp.idw", {},
+                               "produce a prediction variance uncertainty surface")
+    assert zh == pytest.approx(0.2)
+    assert en == pytest.approx(0.2)
+    # 克里金（field）不受该约束惩罚
+    assert _constraint_component("interp.ordinary_kriging", {},
+                                 "produce a prediction variance surface") == \
+        pytest.approx(1.0)
+    # 与不确定性无关的查询不触发约束（不误伤）
+    assert _constraint_component("interp.idw", {}, "interpolate pm2.5") == \
+        pytest.approx(1.0)

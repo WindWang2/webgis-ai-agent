@@ -395,6 +395,47 @@ async def test_map_product_authoring_failure_flagged_not_swallowed(registry, cle
 
 
 @pytest.mark.asyncio
+async def test_map_product_warnings_survive_evidence_forward(registry, clean_session, monkeypatch):
+    """review P2-8：早前入账的 warnings 不得被后续 evidence forward 抹掉。
+
+    layer_upsert（heatmap/points 授权）与 layout_set 各自的降级披露都必须在
+    终稿 warnings 里在场 —— 整体替换会让产品门/scope/legend/converter 等先前
+    披露静默丢失。
+    """
+    ref = await session_data_manager.store(clean_session, _point_fc(60), prefix="geojson")
+
+    from app.services.mapspec_store import mapspec_store as _store
+
+    async def _warn_upsert(session_id, layer, source_data=None):
+        return {"success": True, "warnings": ["injected upsert degradation"]}
+
+    real_layout_set = _store.layout_set
+
+    async def _warn_layout_set(session_id, *a, **k):
+        res = await real_layout_set(session_id, *a, **k)
+        if isinstance(res, dict):
+            res["warnings"] = ["injected layout degradation"]
+        return res
+
+    monkeypatch.setattr(_store, "layer_upsert", _warn_upsert)
+    monkeypatch.setattr(_store, "layout_set", _warn_layout_set)
+
+    res = await registry.dispatch(
+        "webgis_map_product",
+        {"query": "成都小学的分布情况", "session_id": clean_session,
+         "primary_ref": ref, "title": "成都市小学分布"},
+        session_id=clean_session,
+    )
+    warnings = res.get("warnings") or []
+    assert any("injected upsert degradation" in w for w in warnings), (
+        f"layer_upsert 披露被后续 forward 抹掉：{warnings}"
+    )
+    assert any("injected layout degradation" in w for w in warnings), (
+        f"layout_set 披露缺席：{warnings}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_completeness_interactive_map_requires_bound_layer(registry, clean_session):
     """#716: interactive_map completeness counts AUTHORED+BOUND layers, not
     planned-defaulted ones."""
@@ -708,3 +749,15 @@ async def test_map_product_raster_primary_does_not_mark_point_caps(registry, cle
     if "point_profile" in caps:
         assert caps["point_profile"]["status"] != "available", \
             "面主数据不得把 point_profile 标记为完成"
+
+
+def test_candidate_why_handles_blank_condition_reason():
+    """condition 首句为空且 reasons 为空时不得 IndexError。"""
+    from types import SimpleNamespace
+
+    from app.services.gis_harness.tool_map_product import _candidate_why
+
+    blank = SimpleNamespace(condition_reasons_zh=[""], reasons_zh=[])
+    assert _candidate_why(blank) == ""
+    fallback = SimpleNamespace(condition_reasons_zh=[], reasons_zh=["core reason"])
+    assert _candidate_why(fallback) == "core reason"

@@ -213,3 +213,34 @@ async def test_build_anchor_requires_plan():
 def test_restorable_keys_vocabulary():
     assert "workflow_instance" in RESTORABLE_CHAPTER_KEYS
     assert "map_product" in RESTORABLE_CHAPTER_KEYS
+
+
+@pytest.mark.asyncio
+async def test_resume_route_internal_keyerror_is_500_not_404(monkeypatch):
+    """LookupError 宽捕获不得把内部缺键（KeyError）伪装成锚点 404。"""
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+
+    import app.services.gis_harness.resume_anchor as anchor_mod
+    from app.api.routes import workflow_resume as route_mod
+    from app.core.auth import get_current_user
+    from app.core.database import get_async_db
+
+    async def _boom(db, *, anchor_id, user_id):
+        raise KeyError("ref_map")
+
+    monkeypatch.setattr(anchor_mod, "resume_from_anchor", _boom)
+
+    app = FastAPI()
+    app.include_router(route_mod.router, prefix="/api/v1")
+    app.dependency_overrides[get_current_user] = lambda: {"user_id": "u-v5"}
+
+    async def _db():
+        yield None
+
+    app.dependency_overrides[get_async_db] = _db
+
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        resp = await c.post("/api/v1/chat/workflow-resume/any-anchor")
+    assert resp.status_code == 500

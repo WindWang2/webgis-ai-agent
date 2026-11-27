@@ -3,6 +3,7 @@ import io
 import os
 import tempfile
 import numpy as np
+import pytest
 import rasterio
 from rasterio.transform import from_bounds
 from PIL import Image
@@ -12,6 +13,7 @@ from app.services.raster_tile_service import (
     _transparent_tile_png,
     _normalize_channel,
     render_raster_tile,
+    RasterTileError,
 )
 
 
@@ -135,6 +137,28 @@ def test_render_uses_dataset_global_stretch_across_tiles(monkeypatch, tmp_path):
 
     # Stats are cached per (raster, band-subset) after the first render (C5).
     assert (path, (1,)) in svc._STATS_CACHE
+
+
+def test_three_band_request_with_missing_band_raises_not_degrades(tmp_path):
+    """P2: bands=(1,2,4) on a 3-band raster must raise BAND_OUT_OF_RANGE.
+
+    The range filter previously left two indexes, which fell outside the
+    count>=3 branch and silently rendered band 1 as a grayscale tile for an
+    RGB request.
+    """
+    path = str(tmp_path / "three_band.tif")
+    width = height = 100
+    data = np.ones((3, height, width), dtype=np.uint16)
+    transform = from_bounds(116.0, 39.0, 117.0, 40.0, width, height)
+    with rasterio.open(
+        path, "w", driver="GTiff", height=height, width=width,
+        count=3, dtype="uint16", crs="EPSG:4326", transform=transform,
+    ) as dst:
+        dst.write(data)
+
+    with pytest.raises(RasterTileError) as excinfo:
+        render_raster_tile(path, z=8, x=210, y=97, tile_size=256, bands=(1, 2, 4))
+    assert excinfo.value.code == "BAND_OUT_OF_RANGE"
 
 
 def test_multiband_read_uses_indexes_not_all_bands(monkeypatch, tmp_path):
@@ -443,3 +467,111 @@ def test_invalidate_raster_ref_races_band_stats_without_exception(tmp_path):
     finally:
         for src in srcs:
             src.close()
+
+
+def test_crs_less_warn_once_is_race_free(tmp_path, monkeypatch, caplog):
+    """P3 concurrency: ``_CRS_LESS_WARNED`` was the only unlocked cache in this
+    module (stats and tile caches are lock-protected). Concurrent renders of one
+    CRS-less raster raced the membership check / clear / add, so several threads
+    logged the same warning and the set could momentarily overshoot the 4096
+    bound. With ``_CRS_LESS_WARNED_LOCK`` guarding check+add, exactly one
+    warning is emitted per file even when every thread reaches the check at the
+    same instant.
+    """
+    import contextlib
+    import logging
+    import threading
+
+    from app.services import raster_tile_service as svc
+
+    path = str(tmp_path / "crs_less.tif")
+    width = height = 100
+    data = np.ones((1, height, width), dtype=np.float32) * 50.0
+    transform = from_bounds(116.0, 39.0, 117.0, 40.0, width, height)
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        height=height,
+        width=width,
+        count=1,
+        dtype="float32",
+        crs=None,
+        transform=transform,
+        nodata=-9999.0,
+    ) as dst:
+        dst.write(data)
+
+    parties = 4
+    hold_s = 1.0
+    # All render threads must reach the CRS check together; without this the
+    # GDAL open alone serialises them and the race never materialises.
+    open_barrier = threading.Barrier(parties)
+
+    class _RacingWarnedSet(set):
+        """Test-only set that parks the membership check AND the add.
+
+        Every thread that reaches ``raster_path not in _CRS_LESS_WARNED``
+        blocks until all of them did (so none of them can record the path
+        before the others checked), and every ``add`` blocks the same way.
+        If check+add are atomic (locked), only one thread can be inside, both
+        barriers time out, and that single thread warns. If they are not
+        atomic, all threads check an empty set and all of them add + warn.
+        """
+
+        def __init__(self):
+            super().__init__()
+            self._check_barrier = threading.Barrier(parties)
+            self._add_barrier = threading.Barrier(parties)
+
+        def __contains__(self, item):
+            try:
+                self._check_barrier.wait(timeout=hold_s)
+            except threading.BrokenBarrierError:
+                pass
+            return super().__contains__(item)
+
+        def add(self, item):
+            try:
+                self._add_barrier.wait(timeout=hold_s)
+            except threading.BrokenBarrierError:
+                pass
+            return super().add(item)
+
+    real_open_raster = svc.open_raster
+
+    @contextlib.contextmanager
+    def synced_open_raster(uri, *args, **kwargs):
+        with real_open_raster(uri, *args, **kwargs) as dataset:
+            open_barrier.wait(timeout=60)
+            yield dataset
+
+    with svc._RASTER_CACHE_LOCK:
+        svc._RASTER_TILE_CACHE.clear()
+        svc._raster_tile_total_bytes = 0
+    svc._CRS_LESS_WARNED.discard(path)
+    monkeypatch.setattr(svc, "_CRS_LESS_WARNED", _RacingWarnedSet())
+    monkeypatch.setattr(svc, "open_raster", synced_open_raster)
+
+    errors: list = []
+
+    def renderer():
+        try:
+            svc.render_raster_tile(path, z=8, x=210, y=100, tile_size=256)
+        except BaseException as exc:  # noqa: BLE001 - race observability
+            errors.append(exc)
+
+    with caplog.at_level(logging.WARNING, logger="app.services.raster_tile_service"):
+        threads = [threading.Thread(target=renderer) for _ in range(parties)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=120)
+        assert not any(t.is_alive() for t in threads)
+
+    assert not errors, f"concurrent CRS-less renders raised: {errors!r}"
+    warned = [r for r in caplog.records if "has no CRS tag" in r.getMessage()]
+    assert len(warned) == 1, (
+        f"expected exactly one CRS-less warning, got {len(warned)}: "
+        f"{[r.getMessage() for r in warned]}"
+    )

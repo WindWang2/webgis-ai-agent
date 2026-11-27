@@ -195,12 +195,20 @@ class SpatialCatalogService:
         crs_normalized = crs.upper().replace("EPSG:", "") if crs else None
 
         with self._lock:
+            # 一次性快照：catalog 与旁路索引（tags/search_text/profile/owner）
+            # 必须同锁读取，否则并发 unregister 会让结果出现空 tags/profile=None。
             catalog_snapshot = list(self._catalog.items())
+            tags_snapshot = dict(self._tags)
+            search_text_snapshot = dict(self._search_text)
+            profile_snapshot = dict(self._profile_map)
+            owner_snapshot = dict(self._owner_map)
 
         for dataset_id, descriptor in catalog_snapshot:
-            if not self._visible(dataset_id, owner):
-                continue
-            dataset_tags = self._tags.get(dataset_id, [])
+            if owner is not None:
+                entry_owner = owner_snapshot.get(dataset_id)
+                if entry_owner is not None and entry_owner != owner:
+                    continue
+            dataset_tags = tags_snapshot.get(dataset_id, [])
 
             # 1. Source type filter
             if source_type_lower:
@@ -222,7 +230,7 @@ class SpatialCatalogService:
 
             # 4. Keyword query filter
             if query_lower:
-                search_text = self._search_text.get(dataset_id, "")
+                search_text = search_text_snapshot.get(dataset_id, "")
                 if query_lower not in search_text:
                     continue
                 if "\0" in query_lower:
@@ -246,8 +254,8 @@ class SpatialCatalogService:
         items_dict = []
         for d in page_items:
             dump = d.model_dump()
-            dump["tags"] = self._tags.get(d.id, [])
-            dump["profile_id"] = self._profile_map.get(d.id)
+            dump["tags"] = tags_snapshot.get(d.id, [])
+            dump["profile_id"] = profile_snapshot.get(d.id)
             items_dict.append(dump)
 
         return {

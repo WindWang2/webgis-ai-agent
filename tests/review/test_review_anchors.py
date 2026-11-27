@@ -104,6 +104,14 @@ class TestFeatureAnchor:
         a = Anchor(kind=AnchorKind.FEATURE, id="f-1", layer_id="L1")
         assert await evaluate_anchor("s1", a, spec) is AnchorState.UNVERIFIED
 
+    async def test_malformed_features_unverified(self):
+        """features 非列表（如 int）→ unverified，不得 TypeError 逃出投影。"""
+        source = _geojson_source(["f-1"])
+        source["data"]["features"] = 42
+        spec = _spec(layers=[{"id": "L1", "source": "s1"}], sources={"s1": source})
+        a = Anchor(kind=AnchorKind.FEATURE, id="f-1", layer_id="L1")
+        assert await evaluate_anchor("s1", a, spec) is AnchorState.UNVERIFIED
+
 
 class TestClaimAnchor:
     async def test_claim_present_ok(self, monkeypatch):

@@ -191,8 +191,7 @@ class SettlementAdapter:
         # 规格显式声明的词表，缺席不得静默绿；detail 指明环境缺口）。
         outcome.contributions.append(DimensionVerdict(
             dimension="goal_completion",
-            status=PASS if not failed and not unevaluated
-            else (FAIL if failed or unevaluated else NOT_EVALUATED),
+            status=PASS if not failed and not unevaluated else FAIL,
             value="pass" if not failed and not unevaluated else "fail",
             detail="; ".join(
                 [f"{r.check}: {r.detail}" for r in failed]

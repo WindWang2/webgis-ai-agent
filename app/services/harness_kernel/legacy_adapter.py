@@ -68,6 +68,18 @@ def _retain_cleanup(coro: Any) -> asyncio.Future[Any]:
 
 LEGACY_STEP_ID_FMT = "l{}"
 
+
+def _legacy_step_id(raw: Any) -> Optional[str]:
+    """``l{n}`` step id; None when the legacy row's ``n`` is not an int.
+
+    Projection is additive disclosure: a malformed row must be skipped, never
+    break the entry point (module-level exception-safety promise).
+    """
+    try:
+        return LEGACY_STEP_ID_FMT.format(int(raw or 0))
+    except (TypeError, ValueError):
+        return None
+
 #: 锁外 settle 效果的墙钟预算（终验 final gate 可能跑诊断/修复闭环，预算
 #: 从宽；超时后 shield 内的结算继续完成，宿主清理路径不被拖死）。
 _SETTLE_AFTER_LOCK_BUDGET_S = 30.0
@@ -154,7 +166,9 @@ async def project_orchestrator_plan(
         existing = {s.id: s for s in envelope.steps}
         steps: List[PlanStep] = [step for step in envelope.steps if not step.id.startswith("l")]
         for s in getattr(plan, "steps", None) or []:
-            sid = LEGACY_STEP_ID_FMT.format(int(getattr(s, "n", 0) or 0))
+            sid = _legacy_step_id(getattr(s, "n", 0))
+            if sid is None:
+                continue
             prev = existing.get(sid)
             status = "succeeded" if bool(getattr(s, "done", False)) else "pending"
             if prev is not None:
@@ -185,7 +199,7 @@ async def project_orchestrator_plan(
             # review R4：越界赋值绕过 max_length 会在下次 load 时整信封作废
             # （validate 失败 → load None → 静默新建空信封）—— 构造期截断。
             envelope.steps = steps[:MAX_STEPS]
-            for st in steps:
+            for st in envelope.steps:
                 events.append(_step_event(envelope, st))
         hk_metrics.record("host_parity", host="chatengine")
         if lock is not None and lock.lost:
@@ -227,7 +241,9 @@ async def project_canonical_flush(
         now = time.time()
         changed = False
         for cs in getattr(canonical, "steps", None) or []:
-            sid = LEGACY_STEP_ID_FMT.format(int(getattr(cs, "n", 0) or 0))
+            sid = _legacy_step_id(getattr(cs, "n", 0))
+            if sid is None:
+                continue
             step = next((s for s in envelope.steps if s.id == sid), None)
             status = step_status_from_canonical(str(getattr(cs.status, "value", cs.status) or "pending"))
             if step is None:

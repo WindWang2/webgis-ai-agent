@@ -36,6 +36,7 @@ from app.services.gis_harness.requirement_ir.clarify import (
     to_legacy_request,
 )
 from app.services.gis_harness.requirement_ir.contracts import (
+    MAX_FIELD_PROVENANCE,
     MAX_PATCHES,
     PatchRecord,
     RequirementDocument,
@@ -207,6 +208,44 @@ def _doc_from(dump: Dict[str, Any]) -> RequirementDocument:
         return RequirementDocument.model_validate(repaired)
 
 
+def _record_ambiguities_with_journal(
+    doc: RequirementDocument,
+    turn: int,
+) -> RequirementDocument:
+    """将澄清入档接为 ``record_ambiguity`` patch，保证恢复可重放。
+
+    ``record_ambiguities`` 仍是纯 lifecycle 记账；这里只把新增/补
+    ``asked_turn`` 的差异转成专用 system patch。不在 ``replay_document``
+    重跑检测器，避免从语义反推并伪造历史澄清状态。
+    """
+    recorded = record_ambiguities(doc, plan_clarifications(doc), turn)
+    before = {a.context_key: a for a in doc.intent.ambiguities}
+    result = doc
+    for ambiguity in recorded.intent.ambiguities:
+        current = before.get(ambiguity.context_key)
+        if current is not None and current.asked_turn is not None:
+            continue
+        op_id = "amb-" + canonical_fingerprint({
+            "document_id": doc.document_id,
+            "context_key": ambiguity.context_key,
+            "turn": turn,
+        })[:24]
+        record = PatchRecord(
+            op_id=op_id,
+            turn=turn,
+            actor="system",
+            op="record_ambiguity",
+            path=f"ambiguities.{ambiguity.context_key}",
+            value=ambiguity.model_dump(),
+            reason="clarification recorded",
+            expected_revision=result.revision,
+        )
+        result, applied = apply_patch(result, record)
+        if not applied:  # 内部确定性 patch 不得静默丢账
+            raise RuntimeError("record_ambiguity patch was not applied")
+    return result
+
+
 def summarize(doc: RequirementDocument) -> Dict[str, Any]:
     """有界 summary（工具 payload 出口；含 digest/澄清/锁/归因面）。"""
     questions = pending_questions(doc)
@@ -306,7 +345,9 @@ async def _ensure_document_unlocked(
     if classification.kind == "edit":
         patches = diff_to_patches(doc, resolved, turn=turn, query=query)
         applied = 0
-        for record in patches:
+        pending = list(patches)
+        while pending:
+            record = pending.pop(0)
             try:
                 doc, was_applied = apply_patch(doc, record)
                 if was_applied:
@@ -316,7 +357,17 @@ async def _ensure_document_unlocked(
                 patch_errors.append(code)
                 if code == "patch_stale_revision":
                     break   # CAS 失败：其余 patch 基于过期基线，全部放弃
-        doc = record_ambiguities(doc, plan_clarifications(doc), turn)
+                # 非 CAS 拒绝（值非法/路径未知/锁冲突）：该 patch 未入账、
+                # revision 未前进 —— 后续 patch 的链式 expected_revision
+                # 必须同步下移，否则全部 PatchStale 被静默丢弃（本轮差分
+                # 截断；diff_to_patches 的链式 CAS 假设全量应用）。
+                pending = [
+                    p.model_copy(update={"expected_revision": (
+                        p.expected_revision - 1
+                        if p.expected_revision is not None else None)})
+                    for p in pending
+                ]
+        doc = _record_ambiguities_with_journal(doc, turn)
         state, doc = _fold_if_needed(state, doc)
         new_dump = doc.model_dump()
         if new_dump != state.document:
@@ -392,7 +443,10 @@ def _restore_user_fields(
         _resolve_setter,
     )
     spec = doc.intent.model_copy(deep=True)
-    for path, payload in list(user_fields.items())[:16]:
+    # 上界与 field_provenance 的 max_length 对齐（MAX_FIELD_PROVENANCE）：
+    # 硬编码 16 会让 >16 个 user-origin 字段中超出的部分静默不携带
+    # （user-wins 违约且无日志）。
+    for path, payload in list(user_fields.items())[:MAX_FIELD_PROVENANCE]:
         old_value, prov = payload if isinstance(payload, tuple) else (None, payload)
         if old_value is None or prov is None or not getattr(prov, "is_user", lambda: False)():
             continue
@@ -413,6 +467,16 @@ def _restore_user_fields(
             observe_optional_failure(__name__)
             continue
         spec.field_provenance[path] = prov
+    # scene_camera 携带锁只在该轴字段确有值时才保留保护力：超替后新话语无
+    # 相机 cue、值又没能恢复时，锁在而字段为 None —— agent 写该轴必被
+    # _lock_conflict 拒绝且无用户解锁途径（锁保护的是一个不存在的值）。
+    # 必须在值恢复之后裁剪：早裁会把正常超替的好锁误删。
+    spec.locks = [
+        lock for lock in spec.locks
+        if not (lock.scope == "scene_camera" and (
+            (lock.value == "pitch" and spec.scene.camera_pitch is None)
+            or (lock.value == "bearing" and spec.scene.camera_bearing is None)))
+    ]
     return doc.model_copy(update={"intent": spec})
 
 
@@ -465,7 +529,7 @@ async def _apply_user_patches_unlocked(
         # 文档零变更——不写 store（同 revision 重写必被单调 seq 栅栏拒绝，
         # 此前把这种良性重放误报为 requirement_persist_fenced）。
         return {"applied": 0, "errors": [], "summary": summarize(doc)}
-    doc = record_ambiguities(doc, plan_clarifications(doc), doc.updated_turn)
+    doc = _record_ambiguities_with_journal(doc, doc.updated_turn)
     state, doc = _fold_if_needed(state, doc)
     state.document = doc.model_dump()
     if not await save_state(session_store, session_id, state):

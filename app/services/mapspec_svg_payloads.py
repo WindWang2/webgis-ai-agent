@@ -231,9 +231,11 @@ def _parse_scene_disclosure(
         elif rows and rows[0].startswith("矢量导出"):
             rows.append("高程基准：未声明")
     opts = comp.options or {}
-    for note in (opts.get("extraNotes") or [])[:4]:
-        if isinstance(note, str) and note.strip():
-            rows.append(note)
+    extra_notes = opts.get("extraNotes")
+    if isinstance(extra_notes, list):
+        for note in extra_notes[:4]:
+            if isinstance(note, str) and note.strip():
+                rows.append(note)
     return ("场景披露", rows[:16])
 
 

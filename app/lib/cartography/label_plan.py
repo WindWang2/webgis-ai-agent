@@ -310,8 +310,6 @@ def _length_penalty(stats: FieldStats) -> Tuple[float, str]:
         return 1.0, f"long_text(mean={mean_len:.1f}>{LONG_TEXT_HARD:.0f})"
     if mean_len > LONG_TEXT_MEAN:
         return 0.5, f"long_text(mean={mean_len:.1f}>{LONG_TEXT_MEAN:.0f})"
-    if mean_len < 1.0:
-        return 0.5, "too_short"
     return 0.0, ""
 
 
@@ -587,7 +585,15 @@ def build_label_spec(
     自然落空），但附 reasons 说明。
     """
     stats_list = field_stats if field_stats is not None else field_stats_from_profile(profile)
-    choice = choose_label_field(profile, field_stats=stats_list)
+    if explicit_field:
+        # 显式字段即挑选结果：不得让自动挑选失败（choice.field is None）
+        # 挟持策略编排——否则 plan_label_strategy 早退 hover_only 且
+        # zoom_bands 空，用户显式字段被静默降级为仅悬停。
+        choice = LabelFieldChoice(
+            field=explicit_field, confidence=1.0,
+            reasons=[f"explicit_field({explicit_field})"])
+    else:
+        choice = choose_label_field(profile, field_stats=stats_list)
     strategy = plan_label_strategy(profile, view, field_choice=choice, field_stats=stats_list)
 
     field = explicit_field or choice.field

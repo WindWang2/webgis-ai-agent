@@ -146,6 +146,36 @@ async def test_anonymous_string_is_treated_as_anonymous(session_factory):
 
 
 @pytest.mark.asyncio
+async def test_commit_interaction_blocks_cross_user(session_factory):
+    """知道他人 session_id 不能借 commit_interaction 写入消息。"""
+    await _seed_session(session_factory, "s-bob-commit", "user-bob")
+    async with session_factory() as db:
+        await AsyncHistoryService(db).commit_interaction(
+            "s-bob-commit", "intrusion", "planted", user_id="user-alice"
+        )
+    async with session_factory() as db:
+        conv = await AsyncHistoryService(db).get_session(
+            "s-bob-commit", user_id="user-bob"
+        )
+    assert conv is not None
+    assert conv.messages == []
+
+
+@pytest.mark.asyncio
+async def test_commit_interaction_allows_owner(session_factory):
+    await _seed_session(session_factory, "s-bob-commit-ok", "user-bob")
+    async with session_factory() as db:
+        await AsyncHistoryService(db).commit_interaction(
+            "s-bob-commit-ok", "question", "answer", user_id="user-bob"
+        )
+    async with session_factory() as db:
+        conv = await AsyncHistoryService(db).get_session(
+            "s-bob-commit-ok", user_id="user-bob"
+        )
+    assert [m.role for m in conv.messages] == ["user", "assistant"]
+
+
+@pytest.mark.asyncio
 async def test_enforce_cap_buckets_by_user(session_factory):
     """会话数上限驱逐按 user 分桶：user-a 触发上限只删自己最旧的，不动 user-b。"""
     from datetime import datetime, timedelta

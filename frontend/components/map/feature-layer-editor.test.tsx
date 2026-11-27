@@ -7,7 +7,7 @@
  * 编辑事务本身（preview→approve→undo）由 layer-edit-bridge.test.ts 锁定，
  * 这里 mock submitEditOps 只观察是否被调用及参数。
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { resetSelectionStore } from '@/lib/selection/selection-store';
@@ -28,6 +28,18 @@ vi.mock('@/lib/edit/layer-edit-bridge', async (importOriginal) => {
 vi.mock('@/lib/store/session-identity', () => ({
   getSessionIdentity: () => ({ sessionId: 'sess-editor-0001', ownerToken: 'tok' }),
 }));
+// 合同 effect 不得真实 fetch（否则渲染哪棵表单树取决于环境里 8001 端口）。
+vi.mock('@/lib/api/field-contracts', () => ({
+  bindingStatus: vi.fn(async () => ({ status: 'missing' })),
+  getContract: vi.fn(),
+}));
+// 无 I18nProvider 时 useT 每次渲染返回新 t，pickEditTarget 身份抖动会让
+// click effect 每次渲染 off/on 重注册，测试驱动到陈旧闭包；固定 t 消除该
+// 测试环境特有效应。
+vi.mock('@/lib/i18n/useT', () => {
+  const t = (key: string) => key;
+  return { useT: () => t };
+});
 
 import { FeatureLayerEditor } from './feature-layer-editor';
 import type { MapRef } from 'react-map-gl/maplibre';
@@ -36,12 +48,15 @@ function fakeMap() {
   // 源/层按 id 记账（getSource 在 addSource 前返回 undefined —— 与真实
   // maplibre 语义一致，共享顶点高亮层的挂载/摘除才能被断言）。
   const sources = new Map<string, { setData: ReturnType<typeof vi.fn> }>();
+  const draftSource = { setData: vi.fn() };
   const layerIds = new Set<string>();
   return {
     on: vi.fn(),
     off: vi.fn(),
     getSource: vi.fn((id: string) => sources.get(id)),
-    addSource: vi.fn((id: string) => { sources.set(id, { setData: vi.fn() }); }),
+    addSource: vi.fn((id: string) => {
+      sources.set(id, id === 'wb-feedit-src' ? draftSource : { setData: vi.fn() });
+    }),
     getLayer: vi.fn((id: string) => (layerIds.has(id) ? ({ id } as unknown) : undefined)),
     addLayer: vi.fn((def: { id: string }) => { layerIds.add(def.id); }),
     removeLayer: vi.fn((id: string) => { layerIds.delete(id); }),
@@ -50,6 +65,8 @@ function fakeMap() {
     project: vi.fn((p: [number, number]) => ({ x: p[0] * 100, y: -p[1] * 100 })),
     queryRenderedFeatures: vi.fn(() => []),
     getStyle: () => ({ layers: [] }),
+    /** 稳定 draft 源：测试可读回顶点目标同步出的几何。 */
+    draftSource,
   };
 }
 
@@ -102,9 +119,6 @@ beforeEach(() => {
   submitMock.mockResolvedValue({ ok: true, planId: 'p1', revision: 3, createdWfids: [], retiredWfids: [] });
   useHudStore.getState().clearToolState();
   useHudStore.setState({ layers: [], editTarget: null, mapLoaded: true } as never);
-});
-afterEach(() => {
-  useHudStore.getState().clearToolState();
 });
 
 describe('MVT 层编辑拾取走权威链（P2/A02/A03）', () => {
@@ -164,6 +178,44 @@ describe('MVT 层编辑拾取走权威链（P2/A02/A03）', () => {
     });
     expect(submitMock).not.toHaveBeenCalled(); // 只是选中顶点目标，不提交
     expect(pickMock.mock.calls[0][0].tolerancePx).toBe(6);
+    // 不变量本体：vertexTarget 由权威完整几何驱动 —— 顶点源必须出现
+    // authGeom 的全部 3 个顶点（瓦片碎片/未设置目标都不会有这个形状）。
+    await waitFor(() => {
+      const last = map.draftSource.setData.mock.calls.at(-1)?.[0] as {
+        features: Array<{ geometry: { type: string; coordinates: unknown } }>;
+      };
+      const points = last.features.filter((f) => f.geometry.type === 'Point');
+      expect(points.map((f) => f.geometry.coordinates)).toEqual(authGeom.coordinates);
+    });
+  });
+
+  it('权威拾取返回 null geometry（合法 GeoJSON）→ 不设 vertexTarget，拖拽 handler 不解引用 null', async () => {
+    const map = fakeMap();
+    const mapRef = { current: { getMap: () => map } } as unknown as React.RefObject<MapRef | null>;
+    act(() => {
+      useHudStore.setState({
+        layers: [MVT_LAYER] as never,
+        editTarget: { layerId: 'ref:big-0001', refId: 'ref:big-0001' },
+        activeMapTool: 'edit_vertices',
+      } as never);
+    });
+    render(<FeatureLayerEditor mapRef={mapRef} />);
+    const { click } = clickHandlers(map);
+    // 修复前：geometry ?? null 存入 vertexTarget → 同步 effect 与 onDown 的
+    // ringOf(null) 解引用 geometry.type 抛 TypeError。
+    pickMock.mockResolvedValueOnce({
+      id: 'wf1-null',
+      feature: { type: 'Feature', geometry: null, properties: { _wfid: 'wf1-null' } },
+      distPx: 0,
+    });
+    await act(async () => {
+      await click({ lngLat: { lng: 104.5, lat: 30.5 }, point: { x: 10450, y: -3050 } });
+    });
+    expect(submitMock).not.toHaveBeenCalled();
+    const calls = map.on.mock.calls as Array<[string, ...unknown[]]>;
+    const onDown = calls.find(([ev]) => ev === 'mousedown')?.[2];
+    expect(typeof onDown).toBe('function');
+    expect(() => (onDown as (e: unknown) => void)({ point: { x: 0, y: 0 }, lngLat: { lng: 0, lat: 0 } })).not.toThrow();
   });
 
   it('权威拾取未命中 → 零提交（V04：无服务端写入）', async () => {
@@ -352,5 +404,54 @@ describe('共享顶点拖拽（ADR-0304）', () => {
     expect(map.getLayer('wb-shared-hl-fill')).toBeUndefined();
     expect(map.getSource('wb-shared-hl-src')).toBeUndefined();
     expect(map.dragPan.enable).toHaveBeenCalled();
+  });
+});
+
+describe('草稿预览同步（draft 代次进 effect 依赖）', () => {
+  it('draw_line 逐点点击后草稿（线 + 顶点）同步进 draft 源，Escape 清空', async () => {
+    const map = fakeMap();
+    const { draftSource } = map;
+    const mapRef = { current: { getMap: () => map } } as unknown as React.RefObject<MapRef | null>;
+    act(() => {
+      useHudStore.setState({
+        layers: [INLINE_LAYER] as never,
+        editTarget: { layerId: 'ref:small-0002', refId: 'ref:small-0002' },
+        activeMapTool: 'draw_line',
+      } as never);
+    });
+    render(<FeatureLayerEditor mapRef={mapRef} />);
+    const { click } = clickHandlers(map);
+
+    // 修复前：bump() 只触发重渲染，同步 effect 依赖不含草稿代次 →
+    // setData 停留在挂载时的空 FeatureCollection，草稿预览永不渲染。
+    await act(async () => {
+      await click({ lngLat: { lng: 104.0, lat: 30.5 }, point: { x: 10400, y: -3050 } });
+    });
+    await waitFor(() => expect(draftSource.setData).toHaveBeenCalled());
+    const afterFirst = draftSource.setData.mock.calls.at(-1)?.[0] as { features: unknown[] };
+    expect(afterFirst.features).toHaveLength(1); // 首点只有顶点，无线
+
+    await act(async () => {
+      await click({ lngLat: { lng: 105.0, lat: 30.5 }, point: { x: 10500, y: -3050 } });
+    });
+    await waitFor(() => {
+      const last = draftSource.setData.mock.calls.at(-1)?.[0] as { features: unknown[] };
+      expect(last.features).toHaveLength(3); // 1 条 LineString + 2 个顶点
+    });
+    const withDraft = draftSource.setData.mock.calls.at(-1)?.[0] as {
+      features: Array<{ geometry: { type: string } }>;
+    };
+    expect(withDraft.features[0].geometry.type).toBe('LineString');
+
+    // Escape 取消草稿（V05 零写入）—— 已渲染的陈旧草稿必须被清掉。
+    // 派生在 body 上冒泡（真实按键 target 是聚焦元素，window 无 getAttribute）。
+    act(() => {
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    await waitFor(() => {
+      const last = draftSource.setData.mock.calls.at(-1)?.[0] as { features: unknown[] };
+      expect(last.features).toHaveLength(0);
+    });
+    expect(submitMock).not.toHaveBeenCalled(); // 取消不落任何服务端写入
   });
 });

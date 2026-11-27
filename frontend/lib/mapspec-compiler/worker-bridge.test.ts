@@ -690,3 +690,72 @@ describe("diffSpecsAsync fail-closed arms (#686)", () => {
     // If the dead worker were reused, pending would still be unsettled after 1ms.
   });
 });
+
+// ── P2（review）：dispose 结算在飞请求 / strip 同步抛错结算 ────────────────
+
+describe("diffSpecsAsync resource settlement (review P2)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    _resetWorkerBridgeForTests();
+  });
+
+  it("disposeWorker() settles in-flight diff requests immediately (no 30s hang)", async () => {
+    class SilentWorker {
+      constructor(_url: URL, _opts?: { type?: string }) {}
+      postMessage() {} // Never responds — request is in flight when dispose runs.
+      addEventListener() {}
+      removeEventListener() {}
+      terminate() {}
+    }
+    vi.stubGlobal("Worker", SilentWorker as unknown as typeof Worker);
+    vi.useFakeTimers();
+
+    const pending = diffSpecsAsync(null, spec);
+    disposeWorker();
+
+    let settledPatch: Awaited<ReturnType<typeof diffSpecsAsync>> | undefined;
+    void pending.then((patch) => { settledPatch = patch; });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(settledPatch).toEqual({ sources: [], layers: [] });
+    expect(consumeDiffLastFailed()).toBe(true);
+  });
+
+  it("a synchronous strip failure resolves as a failed empty patch (no reject / active-count leak)", async () => {
+    let listener: ((event: { data: { id: string; patch: ReturnType<typeof diffSpecs> } }) => void) | null = null;
+    class Replier {
+      constructor(_url: URL, _opts?: { type?: string }) {}
+      postMessage(msg: { id: string; prev: MapSpec | null; next: MapSpec }) {
+        const { id, prev, next } = msg;
+        queueMicrotask(() => {
+          listener?.({ data: { id, patch: diffSpecs(prev, next) } });
+        });
+      }
+      addEventListener(_type: string, cb: typeof listener) { listener = cb; }
+      removeEventListener() {}
+      terminate() {}
+    }
+    vi.stubGlobal("Worker", Replier as unknown as typeof Worker);
+
+    // 先登记一个 cyclic inlineData（同引用去重），第二次的新引用触发
+    // isDeepEqualInline 无限递归 → stripInlineForTransfer 同步栈溢出。
+    const cyclicA: Record<string, unknown> = { type: "FeatureCollection", features: [] };
+    cyclicA.self = cyclicA;
+    const cyclicB: Record<string, unknown> = { type: "FeatureCollection", features: [] };
+    cyclicB.self = cyclicB;
+    const makeSpec = (inlineData: unknown): MapSpec => ({
+      version: "1.0",
+      sources: { S: { type: "geojson", inlineData } as any },
+      layers: [{ id: "S__point", source: "S", type: "circle", paint: { "circle-radius": 6 } }],
+    });
+    const specA = makeSpec(cyclicA);
+    const specB = makeSpec(cyclicB);
+
+    await diffSpecsAsync(null, specA);
+    const patch = await diffSpecsAsync(specA, specB);
+
+    expect(patch).toEqual({ sources: [], layers: [] });
+    expect(consumeDiffLastFailed(patch)).toBe(true);
+  });
+});

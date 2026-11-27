@@ -99,6 +99,33 @@ def test_incremental_state_is_json_serializable_and_pure():
     assert json.loads(json.dumps(out))["count"] == 5
 
 
+def test_incremental_merge_without_h3_degrades_honestly(monkeypatch):
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _no_h3(name, *args, **kwargs):
+        if name == "h3":
+            raise ImportError("No module named 'h3'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _no_h3)
+    left = new_state()
+    left["count"] = 2
+    right = new_state()
+    right["count"] = 3
+
+    merged = merge_states(left, right)
+    assert merged["count"] == 5
+    assert merged["h3"] == {}
+    assert merged["h3_truncated"] is False
+
+    left["h3"] = {"8928308280fffff": 2}
+    merged = merge_states(left, right)
+    assert merged["h3"] == {}
+    assert merged["h3_truncated"] is True
+
+
 def test_incremental_null_accounting():
     feats = [{"type": "Feature", "geometry": None,
               "properties": {"a": 1}}, {"type": "Feature", "geometry": None,

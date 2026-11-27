@@ -32,6 +32,8 @@ import {
   Activity,
   Radar,
   Workflow,
+  Store,
+  Cpu,
   Maximize2,
   Minimize2,
 } from 'lucide-react';
@@ -161,6 +163,9 @@ const PANEL_META: Record<string, PanelMeta> = {
   cockpit: { icon: Radar },
   // 可视化 GIS 模型构建器（append-only 注册行）。
   model: { icon: Workflow },
+  // V9（ADR-0145）：智能资产面板（append-only 注册行）。
+  market: { icon: Store },
+  modelops: { icon: Cpu },
 };
 
 export function ContextPanel({
@@ -440,6 +445,8 @@ export function ContextPanel({
           {activeTab === 'layers' && (
             <PanelErrorBoundary label={t('panel.boundary.layers')}>
               {editingLayerId ? <LayerStylePanel /> : <LayersTab />}
+              {/* 编辑某层时 layer-style-panel 已有同一入口，避免两个面板同时出现 */}
+              {!editingLayerId && <RasterAuthoringLauncher />}
             </PanelErrorBoundary>
           )}
           {activeTab === 'components' && (

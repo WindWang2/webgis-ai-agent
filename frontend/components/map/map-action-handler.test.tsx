@@ -217,6 +217,38 @@ describe('MapActionHandler', () => {
     expect(mockAnnotationsStore).toEqual([]);
   });
 
+  it('非字符串 command（畸形 AI 负载）也 settle + pop：不永久阻塞队列头', async () => {
+    // 修复前：command.toLowerCase() 在 try 之外抛出 → async IIFE 未捕获拒绝，
+    // reportTerminal/popAction 均不执行，队列头永久卡死、后续命令全堵。
+    actions = [{ command: null as never, params: {} }];
+    await act(async () => { render(<MapActionHandler />); });
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: null }), 'failed',
+      expect.objectContaining({ error: expect.any(String) }),
+    );
+    expect(popAction).toHaveBeenCalledTimes(1);
+    expect(mockFlyTo).not.toHaveBeenCalled();
+  });
+
+  it('requiredParams 校验器抛错也 settle + pop（不冒未处理拒绝）', async () => {
+    // 修复前：requiredParams() 同样在 try 之外，抛错即未捕获拒绝、队列头阻塞。
+    const entry = COMMAND_CATALOGUE.fly_to as unknown as { requiredParams: (p: Record<string, unknown>) => boolean };
+    const orig = entry.requiredParams;
+    entry.requiredParams = () => { throw new Error('validator boom'); };
+    try {
+      actions = [{ command: 'fly_to', params: { center: [116, 39], zoom: 12 } }];
+      await act(async () => { render(<MapActionHandler />); });
+      expect(reportTerminalFn).toHaveBeenCalledWith(
+        expect.objectContaining({ command: 'fly_to' }), 'failed',
+        expect.objectContaining({ error: 'validator boom' }),
+      );
+      expect(popAction).toHaveBeenCalledTimes(1);
+      expect(mockFlyTo).not.toHaveBeenCalled();
+    } finally {
+      entry.requiredParams = orig;
+    }
+  });
+
   it('forwards bearing and pitch to map.flyTo()', async () => {
     actions = [{
       command: 'fly_to',

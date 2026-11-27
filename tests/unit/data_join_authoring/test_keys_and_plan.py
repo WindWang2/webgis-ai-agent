@@ -35,6 +35,15 @@ def test_numeric_family_int_float_equivalent():
     assert canonical_key_value(2, SPEC) != canonical_key_value(2.5, SPEC)
 
 
+def test_large_integer_keys_not_float_collapsed():
+    """>2^53 的不同大整数（雪花/bigint id）不得经 float() 塌缩成同一键。"""
+    a = 2 ** 53
+    assert canonical_key_value(a, SPEC) != canonical_key_value(a + 1, SPEC)
+    assert canonical_key_value(2 ** 63, SPEC) != canonical_key_value(2 ** 63 + 1, SPEC)
+    # 跨 int/float 的数值族等价保持不变（精确可表示）
+    assert canonical_key_value(a, SPEC) == canonical_key_value(float(a), SPEC)
+
+
 def test_null_missing_never_match():
     assert canonical_key_value(None, SPEC) is None
     # 行内 null / 字段缺失 → 整键 None（null 对 null 也不匹配）

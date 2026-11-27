@@ -233,3 +233,29 @@ class TestGroundingAndEvidenceChain:
         assert isinstance(chain, list)
         assert len(chain) > 0
         assert any(ev.domain == "environment" for ev in chain)
+
+
+def test_applicability_key_fallback_never_crosses_units_or_picks_arbitrarily():
+    """Unit-suffixed fallback must not bind distance_m to distance_km.
+
+    The old fallback matched on the first underscore token (``distance``),
+    so a ``distance_m`` condition could consume a ``distance_km`` context
+    value, and ``alt_keys[0]`` arbitrarily chose among multiple candidates.
+    """
+    registry = DomainRulePackRegistry()
+
+    # Different unit must not satisfy the condition (0.3 km <= 500 would pass
+    # if it were misread as meters).
+    assert registry._evaluate_applicability(
+        {"distance_m": {"max": 500}}, {"distance_km": 0.3}
+    ) is False
+
+    # Ambiguous candidates are rejected rather than picking an arbitrary key.
+    assert registry._evaluate_applicability(
+        {"distance": {"max": 500}}, {"distance_m": 300, "distance_km": 0.3}
+    ) is False
+
+    # An unambiguous unit-suffixed extension is still honored.
+    assert registry._evaluate_applicability(
+        {"distance": {"max": 500}}, {"distance_m": 300}
+    ) is True

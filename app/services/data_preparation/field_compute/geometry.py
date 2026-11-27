@@ -138,7 +138,7 @@ def measure_geometry(geometry: Optional[Dict[str, Any]], func_name: str,
         "crs": crs,
         "method": method,
         "geometry_type": gtype,
-        "parts": int(getattr(geom, "geom_type", "") == "MultiPolygon") + 1,
+        "parts": (len(geom.geoms) if gtype == "MultiPolygon" else 1),
         "has_holes": bool(kind == "area" and _has_holes(geometry)),
         "dateline_crossing": _bbox_dateline(geometry),
     }

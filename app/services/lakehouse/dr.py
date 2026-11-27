@@ -23,6 +23,7 @@ from typing import Any, Dict, Iterable, List, Optional, Union
 from app.services.lakehouse.data_object import (
     DATA_OBJECT_KINDS,
     DataObjectError,
+    _stream_verify_digest,
     is_data_object_id,
     materialize_data_object,
     resolve_data_object,
@@ -127,11 +128,15 @@ def backup_cube_chunks(
     if total > max_total_bytes:
         return {"backed_up": False, "reason": "oversized", "byte_size": total}
     store = get_object_store()
+    streamed = getattr(store, "put_blob_from_path", None)
     written = 0
     for rel, digest, _size in entries:
         # #2143 N31：整读 read_bytes 曾把单 chunk 全量驻留内存（≤512MiB
         # 总预算下单文件即可占满）；put_blob_from_path 真流式（零驻留）。
-        result = store.put_blob_from_path(digest, base / rel, "binary")
+        if streamed is not None:
+            result = streamed(digest, base / rel, "binary")
+        else:
+            result = store.put_blob(digest, (base / rel).read_bytes(), "binary")
         if result.put_new:
             written += 1
     return {
@@ -253,8 +258,8 @@ def scrub_object(
         if not object_store.exists(digest):
             missing.append(digest)
             continue
-        raw = object_store.get_blob(digest, expected_sha256=digest)
-        if raw is None:
+        # 流式校验：full 模式下大对象整体驻留会 OOM（materialize 同款通道）。
+        if not _stream_verify_digest(object_store, digest):
             corrupt.append(digest)
     if etag_check and recorded_etag:
         # 比对**执行**即 etag_checked=True（成功/失配都要披露 —— R1-21）。

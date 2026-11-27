@@ -114,3 +114,52 @@ def test_tool_predicate_parser_rejects_unknown_and_unimplemented():
     # outside (documented tool default)
     assert _parse_spatial_predicate(None) == SpatialPredicate.OUTSIDE
     assert _parse_spatial_predicate("MIN_DISTANCE") == SpatialPredicate.MIN_DISTANCE
+
+
+def test_categorical_constraint_unknown_operator_fails_closed():
+    """A misspelling like "==" must not fall through to the "not in" branch.
+
+    ``Constraint`` validation normally rejects unknown categorical operators,
+    but an unvalidated copy (``model_copy``) can still reach the evaluator. The
+    value below is NOT in the allowed set, so the old default branch
+    (``val not in thresh``) wrongly reported the hard constraint as satisfied.
+    """
+    alt = Alternative(id="A", name="A", attributes={"kind": "warehouse"})
+    constraint = Constraint(
+        id="c_cat",
+        name="Only schools allowed",
+        constraint_type=ConstraintType.HARD,
+        category=ConstraintCategory.CATEGORICAL,
+        metric_key="kind",
+        operator="in",
+        threshold=["school"],
+    ).model_copy(update={"operator": "=="})
+
+    feasible, hard_violations, _ = evaluate_alternative_constraints(alt, [constraint], {})
+    assert feasible is False
+    assert len(hard_violations) == 1
+    assert hard_violations[0].passed is False
+
+
+def test_within_constraint_without_boundary_fails_closed():
+    """WITHIN without a reference boundary must not pass by default (GIS-101)."""
+    alt = Alternative(
+        id="A",
+        name="A",
+        geometry=mapping(box(116.35, 39.95, 116.36, 39.96)),
+    )
+    constraint = Constraint(
+        id="c_within",
+        name="Inside permitted boundary",
+        constraint_type=ConstraintType.HARD,
+        category=ConstraintCategory.SPATIAL,
+        spatial_predicate=SpatialPredicate.WITHIN,
+    )
+
+    evaluation = evaluate_spatial_constraint("A", alt.geometry, constraint)
+    assert evaluation.passed is False
+    assert evaluation.margin == -1.0
+
+    feasible, hard_violations, _ = evaluate_alternative_constraints(alt, [constraint], {})
+    assert feasible is False
+    assert len(hard_violations) == 1

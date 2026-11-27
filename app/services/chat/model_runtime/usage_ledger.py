@@ -311,6 +311,8 @@ async def persist_turn_records(
     cost_micro, cost_source = collector.cost_view
     now = datetime.now(timezone.utc)
     try:
+        # 本次持久化成功则清零历史失败计数（失败由下方 except 重新标记）。
+        collector.write_failures = 0
         async with async_db_session() as db:
             row = (
                 await db.execute(
@@ -408,9 +410,17 @@ async def persist_turn_records(
         return False
 
 
+#: fire-and-forget persist 任务的强引用表 —— 只 create_task 不持引用会被
+#: GC 回收（coroutine 永不完成，usage 面静默少 turn）。done 回调移除。
+_persist_tasks: set[asyncio.Task] = set()
+
+
 def spawn_persist_task(collector: TurnUsageCollector, **kwargs) -> asyncio.Task:
     """fire-and-forget 落盘（SSE 循环内调用，绝不 await）。"""
-    return asyncio.create_task(persist_turn_records(collector, **kwargs))
+    task = asyncio.create_task(persist_turn_records(collector, **kwargs))
+    _persist_tasks.add(task)
+    task.add_done_callback(_persist_tasks.discard)
+    return task
 
 
 async def session_usage_summary(db, session_id: str, limit_turns: int = 20) -> Dict[str, Any]:

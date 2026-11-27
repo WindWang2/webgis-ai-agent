@@ -25,6 +25,7 @@ from app.lib.gis.scientific_errors import (
     InsufficientSamples,
     MissingRequiredField,
     NoValidObservations,
+    ResourceScaleMismatch,
 )
 
 pytestmark = pytest.mark.unit
@@ -157,3 +158,21 @@ def test_sampling_adversarial_inputs():
         systematic_grid_points(fc, spacing=0)
     with pytest.raises(ValueError, match="allocation"):
         stratified_points_in_polygons(fc, "landuse", 5, allocation="junk")
+
+
+def test_random_points_total_guard_rejects_n_times_polygons():
+    """P2 修复：总量 = n × 多边形数 超 4M 时先拒绝（分配前）。
+
+    单面封顶（_validate_n 的 1e6）不约束乘积：1e6 × 1000 面 = 1e9 点，
+    旧实现会在任何守卫前把 collected_x 等 Python list 推到数十 GB。
+    """
+
+    fc = _grid_fc(1, 5)                        # 5 个多边形
+    # 单面 n 合法（≤1e6）但乘积 5×1e6 = 5M > 4M → 总量守卫先拒绝
+    with pytest.raises(ResourceScaleMismatch, match="total planned"):
+        random_points_in_polygons(fc, 1_000_000)
+    # 边界内组合照常工作（守卫不误伤；小 n 快路径）
+    fc_small, meta = random_points_in_polygons(fc, 5)
+    assert meta["sample_count"] == 25        # 5 面 × 5
+    assert meta["n_per_polygon"] == 5
+    assert meta["polygon_count"] == 5

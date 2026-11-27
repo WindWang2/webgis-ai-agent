@@ -322,6 +322,28 @@ async def test_mapspec_dependency_live_and_dangling():
 
 
 @pytest.mark.asyncio
+async def test_resume_keeps_natural_language_ref_prefix_in_query():
+    """章节自然语言以 "ref:" 开头时不得被当作 ref 指针置空。"""
+    sid = f"v6-ref-text-{uuid.uuid4().hex[:6]}"
+    await _seed_instance(sid, [_stage("compose", "satisfied")])
+    query = "ref: 继续上一次的分析"
+    plan = await load_session_plan(sid)
+    plan.gis_chapter["query"] = query
+    await save_session_plan(plan)
+    db = _FakeDb()
+    saved = await save_anchor(db, session_id=sid, user_id="u-ref-text")
+
+    result = await resume_from_anchor(
+        db, anchor_id=saved["anchor_id"], user_id="u-ref-text")
+
+    resumed = await load_session_plan(result["session_id"])
+    assert resumed.gis_chapter["query"] == query
+    assert resumed.gis_chapter["resumed_from"]["dangling_refs"] == []
+    await session_data_manager.clear_session(sid)
+    await session_data_manager.clear_session(result["session_id"])
+
+
+@pytest.mark.asyncio
 async def test_resume_authz_owner_isolation_unchanged():
     """恢复授权语义不变：非 owner 与匿名一律拒绝（走原鉴权路径）。"""
     sid = f"v6-verify-authz-{uuid.uuid4().hex[:6]}"

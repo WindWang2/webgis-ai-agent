@@ -154,8 +154,10 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
 
   const refreshUploads = useCallback(async () => {
     if (!sessionId) return;
+    const gen = generationRef.current;
     try {
       const res = await listUploads(sessionId, { ownerToken });
+      if (generationRef.current !== gen) return;
       const options = (res.uploads ?? [])
         .filter((u) => u.session_ref)
         .map((u) => ({
@@ -164,6 +166,7 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
         }));
       setUploads(options);
     } catch {
+      if (generationRef.current !== gen) return;
       setUploads([]);
     }
   }, [sessionId, ownerToken]);
@@ -195,6 +198,11 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
     setExecError(null);
     setStaleHint(false);
     setCancelled(false);
+    // 在途请求的 finally 因代次不匹配永不清除（R2 #2191）—— 这里显式复位，
+    // 否则切换会话后 describe/preview/execute 按钮永久禁用（无取消入口）。
+    setDescribeLoading(false);
+    setPreviewing(false);
+    setExecuting(false);
     void refreshUploads();
   }, [refreshUploads]);
 

@@ -90,6 +90,7 @@ class FieldContractStore:
         revision: int,
         status: str = "draft",
         notes: Optional[str] = None,
+        binding: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         from app.core.database import SessionLocal
 
@@ -106,7 +107,7 @@ class FieldContractStore:
                 revision=revision,
                 rules=rules,
                 normalized_digest=normalized_digest,
-                binding={},
+                binding=binding or {},
                 notes=notes,
             )
             db.add(row)
@@ -250,13 +251,16 @@ class FieldContractStore:
     def create_assessment(self, **cols: Any) -> Dict[str, Any]:
         from app.core.database import SessionLocal
 
-        with SessionLocal() as db:
-            _sqlite_busy_timeout(db)
-            row = FieldContractAssessment(**cols)
-            db.add(row)
-            db.commit()
-            db.refresh(row)
-            return _assessment_row_to_dict(row)
+        def _op() -> Dict[str, Any]:
+            with SessionLocal() as db:
+                _sqlite_busy_timeout(db)
+                row = FieldContractAssessment(**cols)
+                db.add(row)
+                db.commit()
+                db.refresh(row)
+                return _assessment_row_to_dict(row)
+
+        return _retry_locked(_op)
 
     def get_assessment(self, assessment_id: str) -> Optional[Dict[str, Any]]:
         from app.core.database import SessionLocal
@@ -287,17 +291,20 @@ class FieldContractStore:
     ) -> Optional[Dict[str, Any]]:
         from app.core.database import SessionLocal
 
-        with SessionLocal() as db:
-            _sqlite_busy_timeout(db)
-            row = db.get(FieldContractAssessment, assessment_id)
-            if row is None:
-                return None
-            for k, v in cols.items():
-                setattr(row, k, v)
-            row.updated_at = _now()
-            db.commit()
-            db.refresh(row)
-            return _assessment_row_to_dict(row)
+        def _op() -> Optional[Dict[str, Any]]:
+            with SessionLocal() as db:
+                _sqlite_busy_timeout(db)
+                row = db.get(FieldContractAssessment, assessment_id)
+                if row is None:
+                    return None
+                for k, v in cols.items():
+                    setattr(row, k, v)
+                row.updated_at = _now()
+                db.commit()
+                db.refresh(row)
+                return _assessment_row_to_dict(row)
+
+        return _retry_locked(_op)
 
 
 def _contract_row_to_dict(row: FieldContract) -> Dict[str, Any]:

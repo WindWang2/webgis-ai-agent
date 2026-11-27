@@ -337,7 +337,9 @@ def write_zarr_cube(
     Data source per chunk: ``read_chunk(descriptor, time)`` when given,
     else the descriptor's ``source_uri`` is opened through
     :class:`RasterReader` and its window read at
-    ``band_indexes[0]`` (the sanctioned bounded read path).
+    ``band_indexes[0]`` (the sanctioned bounded read path). One reader is
+    reused per distinct source (opened once, closed at the end) — a
+    per-chunk open/close would let GDAL open overhead dominate.
     """
     from app.lib.geo_raster.reader import RasterReader
 
@@ -407,27 +409,37 @@ def write_zarr_cube(
         "layout": "raster_chunk_descriptor_v1",
     }
 
-    for t, time_label in enumerate(times):
-        for d in descriptors[t]:
-            if read_chunk is not None:
-                data = read_chunk(d, str(time_label))
-            else:
-                if not d.source_uri:
-                    raise ZarrStoreError(
-                        f"chunk {d.chunk_id} has no source_uri and no "
-                        "read_chunk loader was provided"
+    readers: Dict[str, RasterReader] = {}
+    try:
+        for t, time_label in enumerate(times):
+            for d in descriptors[t]:
+                if read_chunk is not None:
+                    data = read_chunk(d, str(time_label))
+                else:
+                    if not d.source_uri:
+                        raise ZarrStoreError(
+                            f"chunk {d.chunk_id} has no source_uri and no "
+                            "read_chunk loader was provided"
+                        )
+                    reader = readers.get(d.source_uri)
+                    if reader is None or reader.closed:
+                        reader = RasterReader.open(d.source_uri)
+                        readers[d.source_uri] = reader
+                    data = reader.read_window(
+                        d.window, band=int(d.band_indexes[0])
                     )
-                reader = RasterReader.open(d.source_uri)
-                try:
-                    data = reader.read_window(d.window, band=int(d.band_indexes[0]))
-                finally:
-                    reader.close()
-            col, row, cw, ch = (int(v) for v in d.window)
-            data = np.asarray(data)
-            if data.shape != (ch, cw):
-                raise ZarrStoreError(
-                    f"chunk {d.chunk_id} loader returned {data.shape}, "
-                    f"expected {(ch, cw)}"
-                )
-            arr[t, row:row + ch, col:col + cw] = data
+                col, row, cw, ch = (int(v) for v in d.window)
+                data = np.asarray(data)
+                if data.shape != (ch, cw):
+                    raise ZarrStoreError(
+                        f"chunk {d.chunk_id} loader returned {data.shape}, "
+                        f"expected {(ch, cw)}"
+                    )
+                arr[t, row:row + ch, col:col + cw] = data
+    finally:
+        for reader in readers.values():
+            try:
+                reader.close()
+            except Exception:  # noqa: BLE001 — teardown is best-effort
+                logger.warning("[geo_raster.zarr] reader close failed", exc_info=True)
     return Path(out_store)

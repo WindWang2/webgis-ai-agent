@@ -165,6 +165,13 @@ def register_epsg_transform_tools(registry: ToolRegistry):
         src_clean = str(from_epsg or "").strip().upper()
         dst_clean = str(to_epsg or "").strip().upper()
 
+        if not src_clean or not dst_clean:
+            return std_error_response(
+                f"from_epsg/to_epsg 不能为空（from={from_epsg!r} to={to_epsg!r}）。",
+                code="VALIDATION_ERROR",
+                correction_hint="请提供合法的 EPSG 代码（如 EPSG:4326、EPSG:32650）。",
+            )
+
         if src_clean == dst_clean:
             return {
                 "success": True,

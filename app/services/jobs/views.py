@@ -127,6 +127,15 @@ def _atlas_page_status(record: AnalysisTask) -> Optional[list[dict]]:
     return out or None
 
 
+def _bounded_row_count(value: Any) -> Optional[int]:
+    """行数投影：只接受 [0, 1e9] 的 int，其余形状一律 None（安全摘要必须有界）。"""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    if value < 0 or value > 1_000_000_000:
+        return None
+    return value
+
+
 def _import_member_status(record: AnalysisTask) -> Optional[list[dict]]:
     """data_import job → 有界成员级状态投影（G23）。
 
@@ -153,8 +162,8 @@ def _import_member_status(record: AnalysisTask) -> Optional[list[dict]]:
             "display_name": str(raw.get("display_name") or "")[:96],
             "status": str(raw.get("status") or "")[:24],
             "error": (str(err).splitlines()[0][:160] if err else None),
-            "input_rows": raw.get("input_rows"),
-            "rejected_rows": raw.get("rejected_rows"),
+            "input_rows": _bounded_row_count(raw.get("input_rows")),
+            "rejected_rows": _bounded_row_count(raw.get("rejected_rows")),
             "output_ref": (str(raw.get("output_ref") or "")[:128] or None),
         })
     return out or None

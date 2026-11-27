@@ -1,10 +1,23 @@
 /**
  * 大屏值守模式测试（P7）—— 键盘可达 / 轮播开关与 reduced-motion 默认 /
  * 视图切换 / 退出。
+ *
+ * 评审 P2 补证：时钟独立 tick（auto=false 也走）、只挂载当前视图
+ * （不可见面板的轮询定时器不再持续打后端）。
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import { Wallboard } from './wallboard';
+
+vi.mock('./cluster-dashboard', () => ({
+  ClusterDashboard: () => <div data-testid="wb-cluster" />,
+}));
+vi.mock('./breaker-panel', () => ({
+  BreakerPanel: () => <div data-testid="wb-breaker" />,
+}));
+vi.mock('./system-health-panel', () => ({
+  SystemHealthPanel: () => <div data-testid="wb-health" />,
+}));
 
 function renderWallboard(onExit = vi.fn()) {
   return { onExit, ...render(<Wallboard ownerToken="tok" onExit={onExit} />) };
@@ -73,5 +86,31 @@ describe('Wallboard（P7 值守大屏）', () => {
     renderWallboard(onExit);
     fireEvent.click(screen.getByTestId('wallboard-exit'));
     expect(onExit).toHaveBeenCalledTimes(1);
+  });
+
+  it('关掉自动轮播后时钟仍自行走动（不依赖面板重渲染）', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-11-23T10:00:00Z'));
+      renderWallboard();
+      fireEvent.click(screen.getByTestId('wallboard-carousel-toggle'));
+      const clock = screen.getByTestId('wallboard-clock');
+      const first = clock.textContent;
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+      expect(clock.textContent).not.toBe(first);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('只挂载当前视图（不可见面板不轮询）', () => {
+    renderWallboard();
+    expect(screen.getByTestId('wb-cluster')).toBeTruthy();
+    expect(screen.queryByTestId('wb-breaker')).toBeNull();
+    expect(screen.queryByTestId('wb-health')).toBeNull();
+    fireEvent.click(screen.getByRole('tab', { name: '断路器 / 缓存' }));
+    expect(screen.queryByTestId('wb-cluster')).toBeNull();
+    expect(screen.getByTestId('wb-breaker')).toBeTruthy();
+    expect(screen.queryByTestId('wb-health')).toBeNull();
   });
 });

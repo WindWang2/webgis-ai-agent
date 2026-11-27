@@ -171,10 +171,25 @@ describe('U-9 (#891) aria-selected 语义', () => {
     const selectedBefore = screen
       .getAllByRole('option')
       .filter((o) => o.getAttribute('aria-selected') === 'true').length;
-    fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+    // 漫游键处理器挂在 listbox（trigger 的兄弟节点）—— 必须派发到 listbox，
+    // 否则事件路径不经过处理器，断言恒真。
+    const listbox = screen.getByRole('listbox');
+    fireEvent.keyDown(listbox, { key: 'ArrowDown' });
+    expect(listbox).toHaveAttribute('aria-activedescendant', 'baselayer-opt-1');
     const options = screen.getAllByRole('option');
     const selectedAfter = options.filter((o) => o.getAttribute('aria-selected') === 'true');
     expect(selectedAfter.length).toBe(selectedBefore);
     expect(selectedAfter.length).toBe(1);
+  });
+
+  it('点击选项关闭后清除漫游高亮（再次打开不残留 aria-activedescendant）', () => {
+    render(<BaselayerSwitcher />);
+    fireEvent.click(screen.getByRole('button', { name: /base layer/i }));
+    const listbox = screen.getByRole('listbox');
+    fireEvent.keyDown(listbox, { key: 'ArrowDown' });
+    expect(listbox).toHaveAttribute('aria-activedescendant', 'baselayer-opt-1');
+    fireEvent.click(screen.getByRole('option', { name: 'Carto Light' }));
+    fireEvent.click(screen.getByRole('button', { name: /base layer/i }));
+    expect(screen.getByRole('listbox')).not.toHaveAttribute('aria-activedescendant');
   });
 });

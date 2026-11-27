@@ -42,7 +42,9 @@ from app.lib.gis.scientific_evidence import (
     build_evidence,
 )
 from app.lib.gis.uncertainty import (
+    ScalarUncertainty,
     StatisticalSignificance,
+    UncertaintyMeasure,
     ValidationMetrics,
     uncertainty_blocks_to_evidence,
 )
@@ -84,6 +86,18 @@ class TestParameterContracts:
     def test_apply_contract_normalizes(self):
         out = apply_contract("buffer_analysis", {"distance": 500, "unit": "km"})
         assert out == {"distance": 500.0, "unit": "km"}
+
+    def test_sar_contracts_reject_degenerate_enl_and_incidence(self):
+        with pytest.raises(ValueError, match="parameter_contract_violation"):
+            apply_contract("sar_speckle_filter_analysis", {"enl": 0})
+        with pytest.raises(ValueError, match="parameter_contract_violation"):
+            apply_contract("sar_multitemporal_speckle_analysis", {"enl": -1})
+        with pytest.raises(ValueError, match="parameter_contract_violation"):
+            apply_contract("sar_calibration_analysis",
+                           {"calibration_constant": 1.0, "incidence_deg": 91})
+        with pytest.raises(ValueError, match="parameter_contract_violation"):
+            apply_contract("sar_calibration_analysis",
+                           {"calibration_constant": -1.0})
 
     def test_spec_validators(self):
         with pytest.raises(Exception):
@@ -130,14 +144,29 @@ class TestCRSSafety:
         # 度数数据 vs 投影要求 → 拒
         assert not crs_class_allows("PROJECTED_REQUIRED", "geographic")
         assert not crs_class_allows("LOCAL_METRIC_REQUIRED", "geographic")
-        # 3857 是投影但不是局部度量
-        assert not crs_class_allows("PROJECTED_REQUIRED", "projected")  # generic projections may be feet/3857
+        # 3857 是投影但不是局部度量：LOCAL_METRIC_REQUIRED 拒；
+        # PROJECTED_REQUIRED 按词表接受任何投影平面坐标（含 3857，
+        # 失真进 limitations，不进硬门）
+        assert crs_class_allows("PROJECTED_REQUIRED", "projected")
         assert not crs_class_allows("LOCAL_METRIC_REQUIRED", "projected")
         assert crs_class_allows("LOCAL_METRIC_REQUIRED", "projected_local_metric")
         # 地理 OK / GEODESIC / AGNOSTIC 全放行；unknown 永远放行
         for cls in ("CRS_AGNOSTIC", "GEOGRAPHIC_OK", "GEODESIC", "RASTER_GRID"):
             assert crs_class_allows(cls, "geographic")
         assert crs_class_allows("PROJECTED_REQUIRED", "unknown")
+
+    def test_projected_required_accepts_generic_projected_crs(self):
+        """PROJECTED_REQUIRED 词表 = 任何投影平面坐标（含 3857）。
+
+        回归（review P1）：硬门曾只认 projected_local_metric，普通投影
+        CRS（classify_crs → "projected"，如 EPSG:3857）被误拒，与本模块
+        词表直接矛盾；失真问题应进 limitations，不进硬门。
+        """
+        assert classify_crs("EPSG:3857") == "projected"
+        assert crs_class_allows("PROJECTED_REQUIRED", "projected")
+        assert crs_class_allows("PROJECTED_REQUIRED", "projected_local_metric")
+        # LOCAL_METRIC_REQUIRED 仍只认局部度量（两类分支不得混同）
+        assert not crs_class_allows("LOCAL_METRIC_REQUIRED", "projected")
 
 
 # ── 科学前置条件 ─────────────────────────────────────────────────────
@@ -173,6 +202,14 @@ class TestPreconditions:
         enough = evaluate_precondition(
             "min_temporal_observations:8", {"temporalObservationCount": 12})
         assert enough.verdict == "PASS"
+
+    def test_insufficient_message_states_actual_rejection_floor(self):
+        """拒绝文案必须给出真实边界 max(2, n_min*0.5)，不得宣称 n_min 是下限。"""
+        few = evaluate_precondition(
+            "min_numeric_samples:8", {"numericSampleCount": 3})
+        assert few.verdict == "INSUFFICIENT_DATA"
+        assert "4" in few.message
+        assert "8" in few.message
 
     def test_point_support(self):
         ok = evaluate_precondition(
@@ -212,6 +249,20 @@ class TestUncertaintyAndEvidence:
         ev = sig.to_evidence()
         assert ev["statistic_value"] == 0.423457   # 6 位收敛
         assert ev["p_value"] == 0.01
+
+    def test_measure_values_round_to_six_decimals(self):
+        block = ScalarUncertainty(
+            target="morans_i",
+            measures=[UncertaintyMeasure(
+                measure="value", value=0.123456789,
+                low=0.000000123, high=1.234567890123)],
+        )
+        m = block.to_evidence()["measures"][0]
+        assert m["value"] == 0.123457
+        assert m["low"] == 0.0
+        assert m["high"] == 1.234568
+        sig = StatisticalSignificance(target="x", p_value=0.123456789)
+        assert sig.to_evidence()["p_value"] == 0.123457
 
     def test_blocks_bounded_dedup(self):
         v1 = ValidationMetrics(target="surface", rmse=1.23456789)
@@ -353,6 +404,14 @@ class TestDescriptorVNextValidation:
             conformance_tests=["tests/unit/gis/no_such_file_xyz.py::test_a"]))
         assert any("conformance test file missing" in i for i in reg.validate())
 
+    def test_conformance_check_anchored_to_repo_not_cwd(self, tmp_path, monkeypatch):
+        """CWD 非仓库根时存在性校验不得静默跳过（fail-open 回归）。"""
+        monkeypatch.chdir(tmp_path)
+        reg = self._registry(AlgorithmDescriptor(
+            id="x.conf2", name="x", capabilities=["poi_query"],
+            conformance_tests=["tests/unit/gis/no_such_file_xyz.py::test_a"]))
+        assert any("conformance test file missing" in i for i in reg.validate())
+
 
 # ── resolver 科学门 ──────────────────────────────────────────────────
 class TestResolverScientificGates:
@@ -384,6 +443,23 @@ class TestResolverScientificGates:
             profile={"geometryTypes": ["Point"], "crs": "EPSG:32650"},
             available_tools={"spatial_stats"})
         assert res.status == "resolved"
+
+    def test_crs_class_pass_with_web_mercator(self):
+        """PROJECTED_REQUIRED × EPSG:3857（普通投影米）→ 解析成功。
+
+        回归（review P1）：硬门曾只认 projected_local_metric，3857 数据
+        （classify_crs → "projected"）触发 crs_class_mismatch 使 resolver
+        解析失败 —— 词表明确「任何投影平面坐标（含 3857）」满足该类。
+        """
+        resolver = self._resolver(AlgorithmDescriptor(
+            id="x.web_mercator_ok", name="x", capabilities=["poi_query"],
+            tool_candidates=["spatial_stats"], crs_class="PROJECTED_REQUIRED"))
+        res = resolver.resolve(
+            "poi_query",
+            profile={"geometryTypes": ["Point"], "crs": "EPSG:3857"},
+            available_tools={"spatial_stats"})
+        assert res.status == "resolved"
+        assert not any("crs_class_mismatch" in r for r in res.rejected)
 
     def test_precondition_warning_nonblocking(self):
         resolver = self._resolver(AlgorithmDescriptor(
@@ -428,6 +504,27 @@ class TestResolverScientificGates:
         assert res.status == "resolved"
         assert res.algorithm == "x.secondary"
         assert res.fallback_trail[0].semantics == "approximation"
+
+    def test_fallback_success_keeps_transform_hints(self):
+        """算法级 fallback 成功分支也必须携带全拒时收集的变换建议。"""
+        resolver = self._resolver(
+            AlgorithmDescriptor(
+                id="x.primary", name="x", capabilities=["poi_query"],
+                tool_candidates=["primary_tool"], crs_class="PROJECTED_REQUIRED",
+                fallback_algorithms=["x.secondary"],
+                fallback_semantics={"x.secondary": "approximation"}),
+            AlgorithmDescriptor(
+                id="x.secondary", name="y", capabilities=["point_profile"],
+                tool_candidates=["secondary_tool"]),
+        )
+        res = resolver.resolve(
+            "poi_query",
+            profile={"geometryTypes": ["Point"], "crs": "EPSG:4326",
+                     "bbox": [116.3, 39.9, 116.4, 39.95], "featureCount": 5},
+            available_tools={"primary_tool", "secondary_tool"})
+        assert res.status == "resolved"
+        assert res.algorithm == "x.secondary"
+        assert res.required_transformations == ["reproject to EPSG:32650"]
 
     def test_undeclared_fields_keep_behavior(self):
         """不声明新字段的算法：行为逐位不变（回归保护）。"""

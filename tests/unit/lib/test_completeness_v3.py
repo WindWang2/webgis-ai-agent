@@ -541,6 +541,34 @@ async def test_tool_registry_parity_and_new_tools():
     assert any("STL" in w for w in payload_sd["disclosures"])
 
 
+async def test_temporal_seasonal_decompose_result_size_policy_bounded():
+    """P2: 声明 inline_small，且大序列的四个全长数组按上限截断并披露。"""
+    from app.tools import init_tools
+    from app.tools.registry import ToolRegistry
+
+    registry = ToolRegistry()
+    init_tools(registry)
+    assert (
+        registry.descriptor("temporal_seasonal_decompose").result_size_policy
+        == "inline_small"
+    )
+
+    n = 1203
+    values = [float(5.0 + 0.5 * t + [0.0, 3.0, -1.0, -2.0, 0.0][t % 5])
+              for t in range(n)]
+    payload = await registry.dispatch(
+        "temporal_seasonal_decompose", {"values": values, "period": 5})
+    assert payload["success"] is True, payload
+    assert payload["n"] == n
+    for key in ("trend", "seasonal", "remainder"):
+        assert len(payload[key]) == 500
+    # period=5 < 500：季节指数不受截断。
+    assert len(payload["seasonal_indices"]) == 5
+    assert payload["_arrays_trimmed"]["kept_count"] == 500
+    assert payload["_arrays_trimmed"]["original_lengths"] == {
+        "trend": n, "seasonal": n, "remainder": n}
+
+
 def test_rate_smoothing_rejects_negative_counts():
     """负计数 → 类型化拒绝（V3 review MINOR-2）：MOM 先验均值为负会把
     收缩因子推出率支撑 [0,1]——静默外推是伪造。"""

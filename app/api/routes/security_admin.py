@@ -97,7 +97,16 @@ async def set_org_quota(
                 await db.flush()
         except IntegrityError:
             logger.debug("concurrent organization quota initialization: %s", org_id)
-        row = (await db.execute(select(OrgQuota).where(OrgQuota.org_id == org_id).with_for_update())).scalar_one()
+        row = (await db.execute(
+            select(OrgQuota).where(OrgQuota.org_id == org_id).with_for_update()
+        )).scalar_one_or_none()
+        if row is None:
+            # org 在存在性检查后、插入前被并发删除（或插入方又回滚）：
+            # 不是 500 —— 给出可重试的冲突语义。
+            raise HTTPException(
+                status_code=409,
+                detail="Organization quota changed concurrently; retry",
+            )
     row.max_storage_bytes = body.max_storage_bytes
     row.max_concurrent_tasks = body.max_concurrent_tasks
     row.rate_limit_per_min = body.rate_limit_per_min

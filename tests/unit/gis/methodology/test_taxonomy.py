@@ -63,6 +63,21 @@ def test_invalid_and_alternative_disjoint(taxonomy) -> None:
         assert not overlap, cid
 
 
+def test_validate_flags_category_outside_vocabulary() -> None:
+    """词表外 category_id 必须被 validate 捕获（不得被 all_ids 静默过滤）。"""
+    from app.lib.gis.methodology.taxonomy import (
+        TaskCategoryDescriptor,
+        TaskTaxonomy,
+    )
+    tt = TaskTaxonomy(
+        categories=(TaskCategoryDescriptor(
+            category_id="bogus_category", label_zh="词表外"),),
+        task_lookup=lambda _tid: None,
+        family_lookup=lambda _fid: None,
+    )
+    assert any("unknown category_id" in v for v in tt.validate())
+
+
 # ── category 级匹配（确定性、有界）───────────────────────────────────────
 
 def test_match_query_proximity_specific(taxonomy) -> None:

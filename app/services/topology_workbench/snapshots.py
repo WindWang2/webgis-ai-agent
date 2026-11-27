@@ -229,13 +229,26 @@ def apply_scope(
             "semantics": "where_typed_ast",
         }
     if kind == "bbox":
+        raw_boxes = scope.get("boxes")
+        if raw_boxes is None:
+            raw_boxes = [scope.get("bbox")]
+        if not isinstance(raw_boxes, (list, tuple)) or not raw_boxes:
+            raise SnapshotError(
+                "invalid_scope",
+                "bbox scope 需要非空的 bbox 或 boxes 数组（空框会静默产生空子集）",
+            )
         boxes: List[Tuple[float, float, float, float]] = []
-        if scope.get("boxes") is not None:
-            for raw in scope["boxes"]:
+        for raw in raw_boxes:
+            if not isinstance(raw, (list, tuple)) or len(raw) != 4:
+                raise SnapshotError(
+                    "invalid_scope", "bbox scope 的每个框必须是 [w,s,e,n] 四元组"
+                )
+            try:
                 boxes.append(tuple(float(v) for v in raw))  # type: ignore[misc]
-        else:
-            sb = scope.get("bbox")
-            boxes.append(tuple(float(v) for v in sb))  # type: ignore[misc]
+            except (TypeError, ValueError) as exc:
+                raise SnapshotError(
+                    "invalid_scope", f"bbox scope 坐标必须是数值: {exc}"
+                ) from exc
         subset = [
             f for f in features
             if any(_feature_intersects_bbox(f, b) for b in boxes)
@@ -437,7 +450,9 @@ async def resolve_role_snapshot(
         total_input = len(features)
         scope_semantics = None
         if scope is not None:
-            features, disclosure = apply_scope(features, scope)
+            # 与 session_ref 分支同一纪律：scope 全集扫描卸载工作线程
+            # （事件循环内联 O(n) 扫描会阻塞 async 路由）。
+            features, disclosure = await _aio.to_thread(apply_scope, features, scope)
             scope_semantics = disclosure.get("semantics")
         if len(features) > cap:
             raise SnapshotError(

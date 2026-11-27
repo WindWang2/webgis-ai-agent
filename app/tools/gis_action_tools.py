@@ -115,10 +115,7 @@ def register_gis_action_tools(registry: ToolRegistry):
             raw = dict(raw)
             raw.setdefault("action_id", f"act-decl-{i + 1:02d}")
             try:
-                parsed.append(GISAction(**{
-                    k: v for k, v in raw.items()
-                    if k in GISAction.model_fields
-                }))
+                parsed.append(GISAction(**raw))
             except Exception as exc:
                 return {
                     "success": False, "code": "INVALID_ACTION",
@@ -136,6 +133,23 @@ def register_gis_action_tools(registry: ToolRegistry):
             plan_id=compute_plan_id(body), origin="tool_call", actions=parsed)
         compilation = gis_action_service.compile(
             plan, resolver=RegistryToolResolver(registry))
+        steps = compilation.steps[:16]
+        findings = compilation.findings[:8]
+        reason_codes = list(compilation.reason_codes)[:8]
+        summary = (
+            f"计划编译{'通过' if not compilation.blocked else '被阻塞'}："
+            f"{len(steps)} 步可执行；"
+            f"{len(findings)} 条 findings。")
+        truncations = []
+        for name, shown, total in (
+            ("steps", len(steps), len(compilation.steps)),
+            ("findings", len(findings), len(compilation.findings)),
+            ("reason_codes", len(reason_codes), len(compilation.reason_codes)),
+        ):
+            if shown < total:
+                truncations.append(f"{name} {shown}/{total}")
+        if truncations:
+            summary += "列表已截断：" + "，".join(truncations) + "。"
         return {
             "success": not compilation.blocked,
             "operation": "dry_run",
@@ -148,13 +162,10 @@ def register_gis_action_tools(registry: ToolRegistry):
                  "client_action_id": s.client_action_id,
                  "side_effect": s.side_effect, "failure": s.failure,
                  "wave": s.wave}
-                for s in compilation.steps[:16]
+                for s in steps
             ],
-            "findings": [f.model_dump() for f in compilation.findings[:8]],
+            "findings": [f.model_dump() for f in findings],
             "resource_summary": compilation.resource_summary.model_dump(),
-            "reason_codes": list(compilation.reason_codes)[:8],
-            "summary": (
-                f"计划编译{'通过' if not compilation.blocked else '被阻塞'}："
-                f"{len(compilation.steps)} 步可执行；"
-                f"{len(compilation.findings)} 条 findings。"),
+            "reason_codes": reason_codes,
+            "summary": summary,
         }

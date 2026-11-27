@@ -16,6 +16,8 @@ bundle 脱敏、API 契约）。本文件锁定其未触及的**边界与错误�
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 from pydantic import ValidationError
 
@@ -73,6 +75,13 @@ class TestTextAndDuration:
         assert strip_surrogates("x\U0001F600y") == "x\U0001F600y"
         nested = {"a": ["\ud800"], "b": {"c": "hi\udfff"}}
         assert strip_surrogates(nested) == {"a": [""], "b": {"c": "hi"}}
+
+    def test_strip_surrogates_lone_in_dict_keys(self):
+        # 客户端 JSON \ud800 转义可构造孤立代理键；键不剥除会在
+        # ensure_ascii=False 序列化后撞 UTF-8 编码失败（500）。
+        cleaned = strip_surrogates({"ok\ud800bad": "v", "\udfff": ["x"]})
+        assert cleaned == {"okbad": "v", "": ["x"]}
+        json.dumps(cleaned, ensure_ascii=False).encode("utf-8")
 
     def test_estimate_duration_clamps_floor_and_ceiling(self):
         assert estimate_duration("") == 2.0  # 下限

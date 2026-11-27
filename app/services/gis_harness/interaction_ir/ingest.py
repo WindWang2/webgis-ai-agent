@@ -61,7 +61,9 @@ VERDICT_REJECTED = "rejected"
 #: 载荷预算分层取宽值（选择 kind 4096B + 信封/服务端盖章字段余量）——
 #: 若低于 normalize 层放行的最大载荷，会出现 accepted-but-dropped（ack
 #: 谎报 accepted 而事件不入环），恰是 #2004 族的静默丢失形态。
-_MAX_RECORD_BYTES = MAX_PAYLOAD_BYTES_SELECTION + 512
+#: 复审 P3：信封最坏实测 ≈1500B（7 个可选字符串键各 128 + 4 个 int 键 +
+#: 指纹/kind/实例 id），512B 余量不成立 —— 取 2048B 覆盖满额信封。
+_MAX_RECORD_BYTES = MAX_PAYLOAD_BYTES_SELECTION + 2048
 
 
 class EventVerdict:
@@ -383,7 +385,13 @@ async def ingest_interaction_batch(
                 "acks": [], "persist_degraded": True}
     summary = summarize_verdicts(verdicts)
     response: Dict[str, Any] = {**summary, "acks": [v.to_ack() for v in verdicts],
-        "watermarks": {instance: int(entry.get("acked_seq", 0)) for instance, entry in state.clients.items()}}
+        "watermarks": {
+            str(instance): (
+                _as_int(entry.get("acked_seq", 0)) or 0
+                if isinstance(entry, dict) else 0
+            )
+            for instance, entry in state.clients.items()
+        }}
     if state.dropped:
         response["dropped"] = state.dropped
     return response

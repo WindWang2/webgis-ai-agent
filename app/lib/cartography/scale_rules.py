@@ -252,7 +252,7 @@ def scale_actions(
     codes: List[str] = [f"GRAMMAR.SCALE.TIER_{tier.name.upper()}"]
     disclosures: List[str] = []
     density: Optional[float] = None
-    is_pointish = geometry.lower().startswith("point") or geometry == "multi_point"
+    is_pointish = (geometry or "").lower().startswith("point") or geometry == "multi_point"
 
     if is_pointish and feature_count > 0:
         density = compute_pixel_density(feature_count, viewport_px_w, viewport_px_h)

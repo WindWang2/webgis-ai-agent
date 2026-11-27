@@ -453,11 +453,6 @@ def validate_print_layout(raw: Any) -> PrintLayoutValidation:
         issues.append(PrintLayoutIssue(
             code="PRINT_LAYOUT_MULTIPLE_MAP_SLOTS",
             message="only one paper map slot is supported per page"))
-    enabled = [p for p in plan.atlas.pages if p.enabled]
-    if len(enabled) > MAX_ATLAS_PAGES:
-        issues.append(PrintLayoutIssue(
-            code="PRINT_LAYOUT_PAGE_BUDGET_EXCEEDED",
-            message=f"{len(enabled)} enabled pages exceed {MAX_ATLAS_PAGES}"))
     return PrintLayoutValidation(
         ok=not any(i.severity == "error" for i in issues),
         version=plan.version, issues=issues)

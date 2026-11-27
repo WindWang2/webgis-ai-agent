@@ -220,8 +220,15 @@ export function computeFilterThinAsync(
   // 的重传路径（message handler 内）覆盖该情况；首见 token 必然带 raw 上传。
   if (!workerHasToken(rawToken)) {
     // raw 只在需要（重）上传时 structured-clone 一次（成本摊销）。
-    worker.postMessage({ type: 'init-raw', token: rawToken, raw } satisfies ViewportComputeInit);
-    markTokenUploaded(rawToken);
+    // raw 含循环引用/不可克隆值（函数、DOM 节点）时 postMessage 会同步
+    // 抛 DataCloneError —— 按「通道失败」resolve null，绝不把同步异常
+    // 漏给调用方（本函数的 Promise 契约：null = 调用方回退同步路径）。
+    try {
+      worker.postMessage({ type: 'init-raw', token: rawToken, raw } satisfies ViewportComputeInit);
+      markTokenUploaded(rawToken);
+    } catch {
+      return Promise.resolve(null);
+    }
   }
 
   const jobId = ++nextJobId;

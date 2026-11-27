@@ -828,3 +828,34 @@ class TestRestoreAndTelemetry:
         _make_doc(store, "s1", "统计各区小学数量")
         env = _pending(store, "s1")
         assert env is not None   # 记账失败不阻塞 envelope 构造
+
+
+def test_prune_emitted_removes_stale_keys_below_cap():
+    """P3：已答/已豁免 key 的清理不得依赖溢出切片（≤上限时为 no-op）。"""
+    ledger = env_mod.ClarificationLedger(
+        emitted={"keep": "clar-doc-1", "stale": "clar-doc-2"})
+    env_mod._prune_emitted(ledger, {"keep"})
+    assert set(ledger.emitted) == {"keep"}
+
+
+def test_long_document_id_suppression_prefix_matches_truncated_request_id():
+    """P3：document_id>58 时 request_id 截断仍须与 lineage 前缀同源 ——
+    否则每轮清空 emitted、blocking 问题反复上 SSE。"""
+    store = MemStore()
+    _make_measure_gap(store, "s1")
+    state = run(service.load_state(store, "s1"))
+    doc = service._doc_from(state.document)
+    doc = doc.model_copy(update={"document_id": "d" * 60})
+    state.document = doc.model_dump()
+    run(service.save_state(store, "s1", state))
+
+    env = _pending(store, "s1")
+    assert env is not None and len(env.request_id) == 64
+    ledger = env_mod.ClarificationLedger(
+        emitted={q.context_key: env.request_id for q in env.questions})
+    run(env_mod.save_ledger(store, "s1", ledger))
+
+    envelope, outcome = run(
+        env_mod.collect_turn_clarification(store, "s1", "turn-2"))
+    assert outcome == "suppressed"
+    assert envelope is None

@@ -10,7 +10,7 @@
  *   handled≠已运行；unknown=未确证；legacy/缺失 = coverage limited；
  * - tokens 标注为估算（不是供应商计费）；「排除」不声称历史已遗忘。
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, FileClock, RefreshCw } from 'lucide-react';
 import { useT } from '@/lib/i18n/useT';
 import {
@@ -51,6 +51,8 @@ export function TurnContextPanel({
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<TurnReceiptDetail | null>(null);
   const [loading, setLoading] = useState(false);
+  /** 本次展开已自动拉取过的 session+turn（含失败 / 空回执），用于断开重试环。 */
+  const autoLoadKeyRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     if (!sessionId || !summary.turn_id) return;
@@ -58,14 +60,26 @@ export function TurnContextPanel({
     try {
       const d = await fetchTurnReceipt(sessionId, summary.turn_id, ownerToken);
       setDetail(d);
+    } catch {
+      // 拉取失败：detail 保持为空（按 coverage limited 诚实呈现）。这里必须吞掉：
+      // 调用方是 `void load()`，重抛只会变成 unhandled rejection。
     } finally {
       setLoading(false);
     }
   }, [sessionId, summary.turn_id, ownerToken]);
 
   useEffect(() => {
-    if (open && !detail && !loading) void load();
-  }, [open, detail, loading, load]);
+    if (!open) {
+      // 收起后允许下次展开重新自动拉取一次
+      autoLoadKeyRef.current = null;
+      return;
+    }
+    if (detail || loading) return;
+    const key = `${sessionId ?? ''}\u0000${summary.turn_id}`;
+    if (autoLoadKeyRef.current === key) return;
+    autoLoadKeyRef.current = key;
+    void load();
+  }, [open, detail, loading, load, sessionId, summary.turn_id]);
 
   const counts = summary.counts ?? {};
   const sources: ReceiptSourceLine[] = detail?.payload?.sources ?? [];

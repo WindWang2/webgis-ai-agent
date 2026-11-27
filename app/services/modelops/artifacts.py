@@ -159,6 +159,20 @@ def publish_json_artifact(
     }
 
 
+def _crs_is_wgs84_geographic(crs: str) -> bool:
+    """CRS 是否已是 WGS84 地理坐标（GeoJSON 的默认坐标系）。
+
+    无法解析时返回 False —— 不能假定是 WGS84（宁可多写 crs 成员）。
+    """
+    try:
+        from rasterio.crs import CRS
+
+        parsed = CRS.from_user_input(crs)
+        return bool(parsed.is_geographic and parsed.to_epsg() == 4326)
+    except Exception:  # noqa: BLE001 — 不可解析 CRS 按非 WGS84 处理
+        return False
+
+
 def build_geojson_from_detections(
     detections: list[DetectionRecord],
     *,
@@ -202,6 +216,10 @@ def build_geojson_from_detections(
             }
         features.append({"type": "Feature", "properties": props, "geometry": geometry})
     collection: GeoJSONFeatureCollection = {"type": "FeatureCollection", "features": features}
-    if crs and not to_geographic:
+    # ``to_geographic=True`` 只表示"像素 → transform_xy"，输出仍是**源 CRS
+    # 的单位**：投影 CRS（如 EPSG:3857）下是米，不写 crs 成员会让下游按
+    # GeoJSON 默认 WGS84 解读成经纬度（位置整体错到几万里外）。
+    # 只有确认是 WGS84 地理坐标时才可省略 crs 成员。
+    if crs and (not to_geographic or not _crs_is_wgs84_geographic(crs)):
         collection["crs"] = {"type": "name", "properties": {"name": crs}}
     return collection

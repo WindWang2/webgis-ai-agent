@@ -75,6 +75,9 @@ def format_steps_line(plan, *, max_steps: int = 8) -> str:
     ]
     if not steps:
         return ""
+    # ``steps[-0:]`` 退化为全量、负值会切掉列表开头 —— 非正上界即不投影任何步。
+    if max_steps <= 0:
+        return ""
     parts = []
     for s in reversed(steps[-max_steps:]):
         glyph = _STEP_STATUS_GLYPH.get(str(s.status), "…")

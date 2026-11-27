@@ -313,6 +313,53 @@ def test_bus_local_fanout_and_unsubscribe():
     assert [e["data"]["revision"] for e in got2] == [1, 3]  # 仍订阅 s1：3 照收
 
 
+def test_bus_publish_ambiguous_failure_does_not_double_send():
+    """P3 回归：PUBLISH 已到服务端但读回执失败 → 同进程 listener 只收一份。
+
+    模拟「服务端已 fan-out（psubscribe 回灌本进程），客户端随即连接重置」：
+    修复前 publish 的异常分支再 _dispatch_local 一次 → 双发（op journal 双计）。
+    """
+    import asyncio
+
+    bus = CollabBus()
+    got: list = []
+
+    class _AmbiguousClient:
+        async def publish(self, channel, payload):
+            bus._apply_raw(payload)  # 服务端 fan-out 已回灌本进程 listener
+            raise ConnectionResetError("reset before reply")
+
+    bus._redis_client = lambda: _AmbiguousClient()
+
+    async def _scenario():
+        await bus.add_local_listener("s-amb", got.append)
+        return await bus.publish("s-amb", "op", {"revision": 9}, seq=9)
+
+    published = asyncio.run(_scenario())
+    assert [e["data"]["revision"] for e in got] == [9]  # 恰一份，无双计
+    assert published is False  # 未确认送达任一路径
+
+
+@pytest.mark.asyncio
+async def test_bus_stop_cancels_pending_async_listener_tasks():
+    """P3 回归：stop() 回收防御性兜底路径（listener 返回协程）留下的在飞 task。"""
+    import asyncio
+
+    bus = CollabBus()
+    started = asyncio.Event()
+
+    async def _slow(_envelope):
+        started.set()
+        await asyncio.sleep(3600)
+
+    await bus.add_local_listener("s-stop", _slow)
+    await bus.publish("s-stop", "op", {"revision": 1}, seq=1)
+    await asyncio.wait_for(started.wait(), timeout=1)
+    task = next(iter(bus._callback_tasks))
+    await bus.stop()
+    assert task.done() and task.cancelled()
+
+
 # ─── 引擎：delta intent / base CAS / lock 守卫 / _rev 盖章 ──────────────────
 
 def _valid_doc():
@@ -888,6 +935,135 @@ def test_collab_ws_inbound_non_finite_rejected():
         records = presence_registry.snapshot_local(sid)
         viewports = [r["viewport"] for r in records if "viewport" in r]
         assert viewports == [{"lat": 30.0, "lng": 104.0}]
+
+
+def test_presence_flush_task_cancelled_before_leave_heartbeat(monkeypatch):
+    """P2 concurrency：_flush_presence 自行把 presence_flush_task 置 None 会让
+    finally 丢失在飞任务的引用 —— 已取走 pending 的 flush 在 leave 之后仍会完成
+    heartbeat + 广播 presence update（幽灵参与者）。槽位必须只由主循环写
+    （done() 即空位），finally 取消的才是真正在飞的那个 task。
+    """
+    import asyncio
+    import threading
+
+    from starlette.websockets import WebSocketDisconnect
+
+    from app.api.routes import ws_collab
+    from app.core.auth import create_access_token
+    from app.services.collab.presence import PresenceRegistry
+
+    sid = _sid("v6_flush_cancel")
+    # 复用 harness 的库/限流布置；本测试直驱 handler（不经 TestClient），
+    # 以便在「flush 已取走 pending 且未完成」的精确时刻断开连接。
+    _make_collab_app([(sid, "user-123", None)])
+    token = create_access_token({"sub": "user-123"})
+
+    entered = threading.Event()
+    release = threading.Event()
+    entered_calls = 0
+    completed: list[str] = []
+    orig_heartbeat = PresenceRegistry.heartbeat
+
+    async def _gated_heartbeat(self, session_id, client_id, patch):
+        nonlocal entered_calls
+        entered_calls += 1
+        if entered_calls == 2:
+            # 第二个心跳 = 200ms 节流窗口的 flush task；卡住它，模拟其
+            # await 期间主循环继续跑、连接随时可能断开。
+            entered.set()
+            await asyncio.get_running_loop().run_in_executor(None, release.wait)
+        result = await orig_heartbeat(self, session_id, client_id, patch)
+        completed.append(client_id)
+        return result
+
+    monkeypatch.setattr(PresenceRegistry, "heartbeat", _gated_heartbeat)
+
+    class _FakeWS:
+        def __init__(self):
+            self.inbound: asyncio.Queue = asyncio.Queue()
+            self.sent: list[str] = []
+            self.headers = {"sec-websocket-protocol": f"bearer, {token}"}
+            self.scope = {
+                "subprotocols": ["bearer", token],
+                "headers": [],
+                "client": ("127.0.0.1", 1),
+            }
+            self.client = type("_Peer", (), {"host": "127.0.0.1"})()
+
+        async def accept(self, subprotocol=None):
+            pass
+
+        async def receive_text(self):
+            item = await self.inbound.get()
+            if isinstance(item, BaseException):
+                raise item
+            return item
+
+        async def send_text(self, text):
+            self.sent.append(text)
+
+        async def close(self, code=1000, reason=None):
+            pass
+
+    async def _scenario():
+        ws = _FakeWS()
+        handler = asyncio.create_task(ws_collab.collab_websocket(ws, sid))
+        for _ in range(200):
+            await asyncio.sleep(0.01)
+            if any('"hello"' in frame for frame in ws.sent):
+                break
+        hello = json.loads(next(f for f in ws.sent if '"hello"' in f))
+        client_id = hello["data"]["clientId"]
+
+        # 首帧：窗口外 → 直接中继（心跳 #1，放行）
+        ws.inbound.put_nowait(json.dumps(
+            {"event": "presence", "data": {"viewport": {"lat": 30.0, "lng": 104.0}}}))
+        # 次帧：落在 200ms 节流窗口内 → 建 flush task（心跳 #2 被卡）
+        ws.inbound.put_nowait(json.dumps(
+            {"event": "presence", "data": {"viewport": {"lat": 31.0, "lng": 105.0}}}))
+        for _ in range(300):
+            await asyncio.sleep(0.01)
+            if entered.is_set():
+                break
+        assert entered.is_set(), "节流 flush task 未进入 heartbeat（测试布置失效）"
+        assert len(completed) == 1, "首帧 presence 应已直接中继完成"
+
+        # 断开：receive_text 抛 WebSocketDisconnect → finally 取消槽位 task
+        ws.inbound.put_nowait(WebSocketDisconnect(1000))
+        await asyncio.wait_for(handler, timeout=10.0)
+        count_after_leave = len(completed)
+        # 放行被卡的心跳：修复后任务已取消，这一次心跳绝不会完成
+        release.set()
+        await asyncio.sleep(0.3)
+        assert len(completed) == count_after_leave, (
+            "leave 之后仍有 presence flush 心跳完成 → 幽灵参与者"
+            "（finally 漏取消在飞的 flush task）"
+        )
+        return client_id
+
+    _sid_client = asyncio.run(_scenario())
+    assert _sid_client
+
+
+def test_hello_document_drops_non_finite_doc():
+    """hello 内联 doc 的 allow_nan=False 必须有 try：非有限 doc → 丢内联。
+
+    _hello_document 在 handler 的 try 之前求值（订阅总线 / send_task /
+    presence join 之后）—— 无 try 时 ValueError 直接炸出 handler，
+    listener/send_task/presence 全泄漏且该会话永远连不上。丢内联 doc
+    后客户端经 sync 重取（sync 路径的 dumps 由 send_loop 兜底）。
+    """
+    from app.api.routes.ws_collab import _hello_document
+
+    # 未修复代码在此抛 ValueError（不是返回 None）
+    assert _hello_document(None) is None
+    small = {"workbench": {"version": 1, "layers": ["l1"]}}
+    assert _hello_document(small) is small
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        assert _hello_document({"workbench": {"opacity": bad}}) is None
+    # 深层嵌套的非有限值同样被丢（dumps 遍历全树）
+    assert _hello_document(
+        {"workbench": {"groups": [{"a": {"b": [1.0, float("nan")]}}]}}) is None
 
 
 # ─── artifact 感知（W8）：投影端点 + 失效事件 ────────────────────────────────

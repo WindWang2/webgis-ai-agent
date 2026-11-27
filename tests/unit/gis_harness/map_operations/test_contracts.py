@@ -58,6 +58,44 @@ class TestEffectVocabulary:
             _req(operation_id="x" * 65)
 
 
+class TestViewportBounds:
+    """反证（review P2）：center/bbox 只校验长度不够 —— NaN/越界/倒置会经
+    _bbox_view / _viewport_after 静默写进 MapSpec view（zoom 夹到 18）。"""
+
+    def test_center_rejects_non_finite(self):
+        for bad in ([float("nan"), 30.6], [104.0, float("inf")]):
+            with pytest.raises(ValueError):
+                _req(effects=[{"kind": "set_viewport", "center": bad}])
+
+    def test_center_rejects_out_of_wgs84_range(self):
+        for bad in ([200.0, 30.6], [104.0, 99.0], [-181.0, 0.0]):
+            with pytest.raises(ValueError):
+                _req(effects=[{"kind": "set_viewport", "center": bad}])
+
+    def test_center_accepts_valid(self):
+        req = _req(effects=[{"kind": "set_viewport",
+                             "center": [104.05, 30.65], "zoom": 12}])
+        assert req.effects[0].center == [104.05, 30.65]
+
+    def test_bbox_rejects_inverted(self):
+        # west>east / south>north：span=1e-9 → zoom 夹到 18、中心取中点
+        for bad in ([104.2, 30.8, 103.9, 30.6], [103.9, 30.9, 104.2, 30.6]):
+            with pytest.raises(ValueError):
+                _req(effects=[{"kind": "set_viewport", "bbox": bad}])
+
+    def test_bbox_rejects_non_finite_and_out_of_range(self):
+        for bad in ([float("nan"), 30.6, 104.2, 30.8],
+                    [103.9, 30.6, 200.0, 30.8],
+                    [103.9, 30.6, 104.2, 91.0]):
+            with pytest.raises(ValueError):
+                _req(effects=[{"kind": "set_viewport", "bbox": bad}])
+
+    def test_bbox_accepts_valid(self):
+        req = _req(effects=[{"kind": "set_viewport",
+                             "bbox": [103.93, 30.62, 104.20, 30.80]}])
+        assert req.effects[0].bbox == [103.93, 30.62, 104.20, 30.80]
+
+
 class TestPaintWhitelist:
     def test_opacity_family_accepted(self):
         req = _req(effects=[

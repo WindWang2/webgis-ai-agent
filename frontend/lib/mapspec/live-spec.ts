@@ -230,8 +230,7 @@ export function composeLiveMapSpec(
   const hudOnlyLayers: MapSpecLayer[] = [];
   for (const hl of hudSpec.layers || []) {
     if (!hl.id || isPendingRemoved(hl, removed)) continue;
-    const baseId = hl.id.split('__')[0];
-    if (!committedIdSet.has(hl.id) && !committedIdSet.has(baseId)) {
+    if (!layerAliases(hl.id).some((alias) => committedIdSet.has(alias))) {
       hudOnlyLayers.push(applyPending(hl, pending));
     }
   }

@@ -100,7 +100,7 @@ function maskQuotedLiterals(text: string): string {
 /**
  * 校验 where / filter_expr 文本。
  * 规则：
- *  1) 写类动词 → 拦截（只读端点）；
+ *  1) 写类动词 → 拦截（只读端点）；动词被当列名用（后跟比较/算术运算符）时不拦截；
  *  2) 多语句（顶层 `;` 后仍有实质内容）→ 拦截（单表达式契约）。
  * 引号内的文本先换成占位空白，字面量里的分号和动词不拦截。
  */
@@ -108,7 +108,10 @@ export function guardFilterText(text: string): GuardVerdict {
   const bare = maskQuotedLiterals(stripSqlComments(text ?? ''));
   const verbs: string[] = [];
   for (const verb of BLOCKED_VERBS) {
-    const re = new RegExp(`(^|[^\\w"'])(${verb})(?=[\\s(']|$)`, 'i');
+    // 动词必须处于语句首位：跳过空白后应跟关键字/标识符/引号/括号或结尾。
+    // 若跟的是比较/算术运算符，说明动词只是被当列名用（`WHERE drop > 100`、
+    // `analyze = 1`），不是写语句，不拦截。
+    const re = new RegExp(`(^|[^\\w"'])(${verb})(?=[\\s(']|$)(?!\\s*[^\\w\\s$("'\`])`, 'i');
     if (re.test(bare)) verbs.push(verb);
   }
   if (verbs.length > 0) {

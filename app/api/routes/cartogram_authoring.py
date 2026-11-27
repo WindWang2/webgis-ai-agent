@@ -148,7 +148,10 @@ async def layouts(
     limit: int = Query(default=20, ge=1, le=50),
     conv: Conversation = Depends(require_owned_session),
 ):
-    return await list_layouts(session_id, limit=limit)
+    try:
+        return await list_layouts(session_id, limit=limit)
+    except AuthoringError as err:
+        raise _fail(err) from err
 
 
 @router.get("/sessions/{session_id}/layouts/{layout_ref}", response_model=CartogramLayoutDetailResponse)

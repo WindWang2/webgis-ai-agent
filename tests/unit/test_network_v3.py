@@ -561,3 +561,18 @@ class TestNetworkV3Surface:
             objective="minimize_cost",
         ))
         assert out_auto["scientific_evidence"]["algorithm"] == "network.location_allocation"
+
+
+class TestProblemTypeValidation:
+    def test_unknown_problem_type_rejected_instead_of_p_median_fallback(self):
+        """A misspelled problem_type must not silently solve p_median while
+        summary.problem_type echoes the unrecognized string."""
+        graph, dataset = NetworkGraphBuilder().build_graph(_chain_fc())
+        svc = NetworkLocationAllocationService()
+        with pytest.raises(UnsupportedMethod, match="p_median"):
+            svc.location_allocation(
+                candidate_facilities=[_facility("f0", 116.002)],
+                demand_points=[_demand("d0", 116.0)],
+                p_count=1, problem_type="p-median",
+                graph=graph, network_dataset=dataset,
+            )

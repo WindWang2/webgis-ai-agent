@@ -600,6 +600,48 @@ class TestSecurityManifestGate:
         issues = validate_security_manifest([*SECURITY_CONTROLS, orphan])
         assert any("SEC-RT-ORPHAN" in i for i in issues)
 
+    def test_node_defined_scopes_nested_classes(self):
+        """P3 review：限定名支持嵌套类，且外层类节点不得被嵌套类 def 满足。"""
+        from app.lib.quality.security_manifest import _node_defined
+
+        text = (
+            "class Outer:\n"
+            "    class Inner:\n"
+            "        def test_x(self):\n"
+            "            pass\n"
+            "    def test_y(self):\n"
+            "        pass\n"
+            "\n"
+            "class Other:\n"
+            "    def test_z(self):\n"
+            "        pass\n"
+        )
+        assert _node_defined(text, "Outer::Inner::test_x") is True
+        assert _node_defined(text, "Outer::test_y") is True
+        assert _node_defined(text, "Other::test_z") is True
+        assert _node_defined(text, "Outer::test_x") is False
+        assert _node_defined(text, "Outer::Inner::test_y") is False
+
+    def test_unreadable_test_node_records_issue_not_raises(self, tmp_path, monkeypatch):
+        """P3 review：测试节点文件非 UTF-8/不可读时记 issue，不炸门禁。"""
+        from app.lib.quality import security_manifest
+
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "test_bad.py").write_bytes(
+            b"def test_x():\n    pass\n\xff\xfe"
+        )
+        monkeypatch.setattr(security_manifest, "repo_root", lambda: tmp_path)
+        control = security_manifest.SecurityControl(
+            control_id="SEC-BAD-TEST",
+            area="gate self-check",
+            description="非 UTF-8 测试文件必须记 issue 而不是抛异常",
+            impl=(),
+            test_nodes=("tests/test_bad.py::test_x",),
+            status=security_manifest.STATUS_TESTED,
+        )
+        issues = security_manifest.validate_security_manifest([control])
+        assert any("unreadable" in issue for issue in issues), issues
+
     def test_certification_table_current_and_honest(self):
         from gen_security_manifest import DEFAULT_OUT, generate
 

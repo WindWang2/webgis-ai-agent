@@ -151,3 +151,22 @@ class TestSelectionBehavior:
         assert set(payload) == {"mapModel", "composition", "spec", "category",
                                 "score", "reasons", "slots", "disclosures"}
         assert len(payload["reasons"]) <= 6
+
+
+def test_plan_for_category_failure_is_logged(monkeypatch, caplog):
+    """plan_composition 抛错时类目候选消失必须留日志（不静默吞错）。"""
+    from app.lib.cartography import composition_selection as sel
+    from app.lib.cartography import template_intelligence as ti
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("planner exploded")
+
+    monkeypatch.setattr(ti, "plan_composition", _boom)
+    with caplog.at_level(
+            "WARNING", logger="app.lib.cartography.composition_selection"):
+        plan = sel._plan_for_category(
+            "spatial_distribution", _school_distribution_ctx(),
+            spec_registry=object(), taxonomy=object())
+    assert plan is None
+    assert any("plan_composition failed" in rec.message
+               for rec in caplog.records)

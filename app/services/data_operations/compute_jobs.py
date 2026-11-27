@@ -305,6 +305,14 @@ async def _run_compute_job(
         )
         return status
     except AlreadyFinished:
-        from app.services.jobs.lifecycle import JobStatus
+        from app.services.data_operations.runner import _sync_session
+        from app.services.jobs.lifecycle import coerce_status
+        from app.services.jobs.store import DurableJobStore
 
-        return JobStatus.running  # 并发副本先认领：无本进程终态
+        # 认领失败不必然是「仍在进行」：幂等复用的 job 可能已终态（如
+        # completed 但收据不可回读）。如实回读 DB 状态，不谎报 running。
+        with _sync_session() as db:
+            record = DurableJobStore.get_sync(db, job_id)
+            current = coerce_status(getattr(record, "status", None))
+            db.commit()
+        return current

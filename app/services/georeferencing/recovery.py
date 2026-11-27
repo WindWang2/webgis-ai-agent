@@ -70,7 +70,18 @@ def recover_interrupted_jobs() -> Dict[str, int]:
                 continue
             row = DurableJobStore.get_sync(db, jid)
             if row is not None:
-                job_st = JobStatus(row.status)
+                try:
+                    job_st = JobStatus(row.status)
+                except (TypeError, ValueError):
+                    # Unknown/None status string: skip the transition but still clear
+                    # active_job_id below (a raise here would abort the whole loop and
+                    # leave every later stuck plan unrecovered).
+                    logger.warning(
+                        "[georef-recovery] unknown durable job status %r for job %s",
+                        getattr(row, "status", None),
+                        jid,
+                    )
+                    job_st = None
                 if job_st == JobStatus.cancelling:
                     DurableJobStore.confirm_cancelled_sync(
                         db,

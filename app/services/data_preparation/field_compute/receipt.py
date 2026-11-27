@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import tempfile
+import weakref
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -32,6 +33,21 @@ _RECEIPTS_FILE = "field_compute_receipts.jsonl"
 _MAX_RECORDS = 64
 
 logger = logging.getLogger(__name__)
+
+#: per-session 收据追加锁：ring 的 read-modify-write 必须串行。同会话不同
+#: 指纹计划并发执行、或幂等复用路径（未持 service._exec_lock）并发 append 时，
+#: 无锁会互相覆盖导致 list_receipts 丢记录。弱引用锁表同 service._EX_LOCKS
+#: 纪律：无活跃 append 的会话锁可被 GC。
+_APPEND_LOCKS: "weakref.WeakValueDictionary[str, asyncio.Lock]" = \
+    weakref.WeakValueDictionary()
+
+
+def _append_lock(session_id: str) -> "asyncio.Lock":
+    lock = _APPEND_LOCKS.get(session_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _APPEND_LOCKS[session_id] = lock
+    return lock
 
 
 def _storage_root() -> Path:
@@ -75,8 +91,11 @@ def _load_sync(path: Path, model: Any) -> List[Any]:
                         else _receipt_from(raw))
                 if item is not None:
                     out.append(item)
-    except Exception:  # noqa: BLE001 — 读失败按空（诚实缺席）
-        return []
+    except Exception:  # noqa: BLE001
+        # 读失败必须上抛：_save/_append/_drop 都按「读到空」全量覆写 ring，
+        # 按空返回会静默销毁收据历史且调用方只看到成功。让写路径失败、
+        # 读路径按诚实缺席处理（各自的 try 已兜住）。
+        raise
     return out[-_MAX_RECORDS:]
 
 
@@ -277,7 +296,9 @@ def _probe_publish_sync(session_id: str) -> None:
 
 async def append_receipt(session_id: str, receipt: ComputeReceipt) -> bool:
     try:
-        await asyncio.to_thread(_append_receipt_sync, session_id, receipt)
+        # ring read-modify-write 串行：并发 append 不得互相覆盖
+        async with _append_lock(session_id):
+            await asyncio.to_thread(_append_receipt_sync, session_id, receipt)
         return True
     except Exception:  # noqa: BLE001
         return False

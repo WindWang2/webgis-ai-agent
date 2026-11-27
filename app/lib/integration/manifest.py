@@ -94,19 +94,16 @@ class IntegrationManifest:
 
 
 def read_branch_file(branch: str, path: str, repo_root: Path) -> Optional[str]:
-    """分支 commit 中的文件内容（git blob 优先，工作树回退）。
+    """分支 commit 中的文件内容（严格 git blob；不回退工作树）。
 
     分支文件只存在于各自 commit；工作树通常在别的分支上，磁盘读会拿到
-    错误分支的内容（或不存在）。
+    **错误分支**的内容（或不存在）。git show 失败（分支内不存在/已删除）
+    一律返回 None，由调用方按语义提取降级（``ids_extracted=False``）诚实
+    披露——与 merge_sim ``_branch_reader`` 同纪律（R2-m3）。
     """
     proc = subprocess.run(["git", "show", f"{branch}:{path}"], cwd=repo_root,
                           capture_output=True, text=True, timeout=30)
-    if proc.returncode == 0:
-        return proc.stdout
-    try:
-        return (repo_root / path).read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        return None
+    return proc.stdout if proc.returncode == 0 else None
 
 
 def _git(args: List[str], repo_root: Path, timeout: int = 60) -> str:

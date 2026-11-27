@@ -97,6 +97,10 @@ export function loadChartArtifact(ref: string): Promise<ChartData | null> {
       const chart = adaptChartData((data as { chart?: unknown } | null)?.chart);
       if (taskEpoch !== cacheEpoch) return null;
       cache.set(key, chart);
+      // HTTP 200 但载荷非法（adaptChartData 返回 null）：与 catch 分支同样
+      // 写失败时间戳，否则 failureAt 缺失会让 null 条目被即时判为过期 ——
+      // 每次 loadChartArtifact 都重发请求，FAILURE_TTL_MS 退避形同虚设。
+      if (chart === null) failureAt.set(key, Date.now());
       return chart;
     } catch (e) {
       devOnly.warn(`[chart-artifact] ref ${key} 拉取失败`, e);

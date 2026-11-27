@@ -176,7 +176,8 @@ def record_memory(
         if req.evidence.source == SOURCE_USER_CORRECTION:
             # 人的显式再确认升级证据（同一语义，来源更硬）
             row.evidence = req.evidence.to_dict()
-            row.sensitive = bool(row.sensitive) or bool(req.sensitive)
+        # sensitive 是粘性标记：任何来源的再验证都只能收紧、不能放宽。
+        row.sensitive = bool(row.sensitive) or bool(req.sensitive)
         if req.refs:
             merged = list(row.refs or [])
             for ref in refs:
@@ -421,12 +422,23 @@ def _apply_scope_budget(db: Session, org_id: str, scope: str, scope_id: str) -> 
         GISSpatialMemory.scope == scope,
         GISSpatialMemory.scope_id == scope_id,
     )
+    # 被存活行的 supersedes_id 引用的行是审计链节点——物理删除会让
+    # 后继行的链指针悬空，故预算淘汰必须跳过它们。
+    referenced = select(GISSpatialMemory.supersedes_id).where(
+        GISSpatialMemory.org_id == org_id,
+        GISSpatialMemory.scope == scope,
+        GISSpatialMemory.scope_id == scope_id,
+        GISSpatialMemory.supersedes_id.is_not(None),
+    )
     for pass_status in (None, STATUS_ACTIVE):
         if overflow <= 0:
             break
         stmt = base
         if pass_status is None:
-            stmt = stmt.where(GISSpatialMemory.status != STATUS_ACTIVE)
+            stmt = stmt.where(
+                GISSpatialMemory.status != STATUS_ACTIVE,
+                GISSpatialMemory.id.not_in(referenced),
+            )
         else:
             stmt = stmt.where(GISSpatialMemory.status == STATUS_ACTIVE)
         victims = list(db.execute(

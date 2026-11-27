@@ -718,6 +718,8 @@ class SwarmOrchestrator:
                     wall_time_s=time.time() - started,
                     finished_at=time.time(),
                 )
+            if receipt.attempts < attempt:
+                receipt.attempts = attempt  # 重试次数回填：投影不得少报
             if receipt.status != SwarmReceiptStatus.FAILED:
                 return receipt
             if task.side_effect != "pure":

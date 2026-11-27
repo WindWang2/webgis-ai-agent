@@ -51,6 +51,13 @@
   "message": "null|string",
   "success": "boolean|null"
  },
+ "DELETE /api/v1/data-fusion-authoring/sessions/{session_id}/plans/{plan_id}/decisions": {
+  "__model__": "FusionDecisionListResponse",
+  "cursor": "integer|null",
+  "decisions": "array<object>",
+  "has_more": "boolean",
+  "plan_id": "string"
+ },
  "DELETE /api/v1/data-import/batches/{batch_id}": {
   "__model__": "DeleteResponse",
   "batch_id": "string",
@@ -774,6 +781,53 @@
   "source_type": "null|string",
   "status": "null|string"
  },
+ "GET /api/v1/data-fusion-authoring/sessions/{session_id}/plans": {
+  "__model__": "FusionPlanListResponse",
+  "cursor": "integer|null",
+  "has_more": "boolean",
+  "plans": "array<object>"
+ },
+ "GET /api/v1/data-fusion-authoring/sessions/{session_id}/plans/{plan_id}": {
+  "__model__": "FusionPlanView",
+  "plan_id": "string",
+  "revision": "integer",
+  "session_id": "string",
+  "status": "string"
+ },
+ "GET /api/v1/data-fusion-authoring/sessions/{session_id}/plans/{plan_id}/decisions": {
+  "__model__": "FusionDecisionListResponse",
+  "cursor": "integer|null",
+  "decisions": "array<object>",
+  "has_more": "boolean",
+  "plan_id": "string"
+ },
+ "GET /api/v1/data-fusion-authoring/sessions/{session_id}/plans/{plan_id}/runs": {
+  "__model__": "FusionRunListResponse",
+  "runs": "array<object>"
+ },
+ "GET /api/v1/data-fusion-authoring/sessions/{session_id}/runs/{run_id}": {
+  "__model__": "FusionRunView",
+  "plan_id": "string",
+  "run_id": "string",
+  "session_id": "string",
+  "status": "string"
+ },
+ "GET /api/v1/data-fusion-authoring/sessions/{session_id}/runs/{run_id}/results": {
+  "__model__": "FusionRunResultsResponse",
+  "cursor": "integer",
+  "features": "array<object>",
+  "has_more": "boolean",
+  "run_id": "string",
+  "total": "integer"
+ },
+ "GET /api/v1/data-fusion-authoring/sessions/{session_id}/runs/{run_id}/review-queue": {
+  "__model__": "FusionReviewQueueResponse",
+  "cursor": "integer",
+  "has_more": "boolean",
+  "items": "array<object>",
+  "run_id": "string",
+  "total": "integer"
+ },
  "GET /api/v1/data-import/batches": {
   "__model__": "BatchListResponse",
   "batches": "array<object>"
@@ -905,6 +959,9 @@
   "limit": "integer",
   "offset": "integer",
   "total": "integer"
+ },
+ "GET /api/v1/diagram-symbols/sessions/{session_id}/layers/{layer_id}/inspect": {
+  "__type__": "unknown"
  },
  "GET /api/v1/explorer/status/{task_id}": {
   "__model__": "ExploreStatusResponse",
@@ -1994,7 +2051,7 @@
   "author_kind": "string",
   "base": "object",
   "candidate_digest": "string",
-  "created_at": "string",
+  "created_at": "number",
   "has_approval": "boolean",
   "merge": "null|object",
   "op_kinds": "array<string>",
@@ -2005,7 +2062,7 @@
   "revision": "integer",
   "status": "string",
   "title": "string",
-  "updated_at": "string"
+  "updated_at": "number"
  },
  "PATCH /api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}": {
   "__model__": "CoordinateOperationPlanView",
@@ -2350,7 +2407,7 @@
   "author_kind": "string",
   "base": "object",
   "candidate_digest": "string",
-  "created_at": "string",
+  "created_at": "number",
   "has_approval": "boolean",
   "merge": "null|object",
   "op_kinds": "array<string>",
@@ -2361,7 +2418,7 @@
   "revision": "integer",
   "status": "string",
   "title": "string",
-  "updated_at": "string"
+  "updated_at": "number"
  },
  "POST /api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/comments": {
   "__model__": "FeatureProposalCommentsResponse",
@@ -2799,6 +2856,74 @@
  "POST /api/v1/data-fabric/sources/{source_id}/sync": {
   "__model__": "SourceSyncResponse"
  },
+ "POST /api/v1/data-fusion-authoring/sessions/{session_id}/plans": {
+  "__model__": "FusionPlanView",
+  "plan_id": "string",
+  "revision": "integer",
+  "session_id": "string",
+  "status": "string"
+ },
+ "POST /api/v1/data-fusion-authoring/sessions/{session_id}/plans/{plan_id}/archive": {
+  "__model__": "FusionPlanView",
+  "plan_id": "string",
+  "revision": "integer",
+  "session_id": "string",
+  "status": "string"
+ },
+ "POST /api/v1/data-fusion-authoring/sessions/{session_id}/plans/{plan_id}/decisions": {
+  "__model__": "FusionDecisionView",
+  "action": "string",
+  "decision_id": "string",
+  "pair_key": "string",
+  "plan_id": "string",
+  "revision": "integer"
+ },
+ "POST /api/v1/data-fusion-authoring/sessions/{session_id}/plans/{plan_id}/execute": {
+  "__model__": "FusionRunView",
+  "plan_id": "string",
+  "run_id": "string",
+  "session_id": "string",
+  "status": "string"
+ },
+ "POST /api/v1/data-fusion-authoring/sessions/{session_id}/plans/{plan_id}/preview": {
+  "__model__": "FusionPlanPreviewResponse",
+  "cached": "boolean",
+  "plan_digest": "null|string"
+ },
+ "POST /api/v1/data-fusion-authoring/sessions/{session_id}/plans/{plan_id}/refresh": {
+  "__model__": "FusionRefreshResponse",
+  "base_run_id": "null|string",
+  "changed": "boolean",
+  "plan_id": "string"
+ },
+ "POST /api/v1/data-fusion-authoring/sessions/{session_id}/recover": {
+  "__model__": "FusionRecoverResponse",
+  "recovered": "integer"
+ },
+ "POST /api/v1/data-fusion-authoring/sessions/{session_id}/runs/{run_id}/cancel": {
+  "__model__": "FusionRunCancelResponse",
+  "cancel_requested": "boolean|null",
+  "note": "null|string",
+  "run_id": "string",
+  "status": "null|string"
+ },
+ "POST /api/v1/data-fusion-authoring/sessions/{session_id}/runs/{run_id}/commit": {
+  "__model__": "FusionRunView",
+  "plan_id": "string",
+  "run_id": "string",
+  "session_id": "string",
+  "status": "string"
+ },
+ "POST /api/v1/data-fusion-authoring/sessions/{session_id}/runs/{run_id}/render-ref": {
+  "__model__": "FusionRenderRefResponse",
+  "features": "integer",
+  "render_ref": "string"
+ },
+ "POST /api/v1/data-fusion-authoring/sessions/{session_id}/sources/describe": {
+  "__model__": "FusionDescribeResponse",
+  "session_id": "string",
+  "sources": "array<object>"
+ },
  "POST /api/v1/data-import/batches": {
   "__model__": "BatchCreateResponse",
   "batch_id": "string",
@@ -2949,6 +3074,12 @@
   "sampled_rows": "integer",
   "steps": "array<PlanStepOut>",
   "truncated": "boolean"
+ },
+ "POST /api/v1/diagram-symbols/sessions/{session_id}/layers/{layer_id}/apply": {
+  "__type__": "unknown"
+ },
+ "POST /api/v1/diagram-symbols/sessions/{session_id}/layers/{layer_id}/plan": {
+  "__type__": "unknown"
  },
  "POST /api/v1/explorer/abort/{task_id}": {
   "__model__": "ExploreAbortResponse",
@@ -4192,6 +4323,13 @@
   "preference": "SessionModelPreference",
   "session_id": "string",
   "thinking_controllable": "boolean"
+ },
+ "PUT /api/v1/data-fusion-authoring/sessions/{session_id}/plans/{plan_id}": {
+  "__model__": "FusionPlanView",
+  "plan_id": "string",
+  "revision": "integer",
+  "session_id": "string",
+  "status": "string"
  },
  "PUT /api/v1/georeferencing/plans/{plan_id}/draft": {
   "__model__": "GeorefPlanResponse",

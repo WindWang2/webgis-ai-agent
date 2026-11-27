@@ -62,6 +62,23 @@ def _is_sqlite() -> bool:
 _BACKFILL_BATCH = 5000
 
 
+def _progress_guard(set_clause: str) -> str:
+    """``col = expr`` 的「值真的会变」判据（PG ``IS DISTINCT FROM``）。
+
+    project_id 为空、project/users 无 org、instance_id/source_instance_id
+    孤儿时子查询返回 NULL，SET 后 org_id 仍为 NULL、行仍满足 where ——
+    rowcount 恒 >0，循环打到 1_000_000 硬帽（每批还是一个独立 autocommit
+    事务，PG 升级事实挂死）。把批选区收紧到「值会变」的行后，rowcount 即
+    本轮真实改行数，循环自然收敛；解析不出的行留给随后的兜底回填写入。
+    非 ``col = expr`` 形态时返回空串（退回原语义）。
+    """
+    column, sep, expression = set_clause.partition("=")
+    column = column.strip()
+    if not sep or not column.isidentifier():
+        return ""
+    return f" AND ({column} IS DISTINCT FROM {expression.strip()})"
+
+
 def _exec_update_batched(table: str, set_clause: str, where_clause: str) -> None:
     """PostgreSQL 按 ctid 分批 UPDATE；SQLite 全量一次。
 
@@ -70,10 +87,11 @@ def _exec_update_batched(table: str, set_clause: str, where_clause: str) -> None
     if _is_sqlite():
         op.execute(f"UPDATE {table} SET {set_clause} WHERE {where_clause}")
         return
+    select_where = f"({where_clause}){_progress_guard(set_clause)}"
     sql = (
         f"UPDATE {table} SET {set_clause} "
         f"WHERE ({where_clause}) AND ctid IN ("
-        f"  SELECT ctid FROM {table} WHERE {where_clause} LIMIT {_BACKFILL_BATCH}"
+        f"  SELECT ctid FROM {table} WHERE {select_where} LIMIT {_BACKFILL_BATCH}"
         f")"
     )
     bind = op.get_bind()

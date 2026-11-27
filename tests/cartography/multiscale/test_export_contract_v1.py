@@ -94,3 +94,16 @@ class TestSvgExportConsumesArtifactSource:
         # 导出画布内应存在与工件对应的一条近垂直线 —— 以要素计数断言：
         # 主源 5 条水平分布线，工件 1 条；若未覆盖源会画 5 条。
         assert result.svg.count("<path") + result.svg.count("<line") <= 3
+
+
+def test_active_window_modes_skips_non_numeric_min_zoom():
+    """坏窗（min_zoom 非数值）逐窗跳过，不抛 ValueError（与活跃窗读取面一致）。"""
+    from app.lib.cartography.multiscale.export_adjudication import (
+        active_window_modes,
+    )
+
+    layer = {"representation": {"windows": [
+        {"mode": "raw", "min_zoom": "10", "max_zoom": 12},
+        {"mode": "generalized", "min_zoom": 0, "max_zoom": 8},
+    ]}}
+    assert active_window_modes(layer) == ["generalized"]

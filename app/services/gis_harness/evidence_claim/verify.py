@@ -87,12 +87,27 @@ def _value_compatible(claim: Claim, evidence_meta: Dict[str, Any]) -> tuple[bool
     return True, "value_bound"
 
 
-def _scope_compatible(claim: Claim, evidence_meta: Dict[str, Any]) -> tuple[bool, str]:
+def _scope_compatible(
+    claim: Claim,
+    evidence_meta: Dict[str, Any],
+    *,
+    require_declared_scope: bool = False,
+) -> tuple[bool, str]:
     e_aoi = str(evidence_meta.get("aoi_ref") or "")
     e_temporal = str(evidence_meta.get("temporal_label") or "")
-    if claim.spatial_scope.aoi_ref and e_aoi and claim.spatial_scope.aoi_ref != e_aoi:
+    c_aoi = claim.spatial_scope.aoi_ref
+    c_temporal = claim.temporal_scope.temporal_label
+    if c_aoi and not e_aoi:
+        # 权威证明节点（stat/analysis）缺 scope → fail-closed（与 units/
+        # semantics 同口径：声明了范围就必须有证据范围可核）。
+        if require_declared_scope:
+            return False, "evidence_aoi_missing"
+    elif c_aoi and c_aoi != e_aoi:
         return False, "aoi_mismatch"
-    if claim.temporal_scope.temporal_label and e_temporal and claim.temporal_scope.temporal_label != e_temporal:
+    if c_temporal and not e_temporal:
+        if require_declared_scope:
+            return False, "evidence_temporal_missing"
+    elif c_temporal and c_temporal != e_temporal:
         return False, "temporal_mismatch"
     return True, "scope_ok"
 
@@ -264,7 +279,7 @@ def verify_claim(
             "aoi_ref": node.scope.aoi_ref,
             "temporal_label": node.scope.temporal_label,
             **meta,
-        })
+        }, require_declared_scope=True)
         if not ok_sc:
             method_ok = False
             reasons.append(detail_sc)

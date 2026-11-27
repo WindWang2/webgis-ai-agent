@@ -1,5 +1,9 @@
 """Unit tests for MapSpecLifecycleEngine."""
+import uuid
+
 import pytest
+
+import app.services.mapspec.store as mapspec_store_module
 from app.services.mapspec.lifecycle_engine import (
     MapSpecLifecycleEngine,
     InitProjectIntent,
@@ -10,7 +14,9 @@ from app.services.mapspec.lifecycle_engine import (
     SetLayoutIntent,
     CheckpointIntent,
     RollbackIntent,
+    ReorderLayersIntent,
 )
+from app.services.session_data import session_data_manager
 
 
 @pytest.mark.asyncio
@@ -404,3 +410,172 @@ def test_workbench_doc_validator_messages():
     assert "object" in _workbench_doc_error([1, 2, 3])
     assert "unique" in _workbench_doc_error({
         "version": 5, "groups": [{"id": "a"}, {"id": "a"}], "mode": "explore"})
+
+
+# ─── P3 review fixes: 读失败回执 / 批量 CAS 令牌 / 双 fault / 组件排序 ─────────
+
+
+@pytest.mark.asyncio
+async def test_presentation_batch_persists_revision_without_atomic_backend(
+    tmp_path, monkeypatch,
+):
+    """批量路径不得丢弃 save_mapspec 的 revision_persisted 回退。
+
+    后端缺 commit_mapspec_state / set_map_state_fields（测试替身）时 save
+    只写 spec；CAS 令牌必须由引擎补写，否则回执报 prior+1 而令牌仍旧值。
+    """
+    monkeypatch.setattr(mapspec_store_module, "BASE_STORAGE_DIR", tmp_path)
+    monkeypatch.setattr(session_data_manager, "commit_mapspec_state", None)
+    monkeypatch.setattr(session_data_manager, "set_map_state_fields", None)
+    engine = MapSpecLifecycleEngine()
+    session_id = f"test-batch-rev-{uuid.uuid4().hex[:8]}"
+    try:
+        seed = await engine.apply_mutation(
+            session_id,
+            UpsertLayerIntent(
+                layer={"id": "L", "source": "s", "type": "circle", "paint": {}},
+                source_data={"type": "FeatureCollection", "features": []},
+            ),
+        )
+        assert seed.is_error is False, seed.error_msg
+        batch = await engine.apply_presentation_batch(
+            session_id,
+            [PatchLayerPresentationIntent(layer_id="L", visible=False)],
+            origin="agent",
+        )
+        assert batch.is_error is False, batch.error_msg
+        state = await session_data_manager.get_map_state(session_id)
+        assert int(state.get("_cartographic_mutation_revision") or 0) == (
+            batch.mutation_revision
+        )
+    finally:
+        await session_data_manager.clear_session(session_id)
+
+
+@pytest.mark.asyncio
+async def test_state_read_failure_returns_is_error_receipt(monkeypatch):
+    """get_map_state 失败必须返回 is_error 回执，而非裸异常逸出。"""
+    async def boom(_sid):
+        raise RuntimeError("redis down")
+
+    monkeypatch.setattr(session_data_manager, "get_map_state", boom)
+    engine = MapSpecLifecycleEngine()
+    res = await engine.apply_mutation(
+        f"test-read-fail-{uuid.uuid4().hex[:8]}",
+        SetViewIntent(center=[100.0, 20.0], zoom=5.0),
+    )
+    assert res.is_error is True
+    assert "MapSpec 意图更新失败" in (res.error_msg or "")
+
+
+@pytest.mark.asyncio
+async def test_mapspec_load_failure_returns_is_error_receipt(monkeypatch):
+    """get_mapspec 失败同样须回执，不得以裸异常逸出锁段。"""
+    engine = MapSpecLifecycleEngine()
+
+    async def boom(*_args, **_kwargs):
+        raise RuntimeError("disk read down")
+
+    monkeypatch.setattr(engine.store, "get_mapspec", boom)
+    res = await engine.apply_mutation(
+        f"test-load-fail-{uuid.uuid4().hex[:8]}",
+        SetViewIntent(center=[100.0, 20.0], zoom=5.0),
+    )
+    assert res.is_error is True
+    assert "MapSpec 意图更新失败" in (res.error_msg or "")
+
+
+def test_review_failure_never_raises_on_secondary_fault(monkeypatch):
+    """review 兜底表示本身不得再抛（双 fault 逸出会跳过回滚/is_error）。"""
+    from app.services.mapspec import lifecycle_engine as le
+
+    def boom_fp(_spec):
+        raise ValueError("fingerprint boom")
+
+    monkeypatch.setattr(le, "cartographic_fingerprint", boom_fp)
+    review = MapSpecLifecycleEngine._review_failure(
+        {"sources": 1}, RuntimeError("review boom"),
+    )
+    assert review["status"] == "not_evaluated"
+    assert review["review"]["status"] == "not_evaluated"
+    assert review["counters"]["metadata_sources"] == 0
+
+
+@pytest.mark.asyncio
+async def test_reorder_layers_preserves_non_dict_entries():
+    """reorder 的 leftover 过滤不得丢弃 spec 中的非 dict 图层条目。"""
+    engine = MapSpecLifecycleEngine()
+    session_id = f"test-reorder-nondict-{uuid.uuid4().hex[:8]}"
+    try:
+        base = await engine.apply_mutation(
+            session_id, SetViewIntent(center=[0.0, 0.0], zoom=2.0)
+        )
+        assert base.is_error is False, base.error_msg
+        spec = dict(base.mapspec)
+        spec["sources"] = {"s": {"type": "geojson"}}
+        spec["layers"] = [
+            {"id": "a", "source": "s", "type": "circle"},
+            "opaque-layer-entry",
+            {"id": "b", "source": "s", "type": "circle"},
+        ]
+        await session_data_manager.set_map_state(session_id, "mapspec", spec)
+        res = await engine.apply_mutation(
+            session_id,
+            ReorderLayersIntent(layer_ids=["b"]),
+            expected_revision=base.mutation_revision,
+        )
+        assert res.is_error is False, res.error_msg
+        assert "opaque-layer-entry" in res.mapspec["layers"]
+    finally:
+        await session_data_manager.clear_session(session_id)
+
+
+@pytest.mark.asyncio
+async def test_set_layout_rejects_non_numeric_component_priority():
+    """priority 类型混用（"high" + 缺省）须确定性拒绝，而非 sorted TypeError。"""
+    engine = MapSpecLifecycleEngine()
+    session_id = f"test-layout-priority-{uuid.uuid4().hex[:8]}"
+    try:
+        bad = await engine.apply_mutation(
+            session_id,
+            SetLayoutIntent(components=[
+                {"id": "a", "type": "title", "priority": "high"},
+                {"id": "b", "type": "legend"},
+            ]),
+        )
+        assert bad.is_error is True
+        assert "must be numeric" in (bad.error_msg or "")
+
+        # None 与数值混用（schema Optional[Number]）也不得 TypeError。
+        ok = await engine.apply_mutation(
+            session_id,
+            SetLayoutIntent(components=[
+                {"id": "a", "type": "title", "priority": None},
+                {"id": "b", "type": "legend", "priority": 10},
+            ]),
+        )
+        assert ok.is_error is False, ok.error_msg
+    finally:
+        await session_data_manager.clear_session(session_id)
+
+
+@pytest.mark.asyncio
+async def test_workbench_state_rejects_dangling_membership_group():
+    """membership 的 groupId 必须引用声明组（与 parentId 同门校验）。"""
+    engine = MapSpecLifecycleEngine()
+    session_id = f"test-wb-dangling-{uuid.uuid4().hex[:8]}"
+    try:
+        res = await engine.apply_mutation(
+            session_id,
+            SetWorkbenchStateIntent(doc={
+                "version": 5,
+                "groups": [{"id": "g1", "parentId": None}],
+                "membership": {"layer-a": "gone"},
+                "mode": "explore",
+            }),
+            origin="user", expected_revision=0,
+        )
+        assert res.is_error is True
+        assert "membership" in (res.error_msg or "")
+    finally:
+        await session_data_manager.clear_session(session_id)

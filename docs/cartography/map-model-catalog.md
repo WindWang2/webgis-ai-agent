@@ -3,7 +3,7 @@
 > 由 `app.lib.cartography.catalog_docs` 从 MapModelRegistry 生成；
 > 手改无效。真值：`model_library.py` + `model_packs/`（ADR-0238）。
 
-共 80 个模型（native 78 / planned 2）。
+共 83 个模型（native 81 / planned 2）。
 
 | id | 名称 | 几何 | 图层 | 分级 | 色系 | 默认色带 | 状态 | 降级 |
 |---|---|---|---|---|---|---|---|---|
@@ -23,6 +23,7 @@
 | change_comparison_map | 变化对比图 | polygon | fill | graduated | diverging | RdBu | native | diverging_choropleth |
 | classification_result_map | 分类结果图 | polygon | fill | categorical | qualitative | Set2 | native | — |
 | classified_raster | 分级栅格图 | raster | raster | graduated | sequential | YlOrRd | native | raster_surface |
+| composition_glyph_map | 组成图符地图（饼/环形） | point/polygon | circle | none | qualitative | Set1 | native | — |
 | confusion_matrix_map | 误差/混淆可视化图 | polygon | fill | categorical | qualitative | Set1 | native | categorical_thematic |
 | dasymetric_map | 分区密度图（dasymetric） | polygon | fill | graduated | sequential | YlOrRd | native | normalized_choropleth |
 | dbscan_cluster_map | DBSCAN 聚类簇图 | point | circle | categorical | qualitative | Set1 | native | — |
@@ -48,6 +49,7 @@
 | location_allocation_map | 区位配置图 | point/line/polygon | fill | categorical | qualitative | Dark2 | native | nearest_facility_map |
 | mcda_score_map | MCDA 评分图 | polygon | fill | graduated | sequential | Purples | native | administrative_choropleth |
 | multi_ring_buffer_map | 多环缓冲图 | polygon | fill | graduated | sequential | Blues | native | proximity_overlay |
+| multi_series_glyph_map | 多序列条形图符地图 | point/polygon/line | circle | none | qualitative | Set2 | native | — |
 | nearest_facility_map | 最近设施归属图 | line/point | line | categorical | qualitative | Set2 | native | categorized_line |
 | network_centrality_map | 网络中心性图 | point/line | line | graduated | perceptual_uniform | Magma | native | graduated_line |
 | network_flow_map | 网络流量图 | line | line | graduated | perceptual_uniform | Inferno | native | graduated_line |
@@ -63,6 +65,7 @@
 | rs_composite_map | 遥感合成影像图 | raster | raster | none | none | — | native | raster_surface |
 | sar_change_detection | SAR 变化检测图 | raster | raster | graduated | diverging | RdBu | native | change_comparison_map |
 | sar_intensity_surface | SAR 强度面 | raster | raster | none | perceptual_uniform | Inferno | native | raster_surface |
+| segmented_proportional_glyph_map | 等角分段比例图符地图 | point/polygon | circle | none | qualitative | Dark2 | native | — |
 | sensitivity_analysis_presentation | 敏感性分析呈现图 | polygon | fill | graduated | diverging | RdBu | native | mcda_score_map |
 | service_area_overlay | 服务区叠加 | polygon | fill | graduated | sequential | Blues | native | proximity_overlay |
 | simple_point_map | 轻量点图 | point | circle | none | none | — | native | — |

@@ -416,10 +416,10 @@ export function buildVectorSvgExport(input: VectorSvgExportInput): VectorSvgExpo
       );
     }
     // 裁切标记（出版档；出血外缘四角十字线）
+    // 内容组已 translate(bleedPx, bleedPx)；renderSvgCropMarks 的坐标系即
+    // 内容画幅局部原点，不能再套一次 translate（否则偏移 2×bleedPx）。
     if (cropMarks && bleedPx > 0) {
-      parts.push(
-        `<g transform="translate(${bleedPx}, ${bleedPx})">${renderSvgCropMarks({ width, height, bleedPx })}</g>`,
-      );
+      parts.push(renderSvgCropMarks({ width, height, bleedPx }));
     }
     parts.push('</g>');
     parts.push('</svg>');

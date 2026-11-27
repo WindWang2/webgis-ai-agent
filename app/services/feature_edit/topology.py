@@ -61,6 +61,19 @@ def _wfid_of(feature: Any) -> Optional[str]:
     return wfid if isinstance(wfid, str) else None
 
 
+def _point_coords(geom: Any) -> List[Tuple[float, float]]:
+    """Point/MultiPoint 的坐标序列（多部件展开；其它几何返回空）。
+
+    no_duplicate_points 只针对点要素 —— MultiPoint 的每个 part 都是规则
+    意义上可重复的点，不能按 geom_type == "Point" 整要素跳过。
+    """
+    if geom.geom_type == "Point":
+        return [(geom.x, geom.y)]
+    if geom.geom_type == "MultiPoint":
+        return [(point.x, point.y) for point in geom.geoms]
+    return []
+
+
 def _m2_to_deg2_approx(m2: float, lat_deg: float) -> float:
     """平方米 → 平方度的局部尺度换算（小邻域平面近似；判定容差用）。"""
     from app.services.feature_edit.geometry_ops import geodesic_distance_m
@@ -138,39 +151,49 @@ def check_topology(
         seen: Dict[Tuple[float, float], str] = {}
         for wfid in sorted(affected & set(wfids)):
             geom = by_wfid.get(wfid)
-            if geom is None or not geom.geom_type.startswith("Point"):
+            if geom is None:
                 continue
-            key = (round(geom.x, 9), round(geom.y, 9))
-            if key in seen:
-                findings.append(
-                    finding(
-                        "topology_violation",
-                        "duplicate point feature (declared no_duplicate_points)",
-                        rule="no_duplicate_points",
-                        wfid=wfid,
-                        duplicate_of=seen[key],
-                        bbox=[geom.x, geom.y, geom.x, geom.y],
+            local_seen: set = set()
+            for x, y in _point_coords(geom):
+                key = (round(x, 9), round(y, 9))
+                if key in local_seen:  # 同一 MultiPoint 内部重复只记一次
+                    continue
+                local_seen.add(key)
+                if key in seen:
+                    findings.append(
+                        finding(
+                            "topology_violation",
+                            "duplicate point feature (declared no_duplicate_points)",
+                            rule="no_duplicate_points",
+                            wfid=wfid,
+                            duplicate_of=seen[key],
+                            bbox=[x, y, x, y],
+                        )
                     )
-                )
-            else:
-                seen[key] = wfid
+                else:
+                    seen[key] = wfid
         # 与非受影响点也比对（受影响点可能撞上既有静止点）
         for i, geom in enumerate(geoms):
             w = wfids[i]
-            if w in affected or not geom.geom_type.startswith("Point"):
+            if w in affected:
                 continue
-            key = (round(geom.x, 9), round(geom.y, 9))
-            if key in seen:
-                findings.append(
-                    finding(
-                        "topology_violation",
-                        "edited point duplicates an existing point (declared no_duplicate_points)",
-                        rule="no_duplicate_points",
-                        wfid=seen[key],
-                        duplicate_of=w,
-                        bbox=[geom.x, geom.y, geom.x, geom.y],
+            local_seen = set()
+            for x, y in _point_coords(geom):
+                key = (round(x, 9), round(y, 9))
+                if key in local_seen:
+                    continue
+                local_seen.add(key)
+                if key in seen:
+                    findings.append(
+                        finding(
+                            "topology_violation",
+                            "edited point duplicates an existing point (declared no_duplicate_points)",
+                            rule="no_duplicate_points",
+                            wfid=seen[key],
+                            duplicate_of=w,
+                            bbox=[x, y, x, y],
+                        )
                     )
-                )
 
     if "no_overlap" in rules:
         polygons = [(w, g) for w, g in zip(wfids, geoms) if g.geom_type in ("Polygon", "MultiPolygon")]

@@ -3,7 +3,12 @@ import pytest
 import json
 from unittest.mock import patch
 from app.tools.registry import ToolRegistry
-from app.tools.osm import register_osm_tools, _overpass_to_geojson
+from app.tools.osm import (
+    register_osm_tools,
+    _overpass_to_geojson,
+    _stitch_way_rings,
+    _relation_polygon_geometry,
+)
 
 
 def test_osm_tools_registered():
@@ -234,3 +239,34 @@ async def test_osm_boundary_nominatim_fallback_is_marked_773():
     assert result["source"] == "nominatim"
     assert result["fallback_note"]
     assert result["fetched_at"]
+
+
+def test_stitch_way_rings_merges_rings_when_bridge_way_arrives_late():
+    """回归：桥接 way 晚到时，两条已存在的链必须合并为一个环，而不是各被
+    首尾补点成两个伪环（导致 relation 边界变成 MultiPolygon）。"""
+    def geom(points):
+        return [{"lon": lon, "lat": lat} for lon, lat in points]
+
+    # 方形边界拆成四段，顺序：底边左半、顶边、右侧（桥接两条已存在的链）、左侧
+    ways = [
+        {"geometry": geom([(0, 0), (5, 0), (10, 0)])},
+        {"geometry": geom([(0, 10), (5, 10), (10, 10)])},
+        {"geometry": geom([(10, 0), (10, 10)])},
+        {"geometry": geom([(0, 10), (0, 0)])},
+    ]
+
+    rings = _stitch_way_rings(ways)
+    assert len(rings) == 1
+    assert rings[0] == [
+        [0, 0], [5, 0], [10, 0], [10, 10], [5, 10], [0, 10], [0, 0],
+    ]
+
+    el = {
+        "type": "relation",
+        "id": 1,
+        "members": [dict(w, type="way", role="outer") for w in ways],
+        "tags": {"boundary": "administrative", "admin_level": "8"},
+    }
+    polygon = _relation_polygon_geometry(el)
+    assert polygon["type"] == "Polygon"
+    assert len(polygon["coordinates"]) == 1

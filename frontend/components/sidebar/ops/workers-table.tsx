@@ -6,7 +6,7 @@
  * a11y：原生 <table>，行可聚焦（roving tabindex + 方向键），能力缺席显示
  * 「未披露」而不是 0（旧 worker capability=null 是诚实缺失）。
  */
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type { ClusterWorker } from '@/lib/api/geocompute';
 import { heartbeatFreshness, type HeartbeatFreshness } from '@/lib/hooks/use-cluster-workers';
 import { formatBytes } from './ops-shared';
@@ -27,11 +27,13 @@ function profileSummary(profiles: Record<string, number>): string {
 export function WorkersTable({ workers }: { workers: ClusterWorker[] }) {
   const t = useT('ops');
   const rowRefs = useRef<(HTMLTableRowElement | null)[]>([]);
+  const [activeIndex, setActiveIndex] = useState(0);
 
   const onKeyDown = useCallback((e: React.KeyboardEvent) => {
     const target = e.target as HTMLElement;
     if (target.tagName !== 'TR') return;
-    const rows = rowRefs.current;
+    // 列表缩短后 rows 的旧尾部是 null —— 按当前行数截断再算 roving 落点。
+    const rows = rowRefs.current.slice(0, workers.length);
     const idx = rows.indexOf(target as HTMLTableRowElement);
     if (idx < 0) return;
     let next = -1;
@@ -42,7 +44,7 @@ export function WorkersTable({ workers }: { workers: ClusterWorker[] }) {
     if (next < 0) return;
     e.preventDefault();
     rows[next]?.focus();
-  }, []);
+  }, [workers.length]);
 
   if (workers.length === 0) {
     return (
@@ -50,6 +52,8 @@ export function WorkersTable({ workers }: { workers: ClusterWorker[] }) {
         {t('worker2')}</p>
     );
   }
+
+  const rovingIndex = Math.min(activeIndex, Math.max(0, workers.length - 1));
 
   return (
     <div className="overflow-x-auto">
@@ -78,7 +82,8 @@ export function WorkersTable({ workers }: { workers: ClusterWorker[] }) {
                 ref={(el) => {
                   rowRefs.current[i] = el;
                 }}
-                tabIndex={0}
+                tabIndex={i === rovingIndex ? 0 : -1}
+                onFocus={() => setActiveIndex(i)}
                 aria-rowindex={i + 1}
                 data-testid={`worker-row-${w.worker_id}`}
                 className="border-b border-edge-subtle/60 text-meta text-ink-secondary outline-none focus-visible:bg-surface-hover"

@@ -286,6 +286,16 @@ class TestReproducibilityBundle:
         assert bundle["plan_fingerprint"] == plan.graph_fingerprint()
         assert bundle["drift"]["state"] == "current"
 
+    def test_execution_plan_version_follows_constant(self, monkeypatch):
+        """bundle.execution_plan_version 必须读 EXECUTION_PLAN_VERSION ——
+        常量 bump 后硬编码值会静默过期。"""
+        from app.services.geocompute import reproducibility as rb
+
+        monkeypatch.setattr(rb, "EXECUTION_PLAN_VERSION", 3)
+        plan, run = self._plan_and_run(_filter_node())
+        bundle = build_execution_bundle(plan, run)
+        assert bundle["execution_plan_version"] == 3
+
     def test_external_source_is_conditionally_reproducible(self):
         node = ExecutionNode(
             node_id="q", category=NodeCategory.QUERY,

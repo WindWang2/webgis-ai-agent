@@ -13,7 +13,7 @@ CAPABILITIES: List[CapabilityDescriptor] = [
 
         CapabilityDescriptor(
             id="point_profile", name="数据画像", category="statistics",
-            description="点数/几何/字段画像（不产出新数据，产出元数据）。",
+            description="点数/几何/字段画像（元数据随点要素集引用传递，不复制或新建几何）。",
             input_artifact_types=["poi_feature_set", "point_feature_set"],
             output_artifact_types=["point_feature_set"],
             geometry_requirements=["point"],

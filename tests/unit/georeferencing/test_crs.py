@@ -9,6 +9,7 @@ from pyproj import Transformer
 from app.schemas.georeferencing_schema import GeorefErrorCode
 from app.services.georeferencing.crs import (
     convert_wgs84_to_target,
+    ring_to_wgs84_geojson,
     validate_metric_projected_crs,
 )
 from app.services.georeferencing.service import GeorefDomainError
@@ -41,3 +42,19 @@ def test_r18_lonlat_always_xy_and_area_warning():
         with pytest.raises(GeorefDomainError) as exc_info:
             convert_wgs84_to_target(bad_lon, bad_lat, "EPSG:32650")
         assert exc_info.value.code == GeorefErrorCode.INVALID_GCP_COORDS
+
+
+def test_p3_footprint_ring_closes_after_longitude_unwrap():
+    """A >180 deg longitudinal sweep must not leave the closing point shifted by 360."""
+    corners = [
+        (-13358338.9, 0.0),
+        (0.0, 0.0),
+        (13358338.9, 0.0),
+        (19900000.0, 1000.0),
+    ]
+    geom, bbox = ring_to_wgs84_geojson(corners, "EPSG:3857")
+    ring = geom["coordinates"][0]
+
+    assert len(ring) == len(corners) + 1
+    assert ring[0] == ring[-1]
+    assert bbox[0] <= bbox[2] and bbox[1] <= bbox[3]

@@ -46,6 +46,9 @@ class MetricEvaluator:
 
         if "pct_range" in params:
             rng = params["pct_range"]
+            if len(rng) == 1:
+                single = float(rng[0])
+                return "pct", (single, single, single)
             if len(rng) == 2:
                 return "pct", (float(rng[0]), float(rng[0] + rng[1]) / 2.0, float(rng[1]))
             elif len(rng) >= 3:
@@ -60,6 +63,9 @@ class MetricEvaluator:
 
         if "delta_range" in params:
             rng = params["delta_range"]
+            if len(rng) == 1:
+                single = float(rng[0])
+                return "abs", (single, single, single)
             if len(rng) == 2:
                 return "abs", (float(rng[0]), float(rng[0] + rng[1]) / 2.0, float(rng[1]))
             elif len(rng) >= 3:
@@ -301,7 +307,11 @@ class MetricEvaluator:
             is_missing = False
             gap_note = None
 
-            if m_key in baseline_metrics and not baseline_metrics[m_key].missing_baseline:
+            if (
+                m_key in baseline_metrics
+                and not baseline_metrics[m_key].missing_baseline
+                and baseline_metrics[m_key].baseline is not None
+            ):
                 bm = baseline_metrics[m_key]
                 base_val = bm.baseline
                 base_unit = bm.unit

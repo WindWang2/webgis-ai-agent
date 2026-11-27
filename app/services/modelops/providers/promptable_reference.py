@@ -172,6 +172,11 @@ class PromptableReferenceProvider:
                 # sidecar 先验）：无点/框种子时，先验自身即候选区域，受窗内
                 # 相似度约束（SAM prior 语义的确定性投影）。此前 mask-only
                 # 在 from_payload 重建处崩溃，此路径从未可达。
+                if not any(prior.shape == (h, w) for prior in prior_arrays[:8]):
+                    raise ProviderError(
+                        f"prompt prior mask shape {prior_arrays[0].shape} "
+                        f"does not match window {(h, w)}"
+                    )
                 object_mask |= similarity
             for prior in prior_arrays[:8]:
                 ensure_not_cancelled(ctx)

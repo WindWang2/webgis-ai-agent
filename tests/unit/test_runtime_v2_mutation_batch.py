@@ -152,6 +152,31 @@ async def test_batch_refuses_user_hidden_and_noop_skips_commit(clean_session):
 
 
 @pytest.mark.asyncio
+async def test_batch_provenance_records_opacity_only_applied_layers(clean_session):
+    """P3：纯 opacity patch（visible=None）也要有逐层 provenance 证据 ——
+    shown/hidden 只收显隐决策，applied 补全落盘层集。"""
+    from app.services.gis_world_state.provenance import get_provenance
+
+    await _seed_layers(clean_session, ["op-1"])
+    batch = await apply_gis_mutation_batch(
+        clean_session,
+        [PatchLayerPresentationIntent(layer_id="op-1", opacity=0.4)],
+        origin="agent",
+        actor="test",
+    )
+    assert batch.committed is True
+    entries = await get_provenance(clean_session)
+    mine = [e for e in entries if e.get("kind") == "GISMutationBatch"]
+    assert mine, "batch 提交必须进 provenance"
+    detail = mine[-1]["detail"]
+    assert detail["shown"] == [] and detail["hidden"] == []
+    assert detail["applied"] == ["op-1"], (
+        "纯 opacity patch 必须有逐层证据（旧实现 shown/hidden 双空 → 该批"
+        "对该层无任何记录）"
+    )
+
+
+@pytest.mark.asyncio
 async def test_upsert_cannot_bypass_legacy_ring_user_hide(clean_session):
     """H3：legacy ring（无 spec 印记）下 agent upsert 不得翻回用户隐藏。"""
     await _seed_layers(clean_session, ["r-legacy"])

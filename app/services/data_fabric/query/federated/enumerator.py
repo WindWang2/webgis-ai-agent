@@ -464,7 +464,9 @@ def enumerate_federation(ctx: EnumerationContext) -> EnumeratedPlan:
         sub = (mask - 1) & mask
         while sub > 0:
             rest = mask & ~sub
-            if rest:
+            # sub/rest 互补：只按无序划分访问一次，再显式枚举两个方向；
+            # 否则 (sub,rest) 与 (rest,sub) 会在后续迭代重复生成候选。
+            if rest and sub < rest:
                 # 两侧角色交换是**不同计划**（build 侧不同）—— 两个方向都枚举；
                 # 方向合法性（spatial/aggregate 语义）由 _join_candidate 守卫。
                 candidates.extend(_combine(dp, sub, rest, edge_between, by_id, ctx))
@@ -604,9 +606,20 @@ def _enumerate_fixed_chain(
         if crs_meta:
             transforms.append(crs_meta)
         right_tree: LogicalNode = _scan_tree(right_src, ctx)
-        if crs_meta and crs_meta.get("placement") == "server" and right_tree is not None:
-            # server placement 必然落在右 scan（累积左子树无法回溯重扫）。
-            right_tree = _with_output_crs(right_tree, crs_meta["to_crs"])
+        if (
+            crs_meta
+            and crs_meta.get("placement") == "server"
+            and crs_meta.get("transform_side")
+        ):
+            # server placement 落在**决策侧** scan（transform_side）：右 scan，
+            # 或首跳的左 scan（server_capable[0] 仅当 len(sources_in)==1 为真
+            # —— 那时累积左子树本身就是 scan）。绝不一律落右：那会让
+            # transform_side=left 时左侧几何永不变换、右 scan 反被标为目标
+            # CRS，空间跳两侧坐标系静默错位。
+            if crs_meta["transform_side"] == "left":
+                tree = _with_output_crs(tree, crs_meta["to_crs"])
+            elif right_tree is not None:
+                right_tree = _with_output_crs(right_tree, crs_meta["to_crs"])
         right_cand = _Candidate(
             tree=right_tree,
             sources_in=(right_sid,),
@@ -628,7 +641,12 @@ def _enumerate_fixed_chain(
         new_card = _join_cardinality(edge, left_cand, right_cand, by_id)
         cpu = new_card * _W_LOCAL_CPU_PER_ROW
         build = right_rows * _W_BUILD_PER_ROW
-        cost = cost + right_bytes + cpu + build + crs_cost
+        # 与 DP 路径同口径：右侧 scan 也要计不确定性乘子/限流惩罚与请求成本，
+        # 否则多跳链成本被系统性低估。
+        right_scan_cost, _right_disc = _scan_cost(
+            right_src, bytes_cost=right_bytes * _W_BYTES_TRANSFERRED
+        )
+        cost = cost + right_scan_cost + _W_REMOTE_REQUEST + cpu + build + crs_cost
         left_tree: LogicalNode = tree
         if (
             crs_meta

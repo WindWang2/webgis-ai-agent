@@ -526,9 +526,12 @@ def convert_raster_to_mapspec_layer(
   # remains absent and the deterministic raster bounds rule fails truthfully.
   bounds = _extract_bounds(payload)
   arr = _extract_array(payload)
-  palette = (payload.get("raster_source", {}) or {}).get("suggested_palette") or DEFAULT_RASTER_PALETTE
+  raster_source = payload.get("raster_source")
+  if not isinstance(raster_source, dict):
+    raster_source = {}
+  palette = raster_source.get("suggested_palette") or DEFAULT_RASTER_PALETTE
   render_mode = _extract_render_mode(payload)
-  render_params = (payload.get("raster_source", {}) or {}).get("render_params") or {}
+  render_params = raster_source.get("render_params") or {}
   second_array = _extract_second_array(payload)
   provenance = {
       k: v for k, v in payload.items()

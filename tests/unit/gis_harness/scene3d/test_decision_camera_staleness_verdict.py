@@ -11,8 +11,13 @@ from app.services.gis_harness.scene3d.camera import plan_camera
 from app.services.gis_harness.scene3d.capabilities import (
     probe_scene3d_capabilities,
 )
+from app.services.gis_harness.scene3d.cues import Scene3DCues, pitch_cue_present
 from app.services.gis_harness.scene3d.decision import decide_representation
-from app.services.gis_harness.scene3d.evidence import verify_vertical_evidence
+from app.services.gis_harness.scene3d.evidence import (
+    EvidenceBundle,
+    verify_vertical_evidence,
+)
+from app.services.gis_harness.requirement_ir.contracts import VerticalEvidenceRecord
 from app.services.gis_harness.scene3d.staleness import (
     AnalysisBinding,
     evaluate_staleness,
@@ -74,6 +79,14 @@ def test_evidence_extra_height_evidence_channel():
     assert bad.has_height is False
 
 
+def test_evidence_height_evidence_total_bounded_to_eight():
+    """extra(8) + layer 证据叠加时不得写出第 9 条（通道声明 ≤8）。"""
+    extra = [{"ref": f"x{i}", "valid": 1} for i in range(8)]
+    bundle = verify_vertical_evidence(
+        _spec_with_dem(extrusion_valid=5), extra_height_evidence=extra)
+    assert len(bundle.height_attribute) == 8
+
+
 # ── 能力快照（unavailable + alternatives） ───────────────────────────
 
 
@@ -118,6 +131,27 @@ def test_capabilities_pending_directions_typed_unavailable():
         assert entry.unavailable and entry.reason_code == code, key
 
 
+def test_capabilities_long_dem_ids_do_not_overflow_detail():
+    evidence = EvidenceBundle(elevation=[
+        VerticalEvidenceRecord(
+            kind="elevation_dem", ref=(f"dem-{i}").ljust(128, "x"),
+            verified=True, detail="")
+        for i in range(3)])
+    caps = probe_scene3d_capabilities(evidence)
+    assert len(caps.entry("terrain").detail) <= 200
+
+
+def test_capabilities_missing_dem_reason_codes_are_per_capability(monkeypatch):
+    from app.services.gis_harness.scene3d import capabilities as caps_mod
+
+    monkeypatch.setattr(caps_mod, "_tool_available", lambda name: True)
+    caps = caps_mod.probe_scene3d_capabilities(EvidenceBundle())
+    assert caps.entry("viewshed_analysis").reason_code == "SCENE_CAP_VIEWSHED_NO_DEM"
+    assert caps.entry("line_of_sight").reason_code == "SCENE_CAP_LOS_NO_DEM"
+    assert caps.entry("terrain_measurement").reason_code == "SCENE_CAP_MEASUREMENT_NO_DEM"
+    assert caps.entry("cut_fill_volume").reason_code == "SCENE_CAP_CUTFILL_NO_DEM"
+
+
 # ── 决策（用户偏好层 × 决策核） ──────────────────────────────────────
 
 
@@ -158,6 +192,21 @@ def test_decision_ghost_dem_binding_reports_applied_mode_honestly():
     assert "SCENE_MODE_TERRAIN_OMITTED" in codes
     assert {d.applied_mode for d in decision.degradations
             if d.code == "SCENE_MODE_TERRAIN_OMITTED"} == {"2d"}
+
+
+def test_decision_exaggeration_reset_when_applied_mode_differs():
+    """地形被省略导致实际档位回退时，夸张系数建议一并归零。"""
+    decision = decide_representation(
+        user_dimension="2.5d", terrain_requested=True, exaggeration=2.0,
+        evidence=verify_vertical_evidence(_spec_with_dem()),
+        geometry_kinds=["raster"])
+    assert decision.mode == "2d"
+    assert decision.recommended_exaggeration == 0.0
+
+
+def test_pitch_cue_present_reads_cues_without_query():
+    assert pitch_cue_present(Scene3DCues(camera_pitch=15.0)) is True
+    assert pitch_cue_present(Scene3DCues()) is False
 
 
 def test_decision_does_not_auto_bind_dem_without_explicit_id():
@@ -386,6 +435,17 @@ def test_verdict_user_degradation_visible_even_when_display_na():
         degradations=[{"code": "SCENE_USER_3D_NO_HEIGHT_EVIDENCE",
                        "detail": "无高度证据"}])
     assert verdict.verdict == "degraded"
+
+
+def test_verdict_missing_scene_without_receipt_is_not_completed():
+    """反证（review P2）：scene 缺失时 display_gate=not_applicable，缺失的
+    渲染证据曾被豁免降级 → verdict=completed 而 render_evidence=missing，
+    违反「无证据不宣称完成」红线。"""
+    verdict = build_scene3d_verdict(mapspec={"layers": []})
+    assert verdict.render_evidence == "missing"
+    assert verdict.display_gate == "not_applicable"
+    assert verdict.verdict == "degraded"
+    assert any(f.code == "RENDER_EVIDENCE_MISSING" for f in verdict.findings)
 
 
 def test_verdict_display_gate_blocking_on_dangling_terrain():

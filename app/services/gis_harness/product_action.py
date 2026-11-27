@@ -128,7 +128,8 @@ def advise_next_product_action(
 
     # 5) chart facet owed（required 且缺席/禁用）
     for f in facets:
-        if f.kind == KIND_CHART and f.status in (FS_PENDING, FS_NEEDS_REPAIR):
+        if f.kind == KIND_CHART and f.required and f.status in (
+                FS_PENDING, FS_NEEDS_REPAIR):
             return ProductActionRecommendation(
                 facet_id=f.facet_id,
                 kind=f.kind,

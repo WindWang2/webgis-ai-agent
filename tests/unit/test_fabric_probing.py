@@ -115,13 +115,15 @@ def test_cache_ttl_and_revision_mismatch(svc):
     profile, scope_key, rev = _args()
     r1 = svc.probe(adapter, profile, scope_key, rev)
     r2 = svc.probe(adapter, profile, scope_key, rev)
-    assert r1 is r2  # 缓存命中
+    assert r1 == r2  # 缓存命中（返回副本，不共享可变实例）
+    assert r1 is not r2
     # revision 变化（profile 更新）→ 新键 → 重新探测
     r3 = svc.probe(adapter, profile, scope_key, rev + "new")
-    assert r3 is not r1
-    # get 只读披露
+    assert r3 != r1
+    # get 只读披露（同样返回副本）
     got = svc.get(profile.id, scope_key, rev)
-    assert got is r1
+    assert got == r1
+    assert got is not r1
 
 
 def test_cache_capacity_bounded(svc):

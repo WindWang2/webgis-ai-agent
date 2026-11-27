@@ -16,9 +16,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
+import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -70,7 +71,7 @@ def main() -> int:
 
     try:
         manifests = [build_manifest(b, base, REPO) for b in branches]
-    except RuntimeError as exc:
+    except (RuntimeError, subprocess.CalledProcessError, FileNotFoundError) as exc:
         print(f"拒绝：{exc}", file=sys.stderr)
         return 2
 
@@ -79,7 +80,7 @@ def main() -> int:
         print(json.dumps(report, ensure_ascii=False, indent=1))
         return 0 if report["ok"] else 1
 
-    safe = [re.sub(r"[^A-Za-z0-9._\-]", "_", b) for b in branches]
+    safe = [quote(b, safe="._-") for b in branches]
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     stem = f"{safe[0]}_vs_{safe[1]}"
     (OUT_DIR / f"{stem}.json").write_text(

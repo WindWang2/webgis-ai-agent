@@ -58,6 +58,18 @@ describe('data-fabric 披露留存（ADR-0142 D5）', () => {
     expect(seen).toEqual([1, 2]);
   });
 
+  it('单个订阅者抛错不传播给记录方，也不阻断后续订阅者', () => {
+    const seen: number[] = [];
+    const unsubBad = subscribeFabricDisclosure(() => {
+      throw new Error('subscriber boom');
+    });
+    const unsubGood = subscribeFabricDisclosure((snap) => seen.push(snap.recorded));
+    expect(() => recordFabricDisclosure({ engine_breaker: breakerClosedFixture })).not.toThrow();
+    expect(seen).toEqual([1]);
+    unsubBad();
+    unsubGood();
+  });
+
   it('LRU 有界：历史超过 32 条截断', () => {
     for (let i = 0; i < 40; i += 1) {
       recordFabricDisclosure({ engine_breaker: { ...breakerClosedFixture, consecutive_failures: i } });

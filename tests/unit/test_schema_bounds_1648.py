@@ -271,3 +271,196 @@ class TestDataSourceRouteSchemaRejection:
         resp = TestClient(app).post(
             "/api/v1/data-fabric/sources", json=payload, headers=auth_headers)
         assert resp.status_code == 422, resp.text
+
+
+# ── P3 波次：schema 有界 + 未知键显式拒绝 ────────────────────────────
+
+
+class TestCoordinateSourceSpecBounds:
+    def test_ref_over_limit_422(self):
+        from app.schemas.coordinate_operations_schema import SourceSpec
+
+        with pytest.raises(ValidationError):
+            SourceSpec(kind="session_ref", ref="r" * 257)
+
+    def test_unknown_kind_422(self):
+        from app.schemas.coordinate_operations_schema import SourceSpec
+
+        with pytest.raises(ValidationError):
+            SourceSpec(kind="not_a_delivery_source")
+
+    def test_valid_passes(self):
+        from app.schemas.coordinate_operations_schema import SourceSpec
+
+        spec = SourceSpec(kind="session_ref", session_id="s" * 128, ref="r" * 256)
+        assert spec.session_id == "s" * 128
+
+
+class TestExplorerRequestBounds:
+    def test_session_id_over_limit_422(self):
+        from app.schemas.explorer_schema import StartExploreRequest
+
+        with pytest.raises(ValidationError):
+            StartExploreRequest(query="q", session_id="s" * 129)
+
+    def test_source_hint_over_items_cap_422(self):
+        from app.schemas.explorer_schema import StartExploreRequest
+
+        with pytest.raises(ValidationError):
+            StartExploreRequest(query="q", source_hint=["osm"] * 17)
+
+    def test_auto_threshold_out_of_range_422(self):
+        from app.schemas.explorer_schema import StartExploreRequest
+
+        for bad in (-0.1, 1.1):
+            with pytest.raises(ValidationError):
+                StartExploreRequest(query="q", auto_threshold=bad)
+
+    def test_valid_passes(self):
+        from app.schemas.explorer_schema import StartExploreRequest
+
+        req = StartExploreRequest(query="q", session_id="s", auto_threshold=0.5)
+        assert req.auto_threshold == 0.5
+
+
+class TestFeatureEditTargetBounds:
+    def test_feature_ids_over_limit_422(self):
+        from app.schemas.feature_edit_schema import EditTargetModel
+
+        with pytest.raises(ValidationError):
+            EditTargetModel(feature_ids=["f"] * 201)
+
+    def test_feature_ids_at_limit_passes(self):
+        from app.schemas.feature_edit_schema import EditTargetModel
+
+        target = EditTargetModel(feature_ids=["f"] * 200)
+        assert len(target.feature_ids) == 200
+
+
+class TestGeocomputeLineageBounds:
+    def test_lineage_inputs_over_limit_422(self):
+        from app.schemas.geocompute_schema import ExecutionNodeIn
+
+        with pytest.raises(ValidationError):
+            ExecutionNodeIn(
+                node_id="n", category="c",
+                lineage_inputs=[{"ref_id": "r", "kind": "ref"}] * 17,
+            )
+
+    def test_lineage_inputs_at_limit_passes(self):
+        from app.schemas.geocompute_schema import ExecutionNodeIn
+
+        node = ExecutionNodeIn(
+            node_id="n", category="c",
+            lineage_inputs=[{"ref_id": "r", "kind": "ref"}] * 16,
+        )
+        assert len(node.lineage_inputs) == 16
+
+
+class TestSetLayoutBodyBounds:
+    def _body(self, **overrides):
+        from app.schemas.mapspec_mutation_schema import SetLayoutBody
+
+        payload = {"intent": "set_layout", "expected_revision": 0}
+        payload.update(overrides)
+        return SetLayoutBody(**payload)
+
+    def test_components_over_items_cap_422(self):
+        with pytest.raises(ValidationError):
+            self._body(components=[{"id": "c"}] * 129)
+
+    def test_controls_over_items_cap_422(self):
+        with pytest.raises(ValidationError):
+            self._body(controls=[{"type": "scale"}] * 65)
+
+    def test_frames_over_items_cap_422(self):
+        with pytest.raises(ValidationError):
+            self._body(frames=[{"id": "f"}] * 201)
+
+    def test_small_payload_passes(self):
+        body = self._body(
+            controls=[{"type": "scale"}], components=[{"id": "c"}], frames=[])
+        assert body.components == [{"id": "c"}]
+
+
+class TestRasterSamplingBounds:
+    def test_source_bands_over_per_source_cap_422(self):
+        from app.schemas.raster_sampling_schema import SourceSpecIn
+
+        with pytest.raises(ValidationError):
+            SourceSpecIn(ref_id="r", bands=list(range(1, 10)))
+
+    def test_source_band_dicts_over_cap_422(self):
+        from app.schemas.raster_sampling_schema import SourceSpecIn
+
+        with pytest.raises(ValidationError):
+            SourceSpecIn(ref_id="r", band_labels={str(i): "x" for i in range(17)})
+
+    def test_points_ref_over_limit_422(self):
+        from app.schemas.raster_sampling_schema import PlanCreateIn
+
+        with pytest.raises(ValidationError):
+            PlanCreateIn(
+                mode="source_points", points_ref="r" * 129,
+                sources=[{"ref_id": "s1"}],
+            )
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf")])
+    def test_station_step_non_finite_422(self, bad):
+        from app.schemas.raster_sampling_schema import PlanCreateIn, PlanReviseIn
+
+        with pytest.raises(ValidationError):
+            PlanCreateIn(mode="line_stations", station_step=bad,
+                         sources=[{"ref_id": "s1"}])
+        with pytest.raises(ValidationError):
+            PlanReviseIn(expected_revision=1, station_step=bad)
+
+
+class TestStoryCompileRequestBounds:
+    def test_messages_over_items_cap_422(self):
+        from app.schemas.storymap_schema import StoryCompileRequest
+
+        with pytest.raises(ValidationError):
+            StoryCompileRequest(messages=[{"role": "user"}] * 201)
+
+    def test_messages_at_cap_passes(self):
+        from app.schemas.storymap_schema import StoryCompileRequest
+
+        req = StoryCompileRequest(messages=[{"role": "user"}] * 200)
+        assert len(req.messages) == 200
+
+
+class TestExtraForbidRegression:
+    """拼错键必须 422 显式拒绝，不静默丢弃（与同包 extra=forbid 纪律一致）。"""
+
+    @pytest.mark.parametrize("model,payload", [
+        ("ProjectCreate", {"name": "x", "descripton": "typo"}),
+        ("ProjectUpdate", {"namd": "typo"}),
+        ("DatasetAttach", {"name": "d", "source_type": "upload", "sorce_ref": "x"}),
+        ("WorkflowCreate", {"name": "w", "graph_spec": {"steps": []}, "graph_specs": {}}),
+        ("GenerateReportRequest", {"session_id": "s", "formatt": "pdf"}),
+        ("StoryCompileRequest", {"messages": [{"role": "user"}], "mesagess": []}),
+        ("SourceSpecIn", {"ref_id": "r", "bandz": [1]}),
+        ("PlanCreateIn", {"mode": "source_points", "sources": [{"ref_id": "r"}], "ponts_ref": "x"}),
+        ("PlanReviseIn", {"expected_revision": 1, "station_steps": 5}),
+        ("PreviewIn", {"limit": 8, "limitt": 9}),
+        ("ExecuteIn", {"background": False, "backgroud": True}),
+    ])
+    def test_unknown_key_rejected(self, model, payload):
+        import importlib
+
+        module = importlib.import_module({
+            "ProjectCreate": "app.schemas.project_schema",
+            "ProjectUpdate": "app.schemas.project_schema",
+            "DatasetAttach": "app.schemas.project_schema",
+            "WorkflowCreate": "app.schemas.project_schema",
+            "GenerateReportRequest": "app.schemas.report_schema",
+            "StoryCompileRequest": "app.schemas.storymap_schema",
+            "SourceSpecIn": "app.schemas.raster_sampling_schema",
+            "PlanCreateIn": "app.schemas.raster_sampling_schema",
+            "PlanReviseIn": "app.schemas.raster_sampling_schema",
+            "PreviewIn": "app.schemas.raster_sampling_schema",
+            "ExecuteIn": "app.schemas.raster_sampling_schema",
+        }[model])
+        with pytest.raises(ValidationError):
+            getattr(module, model)(**payload)

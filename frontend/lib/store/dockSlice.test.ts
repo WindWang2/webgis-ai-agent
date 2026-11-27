@@ -116,6 +116,14 @@ describe('dockSlice', () => {
     if (height) Object.defineProperty(window, 'innerHeight', height);
   });
 
+  it('narrow viewports keep map room instead of the 560 floor', () => {
+    // 700px 视口：560 会占 80% —— room（视口 − 280，为地图预留）必须赢。
+    expect(rightDockWidthLimit(700)).toEqual({ min: 260, max: 420 });
+    expect(rightDockWidthLimit(600).max).toBe(320);
+    // 宽视口仍按 0.45 比例增长（既有上限语义不变）。
+    expect(rightDockWidthLimit(2400).max).toBe(1080);
+  });
+
   it('dock sizes clamp, persist in the slice and reset', () => {
     useHudStore.getState().setRightDockWidth(800);
     expect(useHudStore.getState().rightDockWidth).toBe(560);

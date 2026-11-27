@@ -243,3 +243,44 @@ class TestIdentityProjection:
 
 if __name__ == "__main__":
     pytest.main([__file__])
+
+
+class TestStyleOnlyCoversSceneWork:
+    """P2：style_only 只比 deps/layers/components、漏 scene_work —— 仅增删
+    scene 资产或改其 visible/format 时仍报 style_only=True（而 work_fingerprint
+    已变）。"""
+
+    @staticmethod
+    def _scene_spec(assets):
+        spec = _spec(
+            [{"id": "l1", "type": "circle", "source": "s1"}],
+            {"s1": {"type": "geojson", "content_revision": 3},
+             "model-a": {"type": "model3d", "format": "gltf",
+                         "content_revision": 5}},
+        )
+        spec["scene"] = {"mode": "3d", "assets": assets}
+        return spec
+
+    def test_scene_asset_added_is_not_style_only(self):
+        prev = _project(self._scene_spec([]))
+        env = _project(
+            self._scene_spec([{"id": "campus", "source": "model-a"}]),
+            revision=4, fingerprint="fp-scene-2", previous=prev)
+        assert env.invalidation.style_only is False
+
+    def test_scene_asset_visibility_flip_is_not_style_only(self):
+        prev = _project(
+            self._scene_spec([{"id": "campus", "source": "model-a"}]))
+        env = _project(
+            self._scene_spec([{"id": "campus", "source": "model-a",
+                               "visible": False}]),
+            revision=5, fingerprint="fp-scene-3", previous=prev)
+        assert env.invalidation.style_only is False
+
+    def test_unchanged_scene_work_stays_style_only(self):
+        assets = [{"id": "campus", "source": "model-a"}]
+        prev = _project(self._scene_spec(assets))
+        env = _project(
+            self._scene_spec([dict(a) for a in assets]),
+            revision=6, fingerprint="fp-scene-4", previous=prev)
+        assert env.invalidation.style_only is True

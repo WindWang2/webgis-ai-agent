@@ -165,7 +165,10 @@ def _render_static_maps(
             ).svg
             if isinstance(svg, str) and svg.strip():
                 maps[block.id] = svg
-        except Exception:  # noqa: BLE001 — 渲染失败 → 真实告警（HTML 内披露）
+        except Exception as exc:  # noqa: BLE001 — 渲染失败 → 真实告警（HTML 内披露）
+            warnings.append(
+                f"map_view {block.id}: 静态渲染失败"
+                f"（{type(exc).__name__}: {exc}），该块不附静态图件")
             continue
     return maps, warnings
 
@@ -282,14 +285,15 @@ async def freeze_brief_release(
             release_no=release_no, frozen_revision=frozen_revision,
             status="ready", manifest=manifest_text,
             content_sha256=content_sha, html_object_key=html_sha)
-        db.add(candidate)
         try:
-            await db.flush()
+            # SAVEPOINT 只回滚本帧：同事务其他挂起变更不得随竞争重试丢失。
+            async with db.begin_nested():
+                db.add(candidate)
+                await db.flush()
             release = candidate
             break
         except IntegrityError as exc:
             last_integrity_error = exc
-            await db.rollback()
             existing = await db.scalar(select(MapBriefRelease).where(
                 MapBriefRelease.content_sha256 == content_sha))
             if existing is not None:

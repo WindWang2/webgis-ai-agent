@@ -42,6 +42,13 @@ function stopMapKeys(e: ReactKeyboardEvent) {
   e.stopPropagation();
 }
 
+/** 数值输入：空串/非法值返回 null（NaN 经 JSON 序列化成 null 会静默损坏版式）。 */
+function numberInput(raw: string): number | null {
+  if (raw.trim() === '') return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
 export function PrintLayoutPanel({ onClose }: Props) {
   const t = useT();
   const [state, dispatch] = useReducer(reducePrintLayout, undefined, initialPrintLayoutState);
@@ -97,7 +104,8 @@ export function PrintLayoutPanel({ onClose }: Props) {
   const fieldErrors = useMemo(() => draftFieldErrors(state.draft), [state.draft]);
   const dirty = useMemo(
     () => isDraftDirty(state.committed, state.draft), [state.committed, state.draft]);
-  const fontsUnavailable = caps?.fonts.every((f) => !f.available) ?? false;
+  const fontList = caps?.fonts ?? [];
+  const fontsUnavailable = fontList.length > 0 && fontList.every((f) => !f.available);
   const exportUnavailable = state.phase === 'font_unavailable' || fontsUnavailable
     || !state.committed || fieldErrors.length > 0;
 
@@ -301,6 +309,7 @@ export function PrintLayoutPanel({ onClose }: Props) {
         <label className="flex items-center gap-1 text-meta">
           {t('workbench.printLayout.paper')}
           <select className="input input-sm" value={state.draft?.paper.profile ?? 'a4_landscape'}
+                  disabled={!state.draft}
                   onKeyDown={stopMapKeys}
                   onChange={(e) => {
                     const capsEntry = caps?.paper_profiles[e.target.value];
@@ -331,7 +340,11 @@ export function PrintLayoutPanel({ onClose }: Props) {
           {t('workbench.printLayout.zoom')}
           <input className="input input-sm w-16" type="number" min={0.25} max={4}
                  step={0.25} value={state.zoom} onKeyDown={stopMapKeys}
-                 onChange={(e) => dispatch({ type: 'zoom', zoom: Number(e.target.value) })} />
+                 onChange={(e) => {
+                   const zoom = numberInput(e.target.value);
+                   if (zoom == null) return;
+                   dispatch({ type: 'zoom', zoom });
+                 }} />
         </label>
         <button type="button" className="btn btn-ghost text-meta" onClick={saveTemplate}
                 disabled={!state.draft || state.busy}>
@@ -463,9 +476,13 @@ export function PrintLayoutPanel({ onClose }: Props) {
                            type="number" step={0.5} disabled={c.locked}
                            value={c.frame[k]} onKeyDown={stopMapKeys}
                            aria-label={`${c.id}-${k}`}
-                           onChange={(e) => patchComponent(c.id, {
-                             frame: { ...c.frame, [k]: Number(e.target.value) },
-                           })} />
+                           onChange={(e) => {
+                             const value = numberInput(e.target.value);
+                             if (value == null) return;
+                             patchComponent(c.id, {
+                               frame: { ...c.frame, [k]: value },
+                             });
+                           }} />
                   </label>
                 ))}
               </div>

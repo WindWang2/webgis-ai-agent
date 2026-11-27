@@ -4,11 +4,13 @@
 descriptor-first（绝不 resolve payload）、viewport 取数优先级、确定性、
 diff 变更分组与 revision 单调守卫、快照只前进。
 """
+import asyncio
 import uuid
 
 import pytest
 
-from app.services.gis_situation.compiler import compile_situation
+from app.services.gis_situation.compiler import compile_interaction, compile_situation
+from app.services.gis_situation.contract import MAX_LAYER_SUMMARIES
 from app.services.gis_situation.diff import (
     advance_snapshot,
     diff_situation,
@@ -189,6 +191,75 @@ async def test_compile_empty_session_all_unknown():
         assert fact.status in ("unknown", "known")
     assert situation.map.layers.status == "unknown"
     assert situation.evidence.sources_unavailable == []
+
+
+@pytest.mark.asyncio
+async def test_compile_layer_ids_bounded_like_layer_summaries():
+    """layer_ids 与 layers 同裁剪上限：>100 层不得全量随快照持久化。"""
+    session_id = _sid()
+    spec = {
+        "layers": [
+            {"id": f"lyr-{i}", "type": "circle"}
+            for i in range(MAX_LAYER_SUMMARIES + 25)
+        ],
+    }
+    situation = await compile_situation(
+        session_id, store=FakeSituationStore(),
+        mapspec_store=FakeMapspecStore(spec),
+    )
+    assert len(situation.map.layers.value) == MAX_LAYER_SUMMARIES
+    assert len(situation.map.layer_ids.value) == MAX_LAYER_SUMMARIES
+    assert "map.layers(+25)" in situation.evidence.omitted
+
+
+def test_compile_interaction_tolerates_non_numeric_journal_dropped():
+    """journal.dropped 非数值 → 按 0 处理，不得使整轮编译抛错。"""
+    ctx = compile_interaction(
+        {"_feature_edit_journals": {
+            "ref:a": {
+                "dropped": "not-a-number",
+                "entries": [{"seq": 1, "kind": "update", "actor": "user",
+                             "origin": "ui", "deltas": [], "schema_ops": []}],
+            },
+        }},
+        [],
+    )
+    assert ctx.feature_edits.status == "known"
+    assert ctx.feature_edits.value[0]["journal_dropped"] is None
+
+
+def test_compile_interaction_sorts_mixed_type_journal_seq():
+    """journal entries 混型 seq → 稳定排序，不得 TypeError。"""
+    ctx = compile_interaction(
+        {"_feature_edit_journals": {
+            "ref:a": {"entries": [
+                {"seq": "later", "kind": "update"},
+                {"seq": 3, "kind": "update"},
+            ]},
+        }},
+        [],
+    )
+    assert [r["seq"] for r in ctx.feature_edits.value] == [3, "later"]
+
+
+@pytest.mark.asyncio
+async def test_bounded_descriptors_times_out_a_hanging_store(monkeypatch):
+    """描述符 fan-out 与 5 源同纪律：挂起的 get_ref_descriptor 不得阻塞编译。"""
+    from app.services.gis_situation import compiler as compiler_mod
+    from app.services.gis_situation.contract import SituationEvidence
+
+    class _HangingStore:
+        async def get_ref_descriptor(self, session_id, ref_id):
+            await asyncio.sleep(3600)
+
+    monkeypatch.setattr(compiler_mod, "_SOURCE_TIMEOUT_S", 0.05)
+    result = await asyncio.wait_for(
+        compiler_mod._bounded_descriptors(
+            "s1", _HangingStore(), {"ref:a": "别名"}, [], SituationEvidence(),
+        ),
+        timeout=1.0,
+    )
+    assert result == {}
 
 
 # ── diff / snapshot（S3）──────────────────────────────────────────────────

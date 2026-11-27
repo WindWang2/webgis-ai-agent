@@ -37,9 +37,9 @@ function parseArgs(argv) {
   return out;
 }
 
-function pinYinish(s) {
+export function pinYinish(s) {
   // Semantic-ish key from first few CJK + latin; fallback hash
-  const latin = s.replace(CJK, '').replace(/[^a-zA-Z0-9]+/g, ' ').trim();
+  const latin = s.replace(new RegExp(CJK.source, 'g'), '').replace(/[^a-zA-Z0-9]+/g, ' ').trim();
   if (latin.length >= 3) {
     return latin
       .split(/\s+/)
@@ -329,11 +329,16 @@ function transformFile(relPath, ns, catalogZh, catalogEn, usedKeys) {
   return { changed: true, keys: kept.length, bytes: out.length };
 }
 
-function injectUseT(src, ns) {
-  // Only inject into React component-like functions (PascalCase name) or hooks (useX).
-  const re = /((?:export\s+)?function\s+([A-Za-z0-9_]+)\s*\([^)]*\)\s*(?::\s*[^{]+)?\{)/g;
+export function injectUseT(src, ns) {
+  // Only inject into React component-like functions (PascalCase name) or hooks (useX),
+  // whether declared as `function Foo(...) {` or as a block-bodied arrow
+  // `const Foo = (...) => {` / `export const Foo = (...) => {`.
+  const fnRe = /((?:export\s+)?function\s+([A-Za-z0-9_]+)\s*\([^)]*\)\s*(?::\s*[^{]+)?\{)/g;
+  const arrowRe = /((?:export\s+)?const\s+([A-Za-z0-9_]+)\s*(?::[^=]+)?=\s*(?:async\s+)?(?:\([^)]*\)|[A-Za-z0-9_]+)\s*(?::\s*[^=]+)?=>\s*\{)/g;
   let out = src;
-  const matches = [...src.matchAll(re)];
+  const matches = [...src.matchAll(fnRe), ...src.matchAll(arrowRe)].sort(
+    (a, b) => a.index - b.index,
+  );
   for (let i = matches.length - 1; i >= 0; i--) {
     const m = matches[i];
     const name = m[2];

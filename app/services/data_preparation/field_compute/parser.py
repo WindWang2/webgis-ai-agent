@@ -229,9 +229,6 @@ class _Parser:
                         break
                 return {"kind": "call", "name": tok.text, "args": args}
             return {"kind": "field", "name": tok.text}
-        if tok.kind == "op" and tok.text == "=":
-            raise CompileError("UNKNOWN_OPERATOR", "单等号不是合法算子（比较请用 ==）",
-                               position=tok.pos, hint="使用 == / !=")
         raise CompileError("UNKNOWN_NODE", f"无法解析 {tok.text!r}",
                            position=tok.pos, hint="检查表达式语法")
 
@@ -566,7 +563,8 @@ def compile_columns(raw_columns: Sequence[Any], ctx: CompileContext
         deps = set(d for d in _deps(node))
         if name in deps:
             raise _err("CYCLIC_DEPENDENCY", f"计算列 {name!r} 引用了自身")
-        later = deps & set(str(r.get("name") or "") for r in raw_columns[idx + 1:])
+        later = deps & set(str(r.get("name") or "") if isinstance(r, dict)
+                           else "" for r in raw_columns[idx + 1:])
         if later:
             raise _err("FORWARD_REFERENCE",
                        f"计算列 {name!r} 前向引用 {sorted(later)}",

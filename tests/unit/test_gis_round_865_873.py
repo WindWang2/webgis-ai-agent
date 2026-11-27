@@ -324,3 +324,22 @@ def test_review_g4_ambiguous_district_codes_are_or_joined(gd_env, monkeypatch):
     assert fc1["count"] == 12
     fc2 = local_poi.query_gd_poi(district="同名区", name_like="小学A", limit=100)
     assert fc2["count"] == 12
+
+
+# ─── 审查 P1: 省级编码 district='510000' → 2 位前缀必须范围展开 ─────────────
+
+def test_review_province_level_district_code_expands_to_prefix(gd_env):
+    """district='510000'（_resolve_district_codes → ['51']）必须命中全省行。
+
+    旧实现 district 谓词非 4 位即按 6 位精确匹配 → adcode='51' 恒 0 行。
+    """
+    from app.services import local_poi
+
+    for district in ["510000", "51"]:
+        fc = local_poi.query_gd_poi(district=district, limit=100)
+        assert not fc.get("error"), fc
+        assert fc["count"] == 24, f"省级 district={district!r} 必须命中全省 24 行"
+        assert {f["properties"].get("adcode") for f in fc["features"]} == {"510104", "510181"}
+    # 市级 4 位 / 区县级 6 位行为不变
+    assert local_poi.query_gd_poi(district="510100", limit=100)["count"] == 24
+    assert local_poi.query_gd_poi(district="510104", limit=100)["count"] == 12

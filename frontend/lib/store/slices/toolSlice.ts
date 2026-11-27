@@ -44,6 +44,9 @@ export const MAP_TOOLS: readonly MapToolId[] = [
   'delete_feature',
   'edit_labels',
   'split_feature',
+  // G48：地图选点虽是配准面板专用工具，仍属同一封闭词表 —— 漏收会让
+  // 按 MAP_TOOLS 渲染/校验的调用方无法激活它。
+  'georef_pick_map',
 ];
 
 /** G14：真实图层编辑目标（HUD 行 ↔ ref 绑定；null = 未进入编辑）。 */

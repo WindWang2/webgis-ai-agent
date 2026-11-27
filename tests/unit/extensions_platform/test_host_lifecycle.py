@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 
 
-from app.extensions_platform.diagnostics import DiagnosticCode, has_errors
+from app.extensions_platform.diagnostics import DiagnosticCode, ExtensionDiagnostic, has_errors
 from app.extensions_platform.host import ExtensionHost, ExtensionState, HostPolicy
 from app.extensions_platform.permissions import Permission
 from app.tools.registry import ToolRegistry
@@ -669,3 +669,114 @@ class TestUnsignedAuditTrail:
         ]
         assert record.audit_diagnostics[0].severity.value == "info"
         assert any("unsigned local_untrusted" in r.getMessage() for r in caplog.records)
+
+
+class TestLifecycleLocking:
+    """P2：改写 _records / sys.modules 的生命周期面必须持 ``_lifecycle``，
+    与 discover/activate 串行（持锁面之外的 read-then-write 会与 discover
+    的记录替换竞态 → 状态更新丢失 / 操作孤儿对象）。"""
+
+    def _pack_host(self, tmp_path: Path) -> ExtensionHost:
+        _write_tool_ext(tmp_path, "acme", "pack")
+        host = _host(tmp_path, ToolRegistry())
+        host.activate("acme.pack")
+        host.deactivate("acme.pack")  # COMPATIBLE：reload/unload 不走 deactivate
+        return host
+
+    @staticmethod
+    def _assert_blocks_while_locked(host: ExtensionHost, op) -> None:
+        """持锁执行 op（子线程）：未修复时 op 不取锁会立即完成。"""
+        import threading
+
+        assert host._lifecycle.acquire()
+        done = threading.Event()
+
+        def _run() -> None:
+            op()
+            done.set()
+
+        worker = threading.Thread(target=_run, daemon=True)
+        worker.start()
+        try:
+            assert not done.wait(0.3), (
+                "operation mutated host state without holding _lifecycle"
+            )
+        finally:
+            host._lifecycle.release()
+        assert done.wait(5.0), "operation did not finish after the lock was released"
+
+    def test_unload_waits_for_lifecycle_lock(self, tmp_path):
+        host = self._pack_host(tmp_path)
+        try:
+            self._assert_blocks_while_locked(host, lambda: host.unload("acme.pack"))
+            assert host.get_record("acme.pack").state is ExtensionState.DISCOVERED
+        finally:
+            host.reset()
+
+    def test_reload_waits_for_lifecycle_lock(self, tmp_path):
+        host = self._pack_host(tmp_path)
+        try:
+            self._assert_blocks_while_locked(
+                host, lambda: host.reload("acme.pack", activate=False)
+            )
+            assert host.get_record("acme.pack").state is ExtensionState.COMPATIBLE
+        finally:
+            host.reset()
+
+    def test_upgrade_waits_for_lifecycle_lock(self, tmp_path, monkeypatch):
+        """upgrade 的预检 + reload 全程持锁：持锁时预检都不得开跑（否则
+        与 discover 的记录替换竞态）。"""
+        import threading
+
+        from app.extensions_platform import host as host_module
+
+        host = self._pack_host(tmp_path)
+        calls: list[str] = []
+        original = host_module._reread_manifest
+
+        def _spy(path):
+            calls.append(str(path))
+            return original(path)
+
+        monkeypatch.setattr(host_module, "_reread_manifest", _spy)
+        try:
+            assert host._lifecycle.acquire()
+            done = threading.Event()
+
+            def _run() -> None:
+                host.upgrade("acme.pack")
+                done.set()
+
+            worker = threading.Thread(target=_run, daemon=True)
+            worker.start()
+            try:
+                assert not done.wait(0.3), (
+                    "upgrade() must hold _lifecycle across preflight and reload"
+                )
+                assert not calls, "upgrade preflight must not run without _lifecycle"
+            finally:
+                host._lifecycle.release()
+            assert done.wait(5.0), "upgrade did not finish after the lock was released"
+        finally:
+            host.reset()
+
+    def test_worker_death_handler_waits_for_lifecycle_lock(self, tmp_path):
+        """P2：_on_worker_death 由工具代理线程调用，其
+        _deactivate_for_revocation 遍历 _records 与 discover 的插入竞态。"""
+        _write_tool_ext(tmp_path, "acme", "pack")
+        host = _host(tmp_path, ToolRegistry())
+        host.activate("acme.pack")
+        record = host.get_record("acme.pack")
+        try:
+            self._assert_blocks_while_locked(
+                host,
+                lambda: host._on_worker_death(
+                    record,
+                    ExtensionDiagnostic.error(
+                        DiagnosticCode.WORKER_CRASHED, "synthetic crash"
+                    ),
+                ),
+            )
+            assert record.state is ExtensionState.COMPATIBLE
+        finally:
+            host.reset()

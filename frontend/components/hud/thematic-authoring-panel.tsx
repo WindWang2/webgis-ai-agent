@@ -228,7 +228,10 @@ export function ThematicAuthoringPanel({ layerId }: Props) {
       setPreview(null);
       setPreviewError(asThematicError(err));
     } finally {
-      if (epoch === epochRef.current) setBusy(false);
+      // 预览不占有 epoch：在途时外部提交/reload 会推进 epochRef，若按
+      // epoch 相等才释放，busy 将永久为真 —— 面板按钮此后全部禁用
+      // （同 runCommit 的 R2 #2180 收尾口径）。
+      setBusy(false);
     }
   }, [getCtx, buildPlan, layerId]);
 

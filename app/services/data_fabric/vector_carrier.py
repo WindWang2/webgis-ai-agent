@@ -364,6 +364,7 @@ def iter_features_to_arrow_batches(
     frozen_base_schema: Any = None
     run_bbox: Optional[List[float]] = None
     run_types: set = set()
+    first_batch_columns: Optional[Tuple[List[str], Dict[str, Any], List[Any]]] = None
 
     for batch_idx, features in enumerate(feature_batches):
         if not features:
@@ -373,7 +374,9 @@ def iter_features_to_arrow_batches(
                 pa_schema = schema if isinstance(schema, pa.Schema) else pa.schema(schema)
                 frozen_types = {f.name: f.type for f in pa_schema if f.name != "geometry"}
             else:
-                order, columns, _ = _features_to_columns(features)
+                order, columns, wkb_list = _features_to_columns(features)
+                # 批次 0 的列编码复用给下面的数组构建（几何 WKB 只编码一次）。
+                first_batch_columns = (order, columns, wkb_list)
                 frozen_types = {}
                 for k in order:
                     try:
@@ -391,7 +394,11 @@ def iter_features_to_arrow_batches(
                 metadata={"geo": json.dumps(_geo_metadata(crs))},
             )
 
-        order, columns, wkb_list = _features_to_columns(features)
+        if first_batch_columns is not None:
+            order, columns, wkb_list = first_batch_columns
+            first_batch_columns = None
+        else:
+            order, columns, wkb_list = _features_to_columns(features)
         unknown = [k for k in order if k not in frozen_types]
         if unknown:
             raise VectorCarrierSchemaDriftError(

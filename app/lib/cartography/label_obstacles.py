@@ -83,8 +83,10 @@ def project_box_intersects_viewport(box: Box, viewport: Sequence[float]) -> bool
 def _iter_rings(coords: Any) -> List[List[Sequence[float]]]:
     """LineString/MultiLineString/Polygon/MultiPolygon → 线串列表。
 
-    Polygon 只取外环（边界墨迹语义 —— 洞边界的墨迹同样真实，但保守
-    起见 v1 只取外环；洞内放置由外环障碍与文本盒实际碰撞决定）。"""
+    Polygon/MultiPolygon 取**全部环**（外环 + 洞环）：洞边界的墨迹同样
+    真实绘制在地图上，标签压线即误读，故一律作为障碍（与 TS 孪生
+    ``label-obstacles.ts`` 的 ``iterRings`` 逐行同口径）。填充内部不参与
+    —— 只取边界墨迹（见 ``extract_polygon_boundary_obstacles``）。"""
     out: List[List[Sequence[float]]] = []
     if not isinstance(coords, list):
         return out
@@ -193,7 +195,11 @@ def extract_polygon_boundary_obstacles(
     viewport: Sequence[float],
     budget: int = MAX_SEGMENT_OBSTACLES_PER_LAYER,
 ) -> List[ObstacleBox]:
-    """polygon 图层要素 → 外环边界墨迹障碍（填充不参与 —— 语义纪律）。"""
+    """polygon 图层要素 → 边界墨迹障碍（外环 + 洞环；填充不参与 —— 语义纪律）。
+
+    洞环同取：洞边界是真实墨迹，标签压线即误读（与 TS 孪生
+    ``extractPolygonBoundaryObstacles`` 同口径）。
+    """
     out: List[ObstacleBox] = []
     remaining = budget
     for feat in features:

@@ -61,6 +61,12 @@ beforeEach(() => {
 });
 
 describe('DataGcPanel', () => {
+  it('执行夹具的计数与明细数组一致', () => {
+    const result = makeGcExecuteResponse();
+    expect(result.retention.deleted_revision_count).toBe(result.retention.deleted_revisions.length);
+    expect(result.retention.deleted_blob_count).toBe(result.retention.deleted_blobs.length);
+  });
+
   it('渲染用量配额（进度条 + 配额徽章 + 宽限期）', async () => {
     render(<DataGcPanel projectId="p1" authed />);
     expect(await screen.findByText(/存储用量/)).toBeInTheDocument();
@@ -92,7 +98,17 @@ describe('DataGcPanel', () => {
       await new Promise((r) => setTimeout(r, 260));
     });
     fireEvent.click(screen.getByRole('button', { name: '确认永久删除以上候选？' }));
-    await waitFor(() => expect(api.executeDataGc).toHaveBeenCalledWith('p1', expect.anything()));
+    await waitFor(() =>
+      expect(api.executeDataGc).toHaveBeenCalledWith('p1', expect.objectContaining({
+        expectedPlanFingerprint: 'reviewed-plan',
+      })),
+    );
+    // confirm:true is hard-coded in the API module (this test mocks that module
+    // away, so assert the contract at its source).
+    const { readFileSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const apiSrc = readFileSync(resolve(__dirname, '../../lib/api/project-assets.ts'), 'utf8');
+    expect(apiSrc).toMatch(/confirm:\s*true/);
     expect(await screen.findByText(/回收回执/)).toBeInTheDocument();
     expect(screen.getByText(/保护跳过（1）/)).toBeInTheDocument();
     expect(toastStore.addToast).toHaveBeenCalledWith(expect.stringContaining('回收完成：释放'), 'success');

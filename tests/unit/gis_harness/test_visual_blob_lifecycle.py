@@ -249,3 +249,18 @@ def test_blob_ref_lock_degrades_without_filesystem_root():
 
     with blob_ref_lock(_ObjStore(), "ab" * 16):
         pass
+
+
+def test_blob_ref_lock_no_fcntl_on_non_filesystem_backend(monkeypatch):
+    """无 fcntl 平台 + 非 FS 后端：不得在 root 判定前导入 fcntl。"""
+    import sys
+
+    from app.services.gis_harness.visual_observation.blob_lock import blob_ref_lock
+
+    monkeypatch.setitem(sys.modules, "fcntl", None)
+
+    class _ObjStore:
+        pass
+
+    with blob_ref_lock(_ObjStore(), "cd" * 16):
+        pass

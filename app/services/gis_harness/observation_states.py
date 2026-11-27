@@ -117,7 +117,24 @@ def build_observation_summary(
         return {"aggregate": "unknown", "health": HEALTH_BLOCKED,
                 "layers": {}, "charts": {}}
     layers: Dict[str, str] = {}
-    for lid, entry in list((observation.get("layers") or {}).items())[:32]:
+    # canonical 载荷是 list[dict]（chat_schema：条目带 id/runtime_store_id，
+    # 与 map_critique._observed_layers 同索引口径）；dict 形状保留兼容
+    # （旧客户端/手工构造）。此前对 list 直接 .items() 抛 AttributeError
+    # —— 摘要/health 投影全失效。
+    raw_layers = observation.get("layers")
+    if isinstance(raw_layers, dict):
+        layer_items = list(raw_layers.items())[:32]
+    else:
+        indexed: Dict[str, Dict[str, Any]] = {}
+        for entry in (raw_layers or [])[:32]:
+            if not isinstance(entry, dict):
+                continue
+            for key in ("id", "runtime_store_id"):
+                val = str(entry.get(key) or "")
+                if val and val not in indexed:
+                    indexed[val] = entry
+        layer_items = list(indexed.items())
+    for lid, entry in layer_items:
         layers[str(lid)[:64]] = layer_observation_state(
             entry if isinstance(entry, dict) else None,
             intent_verified=intent_verified)

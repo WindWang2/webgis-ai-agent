@@ -58,7 +58,12 @@ class MissionBridge:
         self, watch: SpatialWatch, event: Dict[str, Any]
     ) -> list:
         org = watch.org_id
-        unfinished = self.runtime.store.list_unfinished(org_id=org, limit=100)
+        # 取**最新**的未终态窗口（store 上限 500）：ascending 窗口会把
+        # 真正最近更新的 mission 排除在外。返回前按 updated_at 升序归一，
+        # 调用方 ``cands[-1]`` 即「最近更新的匹配 mission」。
+        unfinished = self.runtime.store.list_unfinished(
+            org_id=org, limit=500, newest_first=True
+        )
         scope_project = watch.mission_project_id or event.get("project_id")
         session_id = watch.session_id or event.get("session_id")
         if not session_id:
@@ -72,6 +77,7 @@ class MissionBridge:
             if scope_project and not m.project_id:
                 continue
             out.append(m)
+        out.sort(key=lambda m: (m.updated_at, m.created_at, m.mission_id))
         return out
 
     # ── 动作 ─────────────────────────────────────────────────────────
@@ -101,7 +107,9 @@ class MissionBridge:
                 user_id="spatial-events",
                 project_id=watch.mission_project_id or event.get("project_id"),
                 root_goal=goal,
-                session_id=str(event.get("session_id") or ""),
+                session_id=str(
+                    watch.session_id or event.get("session_id") or ""
+                ),
                 mission_id=mission_id,
             )
         except Exception as e:  # noqa: BLE001 — 主键冲突 = 对方已创建

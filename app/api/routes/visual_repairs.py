@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import time
+from contextlib import asynccontextmanager
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile
@@ -80,9 +81,9 @@ def _split_fresh_findings(
     return split_fresh_findings(findings, current_revision)
 
 
-async def _known_layer_ids(session_id: str) -> List[str]:
-    loaded = await _engine.store.get_mapspec(session_id)
-    layers = (loaded or {}).get("layers") if isinstance(loaded, dict) else None
+def _known_layer_ids(mapspec: Any) -> List[str]:
+    """已加载 mapspec → 有界 layer id 列表（plan 只加载一次，不整档重读）。"""
+    layers = (mapspec or {}).get("layers") if isinstance(mapspec, dict) else None
     if not isinstance(layers, list):
         return []
     return [
@@ -97,6 +98,23 @@ async def _current_revision(session_id: str) -> int:
     )
 
     return await current_mutation_revision(session_id)
+
+
+@asynccontextmanager
+async def _decision_lock(session_id: str):
+    """visual-repair 决策锁：锁不可用 → 503（与引擎侧同语义），
+    不让 LockDegraded/LockLost/LockContention 直穿成 500。"""
+    from app.services.distributed_lock import session_lock
+
+    try:
+        async with session_lock("visual-repair-decision:" + session_id):
+            yield
+    except (LockContentionError, LockDegradedError, LockLostError):
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "session_lock_unavailable",
+                    "message": "会话锁暂不可用，状态未修改，请稍后重试。"},
+        ) from None
 
 
 def _op_preview(op: Any, locked_ids: set) -> Dict[str, Any]:
@@ -137,13 +155,14 @@ async def plan_visual_repair(
             reason="no_visual_findings").model_dump()
 
     base_revision = await _current_revision(session_id)
+    all_findings = findings
     findings, stale_count = _split_fresh_findings(findings, base_revision)
     if req.finding_ids:
         # 定向修复的 id 全部真实存在但无一新鲜 → 原因是 stale（而非
         # 不可自愈）；id 不存在的 miss 仍交翻译面诚实回 no_healable_defects。
         wanted = {str(x) for x in req.finding_ids}
         known_ids = {str(f.get("finding_id") or "")
-                     for f in await _stored_visual_findings(session_id)}
+                     for f in all_findings}
         fresh_ids = {str(f.get("finding_id") or "") for f in findings}
         if wanted and wanted <= known_ids and not (wanted & fresh_ids):
             return VisualRepairPlanResponse(
@@ -180,20 +199,21 @@ async def plan_visual_repair(
                 reason="all_rejected_by_user", skipped=skipped[:12],
                 stale_count=stale_count).model_dump()
 
+    # map 全档只加载一次：layer id 过滤与 healer 计划复用同一份快照。
+    mapspec = await _engine.store.get_mapspec(session_id)
     translation = visual_findings_to_defects(
         findings,
-        known_layer_ids=await _known_layer_ids(session_id),
+        known_layer_ids=_known_layer_ids(mapspec),
         finding_ids=req.finding_ids,
     )
     defects = translation["defects"]
-    skipped = list(translation["skipped"])
+    skipped = skipped + list(translation["skipped"])
     if not defects:
         return VisualRepairPlanResponse(
             session_id=session_id, proposable=False,
             reason="no_healable_defects", skipped=skipped,
             stale_count=stale_count).model_dump()
 
-    mapspec = await _engine.store.get_mapspec(session_id)
     if not isinstance(mapspec, dict):
         return VisualRepairPlanResponse(
             session_id=session_id, proposable=False,
@@ -270,8 +290,7 @@ async def apply_visual_repair(
     background_tasks: BackgroundTasks,
     _conv: Conversation = Depends(require_owned_session),
 ) -> Dict[str, Any]:
-    from app.services.distributed_lock import session_lock
-    async with session_lock("visual-repair-decision:" + session_id):
+    async with _decision_lock(session_id):
         from app.services.gis_harness.visual_observation.recurrence import (
             load_ledger,
             reset_fingerprints,
@@ -494,8 +513,7 @@ async def reject_visual_repair(
     同一缺陷编译同一 patch；缺陷证据变化（观察重盖章、指纹更新）后自然
     放行。幂等：重复拒绝返回相同回执（决策按 proposal_id 原位替换）。
     """
-    from app.services.distributed_lock import session_lock
-    async with session_lock("visual-repair-decision:" + session_id):
+    async with _decision_lock(session_id):
         from app.services.gis_harness.visual_observation.repair_bridge import (
             load_proposal,
             save_proposal,

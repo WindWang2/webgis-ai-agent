@@ -20,6 +20,7 @@ import {
   attachAgentPlan,
   attachChart,
   attachLayerChip,
+  attachPlanProposal,
   capMessages,
   clearThinkingFlag,
   finalizeAgentPlan,
@@ -28,7 +29,11 @@ import {
   markToolCallsStatus,
   matchRunningToolCallIds,
   MAX_CHAT_MESSAGES,
+  replaceClarificationEnvelope,
+  setClarificationStatus,
+  setFeatureEditProposalStatus,
   setPlanStatus,
+  setRuntimeInteractionStatus,
   settleThinkingMessage,
   type ChatStreamMessage,
 } from './message-reducer';
@@ -227,6 +232,42 @@ describe('agentPlan / plan proposal ops', () => {
     }];
     msgs = setPlanStatus(msgs, { planId: 'p1', status: 'approved' });
     expect(msgs[0].plan!.status).toBe('approved');
+  });
+});
+
+describe('missing-target reference discipline', () => {
+  const plan = {
+    plan_id: 'p1', title: 't', step_count: 0, steps_preview: [], status: 'pending' as const,
+  };
+  const agentPlan = {
+    intent: 'i', domains: [], finalized: false,
+    steps: [{ n: 1, goal: 'g', tool_family: 'core', status: 'pending' as const }],
+  };
+
+  it.each<[string, (prev: ChatStreamMessage[]) => ChatStreamMessage[]]>([
+    ['attachPlanProposal', (prev) => attachPlanProposal(prev, { messageId: 'missing', plan })],
+    ['setRuntimeInteractionStatus', (prev) => setRuntimeInteractionStatus(prev, {
+      interactionId: 'missing', status: 'answered',
+    })],
+    ['setClarificationStatus', (prev) => setClarificationStatus(prev, {
+      requestId: 'missing', status: 'submitted',
+    })],
+    ['replaceClarificationEnvelope', (prev) => replaceClarificationEnvelope(prev, { envelope: undefined })],
+    ['setPlanStatus', (prev) => setPlanStatus(prev, { planId: 'missing', status: 'approved' })],
+    ['attachAgentPlan', (prev) => attachAgentPlan(prev, { messageId: 'missing', agentPlan })],
+    ['markAgentPlanStepDone', (prev) => markAgentPlanStepDone(prev, { messageId: 'missing', stepN: 1 })],
+    ['finalizeAgentPlan', (prev) => finalizeAgentPlan(prev, { messageId: 'missing', skipped: [] })],
+    ['attachLayerChip', (prev) => attachLayerChip(prev, { messageId: 'missing', layerName: 'x' })],
+    ['attachChart', (prev) => attachChart(prev, { messageId: 'missing', chart: {} })],
+    ['appendTurnNotice', (prev) => appendTurnNotice(prev, { messageId: 'missing', kind: 'cancelled' })],
+    ['clearThinkingFlag', (prev) => clearThinkingFlag(prev, { messageId: 'missing' })],
+    ['settleThinkingMessage', (prev) => settleThinkingMessage(prev, { messageId: 'missing' })],
+    ['setFeatureEditProposalStatus', (prev) => setFeatureEditProposalStatus(prev, {
+      planId: 'missing', status: 'applied',
+    })],
+  ])('%s returns prev when its target is missing', (_name, apply) => {
+    const prev = [thinking()];
+    expect(apply(prev)).toBe(prev);
   });
 });
 

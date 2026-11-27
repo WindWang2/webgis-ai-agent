@@ -346,6 +346,34 @@ def test_consume_answer_timeout_vs_user_no(fresh_service):
     assert out2["code"] == "ANSWERED" and out2["domain"]["confirmed"] is False
 
 
+@pytest.mark.parametrize("display", ["False", "FALSE", "0", " no ", False])
+def test_consume_answer_confirm_false_serializations(display):
+    """非精确小写 'false' 的否形态同样判为用户确认「否」。"""
+    from app.services.chat.pi_interaction_envelope import consume_answer
+
+    out = consume_answer(
+        session_id="s", turn_id="t", tool_call_id="tc",
+        envelope_id="env-x", native_id="",
+        answer_kind="confirmed", display=display,
+        interaction_state="answer_written",
+        envelope={"tool_call_id": "tc", "exp": time.time() + 60},
+    )
+    assert out["code"] == "ANSWERED" and out["domain"]["confirmed"] is False
+
+
+def test_pi_ui_env_int_falls_back_on_invalid(monkeypatch):
+    """PI_UI_MAX_* 非整数/空串不得让 import 期 ValueError。"""
+    from app.services.chat.pi_ui_protocol import _env_int
+
+    monkeypatch.setenv("PI_UI_TEST_LIMIT", "garbage")
+    assert _env_int("PI_UI_TEST_LIMIT", 160) == 160
+    monkeypatch.setenv("PI_UI_TEST_LIMIT", "")
+    assert _env_int("PI_UI_TEST_LIMIT", 160) == 160
+    monkeypatch.setenv("PI_UI_TEST_LIMIT", "0")
+    assert _env_int("PI_UI_TEST_LIMIT", 160) == 1
+
+
+
 # ── 生命周期 ────────────────────────────────────────────────────────────
 
 
@@ -482,6 +510,37 @@ async def test_invalidate_turn_kills_pending(fresh_service):
         "sess-A", record.interaction_id, {"value": "人口（2020）"}, _resolver_with(entry, rpc),
     )
     assert out["result"] == "duplicate" and out["state"] == "invalidated"
+
+
+@pytest.mark.asyncio
+async def test_invalidate_turn_cancels_host_policy_dialog(fresh_service):
+    """P2 regression：invalidate_turn 只把 PENDING/ANSWER_WRITTEN 翻成
+    INVALIDATED 并 _emit_update，**不向 stdin 排队 deferred cancel**。
+    无原生 timeout 的 dialog（宿主策略期限那一类）在 vendor
+    侧没有自行 resolve 的兑底，其 promise 会永久挂起（心跳清扫
+    只宩单 pending/answer_written，INVALIDATED 记录永不被复审，缺失不可恢复）。
+    必须与 expire_due 的宿主策略期限分支同片排队 cancelled:true。"""
+    record, rpc, bridge, entry = _make_record(fresh_service)
+    assert record.native_timeout_ms is None  # select 无原生 timeout → 宿主策略期限
+    count = fresh_service.invalidate_turn("sess-A", "turn-A", "turn-teardown")
+    assert count == 1
+    assert record.state is InteractionState.INVALIDATED
+    flushed = await fresh_service.flush_deferred_writes()
+    assert flushed == 1
+    assert rpc.sent == [
+        {"type": "extension_ui_response", "id": "nat-1", "cancelled": True}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_invalidate_turn_leaves_native_timeout_dialog_to_vendor(fresh_service):
+    """带原生 timeout 的 dialog：vendor 自行 resolve 默认值 —— 与
+    expire_due 同款，不写 stdin（迟到写对 vendor 无害但状态不诚实）。"""
+    record, rpc, bridge, entry = _make_record(fresh_service, native_timeout_ms=3000)
+    fresh_service.invalidate_turn("sess-A", "turn-A", "turn-teardown")
+    assert record.state is InteractionState.INVALIDATED
+    assert await fresh_service.flush_deferred_writes() == 0
+    assert rpc.sent == []
 
 
 def test_waiting_for_user_budget_hook(fresh_service):

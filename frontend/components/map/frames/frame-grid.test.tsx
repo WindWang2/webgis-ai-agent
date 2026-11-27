@@ -294,8 +294,73 @@ describe('FrameProductGrid', () => {
     });
   });
 
-  it('活动画幅从产品消失 → 确定性后继（A13）', async () => {
-    const spec = threeFrameSpec();
+  it('快速连点三帧：live 切换串行护栏（A22）—— 链上后调用的捕获不与在途捕获并行', async () => {
+    commitMapSpecDocument(threeFrameSpec() as never, 3);
+    const primary = makeMockMaplibreMap();
+    const primaryRef = { current: { getMap: () => primary } as unknown as MapRef };
+    const frame = makeMockMaplibreMap();
+    const origOnce = frame.once.bind(frame);
+    // 可编排的 idle：默认自动触发（warmup 链照常排空）；pause 后悬挂，
+    // 由测试逐个释放 —— 捕获在途数即「串行护栏」的直接探针。
+    const pendingIdle: Array<() => void> = [];
+    let idleRequests = 0;
+    let paused = false;
+    frame.once = (((type: string, cb: (...a: unknown[]) => void) => {
+      if (type === 'idle') {
+        idleRequests += 1;
+        if (paused) pendingIdle.push(cb as () => void);
+        else setTimeout(cb as () => void, 0);
+        return frame;
+      }
+      return origOnce(type as never, cb as never);
+    }) as typeof frame.once);
+    rmg.map = frame as never;
+    renderGrid({ primary, primaryRef, frame });
+    act(() => openFrameGrid('fp-t-2020'));
+    await waitFor(() => expect(screen.getAllByTestId('frame-grid-tile')).toHaveLength(3));
+
+    // 等打开时的 warmup 链排空：三次帧间捕获（2020→2022→2024→2020）全部落地。
+    for (let i = 0; i < 40 && idleRequests < 3; i++) {
+      await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
+    }
+    expect(idleRequests).toBeGreaterThanOrEqual(3);
+    for (let i = 0; i < 30 && pendingIdle.length > 0; i++) {
+      await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
+    }
+    expect(pendingIdle).toHaveLength(0);
+
+    const activateBtn = (frameId: string) =>
+      screen.getByTestId('frame-grid-tiles').querySelector(`[data-frame-id="${frameId}"]`)!
+        .querySelector('[data-testid="frame-grid-activate"]') as HTMLElement;
+
+    paused = true; // 此后捕获全部悬挂，直到手动释放
+
+    // 连点 2022：wA 捕获在途（pendingIdle=1）。
+    await act(async () => { fireEvent.click(activateBtn('fp-t-2022')); });
+    expect(pendingIdle).toHaveLength(1);
+    // 连点 2024：挂在 runA 之后（串行）—— 不得抢先新开捕获。
+    await act(async () => { fireEvent.click(activateBtn('fp-t-2024')); });
+    expect(pendingIdle).toHaveLength(1);
+
+    // 放行 wA 的捕获 → runA 落定 → runB 的捕获开始（ref 仍应指向 runB）。
+    await act(async () => { pendingIdle.shift()?.(); });
+    expect(pendingIdle).toHaveLength(1);
+
+    // 第三次连点（runA 已完成、runB 在途）：
+    // 修复前 runA 的 finally 无条件清空 ref → wC 与 wB 并行捕获（=2，护栏失效）。
+    await act(async () => { fireEvent.click(activateBtn('fp-t-2020')); });
+    expect(pendingIdle).toHaveLength(1);
+
+    // 顺序放行剩余捕获：每次至多一个在途，最终回到最后意图 fp-t-2020。
+    for (let i = 0; i < 5 && pendingIdle.length > 0; i++) {
+      expect(pendingIdle).toHaveLength(1);
+      await act(async () => { pendingIdle.shift()?.(); });
+    }
+    expect(pendingIdle).toHaveLength(0);
+    expect(screen.getByTestId('frame-grid-scope-chip').textContent).toContain('fp-t-2020');
+  });
+
+  it('活动画幅从产品消失 → 确定性后继（A13）', async () => {    const spec = threeFrameSpec();
     commitMapSpecDocument(spec as never, 3);
     const h = harness();
     renderGrid(h);

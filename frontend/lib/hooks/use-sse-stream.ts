@@ -578,6 +578,10 @@ export function useSSEStream(options: UseSSEStreamOptions) {
             _descriptor: { ...descriptor, content_revision: revision } as unknown as never,
           }, { source: 'server' });
         }
+      }).catch((err) => {
+        // 调度器结算 promise 本不 reject；此 catch 是 then 体内 store 写入
+        // 意外异常的兜底，防 unhandled rejection（对照 add-layer 链路）。
+        devOnly.warn('[DatasetRefresh] failed to refresh layer data:', err);
       });
     } catch {
       // 刷新失败：SSE mapspec 盖章镜像会随后收敛（content_revision 管线）
@@ -1098,15 +1102,12 @@ export function useSSEStream(options: UseSSEStreamOptions) {
         const fire = runtimeUiFire(data);
         if (fire?.kind === 'notify' && fire.message) {
           const tag = fire.notifyType === 'error' ? '⚠' : fire.notifyType === 'warning' ? '⚠' : 'ℹ';
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: `pi-ui-notify-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-              role: 'assistant',
-              content: `${tag} ${fire.message}`,
-              timestamp: Date.now(),
-            } as import('@/lib/chat/message-reducer').ChatStreamMessage,
-          ]);
+          setMessages((prev) => appendMessage(prev, {
+            id: `pi-ui-notify-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            role: 'assistant',
+            content: `${tag} ${fire.message}`,
+            timestamp: Date.now(),
+          } as import('@/lib/chat/message-reducer').ChatStreamMessage));
         }
       } else if (event.event === 'pi_turn_message') {
         // G29：运行中追加指令的真实 disposition（接纳 ≠ 已消费）。跨会话
@@ -1120,15 +1121,12 @@ export function useSSEStream(options: UseSSEStreamOptions) {
         const disposition = payload.disposition
           ? ` (${typeof payload.disposition === 'string' ? payload.disposition : JSON.stringify(payload.disposition).slice(0, 80)})`
           : '';
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `pi-steer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-            role: 'assistant',
-            content: `${modeLabel}${disposition}`,
-            timestamp: Date.now(),
-          } as import('@/lib/chat/message-reducer').ChatStreamMessage,
-        ]);
+        setMessages((prev) => appendMessage(prev, {
+          id: `pi-steer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          role: 'assistant',
+          content: `${modeLabel}${disposition}`,
+          timestamp: Date.now(),
+        } as import('@/lib/chat/message-reducer').ChatStreamMessage));
       } else if (event.event === 'attachment_receipt') {
         // G36（ADR-0291）：逐附件送模回执 —— 回填最后一条带附件的用户消息
         // （sent/refused + reason；跨会话守卫同款）。

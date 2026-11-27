@@ -55,7 +55,9 @@ def upgrade() -> None:
     if _is_sqlite():
         for name, table, _column in _DUP_INDEXES:
             with op.batch_alter_table(table, schema=None) as batch_op:
-                batch_op.drop_index(name)
+                # if_exists=True（对齐 PG 分支 IF EXISTS）：这些是迁移侧重复索引，
+                # create_all 库从不建 ix_reports_* 等，无守卫即 no such index。
+                batch_op.drop_index(name, if_exists=True)
         # layers.creator_id 放松为 nullable（与模型及 PG 分支对齐）。
         with op.batch_alter_table('layers', schema=None) as batch_op:
             batch_op.alter_column(

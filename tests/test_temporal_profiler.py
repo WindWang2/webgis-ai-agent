@@ -138,6 +138,39 @@ class TestTemporalProfiler(unittest.TestCase):
         self.assertEqual(extent.missing_time_records, 2)
         self.assertFalse(profile.metadata.get("time_sample_truncated", False))
 
+    def test_profile_bounds_per_field_value_collection(self):
+        """P3 perf: field_values held every value of every field (O(N×F)
+        memory). Only the parse sample is ever used, so collection is bounded
+        to 5000 values per field while the counts stay full-population."""
+        from unittest import mock
+
+        import app.services.temporal.profiler as profiler_mod
+
+        seen = []
+        original = profiler_mod.profile_field
+
+        def spy(field_name, values, *args, **kwargs):
+            seen.append(len(values))
+            return original(field_name, values, *args, **kwargs)
+
+        base = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        records = [
+            {"properties": {
+                "timestamp": datetime.fromtimestamp(
+                    base.timestamp() + i * 60, tz=timezone.utc
+                ).isoformat(),
+                "val": i,
+            }}
+            for i in range(6000)
+        ]
+
+        with mock.patch.object(profiler_mod, "profile_field", side_effect=spy):
+            profile: TemporalDatasetProfile = profile_temporal_dataset(records)
+
+        self.assertEqual(profile.temporal_extent.total_records, 6000)
+        self.assertTrue(seen)
+        self.assertLessEqual(max(seen), 5000)
+
 
 if __name__ == "__main__":
     unittest.main()

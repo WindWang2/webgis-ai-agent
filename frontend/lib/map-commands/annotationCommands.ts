@@ -47,6 +47,16 @@ export const annotationCommands: Record<string, CommandEntry> = {
       if (!Array.isArray(coordinates) || coordinates.length < 2) {
         return { status: 'failed', error: 'invalid_params' };
       }
+      // P3: elements must be [lng, lat] pairs — a flat [lng, lat, …] payload
+      // would put a number where ring[0] expects a point ([0] undefined → NaN
+      // centroid) and silently store illegal Polygon/LineString geometry.
+      const malformed = coordinates.some((p) => !Array.isArray(p)
+        || p.length < 2
+        || typeof p[0] !== 'number' || typeof p[1] !== 'number'
+        || !Number.isFinite(p[0]) || !Number.isFinite(p[1]));
+      if (malformed) {
+        return { status: 'failed', error: 'invalid_params' };
+      }
       ensureAnnotationLayers(map);
       const store = getHudState();
       if (shape === 'polygon') {

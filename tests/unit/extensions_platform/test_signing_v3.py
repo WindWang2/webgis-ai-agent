@@ -160,6 +160,19 @@ def test_revoked_key_is_life_death(tmp_path):
     assert status.status == STATUS_REVOKED
 
 
+@pytest.mark.parametrize("bad_key_ids", ["acme-2026", {"acme-2026": {}}, 5])
+def test_revoked_key_ids_must_be_a_list(tmp_path, bad_key_ids):
+    """P1：revoked.key_ids 非 list → fail closed typed 拒绝。
+
+    字符串/dict 会被按字符/键迭代从而通过 all() 检查，frozenset 退化为
+    单字符集合——被吊销签名钥静默不吊销（fail open）；标量等不可迭代值
+    则逃逸为未捕获 TypeError。两者都必须在加载期拒绝。
+    """
+    with pytest.raises(ExtensionPlatformError) as excinfo:
+        _make_store(tmp_path, extra={"revoked": {"key_ids": bad_key_ids}})
+    assert "revoked.key_ids" in excinfo.value.diagnostic.message
+
+
 def test_revoked_fingerprint_wins_over_valid_signature(tmp_path):
     pack = _write_pack(tmp_path)
     priv, _ = _keypair(tmp_path, "acme-2026")

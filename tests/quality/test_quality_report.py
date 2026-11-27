@@ -11,7 +11,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "scripts"))
 
-from gen_quality_report import DEFAULT_JSON, DEFAULT_MD, build_report, render_md  # noqa: E402
+from gen_quality_report import DEFAULT_JSON, DEFAULT_MD, build_report, main, render_md  # noqa: E402
 
 
 def test_report_current():
@@ -38,3 +38,14 @@ def test_findings_grouping_is_complete():
         (REPO / "docs/quality/quality-manifest.json").read_text(encoding="utf-8"))
     grouped = report["aggregates"]["quality_manifest"]["findings_by_code"]
     assert sum(grouped.values()) == len(manifest["findings"])
+
+
+def test_output_paths_are_repo_anchored(tmp_path, monkeypatch, capsys):
+    # 回归：输出路径曾为 cwd 相对（scripts/gen_quality_report.py:25）——
+    # 子目录下 --check 误报 stale、写入模式把生成物写进错误目录的 docs 树。
+    assert DEFAULT_MD == REPO / "docs/quality/QUALITY_REPORT.md"
+    assert DEFAULT_JSON == REPO / "docs/quality/quality-report.json"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["gen_quality_report.py", "--check"])
+    if main() == 1:  # 工件过期时，stale 列表须指向 REPO 内真实路径，而非 cwd 相对路径
+        assert str(REPO) in capsys.readouterr().out

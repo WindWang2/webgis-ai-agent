@@ -27,6 +27,14 @@ class RasterResampleArgs(BaseModel):
     target_crs: Optional[str] = Field(None, description="目标 CRS（如 EPSG:3857），留空则保持原 CRS")
     resampling: str = Field("bilinear", description="重采样方法: bilinear(默认), nearest, cubic, mode, average")
 
+class RasterChangeArgs(BaseModel):
+    raster_a: str = Field(..., description="T1 栅格文件路径（data/ 内，基准网格）")
+    raster_b: str = Field(..., description="T2 栅格文件路径（data/ 内，自动对齐到 A）")
+    method: Literal["difference", "absolute_difference", "normalized_difference"] = Field("difference", description="变化检测方法: difference(B−A), absolute_difference(|B−A|), normalized_difference((B−A)/(B+A))")
+    threshold: Optional[float] = Field(None, gt=0, allow_inf_nan=False, description="阈值：给定时输出二分类变化栅格（|Δ| ≥ threshold → 1 变化，0 稳定，255 nodata）")
+    band: int = Field(1, ge=1, description="参与波段（1-based，默认 1）")
+    resampling: Optional[str] = Field(None, description="B 对齐到 A 的重采样方法（默认 bilinear；分类图输入必须 nearest）")
+
 
 def register_raster_transform_tools(registry: ToolRegistry) -> None:
     @tool(registry, name="raster_reclassify",
@@ -99,6 +107,7 @@ def register_raster_transform_tools(registry: ToolRegistry) -> None:
                "传 resampling=nearest（默认 bilinear 仅适用连续量）。"
            ),
            tier=2, domains=["raster"],
+           args_model=RasterChangeArgs,
            side_effect="deterministic_compute",
            network=False,
            deterministic=True,

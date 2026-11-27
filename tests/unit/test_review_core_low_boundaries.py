@@ -63,6 +63,18 @@ def test_error_classifier_shared_from_neutral_module():
     assert not is_error_like_result({"success": True, "error": "partial"})
 
 
+def test_result_warnings_string_is_one_warning_not_per_character():
+    from app.lib.runtime.result_contract import inspect_tool_result
+    view = inspect_tool_result({"warnings": "budget nearly exhausted"})
+    assert view.warnings == ("budget nearly exhausted",)
+
+
+def test_ref_keyed_values_are_collected_without_ref_prefix():
+    from app.lib.runtime.result_contract import inspect_tool_result
+    assert inspect_tool_result({"chartRef": "chart-42"}).ref_ids == ("chart-42",)
+    assert inspect_tool_result({"note": "chart-42"}).ref_ids == ()
+
+
 def test_blob_corruption_is_rejected_before_first_byte(tmp_path):
     from app.services.durable_blob_store import FilesystemBlobStore, BlobDigestMismatch
     store = FilesystemBlobStore(tmp_path)
@@ -524,6 +536,13 @@ def test_common_password_suffix_is_rejected_and_unknown_endpoint_disclosed():
     assert dependency.available_offline("air_gapped") is False
 
 
+def test_symbol_padded_common_password_is_rejected():
+    """前后符号填充不得绕过常见口令表（长度 ≥12 时会豁免字符类）。"""
+    from app.core.password_policy import validate_password_strength, PasswordPolicyError
+    with pytest.raises(PasswordPolicyError, match="常见"):
+        validate_password_strength("!!!!password!!!!")
+
+
 def test_unknown_required_trace_stage_fails_configuration():
     from app.evaluation.chain_gate import evaluate_chain_gate
     with pytest.raises(ValueError, match="unknown expected"):
@@ -858,6 +877,23 @@ async def test_websocket_watchdog_revokes_without_inbound_frame():
     await asyncio.wait_for(closed.wait(), 1)
     await stop_watchdog(task)
     assert detached == [True]
+
+
+@pytest.mark.asyncio
+async def test_stop_watchdog_propagates_caller_cancellation():
+    """调用方取消 stop_watchdog 时 CancelledError 必须展开，不得被吞掉。"""
+    import asyncio
+    from app.core.ws_revalidation import stop_watchdog
+    stopped = asyncio.Event()
+    watchdog = asyncio.create_task(asyncio.sleep(60))
+    stopper = asyncio.create_task(stop_watchdog(watchdog, stopped=stopped))
+    await asyncio.sleep(0.05)
+    stopper.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await stopper
+    watchdog.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await watchdog
 
 
 @pytest.mark.asyncio

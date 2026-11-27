@@ -1,7 +1,7 @@
 'use client'
 import { useT } from '@/lib/i18n/useT';
 
-import React, { useMemo, useState, useCallback } from 'react'
+import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react'
 import { Copy, Check, Crosshair, X } from 'lucide-react'
 import { useHudStore, type HudState } from '@/lib/store/useHudStore'
 import { FEATURE_ID_KEYS } from '@/lib/store/layer-data'
@@ -82,6 +82,18 @@ export function PoiInfoPanel({
   const [dismissed, setDismissed] = useState(false)
   const [copiedCoords, setCopiedCoords] = useState(false)
   const [copiedPropKey, setCopiedPropKey] = useState<string | null>(null)
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const propCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const mountedRef = useRef(true)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
+      if (propCopyTimerRef.current) clearTimeout(propCopyTimerRef.current)
+    }
+  }, [])
 
   const selectedFeature = useHudStore((s: HudState) => s?.selectedFeature)
 
@@ -117,8 +129,10 @@ export function PoiInfoPanel({
             (v) => v != null && v !== '',
           )
           const matchesId = hasUsableFid && candidateIds.some((v) => String(v) === String(fid))
-          const isSingleOrFirst = features.length === 1 || i === 0
-          const shouldMerge = hasUsableFid ? matchesId : isSingleOrFirst
+          const isSingle = features.length === 1
+          // featureId 不可用（h- 前缀/空）时只有「同点仅一个要素」能确定归属；
+          // 多要素场景不得把 selectedFeature 的属性顶到首条目上。
+          const shouldMerge = hasUsableFid ? matchesId : isSingle
           if (shouldMerge) {
             effectiveProps = (selectedFeature.properties || {}) as Record<string, unknown>
             effectiveFeature = { ...f, properties: effectiveProps }
@@ -139,19 +153,34 @@ export function PoiInfoPanel({
     if (!resolvedCoordinates) return
     const [lng, lat] = resolvedCoordinates
     const text = `${lng.toFixed(6)}, ${lat.toFixed(6)}`
-    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(text).catch(() => {})
+    const markCopied = () => {
+      if (!mountedRef.current) return
+      setCopiedCoords(true)
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
+      copyTimerRef.current = setTimeout(() => {
+        setCopiedCoords(false)
+        copyTimerRef.current = null
+      }, 1800)
     }
-    setCopiedCoords(true)
-    setTimeout(() => setCopiedCoords(false), 1800)
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      // 只有写入成功才给出「已复制」；权限拒绝/非安全上下文不得谎报。
+      navigator.clipboard.writeText(text).then(markCopied).catch(() => {})
+    }
   }, [resolvedCoordinates])
 
   const handleCopyProperty = useCallback((key: string, val: unknown) => {
-    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(String(val)).catch(() => {})
+    const markCopied = () => {
+      if (!mountedRef.current) return
+      setCopiedPropKey(key)
+      if (propCopyTimerRef.current) clearTimeout(propCopyTimerRef.current)
+      propCopyTimerRef.current = setTimeout(() => {
+        setCopiedPropKey(null)
+        propCopyTimerRef.current = null
+      }, 1500)
     }
-    setCopiedPropKey(key)
-    setTimeout(() => setCopiedPropKey(null), 1500)
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(String(val)).then(markCopied).catch(() => {})
+    }
   }, [])
 
   const handleZoom = useCallback(() => {

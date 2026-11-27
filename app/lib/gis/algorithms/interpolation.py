@@ -302,7 +302,11 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 ">20 万样本拒绝（Qhull 内存有界但超限先抽稀）",
                 "凸包外格网无值——需要全域覆盖时改用 IDW/趋势面（会外推）",
             ],
-            crs_class="PROJECTED_REQUIRED",
+            # 与 IDW / RBF / natural_neighbor 同一 CRS 政策：实现内部把
+            # 度数输入投影到米制 CRS 再剖分（见 L297 assumptions），故地理
+            # 数据必须被放行——PROJECTED_REQUIRED 会把最常见的 WGS84 输入
+            # 交给 resolver CRS 硬门拒掉，TIN 对之静默不可达。
+            crs_class="GEOGRAPHIC_OK",
             uncertainty_outputs=["validation_metrics"],
             random_seed_policy="deterministic",
             numerical_tolerance="linear 在样本格心精确复现采样值（<1e-9，conformance 固定）",

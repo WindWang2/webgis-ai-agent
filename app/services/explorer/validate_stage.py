@@ -35,6 +35,13 @@ def rows_to_feature_collection(rows: List[dict]) -> Optional[dict]:
             continue
         if not (math.isfinite(float(lat)) and math.isfinite(float(lon))):
             continue
+        # 值域检查：脏数据里 lat=999 / lon=200 等越界坐标同样不是合法点位，
+        # 铸成 Point 会以 EPSG:4326 入库（WGS84 合法域）。
+        if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+            logger.debug(
+                "[rows_to_fc] out-of-range _lat/_lon skipped (lat=%s, lon=%s)",
+                lat, lon)
+            continue
         props = {k: v for k, v in row.items() if not str(k).startswith("_")}
         features.append({
             "type": "Feature",

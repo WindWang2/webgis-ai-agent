@@ -96,7 +96,8 @@ async def test_production_cache_hit_style_reuse_and_source_invalidation():
     assert restyled["cache_hit"] == "analysis"
     assert restyled["aggregation_reused"]
     assert restyled["edge_ref"] == first["edge_ref"]
-    assert restyled["product_ref"] == first["product_ref"]
+    # 仅样式不同也是独立产品：不得复用并覆盖先前 preview 的 product_ref
+    assert restyled["product_ref"] != first["product_ref"]
 
     filtered = await preview(sid, _config(top_n=1))
     assert filtered["cache_hit"] == "miss"
@@ -108,6 +109,36 @@ async def test_production_cache_hit_style_reuse_and_source_invalidation():
     assert stale["source_revision"] == 2
     with pytest.raises(FlowServiceError, match="changed"):
         await query_flow_product(sid, first["product_ref"], kind="product")
+    await session_data_manager.clear_session(sid)
+
+
+@pytest.mark.asyncio
+async def test_restyled_preview_does_not_overwrite_prior_product():
+    sid, _ = await _session_with_source()
+    first = await preview(sid, _config())
+    restyled = await preview(sid, _config(width_max_px=12, palette=["#000000", "#ffffff"]))
+    assert restyled["cache_hit"] == "analysis"
+    assert restyled["product_ref"] != first["product_ref"]
+
+    # 分析缓存复用不得改写先前 preview 的产品载荷
+    stored_first = await session_data_manager.get(sid, first["product_ref"])
+    assert stored_first["config"]["width_max_px"] == 8.0
+    assert stored_first["mapspec"] == first["mapspec_fragment"]
+    stored_restyled = await session_data_manager.get(sid, restyled["product_ref"])
+    assert stored_restyled["config"]["width_max_px"] == 12.0
+
+    # apply 先前的 ref 必须套用先前 envelope 的样式，而非后一次 preview 的样式
+    applied = await apply_flow_product_preview(
+        sid, first["product_ref"], expected_revision=first["mapspec_revision"],
+        mutation_id="flow-service-restyle-apply-first",
+    )
+    assert applied["success"], applied.get("error_msg")
+    edge_layer = next(
+        layer for layer in applied["mapspec"]["layers"]
+        if layer["id"].endswith("-edges")
+    )
+    assert edge_layer["paint"]["width"]["stops"][1][1] == 8.0
+    assert edge_layer["flow"]["product_ref"] == first["product_ref"]
     await session_data_manager.clear_session(sid)
 
 
@@ -146,4 +177,37 @@ async def test_inspect_is_bounded_and_source_scoped():
     assert len(result["sample"]) == 2
     with pytest.raises(FlowServiceError):
         await inspect_flow_source(sid, _config(od_table_ref="missing"))
+    await session_data_manager.clear_session(sid)
+
+
+@pytest.mark.asyncio
+async def test_restyle_with_negative_fixed_domain_nonlinear_transform_does_not_crash():
+    sid, _ = await _session_with_source()
+    built = await preview(sid, _config())
+    assert built["cache_hit"] == "miss"
+    for transform in ("sqrt", "log1p"):
+        restyled = await preview(
+            sid, _config(weight_domain=(-10.0, -1.0), weight_transform=transform))
+        assert restyled["cache_hit"] == "analysis"
+        edge_fc = await session_data_manager.get(sid, restyled["edge_ref"])
+        assert all(
+            f["properties"]["weight_encoded"] == 0.0
+            for f in edge_fc["features"]
+        )
+    await session_data_manager.clear_session(sid)
+
+
+@pytest.mark.asyncio
+async def test_repeated_preview_after_style_variant_hits_preview_cache():
+    sid, _ = await _session_with_source()
+    styled = await preview(sid, _config(width_max_px=12, palette=["#000000", "#ffffff"]))
+    assert styled["cache_hit"] == "miss"
+    # 同一 config 首次经 analysis 缓存 restyle 落产品后，产品指纹必须与
+    # build 路径一致（full_key），再次预览才能命中 preview 缓存。
+    base = await preview(sid, _config())
+    assert base["cache_hit"] == "analysis"
+    repeat = await preview(sid, _config())
+    assert repeat["cache_hit"] == "preview"
+    assert repeat["product_ref"] == base["product_ref"]
+    assert repeat["product_fingerprint"] == base["product_fingerprint"]
     await session_data_manager.clear_session(sid)

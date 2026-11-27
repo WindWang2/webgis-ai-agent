@@ -318,8 +318,12 @@ def _execute_plan_locked(db: Any, plan: GcPlan, *, actor: Optional[str] = None,
                 elif kind in ("cog_output", "artifact_cache", "fabric_materialization"):
                     _stage_file(kind, object_id, plan_dir, staged, lane=entry.get("lane"))
                 elif kind == "worker_cache":
-                    _reclaim_worker_cache_row(db, object_id)
-                    staged.append({"kind": kind, "object_id": object_id, "mode": "registry_row_deleted"})
+                    # 行已不在（并发 prune / miss / object_id 截断）时必须如实
+                    # 记 already_gone —— 绝不把未删除报成已删除。
+                    mode = ("registry_row_deleted"
+                            if _reclaim_worker_cache_row(db, object_id)
+                            else "already_gone")
+                    staged.append({"kind": kind, "object_id": object_id, "mode": mode})
                 else:
                     errors.append(f"{kind}:{object_id}: kind not executable")
         except Exception as exc:  # noqa: BLE001 — preserve per-object failures
@@ -393,16 +397,18 @@ def _stage_file(kind: str, object_id: str, plan_dir: Path,
     staged.append({"kind": kind, "object_id": object_id, "lane": lane, "mode": "moved_to_staging", "bytes": size})
 
 
-def _reclaim_worker_cache_row(db: Any, object_id: str) -> None:
+def _reclaim_worker_cache_row(db: Any, object_id: str) -> bool:
     from app.models.db_model import GeoComputeWorkerCache
 
     worker_id, _, cache_key = object_id.partition(":")
     row = db.query(GeoComputeWorkerCache).filter_by(
         worker_id=worker_id, cache_key=cache_key
     ).one_or_none()
-    if row is not None:
-        db.delete(row)
-        db.flush()
+    if row is None:
+        return False
+    db.delete(row)
+    db.flush()
+    return True
 
 
 def rollback_plan(db: Any, plan: GcPlan, *, actor: Optional[str] = None) -> dict[str, object]:
@@ -482,7 +488,9 @@ def _purge_staging_locked(plan: GcPlan, *, db: Any = None) -> Dict[str, Any]:
     if db is None:
         raise GcPlanError("purge requires a persistent transaction")
     _lock_plan(db, plan)
-    if plan.status not in ("done", "failed"):
+    # rolled_back 也是终态：回滚完成后 staging 只剩恢复证据（.recovery.json），
+    # 观察期过后必须可清理，否则该目录（及证据文件）永远无法回收。
+    if plan.status not in ("done", "failed", "rolled_back"):
         raise GcPlanError(f"purge not allowed from {plan.status}")
     if (plan.result or {}).get("rollback_partial"):
         raise GcPlanError("partial recovery must be resolved before purge")

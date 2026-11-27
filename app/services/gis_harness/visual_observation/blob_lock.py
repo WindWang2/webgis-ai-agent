@@ -18,7 +18,6 @@ def blob_ref_lock(store: object, sha256: str) -> Iterator[None]:
     分条锁（跨进程互斥缺席，与 sweep 对非 FS 后端直接跳过的口径一致），
     不得因属性缺席抛错（可插拔承诺）。
     """
-    import fcntl
     from pathlib import Path
 
     digest = hashlib.sha256(sha256.encode()).hexdigest()
@@ -27,6 +26,10 @@ def blob_ref_lock(store: object, sha256: str) -> Iterator[None]:
         if root is None:
             yield
             return
+        # fcntl 只在文件系统后端路径导入：非 FS 后端/无 fcntl 平台不得因
+        # 该属性缺席而抛 ImportError（可插拔承诺）。
+        import fcntl
+
         directory = Path(root) / ".visual-ref-locks"
         directory.mkdir(parents=True, exist_ok=True)
         # Fixed stripes avoid retaining one lock-file inode for every expired image.

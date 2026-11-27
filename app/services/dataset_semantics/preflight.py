@@ -97,12 +97,14 @@ class PreflightReport:
     verdict: str = "unknown"    # ⊆ ("compatible", "gaps", "unknown")
     checks: List[Dict[str, Any]] = field(default_factory=list)
     gaps: List[PreflightGap] = field(default_factory=list)
+    truncated_datasets: int = 0   # 超出 MAX_PREFLIGHT_DATASETS 未预检的项数
 
     def to_bounded_dict(self) -> Dict[str, Any]:
         return {
             "verdict": self.verdict,
             "checks": self.checks[: len(PREFLIGHT_CHECKS)],
             "gaps": [g.to_bounded_dict() for g in self.gaps[:MAX_PREFLIGHT_GAPS]],
+            "truncated_datasets": int(self.truncated_datasets),
         }
 
 
@@ -117,10 +119,21 @@ def _crs_class(crs: str) -> str:
 
 
 def _bbox_overlap(a: Optional[List[float]], b: Optional[List[float]]) -> Optional[bool]:
-    """两 bbox 是否相交（None = 任一 bbox 未知 → 不可判）。"""
+    """两 bbox 是否相交（None = 任一 bbox 未知/不可判）。"""
     if not a or not b or len(a) != 4 or len(b) != 4:
         return None
-    return not (a[0] > b[2] or b[0] > a[2] or a[1] > b[3] or b[1] > a[3])
+    import math as _math
+
+    try:
+        af = [float(v) for v in a[:4]]
+        bf = [float(v) for v in b[:4]]
+    except (TypeError, ValueError):
+        return None
+    # 非 pydantic 对象直传时 NaN/±Inf 与比较恒 False 会伪 pass（与
+    # task_scope 同款防御；descriptor 校验器已关闭持久化面）。
+    if not all(_math.isfinite(v) for v in af + bf):
+        return None
+    return not (af[0] > bf[2] or bf[0] > af[2] or af[1] > bf[3] or bf[1] > af[3])
 
 
 def _coverage_point(cov: str) -> Optional[Tuple[int, Optional[int]]]:
@@ -241,6 +254,8 @@ def preflight_multi_dataset(
     字段 —— 缺分母不得伪装密度成果）。
     """
     report = PreflightReport()
+    # 超出上限的输入未参与任何判据 —— 必须披露（不得静默截断）。
+    report.truncated_datasets = max(0, len(datasets) - MAX_PREFLIGHT_DATASETS)
     # 形状归一：接受 {标签 → descriptor} 或 role_qualification_evidence 的
     # 产物形状 {角色 → {descriptor, expected_descriptor_fingerprint}}；
     # 条目 descriptor 缺席（None 形状）按未绑定跳过（review N2）。
@@ -386,7 +401,9 @@ def preflight_multi_dataset(
             temporal_result = "pass"
         if temporal_result == "pass" and temporal_partial:
             temporal_result = "unknown"
-    elif temporal_one_sided and temporal_task:
+    # 单侧证据（任务声明时间角色）与 both-sided 对并存时也必须披露
+    # unknown（review P2：elif 会在存在双方时间对时吞掉单侧证据）。
+    if temporal_one_sided and temporal_task and temporal_result != "fail":
         temporal_result = "unknown"
     report.checks.append({
         "check": "temporal_overlap", "result": temporal_result,
@@ -476,6 +493,9 @@ def preflight_multi_dataset(
         report.verdict = "unknown"
     else:
         report.verdict = "compatible"
+    if report.verdict == "compatible" and report.truncated_datasets:
+        # 未预检的数据集可能藏着缺口：证据不完整时不得宣称 compatible。
+        report.verdict = "unknown"
     return report
 
 

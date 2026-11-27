@@ -1,18 +1,16 @@
 #!/usr/bin/env python
 """ads-v1 cost dashboard generator (DS8, ADR-0178).
 
-Runs the validation matrix with fact emission, aggregates cost per
-(source × request_type), compares against the declared budgets, and writes
-docs/dev/ads-v1-cost-dashboard.md — the shared-display-layer artifact
-(V11 W8 shares the *rendering*, never the tables: ads_* vs carto_*).
+Runs the validation matrix, sets the declared budgets per
+(source × request_type), and writes docs/dev/ads-v1-cost-dashboard.md — the
+shared-display-layer artifact (V11 W8 shares the *rendering*, never the
+tables: ads_* vs carto_*).
 
     ./.venv/Scripts/python scripts/ads_cost_dashboard.py
 """
 from __future__ import annotations
 
 import sys
-from collections import defaultdict
-from typing import Any, Dict
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -22,11 +20,8 @@ OUT = REPO / "docs" / "dev" / "ads-v1-cost-dashboard.md"
 
 from app.services.data_fabric.facts import CostBudget, FactsStore  # noqa: E402
 from app.services.data_fabric.matrix import (  # noqa: E402
-    LANGUAGES,
     REQUEST_TYPES,
-    SCENARIOS,
     SOURCES,
-    run_group,
 )
 
 #: Declared budgets (provisional; per-request-type caps derived from the
@@ -45,21 +40,10 @@ def main() -> int:
                 max_ms=BUDGET["max_ms"], wave="M5",
             ))
 
-    # run the full matrix, emitting one fact per group (via the chain/gate layers)
+    # run the full matrix
     from app.services.data_fabric.matrix import run_matrix
 
     summary = run_matrix()
-
-    # aggregate: mean latency & degraded share per (source, request_type)
-    agg: Dict[Any, Dict[str, float]] = defaultdict(lambda: {"n": 0, "latency": 0.0, "degraded": 0})
-    for source in SOURCES:
-        for rt in REQUEST_TYPES:
-            for scenario in SCENARIOS:
-                for lang in LANGUAGES:
-                    rec = run_group(source, rt, scenario, lang)
-                    key = (source, rt)
-                    agg[key]["n"] += 1
-                    agg[key]["latency"] += float(rec.details.get("cost_rows") or 0)
 
     lines = [
         "# ads-v1 成本看板（DS8 · provisional）",

@@ -25,9 +25,9 @@ def derive_result_bbox(
             continue
         desc = descriptors.get(ref)
         if not desc:
-            if ref not in descriptors:
-                continue  # unknown（探测失败）：跳过不判（不虚构 bbox）
-            continue  # 确认缺失：无 bbox 可贡献（过期 finding 由 artifacts 侧报）
+            # unknown（探测失败）与确认缺失都不贡献 bbox（过期 finding 由
+            # artifacts 侧报）——两分支同结论，不重复判定。
+            continue
         bbox = desc.get("bbox")
         if not (isinstance(bbox, (list, tuple)) and len(bbox) == 4):
             continue

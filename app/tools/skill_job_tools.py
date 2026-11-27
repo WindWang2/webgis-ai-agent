@@ -160,8 +160,8 @@ def register_skill_job_tools(registry: ToolRegistry):
         ctx = current_runtime_context()
         if not sid and ctx is not None:
             sid = str(getattr(ctx, "session_id", "") or "")
-        entry = prepared_store.pop(prepared_id, session_id=sid) if sid \
-            else prepared_store.pop(prepared_id)
+        # 无会话上下文 = 无法核验归属：失败闭合，绝不做无过滤消费
+        entry = prepared_store.pop(prepared_id, session_id=sid) if sid else None
         if entry is None:
             # 会话不符与过期同形回执（不泄露 prepared 归属；不消费他人意图）
             return {
@@ -231,7 +231,7 @@ def register_skill_job_tools(registry: ToolRegistry):
             # review P1-2：单读归属验证 —— 行内会话必须与当前回调会话一致
             #（裸 id 枚举不得成为跨会话旁路）。
             row_session = str(view.get("session_id") or "")
-            if not row_session or (sid and row_session != sid):
+            if not row_session or not sid or row_session != sid:
                 return {"success": False, "code": "JOB_NOT_FOUND",
                         "message": f"job {job_id} 不存在"}
             return {"success": True, "run": view}

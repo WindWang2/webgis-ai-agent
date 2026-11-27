@@ -25,6 +25,7 @@ apply_time_window_to_doc 同纪律）。解析顺序即优先级：
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -216,6 +217,18 @@ def _apply_shared_expression(
     breaks = shared.get("breaks")
     if not isinstance(breaks, list) or len(breaks) < 2:
         return doc, ("shared_expression_not_computed",), False
+    # breaks 非数值/非有限 → typed FrameResolutionError（裸 ValueError 会逃逸
+    # 本模块的 typed 契约）；NaN breaks 更会静默产出 nan 图例标签。
+    try:
+        numeric = [float(b) for b in breaks]
+    except (TypeError, ValueError) as exc:
+        raise FrameResolutionError(
+            "frame_shared_expression_invalid",
+            f"共享分级 breaks 含非数值项：{exc}") from exc
+    if not all(math.isfinite(v) for v in numeric):
+        raise FrameResolutionError(
+            "frame_shared_expression_invalid",
+            "共享分级 breaks 含 NaN/Inf（图例标签会静默变成 nan）")
     layers_raw = doc.get("layers")
     layers = layers_raw if isinstance(layers_raw, list) else []
     new_layers: List[Any] = []
@@ -227,22 +240,22 @@ def _apply_shared_expression(
             new_layers.append(layer)
             continue
         legend = dict(layer["legend_spec"])
-        legend["breaks"] = [float(b) for b in breaks]
+        legend["breaks"] = numeric
         legend["method"] = str(shared.get("method") or legend.get("method") or "")
-        legend["k"] = len(breaks) - 1
+        legend["k"] = len(numeric) - 1
         if shared.get("palette"):
             legend["palette"] = str(shared["palette"])
         legend["shared_scope"] = True  # 渲染/图例可识别「同域分级」标记
         # 分级变了，标签与色带同步重算（与 build_graduated_spec 同格式 ——
         # palette_colors 与 breaks 类数不一致是图例/渲染失配源）。
         legend["labels"] = [
-            _graduated_label(float(breaks[i]), float(breaks[i + 1]))
-            for i in range(len(breaks) - 1)
+            _graduated_label(numeric[i], numeric[i + 1])
+            for i in range(len(numeric) - 1)
         ]
         try:
             from app.lib.cartography.thematic_spec import resolve_thematic_colors
 
-            n_classes = len(breaks) - 1
+            n_classes = len(numeric) - 1
             lo = min(
                 (float(b) for b in legend.get("breaks", [])), default=0.0)
             hi = max(

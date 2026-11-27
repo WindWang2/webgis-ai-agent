@@ -5,6 +5,7 @@ Tests pure event mapping logic without instantiating PiBridge or subprocesses.
 from app.services.chat.pi_event_mapper import (
     map_event_to_sse,
     _extract_error_text,
+    _sanitize_for_client,
 )
 
 
@@ -410,3 +411,16 @@ def test_extension_error_fields_are_bounded(caplog):
     assert msg.count("x") < 150
     # event 形状容错：dict 取 type 名
     assert "toolcall_end" in msg
+
+
+def test_sanitize_failure_fails_closed(monkeypatch):
+    """消毒器自身抛错时不得把原文回传客户端（fail-open）。"""
+    import app.services.chat.pi_event_mapper as mapper
+
+    def _boom(_text):
+        raise RuntimeError("sanitizer down")
+
+    monkeypatch.setattr(mapper, "sanitize_error_msg", _boom)
+    out = _sanitize_for_client("secret api_key=sk-live-123456")
+    assert "sk-live-123456" not in out
+    assert "unavailable" in out

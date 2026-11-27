@@ -168,10 +168,25 @@ def build_refresh_plan(
         recompute = list(affected.recompute)
         reuse = list(affected.reuse)
 
+    # 计划列表有界（≤64/类，契约面）；截断必须显式披露，且 decisions /
+    # estimated_budget 只能覆盖**实际下发**的列表 —— 否则 >64 节点 DAG 下
+    # 计划（64）与裁决/预算（全量）互相矛盾，且消费方不知道被截断。
+    recompute_sorted = sorted(recompute)
+    reuse_sorted = sorted(reuse)
+    bounded_recompute = recompute_sorted[:64]
+    bounded_reuse = reuse_sorted[:64]
+    if len(recompute_sorted) > 64 or len(reuse_sorted) > 64:
+        warnings.append(
+            f"plan node lists truncated to 64 recompute / 64 reuse "
+            f"(recompute={len(recompute_sorted)}, reuse={len(reuse_sorted)}); "
+            "decisions and estimated_budget cover the emitted lists only"
+        )
+
     decisions: Dict[str, str] = {}
-    for n in nodes:
-        decisions[n] = (PlanDecision.RECOMPUTE.value if n in recompute
-                        else PlanDecision.REUSE.value)
+    for n in bounded_recompute:
+        decisions[n] = PlanDecision.RECOMPUTE.value
+    for n in bounded_reuse:
+        decisions[n] = PlanDecision.REUSE.value
     # 复用裁决由既有 impact_analysis 的下游产物补充（rebind / conflict /
     # unverifiable），不覆盖子图裁决。
     conflicts: List[str] = []
@@ -200,7 +215,7 @@ def build_refresh_plan(
             d.logical_id: f"{d.change_class}:{d.evidence.value}:{d.reason}"
             for d in diffs
         } or {"_empty": "none"},
-        normalized_args={"recompute": sorted(recompute), "conservative": conservative},
+        normalized_args={"recompute": bounded_recompute, "conservative": conservative},
         crs=";".join(sorted({d.logical_id for d in diffs if d.crs_changed})),
         runtime_semantic_version=geo_stack_digest(),
     )
@@ -221,8 +236,8 @@ def build_refresh_plan(
     })
 
     return RefreshPlan(
-        recompute=sorted(recompute)[:64],
-        reuse=sorted(reuse)[:64],
+        recompute=bounded_recompute,
+        reuse=bounded_reuse,
         decisions=decisions,
         changed_dimensions=changed_dimensions[:8],
         explanations=[str(x)[:200] for x in explanations[:8]],
@@ -232,9 +247,9 @@ def build_refresh_plan(
         preserved_user_edits=sorted(set(user_locks or [])),
         conflicts=conflicts[:32],
         estimated_budget={
-            "recompute_nodes": len(recompute),
-            "reuse_nodes": len(reuse),
-            "estimated_tool_calls": len(recompute),
+            "recompute_nodes": len(bounded_recompute),
+            "reuse_nodes": len(bounded_reuse),
+            "estimated_tool_calls": len(bounded_recompute),
             "conservative": conservative,
         },
         reuse_fingerprint=reuse_fp,

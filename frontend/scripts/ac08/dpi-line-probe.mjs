@@ -163,14 +163,15 @@ function measureRow(png, rows, deviceScale) {
     const half = (bg + minVal) / 2;
     let fwhmDev = 0;
     let inBand = false;
-    for (const v of profile) {
+    for (let i = 0; i < profile.length; i++) {
+      const v = profile[i];
       if (v < half) {
         fwhmDev++;
         inBand = true;
       } else if (inBand) {
         // 允许 1px 噪声断裂
         let noise = true;
-        const idxNext = profile.indexOf(v);
+        const idxNext = i;
         for (let k = 1; k <= 1; k++) {
           if (idxNext + k < profile.length && profile[idxNext + k] < half) noise = false;
         }
@@ -192,9 +193,29 @@ function decodePng(dataUrl) {
   return PNG.sync.read(Buffer.from(base64, 'base64'));
 }
 
+/** --dpi 参数解析：`--dpi=150,300` 或 `--dpi 150,300`；未传时用文档承诺的 96,300。 */
+export function resolveDpiArg(args) {
+  const dpiIdx = args.findIndex((a) => a.startsWith('--dpi'));
+  if (dpiIdx < 0) return '96,300';
+  return args[dpiIdx].split('=')[1] || args[dpiIdx + 1] || '96,300';
+}
+
+/** 收集 pageerror：监听器内不能 throw（会变 uncaught，finally 不执行 → 进程/临时文件泄漏）。 */
+export function collectPageErrors(page) {
+  const errors = [];
+  page.on('pageerror', (e) => { errors.push(e); });
+  return {
+    throwIfAny() {
+      if (errors.length) {
+        throw new Error('pageerror: ' + errors.map((e) => e.message).join('; '));
+      }
+    },
+  };
+}
+
 async function main() {
   const args = process.argv.slice(2);
-  const dpiArg = (args.find((a) => a.startsWith('--dpi')) || '--dpi 96,300').split('=')[1] || args[args.indexOf('--dpi') + 1] || '96,300';
+  const dpiArg = resolveDpiArg(args);
   const dpis = dpiArg.split(',').map((s) => parseInt(s.trim(), 10)).filter((n) => !Number.isNaN(n));
   const outIdx = args.indexOf('--out');
   // --out 相对 frontend/ 解析（../../docs/dev/ac-08-samples/... = 仓库 docs）
@@ -216,9 +237,10 @@ async function main() {
     const context = await browser.newContext({ viewport: { width: VIEW_W + 40, height: VIEW_H + 40 } });
     // 96 DPI 参照系
     const page = await context.newPage();
-    page.on('pageerror', (e) => { throw new Error('pageerror: ' + e.message); });
+    const pageErrors = collectPageErrors(page);
     await page.goto('file:///' + htmlPath.replace(/\\/g, '/'));
     await page.waitForFunction(() => !!window.__probe, null, { timeout: 15000 });
+    pageErrors.throwIfAny();
 
     const base96 = await page.evaluate(async () => {
       const map = await window.__probe.buildMap(1);
@@ -255,6 +277,7 @@ async function main() {
         upscalePng: upName,
       };
     }
+    pageErrors.throwIfAny();
     await context.close();
   } finally {
     await browser.close();
@@ -288,7 +311,10 @@ function renderMarkdown(report) {
   return lines.join('\n') + '\n';
 }
 
-main().catch((e) => {
-  console.error('[dpi-line-probe] FAILED:', e && e.message);
-  process.exit(1);
-});
+// 作为 CLI 直跑才执行 main；被单元测试 import 时只暴露可测函数。
+if (path.resolve(process.argv[1] || '') === fileURLToPath(import.meta.url)) {
+  main().catch((e) => {
+    console.error('[dpi-line-probe] FAILED:', e && e.message);
+    process.exit(1);
+  });
+}

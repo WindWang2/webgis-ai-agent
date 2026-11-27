@@ -83,6 +83,10 @@ _SIZE_KEY = "__size__"
 _NODE_FP_KEY = "__node_fp__"
 _OUT_FP_KEY = "__out_fp__"
 _UPSTREAM_KEY = "__upstream_fps__"
+#: DB 复用索引里无输入源节点的计划域标记（upstream_fingerprints 保留键）：
+#: 外部内容漂移无上游指纹可校验，跨计划复用信任域以计划身份为界（与
+#: _execute_one 的计划域键同语义；缺省 = 修复前的旧条目，fail-open）。
+_PLAN_FP_KEY = "__plan_fp__"
 
 #: checkpoint 指纹采样参数（输出指纹：count + 首尾样本；有界且确定性）。
 _FP_SAMPLE_HEAD = 16
@@ -376,8 +380,10 @@ class NodeResultStore:
                     _, evicted = self._entries.popitem(last=False)
                     self._bytes -= evicted.get("__size__", 0)
             if re_spilled is not None:
-                # 调用方仍拿到完整载荷（一次性拷贝）；内部驻留是 stub
-                return {k: v for k, v in clean.items()}
+                # 调用方仍拿到完整载荷（一次性拷贝）；内部驻留是 stub。
+                # 必须携带 __size__ 标记：复用点的入口检查是
+                # ``_SIZE_KEY in cached``，裸载荷会被判为 miss。
+                return {**clean, _SIZE_KEY: stub_size}
             try:
                 from app.services.geocompute.cluster.metrics import (
                     record_spill_rehydrate,
@@ -613,6 +619,8 @@ class GeoExecutionEngine:
                      budget_scope=gov_path)
         started = time.monotonic()
         preempt_requested = {"flag": False}
+        completed = False
+        cleaned = False
         try:
             self._run_ready_set(run, plan, outputs, outputs_fp,
                                 session_id=session_id,
@@ -624,29 +632,41 @@ class GeoExecutionEngine:
                                 preempt_flag=preempt_requested,
                                 resource_envelope=resource_envelope,
                                 emit_events=emit_events)
+            completed = True
         finally:
-            if governor is not None and gov_path:
-                # Wave 8 R1：本 run 在祖先链上的全部占用（预留估计 + 实际
-                # 记账）一次性归还 —— rows/bytes/nodes 由此是**并发在飞
-                # 量衡**而非终生计数（审计 07 R1 Critical：原先只增不减，
-                # ~25 个估计偏大的 run 即可永久打满 global 预算 → 自我
-                # DoS）。钳零语义（budgets.release）是重复归还的兜底。
-                try:
-                    charged_rows, charged_bytes, charged_nodes = (
-                        charge_ledger.snapshot()
-                    )
-                    governor.release(
-                        gov_path,
-                        rows=reserved["rows"] + charged_rows,
-                        bytes_=reserved["bytes"] + charged_bytes,
-                        nodes=reserved["nodes"] + charged_nodes,
-                    )
-                except Exception:  # noqa: BLE001 - 归还失败不阻断作用域摘除
-                    tracing.emit("budget_release_failed", run_id=run_id,
-                                 status=run.status.value)
-                # 摘除 execution 作用域（归还后祖先链已回到基本线）
-                governor.teardown_scope(gov_path)
-            run.wall_time_s = round(time.monotonic() - started, 6)
+            try:
+                if governor is not None and gov_path:
+                    # Wave 8 R1：本 run 在祖先链上的全部占用（预留估计 + 实际
+                    # 记账）一次性归还 —— rows/bytes/nodes 由此是**并发在飞
+                    # 量衡**而非终生计数（审计 07 R1 Critical：原先只增不减，
+                    # ~25 个估计偏大的 run 即可永久打满 global 预算 → 自我
+                    # DoS）。钳零语义（budgets.release）是重复归还的兜底。
+                    try:
+                        charged_rows, charged_bytes, charged_nodes = (
+                            charge_ledger.snapshot()
+                        )
+                        governor.release(
+                            gov_path,
+                            rows=reserved["rows"] + charged_rows,
+                            bytes_=reserved["bytes"] + charged_bytes,
+                            nodes=reserved["nodes"] + charged_nodes,
+                        )
+                    except Exception:  # noqa: BLE001 - 归还失败不阻断作用域摘除
+                        tracing.emit("budget_release_failed", run_id=run_id,
+                                     status=run.status.value)
+                    # 摘除 execution 作用域（归还后祖先链已回到基本线）
+                    governor.teardown_scope(gov_path)
+                run.wall_time_s = round(time.monotonic() - started, 6)
+                cleaned = True
+            finally:
+                if not completed or not cleaned:
+                    # 非预期异常（含清理阶段自身抛错）：注册表不得滞留
+                    # RUNNING，取消令牌/输出条目不得泄漏。
+                    run.status = ExecutionRunStatus.FAILED
+                if not self._retain_outputs:
+                    with self._run_lock:
+                        self._run_outputs.pop(run_id, None)
+                self._run_tokens.pop(run_id, None)
 
         failed = [nid for nid, ev in run.evidence.items() if ev.status == "failed"]
         if preempt_requested["flag"]:
@@ -2185,13 +2205,22 @@ class GeoExecutionEngine:
               ``result_ref`` 经会话存储**存活探测**通过才复用。
 
         复用被拒时记录类型化原因（``ev.reuse_skipped_reason`` + trace）：
-        ``upstream_changed:<nodes>`` / ``result_ref_unresolvable``。无条目
-        不是「跳过」（没有可复用物），不打证据。
+        ``upstream_changed:<nodes>`` / ``plan_domain_mismatch``（无输入源
+        节点跨计划） / ``result_ref_unresolvable``。无条目不是「跳过」
+        （没有可复用物），不打证据。
         """
         if not cache_owner_isolated(owner_scope):
             return False
         node_fp = node.semantic_fingerprint()
-        reuse_key = graph.checkpoint_reuse_key(node, owner_scope)
+        # 与 _execute_one（ADR-0101 D4）同款键空间纪律：有内部上游输入的
+        # 节点用跨计划 checkpoint 键（命中前校验上游输出指纹一致性）；
+        # 无输入的外部源节点（QUERY/SOURCE_SCAN）的计划域键 —— 外部内容
+        # 漂移无上游指纹可校验，信任域仍以计划身份为界（V3 语义）。
+        # owner 域隔离不变（SEC）。
+        if node.inputs:
+            reuse_key = graph.checkpoint_reuse_key(node, owner_scope)
+        else:
+            reuse_key = graph.node_reuse_key(run.plan_fingerprint, node, owner_scope)
         cached = self._store.get(reuse_key, owner_scope=owner_scope, run_id=run.run_id)
         if cached is not None and _SIZE_KEY in cached:
             stale = self._checkpoint_stale(node, cached, outputs_fp)
@@ -2229,6 +2258,16 @@ class GeoExecutionEngine:
                 ev, f"upstream_changed:{','.join(sorted(changed))}", run, node,
             )
             return False
+
+        if not node.inputs:
+            # 无输入源节点（QUERY/SOURCE_SCAN）：无上游输出指纹可校验
+            # （changed 恒空）→ 跨进程复用同样以计划身份为界，与进程内
+            # 计划域键（上文）/_execute_one 同语义。条目缺计划标记
+            # （修复前写入的旧条目）→ fail-open，由完成路径刷新补标。
+            recorded_plan = recorded.get(_PLAN_FP_KEY)
+            if recorded_plan is not None and recorded_plan != run.plan_fingerprint:
+                self._note_reuse_skip(ev, "plan_domain_mismatch", run, node)
+                return False
 
         payload = self._resolve_session_ref(
             entry.get("session_id"), entry.get("result_ref")
@@ -2322,9 +2361,17 @@ class GeoExecutionEngine:
         if not cache_owner_isolated(owner_scope):
             return
         upstream = {s: outputs_fp[s] for s in node.inputs if s in outputs_fp}
+        # 与 _execute_one / _durable_reuse_hit 同款键空间纪律：无输入外部
+        # 源节点写计划域键（进程内），DB 索引条目带计划域标记（命中前
+        # 校验）—— 外部内容漂移无上游指纹可校验，信任域以计划身份为界。
+        if node.inputs:
+            store_key = graph.checkpoint_reuse_key(node, owner_scope)
+        else:
+            store_key = graph.node_reuse_key(run.plan_fingerprint, node, owner_scope)
+            upstream = {_PLAN_FP_KEY: run.plan_fingerprint}
         try:
             self._store.put(
-                graph.checkpoint_reuse_key(node, owner_scope),
+                store_key,
                 {
                     _NODE_FP_KEY: node_fp,
                     _OUT_FP_KEY: out_fp,

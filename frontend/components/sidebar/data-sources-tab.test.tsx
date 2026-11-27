@@ -189,6 +189,13 @@ import { ApiError } from '@/lib/api/transport';
 const materialize = () => vi.mocked(dataFabricApi.materializeCatalogItem);
 const fetchRef = () => vi.mocked(dataFabricApi.fetchRefGeoJSON);
 
+/** 可控 promise：手动 resolve 模拟「在飞 / 迟到」的请求。 */
+function deferred<T = unknown>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => { resolve = r; });
+  return { promise, resolve };
+}
+
 const GEOJSON = {
   type: 'FeatureCollection' as const,
   features: [
@@ -295,5 +302,28 @@ describe('DataSourcesTab — materialize session + layer wiring (#463)', () => {
     expect(hudStore.addLayer).not.toHaveBeenCalled();
     const messages = toastStore.addToast.mock.calls.map((c: unknown[]) => String(c[0]));
     expect(messages.some((m: string) => m.includes('会话'))).toBe(true);
+  });
+
+  it('物化在飞时切换会话：加载至地图不永久禁用', async () => {
+    const d = deferred();
+    materialize().mockImplementationOnce(() => d.promise as Promise<never>);
+    listSpatialCatalog().mockResolvedValue({
+      total: 1, limit: 50, offset: 0, items: [makeCatalogItem('cat1', '学校分布')],
+    });
+    const view = render(<DataSourcesTab sessionId="sess-real-42" />);
+    const button = await screen.findByRole('button', { name: /加载至地图/ });
+    await act(async () => { fireEvent.click(button); });
+    // 物化在飞 → 按钮转 loading 文案并禁用
+    expect(screen.getByRole('button', { name: /实例化中/ })).toBeDisabled();
+    // 物化仍在飞时切换会话（代次自增）
+    view.rerender(<DataSourcesTab sessionId="sess-real-99" />);
+    expect(screen.getByRole('button', { name: /加载至地图/ })).not.toBeDisabled();
+    // 迟到响应落地（代次不匹配被丢弃）—— 不得把新会话按钮重新锁死
+    d.resolve({
+      success: true, ref_id: 'ref:df-abc123', feature_count: 2, total_count: 2,
+      dataset_id: 'cat1', source_id: 's1', title: '学校分布',
+    });
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.getByRole('button', { name: /加载至地图/ })).not.toBeDisabled();
   });
 });

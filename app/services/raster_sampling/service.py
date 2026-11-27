@@ -613,6 +613,10 @@ async def run_plan_execution(
 async def _latest_job(
     session_id: str, plan_id: str
 ) -> Optional[Dict[str, Any]]:
+    return await asyncio.to_thread(_latest_job_sync, session_id, plan_id)
+
+
+def _latest_job_sync(session_id: str, plan_id: str) -> Optional[Dict[str, Any]]:
     from app.services.data_operations.runner import _sync_session
     from app.models.db_model import AnalysisTask
     from sqlalchemy import select
@@ -622,17 +626,43 @@ async def _latest_job(
             select(AnalysisTask).where(
                 AnalysisTask.task_type == "raster_sampling_execute",
                 AnalysisTask.session_id == session_id,
-            ).order_by(AnalysisTask.id.desc()).limit(200)
+                AnalysisTask.parameters["plan_id"].as_string() == plan_id,
+            ).order_by(AnalysisTask.id.desc()).limit(1)
         ).scalars().all()
         out = None
-        for job in row:
-            params = job.parameters if isinstance(job.parameters, dict) else {}
-            if params.get("plan_id") == plan_id:
-                out = {"job_id": str(job.id), "status": str(job.status),
-                       "params": params}
-                break
+        if row:
+            params = row[0].parameters if isinstance(row[0].parameters, dict) else {}
+            out = {"job_id": str(row[0].id), "status": str(row[0].status),
+                   "params": params}
         db.commit()
     return out
+
+
+async def _require_read_owner(
+    session_id: str, owner_token: Optional[str]
+) -> None:
+    """读取路径归属复核（SEC-08）：presented token 须匹配会话 verifier。
+
+    ``owner_token is None``（工具面/认证用户面）不重复判定 —— 路由层
+    ``require_owned_session`` 已核 user 归属；匿名会话存在 verifier 时
+    每次读取都复核，失配按 404 fail-closed（不泄露会话存在性）。
+    """
+    if not owner_token:
+        return
+    from app.core.auth import owner_token_matches
+    from app.core.owner_tokens import transport_owner_token
+    from app.services.session_ownership import lookup_session_owner_token
+
+    owner_token = transport_owner_token(owner_token)
+    if not owner_token:  # 服务端 verifier 不是可展示的传输凭证
+        return
+    expected = await lookup_session_owner_token(session_id)
+    if expected is None:
+        return
+    if not owner_token_matches(expected, owner_token):
+        raise RasterSamplingError(
+            "UNAUTHORIZED", "session ownership check failed",
+            field="session_id", status_code=404)
 
 
 async def status(
@@ -641,6 +671,7 @@ async def status(
     plan_id: str,
     owner_token: Optional[str] = None,
 ) -> Dict[str, Any]:
+    await _require_read_owner(session_id, owner_token)
     plan = await store.get_plan(session_id, plan_id)
     if plan is None:
         raise RasterSamplingError(
@@ -692,6 +723,7 @@ async def results(
     band: Optional[int] = None,
     valid: Optional[bool] = None,
 ) -> Dict[str, Any]:
+    await _require_read_owner(session_id, owner_token)
     receipt = None
     if execution_id:
         receipt = await store.get_receipt(session_id, execution_id)
@@ -721,9 +753,9 @@ async def results(
         raise RasterSamplingError(
             "RESULTS_EXPIRED", "sample table ref unresolvable",
             field="sample_table_ref", status_code=410)
-    rows_page, total, pagination_facts = await asyncio.to_thread(
+    rows_page, _total, pagination_facts, curves = await asyncio.to_thread(
         _read_page, str(path), page, max(1, min(int(per_page), 500)),
-        source_ref, band, valid)
+        source_ref, band, valid, include_curves=include_curves)
     out: Dict[str, Any] = {
         "success": True,
         "execution_id": receipt.execution_id,
@@ -733,8 +765,6 @@ async def results(
         "pagination": pagination_facts,
     }
     if include_curves:
-        curves = await asyncio.to_thread(
-            _build_curves_payload, str(path))
         out["curves"] = curves
         out["station_layer_ref"] = receipt.outputs.get("station_layer_ref") or ""
         out["band_columns"] = receipt.outputs.get("band_columns") or {}
@@ -744,40 +774,54 @@ async def results(
 def _read_page(
     path: str, page: int, per_page: int,
     source_ref: str, band: Optional[int], valid: Optional[bool],
-) -> Tuple[List[Dict[str, Any]], int, Dict[str, Any]]:
+    *, include_curves: bool = False,
+) -> Tuple[List[Dict[str, Any]], int, Dict[str, Any],
+           Optional[Dict[str, Any]]]:
+    import pyarrow as pa
+    import pyarrow.compute as pc
     import pyarrow.parquet as pq
 
-    table = pq.read_table(path)
-    total = table.num_rows
-    if source_ref:
-        mask = table.column("source_ref").to_pylist()
-        keep = [i for i, v in enumerate(mask) if v == source_ref]
-        table = table.take(keep)
-    if band is not None:
-        mask = table.column("band").to_pylist()
-        keep = [i for i, v in enumerate(mask) if int(v) == int(band)]
-        table = table.take(keep)
-    if valid is not None:
-        mask = table.column("valid").to_pylist()
-        keep = [i for i, v in enumerate(mask) if bool(v) == bool(valid)]
-        table = table.take(keep)
-    filtered = table.num_rows
+    parquet = pq.ParquetFile(path)
+    total = parquet.metadata.num_rows
     start = max(0, (page - 1) * per_page)
-    end = min(filtered, start + per_page)
-    page_table = table.slice(start, end - start)
-    rows = page_table.to_pylist()
+    end = start + per_page
+    filtered = 0
+    rows: List[Dict[str, Any]] = []
+    curve_rows: List[Dict[str, Any]] = []
+    for batch in parquet.iter_batches(use_threads=False):
+        if include_curves:
+            curve_rows.extend(
+                batch.select(publish.CURVE_COLUMNS).to_pylist())
+        mask = None
+        if source_ref:
+            col = batch.column("source_ref")
+            if pa.types.is_dictionary(col.type):
+                col = col.cast(pa.string())
+            cond = pc.equal(col, source_ref)
+            mask = cond if mask is None else pc.and_(mask, cond)
+        if band is not None:
+            cond = pc.equal(batch.column("band"), int(band))
+            mask = cond if mask is None else pc.and_(mask, cond)
+        if valid is not None:
+            cond = pc.equal(batch.column("valid"), bool(valid))
+            mask = cond if mask is None else pc.and_(mask, cond)
+        page_batch = batch.filter(mask) if mask is not None else batch
+        count = page_batch.num_rows
+        if count:
+            lo = max(0, start - filtered)
+            hi = min(count, end - filtered)
+            if hi > lo:
+                rows.extend(page_batch.slice(lo, hi - lo).to_pylist())
+            filtered += count
     facts = {
         "page": page, "per_page": per_page,
         "filtered_rows": filtered, "total_rows": total,
         "filters": {"source_ref": source_ref, "band": band, "valid": valid},
         "truncated": False,
     }
-    return rows, filtered, facts
-
-
-def _build_curves_payload(path: str) -> Dict[str, Any]:
-    raw = publish.load_rows_for_curves(path)
-    return publish.build_display_curves(raw)
+    curves = (publish.build_display_curves(curve_rows)
+              if include_curves else None)
+    return rows, filtered, facts, curves
 
 
 async def cancel(

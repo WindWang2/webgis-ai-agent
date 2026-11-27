@@ -163,3 +163,71 @@ describe('ClarificationCard — 本地作答随 envelope 生命周期（#1628）
     });
   });
 });
+
+/** 三问题 envelope（防御性输入）：不得静默丢弃第 3 题。 */
+function makeThreeQuestionEnvelope(): ClarificationEnvelope {
+  const base = makeEnvelope();
+  return {
+    ...base,
+    questions: [
+      base.questions[0],
+      {
+        ...base.questions[0],
+        code: 'second',
+        context_key: 'params.second',
+        path: 'params.second',
+        question_zh: '第二问？',
+        question_en: 'Second?',
+        options: [
+          { value: 'b', label_zh: '第二问选项', label_en: 'Second option', is_default: false },
+        ],
+        allow_free_text: false,
+        can_waive: false,
+        default_value: 'b',
+      },
+      {
+        ...base.questions[0],
+        code: 'third',
+        context_key: 'params.third',
+        path: 'params.third',
+        question_zh: '第三问？',
+        question_en: 'Third?',
+        options: [
+          { value: 'c', label_zh: '第三问选项', label_en: 'Third option', is_default: false },
+        ],
+        allow_free_text: false,
+        can_waive: false,
+        default_value: 'c',
+      },
+    ],
+  };
+}
+
+describe('ClarificationCard — envelope 问题数不被静默截断', () => {
+  it('3 个问题全部渲染，且提交载荷覆盖全部问题', () => {
+    const onSubmit = vi.fn();
+    const { container } = render(
+      <ClarificationCard state={openState(makeThreeQuestionEnvelope())} onSubmit={onSubmit} />,
+    );
+
+    // 修复前 slice(0, 2)：第 3 题不渲染，答完前两题即可提交缺失答案的载荷。
+    expect(container.querySelectorAll('fieldset')).toHaveLength(3);
+    expect(screen.getByText('第三问？')).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText('1000 米'));
+    fireEvent.click(screen.getByLabelText('第二问选项'));
+    fireEvent.click(screen.getByLabelText('第三问选项'));
+    expect(submitButton()).toBeEnabled();
+
+    fireEvent.click(submitButton());
+    expect(onSubmit).toHaveBeenCalledWith({
+      requestId: 'req-1',
+      answers: [
+        { context_key: 'params.buffer_radius', value: '1000' },
+        { context_key: 'params.second', value: 'b' },
+        { context_key: 'params.third', value: 'c' },
+      ],
+      waiveKeys: [],
+    });
+  });
+});

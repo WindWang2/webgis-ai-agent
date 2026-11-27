@@ -295,6 +295,59 @@ def fn_fingerprint(fn: Any) -> str:
         h.update(uuid.uuid4().bytes)
     return h.hexdigest()[:_CHUNK_ID_HEX]
 
+def _iter_windows_for_size(
+    width: int,
+    height: int,
+    window_size: Optional[Tuple[int, int]],
+    *,
+    window_side: Optional[int] = None,
+    src: Any = None,
+) -> Iterator[Any]:
+    """Bounded-window partition honouring BOTH ``window_size`` axes.
+
+    :func:`raster_grid.iter_bounded_windows` is square-only (a single
+    ``window_side``); callers passing ``window_size=(w, h)`` used to have
+    ``h`` silently dropped. This projection keeps that function the single
+    partition authority: it runs with ``side=max(w, h)`` and subdivides the
+    yielded windows into at most ``w×h`` cells (identical output for square
+    sizes). An explicit ``window_side`` keeps its documented precedence.
+    """
+    from app.lib.geo_analysis.raster_grid import iter_bounded_windows
+    from rasterio.windows import Window
+
+    if window_side is not None:
+        yield from iter_bounded_windows(
+            width, height, window_side=int(window_side), src=src
+        )
+        return
+    if not window_size:
+        yield from iter_bounded_windows(width, height, src=src)
+        return
+    win_w, win_h = int(window_size[0]), int(window_size[1])
+    if win_w < 1 or win_h < 1:
+        raise ValueError(f"window_size must be positive, got {window_size!r}")
+    if win_w == win_h:
+        yield from iter_bounded_windows(
+            width, height, window_side=win_w, src=src
+        )
+        return
+    for win in iter_bounded_windows(
+        width, height, window_side=max(win_w, win_h), src=src
+    ):
+        row = int(win.row_off)
+        row_end = row + int(win.height)
+        col_base = int(win.col_off)
+        col_end = col_base + int(win.width)
+        while row < row_end:
+            row_span = min(win_h, row_end - row)
+            col = col_base
+            while col < col_end:
+                col_span = min(win_w, col_end - col)
+                yield Window(col, row, col_span, row_span)
+                col += win_w
+            row += win_h
+
+
 def iter_chunk_descriptors(
     reader: Any,
     *,
@@ -309,18 +362,16 @@ def iter_chunk_descriptors(
     Reuses ``window_side_from_budget`` + the native-block preference of
     :func:`raster_grid.iter_bounded_windows` verbatim (that function remains
     the single partition authority — this is a projection over it, not a
-    second iterator). Existing bare-``Window`` callers are untouched.
-    ``identity_extra`` passes through to the chunk id (execute_windowed
-    mints its descriptors with ``out_dtype=…`` — round-1 review MINOR).
+    second iterator). ``window_size=(w, h)`` honours both axes (see
+    :func:`_iter_windows_for_size`). Existing bare-``Window`` callers are
+    untouched. ``identity_extra`` passes through to the chunk id
+    (execute_windowed mints its descriptors with ``out_dtype=…`` — round-1
+    review MINOR).
     """
-    from app.lib.geo_analysis.raster_grid import iter_bounded_windows
-
     meta = reader.metadata()
     ds = reader._ds()
-    if window_side is None:
-        window_side = window_size[0] if window_size else None
-    for win in iter_bounded_windows(
-        meta.width, meta.height, window_side=window_side, src=ds
+    for win in _iter_windows_for_size(
+        meta.width, meta.height, window_size, window_side=window_side, src=ds
     ):
         yield build_chunk_descriptor(
             reader,

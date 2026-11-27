@@ -106,6 +106,8 @@ _TOOL_MODULES = [
     # GOAL-02：OGC 开放服务与远程资产工具面（发现/coverage 读/COG 物化/瓦片上图）
     ("app.tools.ogc_service_tools", "register_ogc_service_tools"),
     ("app.tools.data_discovery", "register_data_discovery_tools"),
+    # GOAL-20261126-02：任务级数据覆盖/供给工具面（发现/覆盖对比/计划/执行/状态）
+    ("app.tools.task_data_supply_tools", "register_task_data_supply_tools"),
     # G29：运行中用户决策工具面（原生 ctx.ui 闭环；独立模块防并发冲突）
     ("app.tools.user_decision_tools", "register_user_decision_tools"),
     ("app.tools.workspace_tools", "register_workspace_tools"),
@@ -183,6 +185,9 @@ _TOOL_MODULES = [
     ("app.tools.temporal_media_tools", "register_temporal_media_tools"),
     # G41：双变量矩阵 / 估计值+可靠性双通道作者工作台（独立模块防并发冲突）
     ("app.tools.bivariate_reliability_tools", "register_bivariate_reliability_tools"),
+    # GOAL-20261126-04：地理锚定统计图符三工具（inspect/plan/apply；独立模块
+    # 防并发冲突；apply 走 diagram_symbol_authoring 单一 CAS 写面）
+    ("app.tools.diagram_symbol_tools", "register_diagram_symbol_tools"),
     # G37：会话模型运行配置只读工具面（目录/状态/预算；独立模块防并发冲突；
     # 只读，绝不升级权限 —— 选择变化只来自用户经正式 API 的请求）
     ("app.tools.session_model_tools", "register_session_model_tools"),

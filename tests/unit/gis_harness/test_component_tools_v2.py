@@ -179,6 +179,36 @@ async def test_component_update_stats_panel(registry, clean_session):
 
 
 @pytest.mark.asyncio
+async def test_component_update_tolerates_unparseable_legacy_component(registry, clean_session):
+    """review P2-11：历史组件形状非法不得让整次调用抛 pydantic ValidationError。
+
+    引擎 SetLayoutIntent 只做结构性 id/type 检查，model 非法但结构合法的
+    条目可持久化（前端新组件类型/旧 spec 遗留类型名）—— 对另一个合法组件的
+    突变必须走 typed 契约（成功或诚实失败），不得逸出异常；历史条目也不被
+    顺手删除。
+    """
+    await _seed_components(clean_session)
+    seeded = [c.to_mapspec() for c in build_default_components(primary_cartography="visual_heatmap")]
+    await mapspec_store.layout_set(clean_session, components=[
+        *seeded,
+        {"id": "legacy-future-widget", "type": "future_widget", "position": "top-right"},
+    ])
+    handler = registry._tools["webgis_component_update"]
+    res = await handler(
+        session_id=clean_session, component_type="north_arrow",
+        variant="arrow_simple",
+    )
+    assert isinstance(res, dict) and "success" in res, "必须返回 typed 结果而非抛异常"
+    if not res["success"]:
+        # 引擎写侧（mutation_handlers._handle_patchcomponent）仍全量解析 ——
+        # 以 typed 失败收场（带 message），不再逸出 pydantic ValidationError。
+        assert res.get("message")
+    spec = await mapspec_store.get_mapspec(clean_session)
+    ids = {c.get("id") for c in spec["layout"]["components"]}
+    assert "legacy-future-widget" in ids, "无关历史条目不得被顺手删除"
+
+
+@pytest.mark.asyncio
 async def test_component_update_variant_and_placement(registry, clean_session):
     await _seed_components(clean_session)
     res = await registry.dispatch(
@@ -339,6 +369,39 @@ async def test_large_chart_goes_through_ref_channel(registry, clean_session):
 
 
 @pytest.mark.asyncio
+async def test_large_chart_store_outage_never_persists_phantom_ref(
+    registry, clean_session, monkeypatch
+):
+    """P2 data-integrity：Redis 宕机时 store() 返回哨兵 ref（无载荷）；
+    attach 面板绝不能把它写进 MapSpec options.chartRef（幻影引用）。"""
+    from app.services.session_data_protocol import UNAVAILABLE_REF_PREFIX
+
+    async def _unavailable_store(session_id, data, prefix="data"):
+        return f"{UNAVAILABLE_REF_PREFIX}deadbeef"
+
+    monkeypatch.setattr(session_data_manager, "store", _unavailable_store)
+    await _seed_components(clean_session)
+    data = [
+        {"name": f"district-unit-{i:04d}-" + "x" * 80, "value": i}
+        for i in range(400)
+    ]
+
+    res = await registry.dispatch(
+        "generate_chart",
+        {"chart_type": "bar", "title": "大数据", "data": data,
+         "session_id": clean_session, "attach_to_map": True},
+        session_id=clean_session,
+    )
+    # 图表本体照常生成；面板附加显式失败可见
+    assert res["chart"]["type"] == "bar"
+    assert res["map_chart_panel"]["attached"] is False
+    assert "error" in res["map_chart_panel"]
+    # 哨兵 ref 不得进入 MapSpec（任何组件 options）
+    spec = await mapspec_store.get_mapspec(clean_session) or {}
+    assert UNAVAILABLE_REF_PREFIX not in str(spec)
+
+
+@pytest.mark.asyncio
 async def test_component_update_change_is_json_serializable(registry, clean_session):
     """#1065: placement 变更的 change 记录此前携带 pydantic ComponentPlacement
     对象 —— dispatch 的 json.dumps(default=numpy_json_default) 抛 TypeError，
@@ -362,3 +425,29 @@ async def test_component_update_change_is_json_serializable(registry, clean_sess
         res.get("component_mutation_evidence", {}).get("change", {}),
         default=numpy_json_default,
     )
+
+
+@pytest.mark.asyncio
+async def test_component_update_strips_internal_heatmap_palette_option(
+        registry, clean_session, monkeypatch):
+    """内部控制键 heatmap_palette 不得随 patch 持久化进组件 options。"""
+    await _seed_components(clean_session)
+    from app.services.gis_harness import heatmap_restyle as hr
+
+    async def _ok(session_id, palette_name):
+        return {"success": True, "code": "heatmap_palette_applied",
+                "palette": "blues", "layer_ids": []}
+
+    monkeypatch.setattr(hr, "recolor_session_heatmaps", _ok)
+    res = await registry.dispatch(
+        "webgis_component_update",
+        {"session_id": clean_session, "component_type": "title",
+         "options": {"heatmap_palette": "blues", "custom_flag": "x"}},
+        session_id=clean_session,
+    )
+    assert res["success"] is True, res.get("message")
+    spec = await mapspec_store.get_mapspec(clean_session)
+    title = next(c for c in spec["layout"]["components"]
+                 if c["type"] == "title")
+    assert title["options"].get("custom_flag") == "x"
+    assert "heatmap_palette" not in title["options"]

@@ -43,7 +43,9 @@ class CancelToken:
         cancel_event: Optional[threading.Event] = None,
     ):
         started = time.monotonic()
-        self._deadline = (started + deadline_s) if deadline_s else None
+        # deadline_s=0 与 federation._source_query 的 `> deadline_s` 保持同一
+        # 解释：0 表示已超时，而不是「无期限」。
+        self._deadline = (started + deadline_s) if deadline_s is not None else None
         self._event = cancel_event
 
     def check(self) -> None:
@@ -152,6 +154,19 @@ def iter_scan_pages(
                 pass
         rows = result.features or []
         more = bool(getattr(result, "has_more", False) or getattr(result, "truncated", False))
+        # R1-P1-9：adapter 已证明组窗口不完整时，权威事实优先于任何
+        # len/fetch_window 启发式 —— 分组聚合被页上限截断必须响亮失败，
+        # 不得把静默截断的组窗口当成完整结果Join。
+        group_window_complete = getattr(result, "group_window_complete", None)
+        if group_window_complete is False:
+            raise QueryBudgetExceededError(
+                "source returned an incomplete group window; "
+                "narrow the group_by or raise the page limit",
+                details={
+                    "hint": "grouped aggregation exceeded the source page limit",
+                    "group_window_complete": False,
+                },
+            )
         incoming = fetched + len(rows)
         if incoming > budget.max_rows and incoming <= fetch_limit:
             raise QueryBudgetExceededError(

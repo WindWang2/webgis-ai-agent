@@ -176,6 +176,19 @@ describe('chart agent commands', () => {
     expect(getSelectionFilterExpression('chart-1')).toBeNull();
   });
 
+  it('chart_highlight：>20 类时结果如实回传实际发布的 20 类（不再谎报完整集合）', async () => {
+    const categories = Array.from({ length: 25 }, (_, i) => `c${i}`);
+
+    const res = await await chartCommands.chart_highlight.run(
+      ctxFor({ componentId: 'chart-1', categories }),
+    ) as { status: string; result?: { categories?: string[] } };
+
+    expect(res.status).toBe('succeeded');
+    // selection-store 有界契约 ≤20 —— 结果必须与地图过滤实际消费的集合一致
+    expect(res.result?.categories).toEqual(categories.slice(0, 20));
+    expect(getSelection()?.selected_categories).toEqual(categories.slice(0, 20));
+  });
+
   it('chart_close / chart_restore：enabled 通道', async () => {
     expect(
       (await chartCommands.chart_close.run(ctxFor({ componentId: 'chart-1' })) as { status: string }).status,

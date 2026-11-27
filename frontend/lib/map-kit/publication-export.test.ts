@@ -39,6 +39,7 @@ vi.mock('@/lib/api/publication', () => ({
 }));
 
 import { exportVectorPdf } from '@/lib/api/publication';
+import { composeExportSpec } from '@/lib/map-kit/exporter';
 import {
   runVectorPdfExport,
   atlasPolicyFromRequest,
@@ -100,6 +101,24 @@ describe('runVectorPdfExport（C14 前端入口）', () => {
     expect(hud.exports[0]).toMatchObject({ filename: 'map_vector_1.pdf', type: 'pdf' });
     expect(hud.messages[0]).toContain('矢量 PDF');
     expect(hud.messages[0]).toContain('raster_layer_unavailable_vector_pdf');
+  });
+
+  it('spec 组装异常：对外 spec_unavailable，dev 诊断日志不再静默', async () => {
+    vi.mocked(composeExportSpec).mockImplementationOnce(async () => {
+      throw new Error('compose boom');
+    });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.stubEnv('NODE_ENV', 'development');
+    try {
+      const outcome = await runVectorPdfExport(() => makeHud(), {}, { title: 'T' });
+      expect(outcome).toEqual({ ok: false, error: 'spec_unavailable' });
+      expect(warnSpy).toHaveBeenCalledWith(
+        '[publication-export] spec 组装失败',
+        expect.any(Error),
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('无 committed spec → 诚实失败 no_mapspec，不发请求', async () => {

@@ -276,6 +276,24 @@ def test_j27_aggregate_null_semantics():
     assert stats.matched_pairs == 5
 
 
+def test_p3_internal_geometry_channel_is_reserved():
+    """源字段 __geometry__ 不得静默覆盖内部几何通道（应 typed 冲突）。"""
+    left = loaded_from_rows(
+        "left",
+        {"rows": [{"jk": 1, "__geometry__": {"type": "Point",
+                                            "coordinates": [0, 0]}}]},
+        "fpL")
+    right = loaded_from_rows("right", {"rows": [{"jk": 1, "v": 2}]}, "fpR")
+    plan = attr_plan(
+        keys=[{"left_field": "jk", "right_field": "jk"}],
+        field_map=[{"side": "left", "field": "__geometry__"}])
+    with pytest.raises(DataJoinError) as ei:
+        _run(plan, left, right)
+    assert ei.value.code == "field_mapping_conflict"
+    outs = {c["output"] for c in ei.value.detail["conflicts"]}
+    assert "__geometry__" in outs
+
+
 def test_attribute_matches_federation_kernel_semantics():
     """差分兼容：单键 + inner + 无聚合 == federation attribute_join_local。
 

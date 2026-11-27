@@ -54,6 +54,18 @@ describe('annotationCommands (ROUND-2: confirmed only when data reached the map)
     expect(result).toEqual({ status: 'failed', error: 'target_not_found' });
   });
 
+  it('draw_measurement rejects flat (non-pair) coordinates as invalid_params', () => {
+    const map = makeMockMaplibreMap();
+    // 扁平 [lng, lat, lng, lat] 形态：长度 ≥ 2 但元素不是点 → 旧代码把数字
+    // 当点用（first[0] undefined → 质心 NaN），非法几何静默入库。
+    const result = annotationCommands.draw_measurement.run(
+      makeCtx(map, { shape: 'polygon', coordinates: [116, 39, 117, 40], label: 'd' }),
+    );
+
+    expect(result).toEqual({ status: 'failed', error: 'invalid_params' });
+    expect(map._calls.setData).toHaveLength(0);
+  });
+
   it('draw_measurement succeeds with confirmed:true when the source exists', () => {
     const map = makeMockMaplibreMap();
     const result = annotationCommands.draw_measurement.run(

@@ -218,6 +218,31 @@ async def test_production_missing_shared_rate_ledger_rejects(monkeypatch):
     assert error.value.http_status == 503
 
 
+@pytest.mark.asyncio
+async def test_nonpositive_rate_limit_is_unlimited_not_env_default(monkeypatch):
+    from app.core.rate_limiter import RedisRateLimiter
+    limiter = RedisRateLimiter(MagicMock())
+    is_allowed = AsyncMock(return_value=False)
+    monkeypatch.setattr(limiter, "is_allowed", is_allowed)
+    monkeypatch.setattr("app.core.rate_limiter.get_rate_limiter", AsyncMock(return_value=limiter))
+    assert await org_quota.check_rate("1", limit_per_min=0) is True
+    assert await org_quota.check_rate("1", limit_per_min=-1) is True
+    is_allowed.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_resolution_keeps_default_and_explicit_values(monkeypatch):
+    from app.core.rate_limiter import RedisRateLimiter
+    limiter = RedisRateLimiter(MagicMock())
+    is_allowed = AsyncMock(return_value=True)
+    monkeypatch.setattr(limiter, "is_allowed", is_allowed)
+    monkeypatch.setattr("app.core.rate_limiter.get_rate_limiter", AsyncMock(return_value=limiter))
+    assert await org_quota.check_rate("1") is True
+    assert is_allowed.await_args.args[1] == org_quota.DEFAULT_RATE_PER_MIN
+    assert await org_quota.check_rate("1", limit_per_min=7) is True
+    assert is_allowed.await_args.args[1] == 7
+
+
 def test_postgres_lock_contention_is_bounded_retryable_admission():
     db = MagicMock()
     db.get_bind.return_value = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))

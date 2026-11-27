@@ -20,9 +20,11 @@ const LEGEND_TYPE_BY_COMPONENT: Record<string, string[]> = {
 
 function legendForComponent(component: MapSpecComponent, spec: RendererContext['spec']): LegendSpec | undefined {
   const layerId = (component as unknown as { options?: Record<string, unknown> }).options?.['layerId'];
-  if (typeof layerId === 'string' && layerId && spec) {
-    const layer = spec.layers.find((l) => l.id === layerId) as unknown as { legend_spec?: LegendSpec } | undefined;
-    if (layer?.legend_spec) return layer.legend_spec;
+  if (typeof layerId === 'string' && layerId) {
+    // 显式 layerId 是硬绑定：未命中图层或该层无 legend_spec 时返回空，
+    // 不得回退到按类型搜索别层图例（会以另一图层的 min/max/unit 冒充本层）。
+    const layer = spec?.layers.find((l) => l.id === layerId) as unknown as { legend_spec?: LegendSpec } | undefined;
+    return layer?.legend_spec;
   }
   const wanted = LEGEND_TYPE_BY_COMPONENT[component.type] ?? [];
   const layers = spec?.layers ?? [];

@@ -155,8 +155,8 @@ function buildMarkdownReport(
     `- **Fit GCPs**: ${d?.fit_count ?? 0} | **Check GCPs**: ${d?.check_count ?? 0}`,
     `- **Fit RMSE (m)**: ${d?.fit_rmse != null ? `${d.fit_rmse.toFixed(4)} m` : 'n/a'}`,
     `- **Check RMSE (m)**: ${d?.check_rmse != null ? `${d.check_rmse.toFixed(4)} m` : 'n/a'}`,
-    `- **Condition Number**: ${d?.condition_number != null ? d.condition_number.toExponential(3) : 'n/a'} | **det(J)**: ${d?.coefficients ? d.coefficients.determinant.toExponential(4) : 'n/a'}`,
-    `- **Convex Hull Coverage**: ${d != null ? `${(d.hull_coverage_ratio * 100).toFixed(1)}%` : 'n/a'}`,
+    `- **Condition Number**: ${d?.condition_number != null ? d.condition_number.toExponential(3) : 'n/a'} | **det(J)**: ${d?.coefficients && d.coefficients.determinant != null ? d.coefficients.determinant.toExponential(4) : 'n/a'}`,
+    `- **Convex Hull Coverage**: ${d?.hull_coverage_ratio != null ? `${(d.hull_coverage_ratio * 100).toFixed(1)}%` : 'n/a'}`,
   ];
   if (d?.warnings?.length) {
     lines.push('', '## Warnings');
@@ -200,20 +200,24 @@ function detectImportedCoordsAreWgs84(fmt: 'json' | 'csv', content: string): boo
         : parsed && typeof parsed === 'object' && Array.isArray((parsed as { gcps?: unknown }).gcps)
           ? (parsed as { gcps: unknown[] }).gcps
           : [];
-      const first = rows.find((r): r is Record<string, unknown> =>
-        Boolean(r && typeof r === 'object'),
+      const hasProjCoords = (row: Record<string, unknown>) =>
+        'map_x' in row && 'map_y' in row && row.map_x != null && row.map_y != null;
+      const hasWgsCoords = (row: Record<string, unknown>) =>
+        ('wgs84_lon' in row &&
+          'wgs84_lat' in row &&
+          row.wgs84_lon != null &&
+          row.wgs84_lat != null) ||
+        ('lon' in row && 'lat' in row && row.lon != null && row.lat != null);
+      // 只看首行会误判：首行可能只有 px/py，坐标字段在后续行。
+      const first = rows.find(
+        (r): r is Record<string, unknown> =>
+          Boolean(r && typeof r === 'object') &&
+          (hasProjCoords(r as Record<string, unknown>) ||
+            hasWgsCoords(r as Record<string, unknown>)),
       );
       if (!first) return false;
-      const hasProj =
-        'map_x' in first && 'map_y' in first && first.map_x != null && first.map_y != null;
-      const hasWgs =
-        ('wgs84_lon' in first &&
-          'wgs84_lat' in first &&
-          first.wgs84_lon != null &&
-          first.wgs84_lat != null) ||
-        ('lon' in first && 'lat' in first && first.lon != null && first.lat != null);
-      if (hasProj) return false;
-      return hasWgs;
+      if (hasProjCoords(first)) return false;
+      return hasWgsCoords(first);
     } catch {
       return false;
     }
@@ -294,6 +298,8 @@ export function GeoreferencingWorkbenchPanel({
    */
   const sessionUiEpochRef = useRef(0);
   const deletedSourceIdsRef = useRef<Set<string>>(new Set());
+  /** 未保存编辑标记镜像：轮询回包不得覆盖用户进行中的 GCP/配置编辑。 */
+  const dirtyRef = useRef(false);
   const tRef = useRef(t);
   tRef.current = t;
   const addToastRef = useRef(addToast);
@@ -312,9 +318,12 @@ export function GeoreferencingWorkbenchPanel({
     width: VIEWER_WIDTH, height: VIEWER_HEIGHT,
   });
 
-  const applyPlanToEditor = useCallback((plan: GeorefDraftPlan) => {
+  const applyPlanToEditor = useCallback((plan: GeorefDraftPlan, preserveLocalEdits = false) => {
     setActivePlan(plan);
     setSelectedSourceId(plan.source_id);
+    // 作业轮询期间若用户有未保存编辑，只刷新 activePlan（诊断/产物），
+    // 不回写编辑器，避免静默覆盖 GCP 行并清空撤销栈。
+    if (preserveLocalEdits) return;
     setTargetCrs(plan.target_crs);
     setResampling(plan.resampling);
     setTargetResM(plan.target_resolution_m != null ? String(plan.target_resolution_m) : '');
@@ -350,7 +359,7 @@ export function GeoreferencingWorkbenchPanel({
           const st = await pollGeorefStatus(ctx, planId);
           if (epoch !== sessionUiEpochRef.current) { stopPolling(); return; }
           setJobStatus(st);
-          applyPlanToEditor(st.plan);
+          applyPlanToEditor(st.plan, dirtyRef.current);
           if (!['pending', 'queued', 'running', 'cancelling'].includes(st.status)) {
             stopPolling();
             setExecuting(false);
@@ -365,9 +374,14 @@ export function GeoreferencingWorkbenchPanel({
               );
             }
           }
-        } catch {
+        } catch (err) {
+          if (epoch !== sessionUiEpochRef.current) return;
           stopPolling();
           setExecuting(false);
+          // 轮询失败必须同时清掉旧 running 状态，否则 isJobRunning 恒真、
+          // 面板永久卡在「运行中」且进度不再更新。
+          setJobStatus(null);
+          addToastRef.current(asGeorefError(err).message, 'error');
         }
       };
       void pollOnce();
@@ -565,6 +579,7 @@ export function GeoreferencingWorkbenchPanel({
    */
   const gcpsRef = useRef<EditableGcpRow[]>([]);
   useEffect(() => { gcpsRef.current = gcps; }, [gcps]);
+  useEffect(() => { dirtyRef.current = dirty; }, [dirty]);
 
   const mutateGcps = useCallback((updater: (prev: EditableGcpRow[]) => EditableGcpRow[]) => {
     const prev = gcpsRef.current;
@@ -620,7 +635,15 @@ export function GeoreferencingWorkbenchPanel({
     setShowIgnoreExifRetry(false);
     try {
       const res = await uploadGeorefSource(ctx, file, forceIgnoreExif);
-      if (epoch !== sessionUiEpochRef.current) return;
+      if (epoch !== sessionUiEpochRef.current) {
+        // 代次已变：清理刚上传的源，避免服务端残留孤立文件。
+        try {
+          await deleteGeorefSource(ctx, res.source.source_id);
+        } catch {
+          /* best-effort cleanup */
+        }
+        return;
+      }
       let created: { plan: GeorefDraftPlan } | null = null;
       try {
         created = await createGeorefPlan(ctx, {
@@ -675,10 +698,12 @@ export function GeoreferencingWorkbenchPanel({
   const handleDeleteSource = async () => {
     if (!ctx || !selectedSource) return;
     const deletedSid = selectedSource.source_id;
+    const epoch = sessionUiEpochRef.current;
     mutationEpochRef.current += 1;
     deletedSourceIdsRef.current.add(deletedSid);
     try {
       await deleteGeorefSource(ctx, deletedSid);
+      if (epoch !== sessionUiEpochRef.current) return;
       const remSources = sources.filter((s) => s.source_id !== deletedSid);
       const remPlans = plans.filter((p) => p.source_id !== deletedSid);
       setSources(remSources);
@@ -705,6 +730,7 @@ export function GeoreferencingWorkbenchPanel({
       }
     } catch (err) {
       deletedSourceIdsRef.current.delete(deletedSid);
+      if (epoch !== sessionUiEpochRef.current) return;
       addToast(asGeorefError(err).message, 'error');
     }
   };
@@ -989,6 +1015,13 @@ export function GeoreferencingWorkbenchPanel({
         const msg = t('partialBindWarning', { rev: nextRev });
         setBindMessage(msg);
         addToast(msg, 'warning');
+      } else {
+        // 既非 bound 也非 partial_success 的硬失败（带 error_code/message）：
+        // 旧代码无 else 分支，服务端错误被静默吞掉。
+        const msg =
+          [res.error_code, res.message].filter(Boolean).join(': ') || t('jobFailed');
+        setBindMessage(msg);
+        addToast(msg, 'error');
       }
     } catch (err) {
       addToast(asGeorefError(err).message, 'error');
@@ -1710,7 +1743,7 @@ export function GeoreferencingWorkbenchPanel({
               {diag.condition_number != null ? diag.condition_number.toExponential(2) : '—'}
             </div>
             <div>
-              {t('hullCoverage')}: {(diag.hull_coverage_ratio * 100).toFixed(1)}%
+              {t('hullCoverage')}: {diag.hull_coverage_ratio != null ? `${(diag.hull_coverage_ratio * 100).toFixed(1)}%` : '—'}
             </div>
           </div>
           {diag.blockers.map((b, i) => (

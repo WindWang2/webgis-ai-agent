@@ -278,7 +278,18 @@ def register_data_fabric_tools(registry: ToolRegistry):
             # 补建语义 —— 补建的 adapter 会被注册进 registry 成为受治理条目）。
             adapter = _resolve_source_adapter(profile_id, session_id)
             if not adapter:
-                raise RuntimeError(f"Data source connection profile '{profile_id}' not found. Please connect first.")
+                # 未知/未连接 profile_id 与同文件其余工具同口径：typed error
+                # dict，而非裸 RuntimeError 穿出工具边界（调用方按 error_type
+                # 分流，非结构化异常不可分流）。
+                return {
+                    "status": "error",
+                    "error_type": UNSUPPORTED_SOURCE,
+                    "error": (
+                        f"Data source connection profile '{profile_id}' not found. "
+                        f"Please connect first."
+                    ),
+                    "profile_id": profile_id,
+                }
 
             health = data_fabric_health_check.check_health(adapter)
             caps = adapter.capabilities()
@@ -681,7 +692,15 @@ def register_data_fabric_tools(registry: ToolRegistry):
         def _sync_run():
             adapter = _resolve_source_adapter(profile_id, session_id)
             if not adapter:
-                raise RuntimeError(f"Connection profile '{profile_id}' not found. Cannot refresh.")
+                # 同上：未知/未连接 profile_id 返回 typed error dict。
+                return {
+                    "status": "error",
+                    "error_type": UNSUPPORTED_SOURCE,
+                    "error": (
+                        f"Connection profile '{profile_id}' not found. Cannot refresh."
+                    ),
+                    "profile_id": profile_id,
+                }
 
             sync_details = adapter.sync(owner=session_id)
             health = data_fabric_health_check.check_health(adapter)

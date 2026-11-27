@@ -70,6 +70,9 @@ def _select(
         return [by_id[i] for i in only_ids]
     if profile == "smoke":
         by_id = {s.id: s for s in scenarios}
+        missing = [i for i in SMOKE_IDS if i not in by_id]
+        if missing:
+            raise SystemExit(f"unknown scenario ids: {missing}")
         return [by_id[i] for i in SMOKE_IDS]
     if profile == "focused":
         return [s for s in scenarios

@@ -220,9 +220,17 @@ def test_format_error_response_carries_category():
         request,
         include_details=False,
     )
-    assert resp["code"] == "SERVER_ERROR"  # 既有字段不变
+    # P3 修复：code 跟随类目裁决的 http_status（503），不再恒为 SERVER_ERROR
+    # —— 与 global_exception_handler 实际返回的状态码保持一致。
+    assert resp["code"] == "SERVICE_UNAVAILABLE"
     assert resp["category"] == "dependency_failure"
     assert resp["retryable"] is True
+
+    quota = format_error_response(
+        PlatformError("quota exceeded", category=ErrorCategory.QUOTA),
+        request,
+    )
+    assert quota["code"] == "RATE_LIMITED"
 
     resp = format_error_response(HTTPException(status_code=404), request)
     assert resp["code"] == "NOT_FOUND"  # 既有 M5 映射不受影响

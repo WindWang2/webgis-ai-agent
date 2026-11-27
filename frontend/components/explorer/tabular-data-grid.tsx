@@ -497,7 +497,7 @@ export function TabularDataGrid({
     );
   }
 
-  if (allRows.length === 0 && !loading) {
+  if (allRows.length === 0) {
     return (
       <div className={clsx('rounded-lg border border-edge-subtle bg-surface-panel p-6', className)}>
         <EmptyState icon={FileSpreadsheet} title={emptyTitleText} description={emptyDescriptionText} />

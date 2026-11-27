@@ -225,7 +225,12 @@ class ScenarioComparisonEngine:
                 diff_pct = round(((max(vals) - min(vals)) / max(abs(min(vals)), 1.0)) * 100, 1)
                 
                 if diff_pct > 5.0:
-                    goal = goals.get(m_key, "maximize")
+                    goal = goals.get(m_key)
+                    # Metrics without a declared optimization direction are
+                    # excluded from scoring; they must not be narrated as
+                    # "best/worst" under an implicit maximize default.
+                    if goal is None:
+                        continue
                     best_scen = max_scen if goal == "maximize" else min_scen
                     worst_scen = min_scen if goal == "maximize" else max_scen
                     trade_offs.append(

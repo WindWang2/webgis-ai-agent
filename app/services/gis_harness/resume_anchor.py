@@ -30,6 +30,7 @@ import asyncio
 from app.services.gis_harness.failure_observation import observe_optional_failure
 
 import logging
+import re
 import time
 import uuid
 from typing import Any, Dict, List, Optional
@@ -53,6 +54,10 @@ RESTORABLE_CHAPTER_KEYS = (
     "goal",
 )
 _ANCHOR_SCHEMA_VERSION = 2
+#: session store 生成的 ref id 形态（``ref:<prefix>-<16 hex>``）。章节里的
+#: 自然语言文本（query/goal 等）即使以 "ref:" 开头也不是 ref 指针，不得
+#: 被置空。
+_REF_ID_RE = re.compile(r"^ref:[A-Za-z0-9_-]+-[0-9a-f]{16}$")
 
 
 async def build_anchor(session_id: str) -> Optional[Dict[str, Any]]:
@@ -308,7 +313,8 @@ async def resume_from_anchor(
             return {k: _rewrite_refs(v) for k, v in node.items()}
         if isinstance(node, list):
             return [_rewrite_refs(v) for v in node]
-        if isinstance(node, str) and node.startswith("ref:"):
+        if isinstance(node, str) and (
+                node in known_ref_ids or _REF_ID_RE.match(node)):
             if node in ref_map:
                 return ref_map[node]
             dangling.append(node)
@@ -316,6 +322,7 @@ async def resume_from_anchor(
         return node
 
     anchor = row.anchor if isinstance(row.anchor, dict) else {}
+    known_ref_ids = {str(ref) for ref in (anchor.get("ref_ids") or [])}
     old_sid = str(anchor.get("source_session_id") or row.session_id)
     new_sid = f"resume-{anchor_id[:8]}-{uuid.uuid4().hex[:8]}"
     dangling: List[str] = []

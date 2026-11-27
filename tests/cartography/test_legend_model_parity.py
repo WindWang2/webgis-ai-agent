@@ -74,3 +74,17 @@ def test_nodata_only_categorical_counts_one():
     )
     assert oracle["entryCount"] == 1
     assert oracle["hasNodata"] is True
+
+
+def test_graduated_non_list_breaks_and_colors_do_not_raise():
+    """畸形 graduated spec（breaks=dict / palette_colors 非序列）按空面处理。"""
+    assert derive_legend_items({
+        "type": "graduated",
+        "breaks": {"a": 1, "b": 2, "c": 3},
+        "palette_colors": ["#111111", "#222222"],
+    }) is None
+    assert derive_legend_items({
+        "type": "graduated",
+        "breaks": [1, 2, 3],
+        "palette_colors": 5,
+    }) is None

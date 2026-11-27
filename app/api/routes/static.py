@@ -71,7 +71,11 @@ async def serve_static(
 
     base = Path(settings.DATA_DIR).resolve()
     is_public = any(
-        target.is_relative_to(base / prefix.rstrip("/")) for prefix in _PUBLIC_PREFIXES
+        target.is_relative_to(base / prefix.rstrip("/"))
+        # 恰好等于公共目录本身（DATA_DIR 根下同名文件）不算公共树内容 ——
+        # is_relative_to 对相等路径也返回 True，不拦会让匿名可读该文件。
+        and target != base / prefix.rstrip("/")
+        for prefix in _PUBLIC_PREFIXES
     )
     # SEC-F3: a Bearer token alone must NOT grant reads of arbitrary private
     # files under DATA_DIR (other tenants' uploads/exports/reports and

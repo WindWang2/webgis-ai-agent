@@ -138,6 +138,15 @@ class TestBenchmark:
         result = evaluate_case(library, case)
         assert result["passed"] and result["kind"] == "top1"
 
+    def test_select_without_top_expect_does_not_false_pass(self, library):
+        """缺 top 期望且 resolver 无选中时不得把 None==None 记作 top1 命中。"""
+        result = evaluate_case(library, {
+            "id": "no-top", "q": "量子物理公式推导",
+            "expect": {"type": "select"}})
+        assert result["passed"] is False
+        assert result["kind"] == "no_result"
+
+
     def test_no_llm_dependency(self):
         # 语料评测是确定性纯函数：不触网、不调模型（结构性保证：纯 CPU 快）
         import time

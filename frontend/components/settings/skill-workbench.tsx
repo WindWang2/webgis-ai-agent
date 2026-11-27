@@ -750,6 +750,7 @@ function IdentitySkillWorkbench({ scope }: { scope: WorkbenchScope }) {
                     <button
                       className="rounded-md bg-muted px-3 py-1.5 text-xs"
                       onClick={() => {
+                        stopPolling();
                         setSelected(selected);
                         setPrepared(null);
                         setRun(null);

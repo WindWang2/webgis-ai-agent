@@ -43,6 +43,7 @@ from app.services.geocompute.reproducibility import (
 )
 from app.services.provenance.manifest import (
     RunManifestBuilder,
+    build_run_manifest,
     compute_run_fingerprint,
     redact_provenance_args,
 )
@@ -488,6 +489,26 @@ class TestProvenanceRedaction:
         assert "137 more items dropped" in red[63]
         # 幂等：二次脱敏不再越界，标记原样通过
         assert redact_provenance_args(red) == red
+
+    def test_manifest_trim_keeps_depth_marker(self):
+        """redact 后的深层标记不能被随后执行的 _trim 重新塌回 None。"""
+        deep = current = {"leaf": 1}
+        for _ in range(12):
+            current["child"] = {"leaf": 2}
+            current = current["child"]
+        manifest = build_run_manifest(
+            workflow_revision_id="v1",
+            graph_fingerprint="g1",
+            input_bindings={},
+            input_dataset_fingerprints={},
+            steps=[{"step_id": "s1", "args": deep}],
+            tool_versions={},
+            artifacts=[],
+        )
+        node = manifest["steps"][0]["args"]
+        for _ in range(8):
+            node = node["child"]
+        assert node["child"] == "[truncated:max-depth]"
 
     def test_password_never_lands_in_db_rows(self, db_session):
         db = db_session

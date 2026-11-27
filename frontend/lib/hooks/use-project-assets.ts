@@ -99,6 +99,11 @@ export function useProjectDatasets(projectId: string): UseProjectDatasetsResult 
   const gen = useRef(0);
   const abort = useRef<AbortController | null>(null);
   const mounted = useRef(true);
+  /** schema 快照只对当前项目有意义：切项目即清空（防跨项目残留/无界增长）。 */
+  const schemaProjectRef = useRef(projectId);
+  /** 当前列表快照（attach 去重判定用；避免把 datasets 放进回调依赖）。 */
+  const datasetsRef = useRef<ProjectDataset[]>([]);
+  datasetsRef.current = datasets;
   const pageSize = 50;
 
   const applyPage = useCallback((page: Page<ProjectDataset>, append: boolean) => {
@@ -113,6 +118,10 @@ export function useProjectDatasets(projectId: string): UseProjectDatasetsResult 
 
   const reload = useCallback(
     async (opts?: FetchOpts) => {
+      if (schemaProjectRef.current !== projectId) {
+        schemaProjectRef.current = projectId;
+        setSchemaByDataset({});
+      }
       if (!projectId) {
         abort.current?.abort();
         gen.current += 1;
@@ -175,8 +184,10 @@ export function useProjectDatasets(projectId: string): UseProjectDatasetsResult 
           ...prev,
           [attached.id]: attached.schema_profile ?? {},
         }));
+        // 重附 / 本地列表过期：数组去重后 total 不得再 +1（否则相对服务端单向漂移）。
+        const alreadyListed = datasetsRef.current.some((d) => d.id === attached.id);
         setDatasets((prev) => (prev.some((d) => d.id === attached.id) ? prev : [attached, ...prev]));
-        setTotal((t) => t + 1);
+        if (!alreadyListed) setTotal((t) => t + 1);
         return attached;
       } catch (err: unknown) {
         if (mounted.current) setError(parseApiErrorDetail(err, t('project.errAttachDataset')));
@@ -587,6 +598,15 @@ export function useProjectSnapshots(
   const abort = useRef<AbortController | null>(null);
   const mounted = useRef(true);
   const seenProject = useRef<string | null>(null);
+  // P2：inspect / loadDiff 是两条独立结果面 —— 各自的代次 + AbortController
+  // 防止先发的旧响应在交错/切项目/切会话后覆盖新结果。
+  const inspectGen = useRef(0);
+  const inspectAbort = useRef<AbortController | null>(null);
+  const diffGen = useRef(0);
+  const diffAbort = useRef<AbortController | null>(null);
+  // 作用域快照：请求发起时的 (project, session) —— 代次之外再按归属丢弃迟到响应。
+  const scopeRef = useRef('');
+  scopeRef.current = `${projectId}\u0000${sessionId ?? ''}`;
   const sessionReady = Boolean(sessionId);
 
   const reload = useCallback(
@@ -650,13 +670,31 @@ export function useProjectSnapshots(
   const inspect = useCallback(
     async (snapshotId: string) => {
       if (!projectId || !sessionId) return null;
+      inspectAbort.current?.abort();
+      const ac = new AbortController();
+      inspectAbort.current = ac;
+      const g = ++inspectGen.current;
+      const scope = scopeRef.current;
       try {
         const report = await inspectWorkspaceSnapshot(projectId, snapshotId, sessionId, {
           forceRefresh: true,
+          signal: ac.signal,
         });
-        if (mounted.current) setVerifications((prev) => ({ ...prev, [snapshotId]: report }));
+        if (
+          !mounted.current
+          || ac.signal.aborted
+          || g !== inspectGen.current
+          || scopeRef.current !== scope
+        ) return null;
+        setVerifications((prev) => ({ ...prev, [snapshotId]: report }));
         return report;
       } catch (err: unknown) {
+        if (
+          ac.signal.aborted
+          || isAbortError(err)
+          || g !== inspectGen.current
+          || scopeRef.current !== scope
+        ) return null;
         if (mounted.current) setError(parseApiErrorDetail(err, t('project.errInspectSnapshot')));
         return null;
       }
@@ -739,23 +777,45 @@ export function useProjectSnapshots(
   const loadDiff = useCallback(
     async (aId: string, bId: string) => {
       if (!projectId || !sessionId || aId === bId) return null;
+      diffAbort.current?.abort();
+      const ac = new AbortController();
+      diffAbort.current = ac;
+      const g = ++diffGen.current;
+      const scope = scopeRef.current;
       setDiffLoading(true);
       setError(null);
       try {
         const [a, b] = await Promise.all([
-          inspectWorkspaceSnapshot(projectId, aId, sessionId, { forceRefresh: true }),
-          inspectWorkspaceSnapshot(projectId, bId, sessionId, { forceRefresh: true }),
+          inspectWorkspaceSnapshot(projectId, aId, sessionId, {
+            forceRefresh: true,
+            signal: ac.signal,
+          }),
+          inspectWorkspaceSnapshot(projectId, bId, sessionId, {
+            forceRefresh: true,
+            signal: ac.signal,
+          }),
         ]);
-        if (!mounted.current) return null;
+        if (
+          !mounted.current
+          || ac.signal.aborted
+          || g !== diffGen.current
+          || scopeRef.current !== scope
+        ) return null;
         setVerifications((prev) => ({ ...prev, [aId]: a, [bId]: b }));
         const result = diffSnapshots(a, b);
         setDiff(result);
         return result;
       } catch (err: unknown) {
+        if (
+          ac.signal.aborted
+          || isAbortError(err)
+          || g !== diffGen.current
+          || scopeRef.current !== scope
+        ) return null;
         if (mounted.current) setError(parseApiErrorDetail(err, t('project.errDiffSnapshots')));
         return null;
       } finally {
-        if (mounted.current) setDiffLoading(false);
+        if (g === diffGen.current && mounted.current) setDiffLoading(false);
       }
     },
     [projectId, sessionId],
@@ -768,8 +828,20 @@ export function useProjectSnapshots(
     return () => {
       mounted.current = false;
       abort.current?.abort();
+      inspectAbort.current?.abort();
+      diffAbort.current?.abort();
     };
   }, []);
+
+  // P2：切项目/会话时中止在途的 inspect/diff，并让迟到响应失去代次资格。
+  useEffect(() => {
+    inspectAbort.current?.abort();
+    inspectAbort.current = null;
+    diffAbort.current?.abort();
+    diffAbort.current = null;
+    inspectGen.current += 1;
+    diffGen.current += 1;
+  }, [projectId, sessionId]);
 
   useEffect(() => {
     void reload();

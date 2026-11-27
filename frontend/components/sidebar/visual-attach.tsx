@@ -54,6 +54,27 @@ export function VisualAttachBar({ sessionId, ownerToken }: {
     }
   }, [sessionId, begin, setSession]);
 
+  // 本地缩略图 objectURL 回收（评审 P2）：blob URL 不 revoke 会随会话不断累积
+  // 泄漏地图截图 PNG —— 移除草稿 / 切换会话（store 清空）/ 发送消费后草稿消失
+  // 都不回收。这里按「没有任何草稿在用」才 revoke，避免 temp→真实 evidence id
+  // 替换瞬间误回收仍在显示的缩略图。
+  const thumbUrlsRef = useRef<Map<string, string>>(new Map());
+  useEffect(() => {
+    const inUse = new Set<string>();
+    for (const d of drafts) if (d.thumbUrl) inUse.add(d.thumbUrl);
+    for (const url of thumbUrlsRef.current.values()) {
+      if (!inUse.has(url)) URL.revokeObjectURL(url);
+    }
+    thumbUrlsRef.current = new Map(
+      drafts.filter((d) => d.thumbUrl).map((d) => [d.evidenceId, d.thumbUrl as string]),
+    );
+  }, [drafts]);
+  // 卸载：回收仍在登记的 URL
+  useEffect(() => () => {
+    for (const url of thumbUrlsRef.current.values()) URL.revokeObjectURL(url);
+    thumbUrlsRef.current = new Map();
+  }, []);
+
   const sessionReady = typeof sessionId === 'string' && sessionId.length > 0;
 
   const mapIdentity = useCallback(() => {
@@ -76,13 +97,20 @@ export function VisualAttachBar({ sessionId, ownerToken }: {
     if (!sessionId) return;
     // 上传中占位（临时 id；回执后替换为真实 evidence id）。
     const tempId = `pending-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
-    addDraft({
+    const pendingAdd = addDraft({
       evidenceId: tempId,
       sourceType: opts.sourceType,
       label: opts.label,
       thumbUrl: opts.localThumb,
       uploading: true,
     });
+    if (!pendingAdd.ok) {
+      if (opts.localThumb) URL.revokeObjectURL(opts.localThumb);
+      setNotice(pendingAdd.reason === 'full'
+        ? t('sidebar.chat.visualAttach.draftFull')
+        : t('sidebar.chat.visualAttach.uploadFailed'));
+      return;
+    }
     const { revision, fingerprint } = mapIdentity();
     try {
       const dto = await uploadVisualEvidence({
@@ -98,7 +126,7 @@ export function VisualAttachBar({ sessionId, ownerToken }: {
         crop: opts.crop,
       });
       removeDraft(tempId);
-      addDraft({
+      const readyAdd = addDraft({
         evidenceId: dto.evidence_id,
         sourceType: opts.sourceType,
         label: opts.label || dto.label || '',
@@ -106,12 +134,18 @@ export function VisualAttachBar({ sessionId, ownerToken }: {
         mapspecRevision: dto.mapspec_revision ?? null,
         viewportHash: dto.viewport_hash,
       });
+      if (!readyAdd.ok) {
+        if (opts.localThumb) URL.revokeObjectURL(opts.localThumb);
+        setNotice((current) => current || (readyAdd.reason === 'full'
+          ? t('sidebar.chat.visualAttach.draftFull')
+          : t('sidebar.chat.visualAttach.uploadFailed')));
+      }
     } catch (err) {
       const reason = err instanceof Error && err.message ? err.message.slice(0, 120) : 'upload_failed';
       updateDraft(tempId, { uploading: false, error: reason });
       window.setTimeout(() => removeDraft(tempId), 6000);
     }
-  }, [sessionId, ownerToken, addDraft, removeDraft, updateDraft, mapIdentity]);
+  }, [sessionId, ownerToken, addDraft, removeDraft, updateDraft, mapIdentity, t]);
 
   const attachMap = useCallback(async () => {
     setMenuOpen(false);
@@ -157,7 +191,13 @@ export function VisualAttachBar({ sessionId, ownerToken }: {
   const onFilePicked = useCallback(async (files: FileList | null) => {
     setMenuOpen(false);
     if (!files || files.length === 0) return;
-    for (const file of Array.from(files).slice(0, 4 - drafts.length)) {
+    const picked = Array.from(files);
+    // 名额不足时如实提示，不静默丢弃多余文件（只上传前 remaining 个）。
+    const remaining = Math.max(0, 4 - drafts.length);
+    if (picked.length > remaining) {
+      setNotice(t('sidebar.chat.visualAttach.draftFull'));
+    }
+    for (const file of picked.slice(0, remaining)) {
       await upload({
         file,
         sourceType: 'reference_upload',
@@ -166,7 +206,7 @@ export function VisualAttachBar({ sessionId, ownerToken }: {
       });
     }
     if (fileInputRef.current) fileInputRef.current.value = '';
-  }, [upload, drafts.length]);
+  }, [upload, drafts.length, t]);
 
   const chipLabel = (d: VisualAttachmentDraft) => {
     const key = d.sourceType === 'map_viewport' ? 'chipViewport'

@@ -185,9 +185,10 @@ class TestVersioningAndMigration:
     def test_known_versions(self):
         # ADR-0193：1.3 additive（顶层 scenario_mode 推演视图协议）。
         # C11：1.5 additive（layer.visibility/bivariate/data_binding 语义层）。
-        # 版本链：1.10 = G21 OD flow；2.0 号位留给 G15（恒等上船），2.1 = label authoring。
-        assert KNOWN_VERSIONS == ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10", "2.0", "2.1")
-        assert LATEST_VERSION == "2.1"
+        # 版本链：1.10 = G21 OD flow；2.0 号位留给 G15（恒等上船），2.1 = label authoring，
+        # 2.2 = GOAL-20261126-04 地理锚定统计图符（layer.diagram_symbol，纯 additive）。
+        assert KNOWN_VERSIONS == ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10", "2.0", "2.1", "2.2")
+        assert LATEST_VERSION == "2.2"
         assert DEFAULT_VERSION == "1.0"
 
     def test_missing_version_defaults_to_1_0_and_migrates(self):
@@ -323,3 +324,23 @@ class TestUnknownFieldsPolicy:
         assert any(d.path == "layers[1].id" for d in result.invalid_fields)
         # 索引错误不殃及相邻层
         assert not any(d.path == "layers[2].id" for d in result.invalid_fields)
+
+
+def test_unknown_field_walk_stops_at_disclosure_cap():
+    """unknown 披露收集必须有界：达到封顶后不得继续遍历全量键。"""
+    from app.lib.cartography import mapspec_schema as ms
+
+    class _CountingDict(dict):
+        def __init__(self, data):
+            super().__init__(data)
+            self.yielded = 0
+
+        def items(self):
+            for k, v in super().items():
+                self.yielded += 1
+                yield k, v
+
+    payload = _CountingDict({f"unknown_{i}": i for i in range(1000)})
+    out = []
+    ms._walk_model(ms.MapSpecDocument, payload, "", out)
+    assert payload.yielded <= ms.MAX_DISCLOSURES_PER_KIND + 2

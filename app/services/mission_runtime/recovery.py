@@ -64,9 +64,13 @@ def build_resume_plan(swarm: C.SwarmRunDurable) -> Dict[str, Any]:
             C.RecoveryClass.RETRYABLE_FAILURE,
             C.RecoveryClass.RUNNING_OWNER_DEAD,
         ):
-            # destructive running → unresolved (never blind rerun)
+            # destructive/compensatable running → unresolved (never blind rerun:
+            # an interrupted compensatable op may already have external effects)
             if (
-                receipt.operation_class == C.OperationClass.DESTRUCTIVE_AT_MOST_ONCE
+                receipt.operation_class in (
+                    C.OperationClass.DESTRUCTIVE_AT_MOST_ONCE,
+                    C.OperationClass.COMPENSATABLE,
+                )
                 and receipt.state == C.SwarmTaskDurableState.RUNNING
             ):
                 unresolved.append(tid)
@@ -149,7 +153,8 @@ class MissionRecoveryCoordinator:
 
         try:
             rec = self.store.get_mission(mission_id, org_id=org_id)
-            assert rec is not None
+            if rec is None:
+                return {"ok": False, "reason": "NOT_FOUND", "lease_epoch": epoch}
             if rec.state != C.MissionState.RECOVERING:
                 # only leave terminal alone
                 if C.is_terminal(rec.state):

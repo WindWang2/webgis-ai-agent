@@ -152,8 +152,11 @@ def derive_claimed_scope(
     # with selection=None is an explicit current empty/replaced selection.
     has_current_selection = "selection" in snapshot and snapshot.get("event_count") != 0
     source = selection if has_current_selection else pre_turn
-    sources: List[str] = ["ir_ledger"] if selection is not None else (
-        ["pre_turn"] if pre_turn is not None else []
+    # Label the facet that actually supplied `source`: an empty ledger never
+    # established a current selection, so its `selection` is not IR evidence.
+    source_is_ir = has_current_selection and selection is not None
+    sources: List[str] = ["ir_ledger"] if source_is_ir else (
+        ["pre_turn"] if source is not None else []
     )
     if source is not None:
         multi = _clip_ids(source.get("selected_ids"))
@@ -161,7 +164,7 @@ def derive_claimed_scope(
         single = str(single)[:128] if isinstance(single, (str, int)) else None
         feature_ids = multi or ([single] if single else [])
         claimed_seq = None
-        if selection is not None:
+        if source_is_ir:
             src = selection.get("source")
             if isinstance(src, dict) and isinstance(src.get("server_seq"), int):
                 claimed_seq = src["server_seq"]

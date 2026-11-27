@@ -40,7 +40,7 @@ def scan() -> dict:
                       f"（R2-NIT：不静默截断）", file=sys.stderr)
             continue
         count += 1
-        if len(behaviors) > _MAX_TEST_FILES:
+        if count > _MAX_TEST_FILES:
             print(f"警告：测试文件数达上限 {_MAX_TEST_FILES}，扫描提前终止",
                   file=sys.stderr)
             break

@@ -217,13 +217,20 @@ class EmbeddingCache:
                 self._misses += 1
                 return None
             meta["last_used"] = self._clock()
+            tmp_meta = sidecar.with_suffix(f".json.tmp{uuid.uuid4().hex[:8]}")
             try:
-                sidecar.write_text(
+                tmp_meta.write_text(
                     json.dumps(meta, sort_keys=True, ensure_ascii=False),
                     encoding="utf-8",
                 )
+                os.replace(tmp_meta, sidecar)
             except OSError:
-                pass  # LRU 时间戳更新失败不影响正确性
+                # LRU 时间戳更新失败不影响正确性；但 sidecar 必须原子发布
+                # （直接覆写会截断已有提交标记 → 条目静默丢失）。
+                try:
+                    tmp_meta.unlink(missing_ok=True)
+                except OSError:
+                    pass
             self._hits += 1
             return array
 

@@ -29,6 +29,26 @@ def _utf8_len(payload: Dict[str, Any]) -> int:
     return len(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
 
 
+def _bounded_detail_payload(
+    payload: Dict[str, Any], max_bytes: int,
+) -> Dict[str, Any]:
+    """递归裁剪超大 detail 投影（字符串/列表）到字节预算内；失败返回 {}。"""
+    def trim(node: Any, str_cap: int, list_cap: int) -> Any:
+        if isinstance(node, str):
+            return node[:str_cap]
+        if isinstance(node, list):
+            return [trim(v, str_cap, list_cap) for v in node[:list_cap]]
+        if isinstance(node, dict):
+            return {k: trim(v, str_cap, list_cap) for k, v in node.items()}
+        return node
+
+    for str_cap, list_cap in ((512, 32), (128, 8), (32, 2), (8, 1)):
+        candidate = trim(payload, str_cap, list_cap)
+        if _utf8_len(candidate) <= max_bytes:
+            return candidate
+    return {}
+
+
 class SkillCard(BaseModel):
     """渐进披露第一层：只含选择所需的最小面。"""
     id: str
@@ -108,6 +128,10 @@ class SkillCatalog:
                 continue
             card = SkillCard.from_contract(skill).to_bounded_dict()
             size = _utf8_len(card)
+            if size > MAX_CARD_BYTES:
+                # 单卡超限：跳过并如实标注截断（不把超预算卡塞进列表）。
+                truncated = True
+                continue
             if total + size > MAX_CARD_LIST_BYTES:
                 truncated = True
                 break
@@ -135,11 +159,18 @@ class SkillCatalog:
         payload = skill.to_detail_dict()
         # 有界裁剪（防御性；正常契约远小于预算）
         payload["examples"] = payload.get("examples", [])[:8]
+        truncated = _utf8_len(payload) > MAX_DETAIL_BYTES
+        if truncated:
+            payload = _bounded_detail_payload(payload, MAX_DETAIL_BYTES) or {
+                "id": skill.id[:64],
+                "name": skill.name[:64],
+                "description": skill.description[:160],
+            }
         return {
             "skill": payload,
             "bytes": _utf8_len(payload),
             "budget_bytes": MAX_DETAIL_BYTES,
-            "truncated": _utf8_len(payload) > MAX_DETAIL_BYTES,
+            "truncated": truncated,
         }
 
 

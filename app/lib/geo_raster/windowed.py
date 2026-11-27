@@ -128,14 +128,10 @@ def execute_windowed(
             raise RasterReaderError(f"duplicate band indices in {band_list}")
 
     # V3 primitives are the sanctioned loop driver (audit tension #1: V4
-    # must not grow a second window runtime): budget-derived side, native
-    # block windows when they fit the budget, fixed grid otherwise.
-    from app.lib.geo_analysis.raster_grid import (
-        iter_bounded_windows,
-        window_side_from_budget,
-    )
-
-    window_side = window_size[0] if window_size else window_side_from_budget()
+    # must not grow a second window runtime): _iter_windows_for_size projects
+    # iter_bounded_windows and honours BOTH window_size axes (the former
+    # window_size[0]-only truncation dropped the height silently).
+    from app.lib.geo_raster.chunk import _iter_windows_for_size
 
     # Wave 6 chunk runtime: descriptors + optional per-chunk cache. Lazy
     # import keeps the module graph identical for default callers.
@@ -181,7 +177,9 @@ def execute_windowed(
             "windows to a WindowedRasterWriter or pass budget_ok=True"
         )
     out = np.empty((meta.height, meta.width), dtype=out_dtype)
-    windows = list(iter_bounded_windows(meta.width, meta.height, window_side=window_side, src=ds))
+    windows = list(
+        _iter_windows_for_size(meta.width, meta.height, window_size, src=ds)
+    )
     n_windows = len(windows)
     done = 0
 
@@ -252,10 +250,17 @@ def execute_windowed(
                 Window(r_col, r_row, r_w, r_h),
                 cancel_token=None,  # 窗口间取消由 cancellable 迭代器承担
             )
-        elif bands is not None:
-            data = ds.read(band_list, window=Window(r_col, r_row, r_w, r_h))
         else:
-            data = ds.read(band, window=Window(r_col, r_row, r_w, r_h))
+            # Local reads hold the canonical GDAL env (same runtime property
+            # as RasterReader._budgeted_read); only the remote branch delegates
+            # its policy/env handling to remote_read_window.
+            from app.lib.geo_raster.env import rasterio_env
+
+            with rasterio_env():
+                if bands is not None:
+                    data = ds.read(band_list, window=Window(r_col, r_row, r_w, r_h))
+                else:
+                    data = ds.read(band, window=Window(r_col, r_row, r_w, r_h))
         core_result = fn(data, (col0, row0, w, h), (r_col, r_row, r_w, r_h))
         expected = (h, w)
         if core_result.shape != expected:

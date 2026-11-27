@@ -243,6 +243,53 @@ async def test_chat_completions_turn_start_observation_lock_timeout_503(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_chat_completions_releases_db_before_turn(monkeypatch):
+    """C-F2 parity: POST /chat/completions must release the request-level
+    pooled connection BEFORE the multi-second turn.
+
+    chat_stream already early-closes after the guard; the non-streaming path
+    used to hold the connection across the whole ``prompt()`` round (LLM +
+    tools, seconds to minutes) plus persistence, so ~30 concurrent turns
+    exhausted pool_size+max_overflow and unrelated requests 500'd on
+    ``pool_timeout``. Every write after the guard opens its own short-lived
+    session, so the early close loses nothing.
+    """
+    state = {"closed": False, "closed_during_prompt": None}
+
+    class _TrackingDb:
+        """Close-only stand-in (same shape direct-route tests use)."""
+
+        async def close(self):
+            state["closed"] = True
+
+    async def _prompt(*args, **kwargs):
+        state["closed_during_prompt"] = state["closed"]
+        return {"sessionId": "sess-db-rel", "content": "ok"}
+
+    fake_bridge = MagicMock()
+    fake_bridge._process_died = False
+    fake_bridge.prompt = AsyncMock(side_effect=_prompt)
+
+    async def _noop_guard(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(_chat_mod, "_guard_body_session", _noop_guard)
+    monkeypatch.setattr(_chat_mod, "_guard_body_project", _noop_guard)
+    monkeypatch.setattr(_chat_mod, "pi_bridge", fake_bridge, raising=False)
+
+    req = _chat_mod.ChatRequest(message="hi", session_id="sess-db-rel")
+    resp = await _chat_mod.chat_completions(
+        req, request=MagicMock(), _user={}, owner_token=None, db=_TrackingDb()
+    )
+    assert resp.content == "ok"
+    assert state["closed"] is True, "request-level db must be closed by the route"
+    assert state["closed_during_prompt"] is True, (
+        "db must already be closed when the turn (prompt) starts — holding "
+        "it across the turn pins a pooled connection for the whole round"
+    )
+
+
+@pytest.mark.asyncio
 async def test_chat_stream_turn_start_observation_lock_timeout_503(monkeypatch):
     """#791: POST /chat/stream must scope a turn-start observation lock
     TimeoutError to 503 before any SSE stream starts."""

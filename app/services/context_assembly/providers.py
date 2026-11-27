@@ -507,6 +507,10 @@ class GisContextCardProvider(BaseProvider):
 
     async def build(self, req, facts, *, prior_chars: int = 0,
                     knowledge_present: bool = False):
+        # Both call sites (assembly + collect_cartography_wave) invoke build()
+        # directly, bypassing BaseProvider.collect — honor the declared gate.
+        if not self.enabled(req, facts):
+            return []
         from app.services.gis_context.hotpath import assemble_gis_context_card
 
         text, _rc = await assemble_gis_context_card(

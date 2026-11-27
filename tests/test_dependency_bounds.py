@@ -100,6 +100,11 @@ class TestAdmits:
         assert guard.admits(">=2.0.25", "2.1.1")
         assert guard.admits(">=2.2.2,<4.0.0", "3.0.6")
 
+    def test_unconstrained_spec_admits_everything(self):
+        # review P2: 裸声明（无版本约束）= 放行任意版本，不得从击穿检查中消失
+        assert guard.admits("", "3.0.6")
+        assert guard.admits("", "2.1.1")
+
     def test_compatible_release_implies_ceiling(self):
         assert guard.admits("~=2.2", "2.3.3")
         assert not guard.admits("~=2.2", "3.0.6")
@@ -144,6 +149,12 @@ class TestParseRequirements:
         specs = guard.parse_requirements(dev)
         assert specs["pandas"] == ">=2.2.2,<3.0"
         assert specs["pytest"] == ">=9.1.1"
+
+    def test_bare_declaration_is_kept_as_unconstrained(self, tmp_path):
+        # review P2: 无版本约束行曾被 if spec 丢弃 → 该包整体从击穿检查中消失
+        path = tmp_path / "requirements.txt"
+        path.write_text("greenlet\ngeopandas\n", encoding="utf-8")
+        assert guard.parse_requirements(path) == {"greenlet": "", "geopandas": ""}
 
     def test_lock_parsing_skips_via_comments(self, tmp_path):
         lock = tmp_path / "requirements.lock"
@@ -230,6 +241,25 @@ class TestCheckGate:
         errors = guard.check([req, dev_path], lock)
         assert any("pandas" in e and "3.0.6" in e for e in errors)
 
+    def test_bare_pandas_declaration_is_flagged(self, tmp_path):
+        # review P2: 裸 pandas 无上界 = 放行击穿版本；曾被丢弃后整体跳过
+        req, lock = _write(tmp_path, FIXED_REQ.replace("pandas>=2.2.2,<3.0", "pandas"))
+        errors = guard.check([req], lock)
+        assert any("pandas" in e and "3.0.6" in e for e in errors), errors
+
+    def test_bare_geopandas_is_not_reported_missing(self, tmp_path):
+        # review P2: 裸 geopandas 已声明，不得误报"未声明"；无约束也不得算 lock 漂移
+        req, lock = _write(tmp_path, FIXED_REQ.replace("geopandas>=1.1.4", "geopandas"))
+        assert guard.check([req], lock) == []
+
+    def test_bare_greenlet_declaration_counts_as_declared(self, tmp_path):
+        # review P2: 裸 greenlet 不得再报"未在任何 requirements 声明"
+        req, lock = _write(
+            tmp_path, FIXED_REQ + "greenlet\n",
+            lock=LOCK.replace("greenlet==3.5.6\n", ""),
+        )
+        assert guard.check([req], lock) == []
+
 
 class TestPyprojectScanSurface:
     """#1730：pyproject [project].dependencies 必须在扫描面内。
@@ -269,6 +299,26 @@ class TestPyprojectScanSurface:
         # main() 必须把 pyproject 纳入扫描面（#1730 结构性根因），否则脚本本身仍是漏的
         _write(tmp_path, FIXED_REQ, pyproject=PYPROJECT_BREAKER)
         assert guard.main(tmp_path) == 1
+
+    def test_pyproject_bare_dependency_is_kept_as_unconstrained(self, tmp_path):
+        # review P2: pyproject 裸声明同样不得被 if spec 丢弃
+        path = tmp_path / "pyproject.toml"
+        path.write_text(
+            PYPROJECT_CLEAN.replace('"geopandas>=1.1.4"', '"geopandas"'),
+            encoding="utf-8",
+        )
+        assert guard.parse_pyproject_dependencies(path)["geopandas"] == ""
+
+    def test_pyproject_bare_unsafe_dependency_is_flagged(self, tmp_path):
+        # review P2: pyproject 丢了版本约束的 sqlalchemy 必须与 requirements 同样红
+        pyproject = PYPROJECT_CLEAN.replace(
+            '"sqlalchemy[asyncio]>=2.0.25,<2.1"', '"sqlalchemy[asyncio]"'
+        )
+        req, lock = _write(tmp_path, FIXED_REQ, pyproject=pyproject)
+        errors = guard.check([req, tmp_path / "pyproject.toml"], lock)
+        assert any(
+            "sqlalchemy" in e and "pyproject" in e and "2.1.1" in e for e in errors
+        ), errors
 
 
 class TestLiveRepoGate:

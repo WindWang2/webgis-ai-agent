@@ -295,6 +295,12 @@ class RefreshStore:
         with self._lease_guard:
             fd = self._lease_fds.pop(lease, None)
         if fd is not None:
+            # 释放即删除令牌：lease 文件不是账本，不应永久残留（proposal
+            # 被 GC 后仍累积）。仍持锁时 unlink，再关闭 fd。
+            try:
+                os.unlink(lease)
+            except OSError:
+                pass
             os.close(fd)
 
     # ── cap ─────────────────────────────────────────────────────────
@@ -313,6 +319,31 @@ class RefreshStore:
                         tmp.unlink()
                 except OSError:
                     continue
+            # lease 令牌不是账本：崩溃/未走 release 的残留文件在此回收。
+            # 只处理旧文件，且必须能非阻塞加锁成功（证明无人持有）才删，
+            # 避免误删仍在 execute/adopt 的互斥令牌。
+            try:
+                import fcntl
+            except ImportError:
+                fcntl = None  # type: ignore[assignment]
+            if fcntl is not None:
+                for lease in d.glob("*.lease"):
+                    try:
+                        if now - lease.stat().st_mtime <= 3600:
+                            continue
+                        if str(lease) in self._lease_fds:
+                            continue
+                        fd = os.open(str(lease), os.O_RDWR)
+                        try:
+                            try:
+                                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                            except OSError:
+                                continue
+                            lease.unlink()
+                        finally:
+                            os.close(fd)
+                    except OSError:
+                        continue
             # R2-P2：glob 会同时匹配隔离基线 doc（*.doc.json）。它们不是
             # proposal manifest，既不能计入配额，也不能被当作可回收项删除。
             files = sorted(

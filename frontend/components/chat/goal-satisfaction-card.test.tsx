@@ -73,4 +73,17 @@ describe('GoalSatisfactionCard', () => {
     expect(screen.queryAllByTestId('goal-requirement-row')).toHaveLength(0);
     expect(screen.getByTestId('goal-satisfaction-card')).toBeTruthy();
   });
+
+  it('需求超过 12 条时披露未展示条数（不静默截断）', () => {
+    const requirements = Array.from({ length: 15 }, (_, i) => ({
+      id: `req-${i}`,
+      kind: 'map',
+      verdict: 'partial' as const,
+      missing: [],
+      next_action: '',
+    }));
+    render(<GoalSatisfactionCard view={makeView({ requirements })} />);
+    expect(screen.getAllByTestId('goal-requirement-row')).toHaveLength(12);
+    expect(screen.getByTestId('goal-requirements-more').textContent).toContain('3');
+  });
 });

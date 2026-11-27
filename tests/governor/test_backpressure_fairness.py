@@ -111,6 +111,17 @@ class TestFairScheduler:
                 break
         assert s.is_mathematically_sane()
 
+    def test_enqueue_position_uses_scheduling_key_not_seq(self):
+        """队位按调度键（消费/权重）排序，而不是入队 seq 顺序。"""
+        s = FairScheduler(4, aging_threshold_s=1e9)  # 关闭 aging，纯消费序
+        s._record_consumption("busy", 100.0)
+        s._record_consumption("idle", 0.0)
+        busy = _waiter("busy")
+        idle = _waiter("idle")
+        assert s.enqueue(busy) == 0
+        assert s.enqueue(idle) == 0          # 空会话是下一个可执行者
+        assert s._position_of(busy.seq) == 1
+
     def test_fair_share_and_starvation_index(self):
         share = fair_share_snapshot({"a": 3.0, "b": 1.0})
         assert share["a"] == pytest.approx(0.75)

@@ -14,7 +14,6 @@ logger = logging.getLogger(__name__)
 
 _IMG_PREFIX = "georefbin-"
 _REF_PREFIX = "georefref-"
-_MAX_SESSIONS_PER_BLOB = 128
 
 
 def blob_key_for_sha(sha256: str) -> str:
@@ -56,7 +55,10 @@ def _load_refs(sha256: str) -> Dict[str, int]:
         refs = data.get("refs") if isinstance(data, dict) else None
         if not isinstance(refs, dict):
             return {}
-        return {str(k)[:128]: max(0, int(v)) for k, v in list(refs.items())[:_MAX_SESSIONS_PER_BLOB] if int(v) > 0}
+        # Never truncate here: _save_refs writes this mapping back wholesale, so a
+        # truncated load would permanently drop the pin of every discarded session
+        # (its artifact still references the blob, which could then be GC'd).
+        return {str(k)[:128]: max(0, int(v)) for k, v in refs.items() if int(v) > 0}
     except Exception:  # noqa: BLE001
         return {}
 

@@ -208,6 +208,25 @@ describe('viewCommands camera commands (V3 Promise<MapCommandResult> contract)',
     await expect(promise).resolves.toMatchObject({ status: 'failed' });
   });
 
+  it('map teardown during setup (stop/once throw) resolves failed, never rejects', async () => {
+    // P3: map.stop() / onUserGestureStart() / map.once() used to sit outside
+    // the try — a destroyed map rejected the returned promise and stalled the
+    // queue instead of a structured failed ack.
+    const stopBroken = makeMockMaplibreMap();
+    stopBroken.stop.mockImplementation(() => {
+      throw new Error('map destroyed');
+    });
+    await expect(viewCommands.fly_to.run(makeCtx(stopBroken, { center: [116, 39], zoom: 12 })))
+      .resolves.toEqual({ status: 'failed', error: 'map destroyed' });
+
+    const onceBroken = makeMockMaplibreMap();
+    onceBroken.once.mockImplementation(() => {
+      throw new Error('map destroyed');
+    });
+    await expect(viewCommands.fly_to.run(makeCtx(onceBroken, { center: [116, 39], zoom: 12 })))
+      .resolves.toEqual({ status: 'failed', error: 'map destroyed' });
+  });
+
   it('runs multiple camera commands independently (each settles on its own moveend)', async () => {
     const map = makeMockMaplibreMap();
     const a = viewCommands.fly_to.run(makeCtx(map, { center: [116, 39], zoom: 12 }));
@@ -299,6 +318,19 @@ describe('viewCommands camera commands (V3 Promise<MapCommandResult> contract)',
     // 无有效参数的 no-op（run body 快路径处理）不经过校验器放行即可
     expect(requiredParams({})).toBe(false);
     expect(requiredParams({ opacity: 0.5 })).toBe(false);
+  });
+
+  it('validator rejects malformed center (length != 2) — no fake success ack', () => {
+    // {center:[116]} / {center:[]} 曾通过校验器（只查 Array.isArray）→ run 内
+    // hasCenter=false 且无其他维度 → 早退 ack succeeded 把未动的当前相机当
+    // actual（假成功）。现在与 fly_to/fly_camera 同宽：center 必须是 [lng, lat]。
+    const { requiredParams } = viewCommands.set_map_view;
+    expect(requiredParams({ center: [116] })).toBe(false);
+    expect(requiredParams({ center: [] })).toBe(false);
+    expect(requiredParams({ center: [116, 39, 40] })).toBe(false);
+    expect(requiredParams({ center: 'x' })).toBe(false);
+    // 畸形 center + 有效命名维度 → 仍由该维度放行（run body 只动命名维度）
+    expect(requiredParams({ center: [116], zoom: 5 })).toBe(true);
   });
 
   it('run #534: bearing-only actually flies to the requested bearing and converges', async () => {

@@ -25,16 +25,22 @@ export function SpatialCrosshair() {
     const vp = useHudStore.getState().viewport;
     const [cLng, cLat] = vp?.center ?? [0, 0];
     if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(`${cLng.toFixed(6)}, ${cLat.toFixed(6)}`);
+      navigator.clipboard
+        .writeText(`${cLng.toFixed(6)}, ${cLat.toFixed(6)}`)
+        // 只有写入成功才给「已复制」；拒绝/非安全上下文不得谎报，也不留下
+        // 未处理的 Promise 拒绝。
+        .then(() => {
+          setCopied(true);
+          if (copyTimerRef.current) {
+            clearTimeout(copyTimerRef.current);
+          }
+          copyTimerRef.current = setTimeout(() => {
+            setCopied(false);
+            copyTimerRef.current = null;
+          }, 1500);
+        })
+        .catch(() => {});
     }
-    setCopied(true);
-    if (copyTimerRef.current) {
-      clearTimeout(copyTimerRef.current);
-    }
-    copyTimerRef.current = setTimeout(() => {
-      setCopied(false);
-      copyTimerRef.current = null;
-    }, 1500);
   };
 
   return (
@@ -160,7 +166,11 @@ export function SpatialCrosshair() {
           }}
         >
           <title>{copied ? t('map.readout.copiedTitle') : t('map.readout.copyTitle')}</title>
-          <circle cx="12" cy="12" r="3" fill={copied || isThinking ? 'var(--agent-accent)' : 'var(--text-disabled)'} style={{ transition: 'fill 0.3s ease' }} />
+          {/* 中心点 = 复制命中面：常驻 pointer-events:auto，点击事件冒泡到上面
+              svg 的 onClick。曾把门控整个挂在 24px 框上（空闲 'none'），而 copied
+              只能由点击产生 —— 死锁使「点击复制中心坐标」在默认态永不可达。
+              24px 装饰框保持审计契约（空闲不吞要素拾取），命中面收敛到中心精确点。 */}
+          <circle cx="12" cy="12" r="3" fill={copied || isThinking ? 'var(--agent-accent)' : 'var(--text-disabled)'} style={{ transition: 'fill 0.3s ease', pointerEvents: 'auto' }} />
           <path d="M12 2v6M12 16v6M2 12h6M16 12h6" stroke={copied || isThinking ? 'var(--agent-accent)' : 'var(--text-muted)'} strokeWidth="1.5" strokeLinecap="round" style={{ transition: 'stroke 0.3s ease' }} />
         </svg>
 

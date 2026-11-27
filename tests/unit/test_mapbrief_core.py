@@ -13,6 +13,7 @@ from app.lib.storymap.brief_factcheck import (
     check_facts,
     resolve_field_path,
 )
+from app.lib.storymap.brief_preflight import run_preflight
 from app.lib.storymap.brief_spec import (
     BRIEF_SPEC_SCHEMA_VERSION,
     BriefBlock,
@@ -372,6 +373,78 @@ class TestFactCheck:
         assert "contradicts" in updated[1].status_reason
 
 
+# ── 3.5 预检裁决（warning 不得掩盖 unverified） ──────────────────────
+
+
+class TestBriefPreflightVerdicts:
+    def test_warning_does_not_mask_unverified_facts(self):
+        """评审 #P2：warning + unverified 并存时不得判 pass/deliverable。"""
+        spec = MapBriefSpec.model_validate({
+            "chapters": [{"id": "c1", "title": "t", "narrative": "n",
+                          "arc_role": "introduction"}],
+            "blocks": [
+                {"id": "blk-map", "chapter_id": "c1", "kind": "map_view",
+                 "map_view": {"center": [116.4, 39.9], "zoom": 5.0,
+                              "mapspec_fingerprint": "fp-1"}},
+                {"id": "blk-src", "chapter_id": "c1", "kind": "source",
+                 "text": "来源：统计表"},
+            ],
+            "facts": [
+                {"fact_id": "fact-warn", "label": "学校总数",
+                 "kind": "count", "value": 142, "unit": "所",
+                 "basis": {"artifact_ref": "ref:stats-schools",
+                           "field_path": "table.rows.0.count"}},
+                {"fact_id": "fact-unver", "label": "无证据数值",
+                 "kind": "count", "value": 9},
+            ],
+        })
+        report = run_preflight(
+            spec,
+            records={"ref:stats-schools": {"status": "valid",
+                                           "metadata": {}}},
+            payloads={"ref:stats-schools": {
+                "table": {"rows": [{"count": 142}]}}},
+            widget_data={}, mapspec_available=True)
+        numeric = next(i for i in report.items
+                       if i.check == "numeric_consistency")
+        assert numeric.verdict == "not_evaluated"
+        assert numeric.refs == ["fact-unver"]
+        assert report.outcome == "draft_exportable"
+
+    def _map_spec(self, center):
+        return MapBriefSpec.model_validate({
+            "chapters": [{"id": "c1", "title": "t", "narrative": "n",
+                          "arc_role": "introduction"}],
+            "blocks": [{"id": "blk-map", "chapter_id": "c1",
+                        "kind": "map_view",
+                        "map_view": {"center": center, "zoom": 4.0,
+                                     "mapspec_fingerprint": "fp-1"}}],
+            "facts": [],
+        })
+
+    def _coverage(self, spec, bbox):
+        report = run_preflight(
+            spec, records={"ref:x": {"status": "valid", "bbox": bbox}},
+            payloads={}, widget_data={}, mapspec_available=True)
+        return next(i for i in report.items
+                    if i.check == "map_version_coverage")
+
+    def test_antimeridian_bbox_camera_not_reported_outside(self):
+        # e<w 表示跨 ±180°（camera_planner 同语义）：中心 -180 在覆盖内。
+        item = self._coverage(self._map_spec([-180.0, 0.0]),
+                              [170.0, -10.0, -170.0, 10.0])
+        assert item.refs == []
+
+    def test_malformed_bbox_elements_do_not_break_preflight(self):
+        # 元素非数值/None/NaN 不得把预检变成 500，也不得毒化覆盖比较。
+        spec = self._map_spec([116.4, 39.9])
+        for bbox in ([1.0, "x", 3.0, 4.0],
+                     [1.0, 2.0, 3.0, None],
+                     [1.0, float("nan"), 3.0, 4.0]):
+            item = self._coverage(spec, bbox)
+            assert item.refs == [], bbox
+
+
 # ── 4. 草稿编译（服务壳，loader 打桩） ────────────────────────────────
 
 
@@ -507,3 +580,30 @@ class TestBriefCompiler:
         # db=None → messages 缺席；trace 缺席 → ValueError（422 语义）
         with pytest.raises(ValueError):
             await bc.compile_brief_draft(Conv(), db=None)
+
+
+# ── 5. 冻结发布：静态图件渲染失败必须告警 ────────────────────────────
+
+
+class TestStaticMapRenderWarnings:
+    def test_render_exception_appends_warning(self, monkeypatch):
+        from app.services.storymap import brief_release
+        from app.services import mapspec_to_svg
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("render exploded")
+
+        monkeypatch.setattr(
+            mapspec_to_svg, "compile_mapspec_to_svg_detailed", boom)
+        spec = MapBriefSpec.model_validate(_brief(
+            facts=[],
+            blocks=[{
+                "id": "blk-map1", "chapter_id": "arc-introduction",
+                "kind": "map_view",
+                "map_view": {"center": [104.06, 30.67], "zoom": 10},
+            }],
+        ))
+        maps, warnings = brief_release._render_static_maps(
+            spec, {"layers": []})
+        assert maps == {}
+        assert any("blk-map1" in w and "渲染失败" in w for w in warnings)

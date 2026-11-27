@@ -247,3 +247,25 @@ def test_binding_drift_changes_fingerprint_and_stales_plan():
     m_caps = compile_runtime_manifest(tool_registry=_build(True))
     assert m_caps.is_stale_plan(fp_plain) is True
     assert m_caps.is_stale_plan(fp_caps) is False
+
+
+def test_fatal_survives_warning_budget_exhaustion():
+    """>MAX_FINDINGS 条 metadata/unbacked warning 把旧预算耗尽后，最后出现
+    工具的 capability_id_dangling fatal 必须仍在 —— 它是启动 fail-fast 闸
+    的唯一输入，被 warning 挤占等于闸被静默绕过。"""
+    from app.lib.gis.capability_conformance import MAX_FINDINGS
+
+    # 每个工具缺 4 项 ABI 元数据（warning）+ 声明无算法链支撑（warning）
+    tools = [(f"warn_tool_{i:04d}", {"capabilities": ["cap_a"]})
+             for i in range(MAX_FINDINGS + 5)]
+    tools.append(("ghost_tool", {"capabilities": ["no_such_cap"]}))
+
+    issues = _run(tools=tools)
+    fatal = [i for i in issues if i.code == CODE_ID_DANGLING]
+    assert fatal, "warning 预算耗尽后 fatal 被静默丢弃（fail-fast 闸被绕过）"
+    assert fatal[0].tool == "ghost_tool"
+    assert fatal[0].severity == SEVERITY_FATAL
+    # warning 侧仍守预算（有界承诺不破）
+    assert len([i for i in issues if i.severity == SEVERITY_WARNING]) <= MAX_FINDINGS
+    # 确定性：同输入同序同输出
+    assert [i.to_dict() for i in _run(tools=tools)] == [i.to_dict() for i in issues]

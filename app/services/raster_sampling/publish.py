@@ -145,8 +145,11 @@ def build_station_layer(
             invalid_by_station[r.sample_id] = (
                 invalid_by_station.get(r.sample_id, 0) + 1)
 
+    sorted_band_keys = sorted(band_keys)
+    col_index = {key: i + 1 for i, key in enumerate(sorted_band_keys)}
+
     def _col_name(source_ref: str, band: int) -> str:
-        idx = sorted(band_keys).index((source_ref, band)) + 1
+        idx = col_index[(source_ref, band)]
         return f"v{idx}_{band}"
 
     features: List[Dict[str, Any]] = []
@@ -163,7 +166,7 @@ def build_station_layer(
             "invalid_cells": invalid_by_station.get(st.sample_id, 0),
         }
         props.update(st.parent_attrs)
-        for key in sorted(band_keys):
+        for key in sorted_band_keys:
             v = value_by_key.get((st.sample_id, key[0], key[1]))
             props[_col_name(key[0], key[1])] = v
         features.append({
@@ -405,7 +408,11 @@ def thin_series(
         keep_idx.add(vmin[1])
     # 仍超限 → 在保留点间均匀补间
     if len(keep_idx) > limit:
-        keep_idx = set(sorted(keep_idx)[:limit])
+        ordered = sorted(keep_idx)
+        if limit <= 1:
+            keep_idx = {ordered[0]}
+        else:
+            keep_idx = set(ordered[: limit - 1] + [ordered[-1]])
     kept_sorted = sorted(keep_idx)
     if len(kept_sorted) < limit:
         need = limit - len(kept_sorted)
@@ -420,16 +427,21 @@ def thin_series(
              "kept": len(final), "total": n})
 
 
+CURVE_COLUMNS = ["sample_id", "source_ref", "band", "chainage_m",
+                 "station_index", "physical_value", "interpolated_value",
+                 "raw_value", "valid", "part_id"]
+
+
 def load_rows_for_curves(parquet_path: str) -> List[Dict[str, Any]]:
-    """长表 → 曲线原料（仅曲线列；分页读，行组流式）。"""
+    """长表 → 曲线原料（仅曲线列；按行组分批流式读取）。"""
     import pyarrow.parquet as pq
 
-    table = pq.read_table(
-        parquet_path,
-        columns=["sample_id", "source_ref", "band", "chainage_m",
-                 "station_index", "physical_value", "interpolated_value",
-                 "raw_value", "valid", "part_id"])
-    return table.to_pylist()
+    rows: List[Dict[str, Any]] = []
+    parquet = pq.ParquetFile(parquet_path)
+    for batch in parquet.iter_batches(columns=CURVE_COLUMNS,
+                                      use_threads=False):
+        rows.extend(batch.to_pylist())
+    return rows
 
 
 def _part_sort_key(part: str) -> Tuple[str, int]:

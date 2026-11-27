@@ -19,6 +19,7 @@ from app.services.review.store import (
     MAX_PROPOSALS_PER_SESSION,
     ReviewStore,
     ReviewStoreCorrupt,
+    ReviewStoreError,
     ReviewStoreFull,
 )
 
@@ -117,6 +118,16 @@ async def test_atomic_write_no_tmp_leftover(store):
     assert files == ["proposals.json"]
     data = json.loads((rdir / "proposals.json").read_text(encoding="utf-8"))
     assert data["version"] == 1
+
+
+@pytest.mark.asyncio
+async def test_session_id_with_reserved_chars_rejected(store):
+    """保留字符不得静默剔除：'a/b' 不能与 'ab' 落到同一目录（锁按原始 id）。"""
+    with pytest.raises(ReviewStoreError):
+        await store.list_proposals("a/b")
+    with pytest.raises(ReviewStoreError):
+        await store.save_proposal("a\\b", _proposal())
+    assert await store.list_proposals("ab") == []
 
 
 @pytest.mark.asyncio

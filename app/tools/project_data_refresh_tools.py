@@ -115,6 +115,12 @@ def _receipt(tool_ok: bool = True, task: str = "ok",
     }
 
 
+def _missing_session() -> Dict[str, Any]:
+    return {"success": False, "error": "missing_session",
+            "detail": "Missing session_id context",
+            **_receipt(False, "not_run")}
+
+
 def _diff_summary(diffs: list) -> Dict[str, Any]:
     out = []
     for d in diffs[:MAX_SUMMARY_ITEMS]:
@@ -167,7 +173,7 @@ def register_project_data_refresh_tools(registry: ToolRegistry) -> None:
         from app.services.project_runtime.refresh.records import CheckReceipt
 
         if not session_id:
-            return {"error": "Missing session_id context", **_receipt(False, "not_run")}
+            return _missing_session()
         try:
             with SessionLocal() as db:
                 uid = await _authorized_context(db, project_id, session_id)
@@ -210,6 +216,8 @@ def register_project_data_refresh_tools(registry: ToolRegistry) -> None:
         session_id: str = "",
     ) -> dict:
         try:
+            if not session_id:
+                return _missing_session()
             pid = _need(proposal_id)
             with SessionLocal() as db:
                 uid = await _authorized_context(db, project_id, session_id)
@@ -252,8 +260,7 @@ def register_project_data_refresh_tools(registry: ToolRegistry) -> None:
     ) -> dict:
         try:
             if not session_id:
-                return {"error": "Missing session_id context",
-                        **_receipt(False, "not_run")}
+                return _missing_session()
             with SessionLocal() as db:
                 uid = await _authorized_context(db, project_id, session_id)
                 prop = await _service().preview(
@@ -307,6 +314,8 @@ def register_project_data_refresh_tools(registry: ToolRegistry) -> None:
         session_id: str = "",
     ) -> dict:
         try:
+            if not session_id:
+                return _missing_session()
             pid = _need(proposal_id)
             with SessionLocal() as db:
                 uid = await _authorized_context(db, project_id, session_id)
@@ -314,6 +323,13 @@ def register_project_data_refresh_tools(registry: ToolRegistry) -> None:
                     db, project_id=project_id, proposal_id=pid,
                     user_id=uid, cancel=cancel)
             cand = result.get("candidate")
+            task_execution = (result.get("receipt") or {}).get("task_execution")
+            if task_execution is None:
+                status = cand.status.value if cand else "not_started"
+                task_execution = {
+                    "succeeded": "ok", "adopted": "ok", "partial": "partial",
+                    "failed": "failed", "cancelled": "failed", "discarded": "failed",
+                }.get(status, "not_run")
             return {
                 "success": True, "project_id": project_id, "proposal_id": pid,
                 "replayed": result.get("replayed", False),
@@ -323,7 +339,7 @@ def register_project_data_refresh_tools(registry: ToolRegistry) -> None:
                               else result.get("preserved", [])[:MAX_SUMMARY_ITEMS]),
                 "conflicts": (cand.merge_conflicts[:MAX_SUMMARY_ITEMS] if cand else []),
                 "truncated": False, "warnings": [],
-                **_receipt(task=result["receipt"]["task_execution"]),
+                **_receipt(task=task_execution),
             }
         except Exception as exc:  # noqa: BLE001
             return _error(exc)
@@ -352,6 +368,8 @@ def register_project_data_refresh_tools(registry: ToolRegistry) -> None:
         session_id: str = "",
     ) -> dict:
         try:
+            if not session_id:
+                return _missing_session()
             pid = _need(proposal_id)
             with SessionLocal() as db:
                 uid = await _authorized_context(db, project_id, session_id)
@@ -390,6 +408,8 @@ def register_project_data_refresh_tools(registry: ToolRegistry) -> None:
         session_id: str = "",
     ) -> dict:
         try:
+            if not session_id:
+                return _missing_session()
             pid = _need(proposal_id)
             with SessionLocal() as db:
                 uid = await _authorized_context(db, project_id, session_id)
@@ -423,6 +443,8 @@ def register_project_data_refresh_tools(registry: ToolRegistry) -> None:
         session_id: str = "",
     ) -> dict:
         try:
+            if not session_id:
+                return _missing_session()
             pid = _need(proposal_id)
             with SessionLocal() as db:
                 uid = await _authorized_context(db, project_id, session_id)
@@ -461,6 +483,8 @@ def register_project_data_refresh_tools(registry: ToolRegistry) -> None:
         session_id: str = "",
     ) -> dict:
         try:
+            if not session_id:
+                return _missing_session()
             pid = _need(proposal_id)
             with SessionLocal() as db:
                 uid = await _authorized_context(db, project_id, session_id)

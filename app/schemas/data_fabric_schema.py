@@ -46,7 +46,8 @@ class ConnectionProfile(BaseModel):
             u = urlparse(eff_url)
             if u.hostname:
                 self.host = u.hostname
-                self.port = u.port or 5432
+                if self.port is None:
+                    self.port = u.port or 5432
                 db = u.path.lstrip("/")
                 if db and not self.database:
                     self.database = db
@@ -147,6 +148,11 @@ class QueryResult(BaseModel):
     has_more: bool = False
     result_mode: Optional[str] = None       # descriptor|statistics|sample|features|materialize|vector_tile
     is_demo: bool = False
+    # 分组聚合的组窗口完整性：``True`` = 源侧已证明取到全部组；
+    # ``False`` = 组数超过页上限被截断（消费方必须失败或披露，
+    # 不得把 ``len(data) == limit`` 当作完整）。``None`` = 非分组
+    # 聚合/源不提供该事实（单组 COUNT 等无从截断）。
+    group_window_complete: Optional[bool] = None
 
 
 class CatalogFeaturesPageResponse(BaseModel):

@@ -267,6 +267,34 @@ class TestDoctor:
         assert isinstance(payload["grants_parsed"], dict)
         assert payload["extensions"][0]["id"] == "acme.pack"
 
+    def test_certification_gate_reuses_single_discovery(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """gate 体检复用步骤 3 的 host，不再第二次全量 discover/指纹。"""
+        import app.extensions_platform.cli as cli
+
+        _write_good_ext(tmp_path)
+        calls: list[list[str]] = []
+        real_build = cli._build_host
+
+        def counting_build(roots):
+            calls.append(list(roots))
+            return real_build(roots)
+
+        monkeypatch.setattr(cli, "_build_host", counting_build)
+        monkeypatch.setattr(
+            "app.core.config.settings.EXTENSIONS_REQUIRE_CERTIFIED",
+            True,
+            raising=False,
+        )
+        rc = cli.main(["doctor", "--json", "--root", str(tmp_path)])
+        assert rc == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["settings"]["EXTENSIONS_REQUIRE_CERTIFIED"] == "True"
+        # gate 分支确实执行（未认证包被点名）。
+        assert any("certification gate is ON" in p for p in payload["problems"])
+        assert len(calls) == 1
+
 
 # ---------------------------------------------------------------- scaffold
 

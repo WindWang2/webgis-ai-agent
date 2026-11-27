@@ -59,6 +59,26 @@ async def test_discover_progress_reports() -> None:
 
 
 @pytest.mark.asyncio
+async def test_discover_missing_overall_score_does_not_kill_stage() -> None:
+    """A score payload without ``overall`` ranks last instead of raising
+    KeyError outside the per-source isolation and aborting the whole stage."""
+    class _ScoreWithoutOverall:
+        def model_dump(self):  # noqa: ANN201
+            return {"temporal_score": 0.9}
+
+    class Adapter(_Adapter):
+        async def quick_assess(self, query, source):  # noqa: ANN001, ANN003
+            if source.id == "s0":
+                return _ScoreWithoutOverall()
+            return await super().quick_assess(query, source)
+
+    result = await run_discover_stage("rank-no-overall", "成都 POI", {},
+                                      adapter=Adapter(3))
+    assert result.success is True
+    assert [c["source"]["id"] for c in result.data["selected_sources"]] == ["s1", "s2", "s0"]
+
+
+@pytest.mark.asyncio
 async def test_discover_scores_later_candidates_and_isolates_one_failure() -> None:
     import asyncio
 

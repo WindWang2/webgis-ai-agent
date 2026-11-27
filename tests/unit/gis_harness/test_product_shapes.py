@@ -132,6 +132,33 @@ def test_builder_no_template_still_valid_generic():
     assert spec.plan_id == plan.plan_id
 
 
+def test_builder_spec_id_distinct_when_plan_id_empty():
+    """P3：空 plan_id 不得让不同产品收敛为同一 spec_id（sha1("")[:12]）。"""
+    intent, plan = _plan_for("成都小学分布情况，各区统计")
+    empty_plan = plan.model_copy(update={"plan_id": ""})
+    s1 = build_product_spec_from_plan(
+        empty_plan, intent.model_copy(update={"query": "产品一"}), None)
+    s2 = build_product_spec_from_plan(
+        empty_plan, intent.model_copy(update={"query": "产品二"}), None)
+    assert s1.spec_id != s2.spec_id
+
+
+def test_builder_truncates_intent_fields_to_contract_limits():
+    """P3：超长 intent 字段按 MapProductSpec max_length 截断，builder 不抛。"""
+    from app.services.gis_harness.intent import ScopeIntent, SubjectIntent
+
+    intent, plan = _plan_for("成都小学分布情况，各区统计")
+    long_intent = intent.model_copy(update={
+        "scope": ScopeIntent(name="x" * 300),
+        "subject": SubjectIntent(category="y" * 300),
+        "time": "z" * 300,
+    })
+    spec = build_product_spec_from_plan(plan, long_intent, None)
+    assert len(spec.scope) == 120
+    assert len(spec.subject) == 120
+    assert len(spec.temporal) == 120
+
+
 # ── shape 投影 ────────────────────────────────────────────────────────
 
 

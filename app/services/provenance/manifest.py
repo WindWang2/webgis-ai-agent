@@ -148,7 +148,9 @@ def redact_provenance_args(value: Any, depth: int = 0) -> Any:
 def _trim(value: Any, depth: int = 0) -> Any:
     """Recursively drop large keys and truncate long string leaves."""
     if depth > 8:
-        return None
+        # 与 redact_provenance_args 同一可见标记：裁剪不得把深层截断重新
+        # 塌回 None（review #1744-8 的修复必须在落库前仍然生效）。
+        return _TRUNCATED_DEPTH
     if isinstance(value, dict):
         return {k: _trim(v, depth + 1) for k, v in value.items() if k not in _LARGE_KEYS}
     if isinstance(value, list):

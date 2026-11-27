@@ -87,7 +87,7 @@ class EvaluationService:
         if request.task_type == "segmentation":
             if request.references_path is None:
                 raise ModelOpsError("segmentation evaluation requires references_path")
-            pred, refs = self._read_pair(request.predictions_path, request.references_path)
+            pred, refs, pred_meta = self._read_pair(request.predictions_path, request.references_path)
             metrics = segmentation_metrics(
                 refs, pred, num_classes=request.num_classes,
                 ignore_index=request.ignore_index,
@@ -96,14 +96,12 @@ class EvaluationService:
             # m-5：置信度校准需要 confidence 栅格输入（类代理无信息量）——
             # 不再伪造 ECE 数值；输入齐备时才计算。
             if request.confidence_path is not None:
-                from app.lib.geo_raster.reader import RasterReader as _RR
-
                 # #1219（B-16）：confidence 走有界读 —— budget_ok=True 是
                 # 审计明示的后门（512MiB 预算护栏不应被评估路径绕开）。
-                with _RR.open(str(request.confidence_path)) as cr:
-                    conf = cr.read_full()
-                    if conf.ndim == 3:
-                        conf = conf[0]
+                # 与 pred/refs 网格（形状 + CRS/仿射）不一致即 typed 拒绝：
+                # 同元素数异形（如转置）时 conf[mask] 会静默错位 → ECE 指标
+                # 错误，形状不符则裸 IndexError。
+                conf = self._read_single(request.confidence_path, reference=pred_meta)
                 mask = pred != request.ignore_index
                 report["ece"] = expected_calibration_error(
                     conf[mask].tolist(), (pred[mask] == refs[mask]).tolist()
@@ -152,11 +150,13 @@ class EvaluationService:
                             ignore_index=request.ignore_index)
                 folds[str(fold)] = {"miou": fm.miou, "support_px": int(mask.sum())}
             report["per_fold"] = folds
-            # V3 §G：地理分区指标（region id 栅格，可选）。
+            # V3 §G：地理分区指标（region id 栅格，可选）。region 栅格必须与
+            # pred/refs 同网格——异形会让 per_region_metrics 的布尔切片错位
+            # （逐 region 指标误导）或裸崩。
             if request.regions_path is not None:
                 from app.lib.modelops.evaluation import per_region_metrics
 
-                regions = self._read_single(request.regions_path)
+                regions = self._read_single(request.regions_path, reference=pred_meta)
                 report["per_region"] = per_region_metrics(
                     refs, pred, regions,
                     num_classes=request.num_classes,
@@ -179,7 +179,7 @@ class EvaluationService:
         elif request.task_type == "classification":
             if request.references_path is None:
                 raise ModelOpsError("classification evaluation requires references_path")
-            pred, refs = self._read_pair(request.predictions_path, request.references_path)
+            pred, refs, _meta = self._read_pair(request.predictions_path, request.references_path)
             from app.lib.modelops.evaluation import classification_metrics
 
             # R2-M5：numpy 直算（.tolist() 的 Python list 物化无必要）。
@@ -213,6 +213,11 @@ class EvaluationService:
 
     # ── 漂移评估（V3 §G：baseline vs current 的空间/分布对比）────────
     def evaluate_drift(self, request: DriftEvaluationRequest) -> Dict[str, Any]:
+        # 与 evaluate（:81）同口径：owner_scope 恰好一维。空/双键 scope 会
+        # 并入 output_dir 路径（`_` join 出畸形目录名）并以非法 scope 发布
+        # artifact（跨 owner 可见性破裂）。
+        if set(request.owner_scope) - {"session_id", "project_id"} or len(request.owner_scope) != 1:
+            raise ModelOpsError("owner_scope must be exactly one of session_id/project_id")
         run_id = uuid.uuid4().hex[:16]
         started = time.time()
         from app.lib.modelops.evaluation import (
@@ -222,7 +227,7 @@ class EvaluationService:
             segmentation_metrics,
         )
 
-        base, cur = self._read_pair(request.baseline_path, request.current_path)
+        base, cur, base_meta = self._read_pair(request.baseline_path, request.current_path)
         report: Dict[str, Any] = {
             "run_id": run_id,
             "report_type": "drift",
@@ -243,16 +248,25 @@ class EvaluationService:
         report["class_distribution_psi"] = class_distribution_psi(base_counts, cur_counts)
         # 置信度分布 PSI（可选）。
         if request.baseline_confidence_path and request.current_confidence_path:
-            bconf = self._read_single(request.baseline_confidence_path)
-            cconf = self._read_single(request.current_confidence_path)
+            bconf = self._read_single(
+                request.baseline_confidence_path, reference=base_meta
+            )
+            cconf = self._read_single(
+                request.current_confidence_path, reference=base_meta
+            )
             mask = (base != request.ignore_index) & (cur != request.ignore_index)
-            if mask.any() and bconf.shape == base.shape and cconf.shape == cur.shape:
+            if mask.any():
                 report["confidence_psi"] = population_stability_index(
                     bconf[mask].tolist(), cconf[mask].tolist()
                 )
-        # 地理切片：逐 region 的一致性（地理漂移定位）。
+            else:
+                report["confidence_psi_note"] = (
+                    "skipped: no comparable pixels after ignore_index mask"
+                )
+        # 地理切片：逐 region 的一致性（地理漂移定位）。region 栅格必须与
+        # baseline/current 同网格——异形会让逐 region 切片错位或裸崩。
         if request.regions_path is not None:
-            regions = self._read_single(request.regions_path)
+            regions = self._read_single(request.regions_path, reference=base_meta)
             report["per_region"] = per_region_metrics(
                 base, cur, regions,
                 num_classes=request.num_classes,
@@ -276,8 +290,14 @@ class EvaluationService:
         return report
 
     @staticmethod
-    def _read_single(path: Path) -> np.ndarray:
-        """读单波段栅格（regions/confidence；返回 2D）。"""
+    def _read_single(path: Path, *, reference: Optional[Any] = None) -> np.ndarray:
+        """读单波段栅格（regions/confidence；返回 2D）。
+
+        ``reference``：给定预测栅格元数据时，校验本栅格与它**同网格**
+        （形状 + CRS + 仿射）。同元素数异形（转置）会让布尔掩码/逐 region
+        切片静默错位（指标错误），形状不符则裸 IndexError —— 一律 typed
+        拒绝并提示重采样，不出误导性报告。
+        """
         with RasterReader.open(str(path)) as reader:
             meta = reader.metadata()
             if meta.width * meta.height * meta.count > 16_000_000:
@@ -285,11 +305,28 @@ class EvaluationService:
             data = reader.read_full()
         if data.ndim == 3:
             data = data[0]
+        if reference is not None:
+            grid = (reference.height, reference.width)
+            if data.shape != grid:
+                raise ModelOpsError(
+                    f"{Path(path).name} shape {data.shape} != prediction grid "
+                    f"{grid} — resample onto the prediction grid before evaluation"
+                )
+            if (str(meta.crs) != str(reference.crs)
+                    or tuple(meta.transform or []) != tuple(reference.transform or [])):
+                raise ModelOpsError(
+                    f"{Path(path).name} grid differs from prediction CRS/transform "
+                    "— resample onto the prediction grid before evaluation"
+                )
         return data
 
     @staticmethod
     def _read_pair(pred_path: Path, ref_path: Path) -> tuple:
-        """读预测/参考栅格（有界：geoid 校验 + 预算护栏由 RasterReader 兜底）。"""
+        """读预测/参考栅格（有界：geoid 校验 + 预算护栏由 RasterReader 兜底）。
+
+        返回 ``(pred, refs, pred_meta)`` —— 第三成员供 confidence/regions
+        等辅助栅格做同网格校验（_read_single 的 ``reference``）。
+        """
         # R2-M5：不绕过 reader 预算（budget_ok=True 是审计眼里的后门）。
         with RasterReader.open(str(pred_path)) as pr:
             meta = pr.metadata()
@@ -321,4 +358,4 @@ class EvaluationService:
             pred = pred[0]
         if refs.ndim == 3:
             refs = refs[0]
-        return pred, refs
+        return pred, refs, pred_meta

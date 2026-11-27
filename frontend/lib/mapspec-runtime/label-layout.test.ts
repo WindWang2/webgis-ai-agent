@@ -160,6 +160,22 @@ describe("selectTopLabels (P3 thinning)", () => {
     expect(selectTopLabels(features, strategy, 6).kept).toBe(40);
     expect(selectTopLabels(features, strategy, 10).kept).toBe(400);
   });
+
+  it("limit=0（band topRatio=0）→ 安全跳过而非越界崩溃", () => {
+    const bands = [{ minZoom: 0, maxZoom: 24, topRatio: 0, sizeRatio: null }];
+    const strategy: LabelStrategySpec = { ...baseStrategy, mode: "top_n", topN: 10, priorityField: "pop", zoomBands: bands };
+    // 无可用 id 键 → 原本会在 order[limit-1] 上读 .v 抛 TypeError。
+    const noId = fc(100).map((f) => ({ properties: { name: f.properties!.name, pop: f.properties!.pop } }));
+    const sel = selectTopLabels(noId, strategy, 10);
+    expect(sel.method).toBe("skipped");
+    expect(sel.reason).toBe("limit_non_positive");
+    expect(sel.limit).toBe(0);
+    expect(sel.filter).toBeNull();
+    // 有 id 键时同样跳过 —— 不发「匹配任何要素」的空 id 列表 filter。
+    const withId = selectTopLabels(fc(100, { idKey: "id" }), strategy, 10);
+    expect(withId.method).toBe("skipped");
+    expect(withId.filter).toBeNull();
+  });
 });
 
 describe("degrade ladder (P3, §0.4 four levels)", () => {

@@ -7,9 +7,10 @@ hidden state、无限聊天历史、巨型 GeoJSON 载荷、Redis dump、secret/
 """
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 #: manifest schema 版本（升级时新版本号 + fail-closed 读路径，见 store/validation）。
 RUNTIME_SNAPSHOT_SCHEMA_VERSION = 1
@@ -140,6 +141,9 @@ class PlanProjectionRef(BaseModel):
     —— 恢复章节无数据行在场证据，绑定类行一律不恢复）。
     """
 
+    # freeze 通过属性赋值填充投影；赋值也必须有界（否则大 plan 冻结绕过校验）。
+    model_config = ConfigDict(validate_assignment=True)
+
     envelope_id: str = ""
     user_goal: str = ""
     progress: List[Dict[str, Any]] = Field(default_factory=list)
@@ -153,6 +157,33 @@ class PlanProjectionRef(BaseModel):
     @classmethod
     def _bounded_goal(cls, v: str) -> str:
         return str(v)[:512]
+
+    @field_validator("progress")
+    @classmethod
+    def _bounded_progress(
+        cls, v: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        return list(v)[:PROGRESS_LIMIT]
+
+    @field_validator("restorable_chapter")
+    @classmethod
+    def _bounded_chapter(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        # 不可信 manifest 的 chapter 无界放大面：以 spec 文档同一体积界
+        # fail-closed（freeze 时同样拒绝超界 plan，绝不落巨型 manifest）。
+        try:
+            size = len(json.dumps(v, ensure_ascii=False).encode("utf-8"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("restorable_chapter is not JSON-serializable") from exc
+        if size > MAPSPEC_DOC_MAX_BYTES:
+            raise ValueError("restorable_chapter exceeds MAPSPEC_DOC_MAX_BYTES")
+        return v
+
+    @field_validator("capability_statuses")
+    @classmethod
+    def _bounded_capability_statuses(
+        cls, v: Dict[str, str]
+    ) -> Dict[str, str]:
+        return dict(list(v.items())[:CAPABILITY_LIMIT])
 
     @field_validator("workflow_rows_fingerprint")
     @classmethod

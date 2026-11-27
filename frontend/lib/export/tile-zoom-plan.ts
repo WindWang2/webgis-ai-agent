@@ -43,7 +43,7 @@ export function planTileZoomCapture(
   const zoomGainLevels = Math.min(desiredGain, headroom);
   const captureZoom = Math.min(baseZoom + zoomGainLevels, maxZoom);
   const resampleFactor = ratio;
-  const effective = zoomGainLevels >= 0.5
+  const effective = zoomGainLevels > 0
     ? `栅格取图 zoom 提升 ${zoomGainLevels.toFixed(1)} 级（${baseZoom.toFixed(1)}→${captureZoom.toFixed(1)}）后重采样 ${ratio.toFixed(2)}×`
     : `底图 maxzoom=${maxZoom.toFixed(1)} 无 headroom —— 栅格细节保持原生（与 V10 等同，如实披露）`;
   return {

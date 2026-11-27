@@ -177,12 +177,19 @@ def _write_centers(rows: List[Tuple[Any, ...]]) -> None:
     db = yearbook_db_path()
     if not db.exists():
         return
+    # SQLite 唯一约束中 NULL 互不相等：adcode 缺失（NaN→NULL）时主键
+    # (adcode,name) 不参与去重，脏省重导会累积重复行。统一落为空串后再写。
+    normalized = []
+    for name, adcode, *rest in rows:
+        if adcode is None or pd.isna(adcode):
+            adcode = ""
+        normalized.append((name, adcode, *rest))
     conn = sqlite3.connect(db)
     try:
         with conn:
             conn.executemany(
                 "INSERT OR REPLACE INTO township_centers VALUES (?,?,?,?,?,?,?)",
-                rows,
+                normalized,
             )
     finally:
         conn.close()
@@ -295,11 +302,12 @@ def _iter_xlsx_chunks(
     大省超 xlsx 单表 2^20 行上限被切多 sheet：首 sheet 带表头，续 sheet
     直接是数据行；sheet 尾部可能有整行空白的填充段（坐标过滤时丢弃）。
     """
+    emitted_sheets: set = set()
+    base_header: Optional[List[str]] = None
     try:
         from python_calamine import CalamineWorkbook
 
         wb = CalamineWorkbook.from_path(str(tmp))
-        base_header: Optional[List[str]] = None
         for sheet in wb.sheet_names:
             ws = wb.get_sheet_by_name(sheet)
             it = iter(ws.iter_rows())
@@ -310,8 +318,10 @@ def _iter_xlsx_chunks(
             if "location" in first_row and "id" in first_row:
                 header = _dedupe_header(first_row)  # 带表头的数据 sheet
                 base_header = base_header or header
+                emitted_sheets.add(sheet)
                 yield header, it
             elif base_header is not None:
+                emitted_sheets.add(sheet)
                 yield base_header, itertools.chain([tuple(first_row)], it)  # 无表头续表
             else:
                 logger.warning("[gd-poi] %s!%s 表头异常，跳过", tmp.name, sheet)
@@ -319,8 +329,11 @@ def _iter_xlsx_chunks(
         import openpyxl
 
         wb_xl = openpyxl.load_workbook(str(tmp), read_only=True, data_only=True)
-        base_header = None
         for sheet in wb_xl.sheetnames:
+            if sheet in emitted_sheets:
+                # 已由 calamine 输出的 sheet 绝不重放：其行已 flush 进无主键
+                # 的 GPKG 层，二次 yield 会整段重复入库。
+                continue
             ws_xl = wb_xl[sheet]
             row_iter = ([cell.value for cell in row] for row in ws_xl.iter_rows())
             it = iter(row_iter)
@@ -684,9 +697,16 @@ def gd_poi_catalog() -> Dict[str, Any]:
     if available:
         out["gpkg"] = str(gd_poi_gpkg_path())
         if _meta_path().exists():
-            meta = json.loads(_meta_path().read_text(encoding="utf-8"))
-            out["provinces"] = meta.get("provinces", {})
-            out["total_rows"] = sum(meta.get("provinces", {}).values())
+            try:
+                meta = json.loads(_meta_path().read_text(encoding="utf-8"))
+                provinces = meta.get("provinces", {})
+            except (ValueError, OSError) as exc:
+                # 撕裂/损坏的 meta（旧版非原子写遗留）与 ingest 侧容错对称：
+                # 目录降级为「可用但省份明细未知」，不让整个查询抛错。
+                logger.warning("[gd-poi] meta.json 不可解析（%s），provinces 明细降级", exc)
+            else:
+                out["provinces"] = provinces
+                out["total_rows"] = sum(provinces.values())
     else:
         out["error"] = "gd_pois.gpkg 未生成"
         out["correction_hint"] = "运行 python manage.py gd-poi-ingest 预处理。"
@@ -904,7 +924,10 @@ def query_gd_poi(
             code = _adcode_literal(str(raw).strip())
             if not code:
                 continue
-            if len(code) == 4:  # 市级前缀
+            # 省级编码（_resolve_district_codes 把 510000 归一为 '51'）与市级
+            # 4 位前缀同样按范围展开——与 adcode 参数的 2 位处理一致；此前非
+            # 4 位一律走精确匹配，adcode='51' 恒 0 行。
+            if len(code) in (2, 4):  # 省级 2 位 / 市级 4 位前缀
                 nxt = code[:-1] + chr(ord(code[-1]) + 1)
                 d_ogr.append(f"(adcode >= '{code}' AND adcode < '{nxt}')")
                 d_sql.append("(adcode >= ? AND adcode < ?)")

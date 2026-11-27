@@ -481,16 +481,29 @@ def read_composition_identity(spec: Dict[str, Any]) -> Optional[CompositionIdent
         if isinstance(raw_versions, dict):
             for k in sorted(raw_versions.keys())[:MAX_COMPONENT_VERSIONS]:
                 versions[str(k)[:32]] = str(raw_versions[k])[:16]
+
+        def _int_or(value: Any, default: int) -> int:
+            try:
+                return int(value)
+            except (TypeError, ValueError, OverflowError):
+                return default
+
+        abi_raw = raw.get("component_abi_version")
         return CompositionIdentity(
             template_id=str(raw.get("template_id") or ""),
             template_version=str(raw.get("template_version") or ""),
             contract_id=str(raw.get("contract_id") or ""),
             contract_fingerprint=str(raw.get("contract_fingerprint") or ""),
-            component_abi_version=int(raw.get("component_abi_version") or COMPONENT_ABI_VERSION),
+            # 0 是显式旧 ABI（必须如实读出，不能伪装成当前版本）；
+            # 只有缺失/空值才回填当前 ABI。
+            component_abi_version=_int_or(
+                COMPONENT_ABI_VERSION
+                if abi_raw is None or abi_raw == "" else abi_raw,
+                0),
             component_versions=versions,
-            applied_revision=int(raw.get("applied_revision") or 0),
+            applied_revision=_int_or(raw.get("applied_revision"), 0),
             asset_id=str(raw.get("asset_id") or ""),
-            asset_revision=int(raw.get("asset_revision") or 0),
+            asset_revision=_int_or(raw.get("asset_revision"), 0),
         )
     except Exception:  # 防御性：身份块损坏不阻塞读路径
         return None

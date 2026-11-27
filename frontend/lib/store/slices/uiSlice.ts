@@ -6,6 +6,7 @@
  */
 import type { StateCreator } from 'zustand';
 import { TILE_PROVIDERS } from '@/lib/providers';
+import { MODE_TABS } from './workbenchSlice';
 import type { HudState, AiStatus, LeftTab, SettingsTab, ExportItem, SystemMessage } from '../hud-types';
 
 /**
@@ -14,6 +15,12 @@ import type { HudState, AiStatus, LeftTab, SettingsTab, ExportItem, SystemMessag
 export const MAX_OPS_LOG = 200;
 /** Same bound as the ops log: export receipts and causal entries are recent-activity UI. */
 export const MAX_UI_FEED = 200;
+/**
+ * FE-3: system-message queue cap. When a message is pending and nothing calls
+ * drainSystemMessage (consumer unmounted), every further callback enqueues
+ * forever — bound it like the other UI feeds, dropping the oldest.
+ */
+export const MAX_SYSTEM_MESSAGE_QUEUE = 200;
 export const SIDEBAR_MIN_WIDTH = 280;
 /** Floor so existing 280–420 layouts stay valid; wide viewports may go higher. */
 export const SIDEBAR_MAX_WIDTH_FLOOR = 420;
@@ -125,7 +132,14 @@ export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = 
       if (s.pendingSystemMessage === null) {
         return { pendingSystemMessage: payload, _systemMessageQueue: [] };
       }
-      return { _systemMessageQueue: [...s._systemMessageQueue, payload] };
+      // 上限（与其它 UI feed 同档）：无人 drain 时队列不得无界增长，超限丢最旧。
+      const next = [...s._systemMessageQueue, payload];
+      return {
+        _systemMessageQueue:
+          next.length > MAX_SYSTEM_MESSAGE_QUEUE
+            ? next.slice(next.length - MAX_SYSTEM_MESSAGE_QUEUE)
+            : next,
+      };
     }),
   // consumer 调用：取出并激活下一条（无下一条则置 null）
   drainSystemMessage: () =>
@@ -149,7 +163,12 @@ export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = 
     set((s) => ({
       activeLeftTab: tab,
       leftPanelOpen: true,
-      modeActiveTab: { ...s.modeActiveTab, [s.mode]: tab },
+      // R1 不变式：只有属于当前模式词表的 tab 才写入模式记忆槽 —— 否则
+      // setWorkbenchMode 切回该模式时会恢复成界外 tab（如 explore 模式
+      // 记住 'analysis'）。
+      modeActiveTab: MODE_TABS[s.mode]?.includes(tab)
+        ? { ...s.modeActiveTab, [s.mode]: tab }
+        : s.modeActiveTab,
     })),
   activeTool: null,
   setActiveTool: (tool: string | null) => set({ activeTool: tool }),

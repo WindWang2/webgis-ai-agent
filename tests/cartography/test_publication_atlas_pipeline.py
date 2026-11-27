@@ -322,3 +322,37 @@ def test_parse_chart_series_cap_dict_entry_semantics():
     assert len(series) == MAX_SERIES - 1  # empty 占首位帽位，有效序列少一
     assert [s["name"] for s in series] == [f"s{i}" for i in range(MAX_SERIES - 1)]
     assert raw_count == MAX_SERIES - 1
+
+
+def _deep_marker_svg(depth: int = 80) -> str:
+    """chrome marker 藏在超过 MAX_WALK_DEPTH 的嵌套里（遍历触顶）。"""
+    inner = '<g class="chrome-title"><text> buried </text></g>'
+    for _ in range(depth):
+        inner = f"<g>{inner}</g>"
+    return f'<svg xmlns="http://www.w3.org/2000/svg">{inner}</svg>'
+
+
+def test_walk_cap_marks_semantic_surface_truncated():
+    """P2：遍历触顶（深度 > MAX_WALK_DEPTH）必须置 truncated。
+
+    不置位时超大 SVG 静默给出不完整语义面（家族假 missing）。
+    """
+    sem = extract_semantics(_deep_marker_svg())
+    assert sem["parse_ok"] is True
+    assert sem["truncated"] is True
+    assert "title" not in sem["chrome_families"]
+
+
+def test_truncated_surface_is_not_silent_missing():
+    """P2：actual 语义面截断时 compare_semantics 不得判「静默丢失」。"""
+    from app.lib.cartography.export_semantic_corpus import compare_semantics
+
+    expected = {"chrome_families": ["title"]}
+    actual = extract_semantics(_deep_marker_svg())
+    report = compare_semantics(expected, actual)
+    assert report["truncated"] is True
+    assert report["ok"] is False
+    verdicts = {f["family"]: f["verdict"] for f in report["families"]}
+    assert verdicts["title"] == "degraded"
+    assert any(f["detail"] == "semantic_surface_truncated"
+               for f in report["families"])

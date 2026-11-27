@@ -194,7 +194,15 @@ def merge_states(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
             slot_a["types"][t] = slot_a["types"].get(t, 0) + c
     for t, c in (b.get("geom_types") or {}).items():
         out["geom_types"][t] = out["geom_types"].get(t, 0) + c
-    import h3
+    try:
+        import h3
+    except Exception:  # noqa: BLE001 — h3 缺席时增量状态退化为无分布
+        out["h3"] = {}
+        out["h3_truncated"] = (
+            bool(a.get("h3_truncated")) or bool(b.get("h3_truncated"))
+            or bool(a.get("h3") or b.get("h3"))
+        )
+        return out
 
     merged_cells: Dict[str, int] = {}
     resolution = int(out["resolution"])

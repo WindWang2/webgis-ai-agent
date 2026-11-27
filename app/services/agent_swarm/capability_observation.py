@@ -102,12 +102,13 @@ class CapabilityRecordingRegistry:
         alien = capabilities - self.granted
         if alien:
             return self._deny("capabilities_not_granted:" + ",".join(sorted(alien)))
+        result = self._inner.dispatch(name, *args, **kwargs)
+        value = await result if inspect.isawaitable(result) else result
         self._called.add(canonical)
         if not capabilities:
             self._missing.add(canonical)
         self._used.update(capabilities)
-        result = self._inner.dispatch(name, *args, **kwargs)
-        return await result if inspect.isawaitable(result) else result
+        return value
 
     def _deny(self, reason: str) -> dict:
         if len(self._denied) < 8:

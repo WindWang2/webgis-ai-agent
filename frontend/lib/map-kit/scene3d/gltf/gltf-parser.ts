@@ -223,6 +223,13 @@ export async function parseGltf(
   let binChunk: Uint8Array | null = null;
   if (isGlb) {
     const container = parseGlbContainer(input);
+    // GLB 分支同样受 JSON 预算约束（二进制总预算内 JSON chunk 也不得无界）。
+    if (container.json.byteLength > MAX_JSON_BYTES) {
+      throw new GltfParseError(
+        'budget_exceeded',
+        `glTF JSON ${container.json.byteLength} > ${MAX_JSON_BYTES}`,
+      );
+    }
     jsonText = new TextDecoder().decode(container.json);
     binChunk = container.bin;
   } else {
@@ -293,9 +300,23 @@ export async function parseGltf(
   });
 
   // ── materials ──────────────────────────────────────────────────────────
-  const materials: ParsedMaterial[] = (doc.materials ?? []).map((m) => {
+  const materials: ParsedMaterial[] = (doc.materials ?? []).map((m, mi) => {
     const pbr = m.pbrMetallicRoughness ?? {};
     const factor = pbr.baseColorFactor ?? [1, 1, 1, 1];
+    // 数值零校验：baseColorFactor 长度<3 或含非数时旧实现产出
+    // [undefined,…] → NaN 直入渲染；metallic/roughness 非数值直传同理
+    // （畸形 glTF 静默渲染异常）—— typed 拒绝。
+    const isNum = (v: unknown): boolean => typeof v === 'number' && Number.isFinite(v);
+    if (!Array.isArray(factor) || factor.length < 3 || !isNum(factor[0]) || !isNum(factor[1]) || !isNum(factor[2])
+        || (factor.length > 3 && !isNum(factor[3]))) {
+      throw new GltfParseError('corrupt', `materials[${mi}].pbrMetallicRoughness.baseColorFactor invalid`);
+    }
+    if (pbr.metallicFactor !== undefined && !isNum(pbr.metallicFactor)) {
+      throw new GltfParseError('corrupt', `materials[${mi}].pbrMetallicRoughness.metallicFactor invalid`);
+    }
+    if (pbr.roughnessFactor !== undefined && !isNum(pbr.roughnessFactor)) {
+      throw new GltfParseError('corrupt', `materials[${mi}].pbrMetallicRoughness.roughnessFactor invalid`);
+    }
     return {
       baseColorFactor: [factor[0], factor[1], factor[2], factor[3] ?? 1],
       metallicFactor: pbr.metallicFactor ?? 1,
@@ -501,6 +522,14 @@ export async function parseGltf(
           out[i * arity + c] = readComponent(dv, row + c * compBytes, acc.componentType, normalized);
         }
       }
+    } else if (!acc.sparse) {
+      // 无 bufferView 且无 sparse：out 全零静默返回 —— 畸形（小 count 的）
+      // POSITION/NORMAL/TEXCOORD 会渲染出零几何而非 typed 拒绝。spec 合法
+      // 的免 bufferView 形态仅 sparse-only accessor。
+      throw new GltfParseError(
+        'corrupt',
+        `accessor ${index} has neither bufferView nor sparse (zero-filled attributes rejected)`,
+      );
     }
     // sparse（base 无 bufferView = sparse-only accessor 合法形态，out 已零初始化）
     applySparse(acc, count, arity, index, (elIdx, valDv, row) => {
@@ -602,7 +631,14 @@ export async function parseGltf(
     const primitives: ParsedPrimitive[] = [];
     if (typeof n.mesh === 'number') {
       meshCount += 1;
-      const mesh = doc.meshes?.[n.mesh];
+      const meshes = doc.meshes ?? [];
+      if (!Number.isInteger(n.mesh) || n.mesh < 0 || n.mesh >= meshes.length) {
+        throw new GltfParseError(
+          'corrupt',
+          `node ${index} mesh ${n.mesh} out of range (${meshes.length} meshes)`,
+        );
+      }
+      const mesh = meshes[n.mesh];
       for (const prim of mesh?.primitives ?? []) {
         if (prim.targets?.length) warnings.push('morph_targets_ignored');
         const posIdx = prim.attributes?.POSITION;
@@ -629,12 +665,24 @@ export async function parseGltf(
         if (totalTriangles > MAX_TRIANGLES_PER_ASSET) {
           throw new GltfParseError('budget_exceeded', `triangles > ${MAX_TRIANGLES_PER_ASSET}`);
         }
+        // material 索引必须落在 materials 表内：越界/负值直传会让下游
+        // materials[i] 取空（静默回退默认材质，错标材质归属）。
+        let materialIndex: number | null = null;
+        if (typeof prim.material === 'number') {
+          if (!Number.isInteger(prim.material) || prim.material < 0 || prim.material >= materials.length) {
+            throw new GltfParseError(
+              'corrupt',
+              `primitive material ${prim.material} out of range (${materials.length} materials)`,
+            );
+          }
+          materialIndex = prim.material;
+        }
         primitives.push({
           positions,
           normals,
           uvs,
           indices,
-          materialIndex: typeof prim.material === 'number' ? prim.material : null,
+          materialIndex,
         });
         geometryBytes += positions.byteLength + (normals?.byteLength ?? 0)
           + (uvs?.byteLength ?? 0) + (indices?.byteLength ?? 0);

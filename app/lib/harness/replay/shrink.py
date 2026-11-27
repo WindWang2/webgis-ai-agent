@@ -120,7 +120,7 @@ async def _shrink_dimension(
 ) -> Dict[str, Any]:
     """单维度 ddmin：粗块 → 粒度减半 → 单元素；采纳即以新序列重开。"""
     while True:
-        if state["candidates"] >= max_candidates or rounds > max_rounds:
+        if state["candidates"] >= max_candidates:
             state["exceeded"] = True
             return {"progressed": False,
                     "candidates": state["candidates"], "exceeded": True}
@@ -181,7 +181,7 @@ def _identity_of(scenario: Scenario, dimension: str, index: Any) -> str:
             fault = scenario.faults[int(index)] or {}
             return str(fault.get("type")
                        or f"fault[{index}]")
-        except (IndexError, TypeError):
+        except (IndexError, TypeError, AttributeError):
             return f"fault[{index}]"
     if dimension == "mutations":
         ti, mi = index

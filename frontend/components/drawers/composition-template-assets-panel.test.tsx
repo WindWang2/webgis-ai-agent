@@ -7,9 +7,11 @@
  *  - save disabled without a session
  *  - DB-unavailable disclosure (reason_codes) surfaces as an info notice
  *  - apply dispatches through the parent callback (no second write path)
+ *  - stale list response (rapid refresh / quick panel toggle) never
+ *    overwrites the newer asset list or notice
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { I18nProvider } from '@/lib/i18n/i18n-provider';
 import { CompositionTemplateAssetsPanel } from './composition-template-assets-panel';
 
@@ -147,5 +149,46 @@ describe('CompositionTemplateAssetsPanel', () => {
     render(<CompositionTemplateAssetsPanel open={false} onClose={() => {}} />);
     expect(screen.queryByTestId('composition-template-assets-panel')).toBeNull();
     expect(mockApi.list).not.toHaveBeenCalled();
+  });
+
+  it('stale list response does not overwrite a newer one (rapid open/close)', async () => {
+    const pending: Array<(v: unknown) => void> = [];
+    mockApi.list.mockImplementationOnce(
+      () => new Promise((resolve) => { pending.push(resolve as (v: unknown) => void); })
+    );
+    mockApi.list.mockImplementationOnce(
+      () => new Promise((resolve) => { pending.push(resolve as (v: unknown) => void); })
+    );
+    const NEWER = {
+      success: true,
+      assets: [{ ...DB_ASSET, asset_id: 'asset.newer', name: '新版式' }],
+      asset_count: 1,
+      reason_codes: [],
+    };
+    const STALE = {
+      success: true,
+      assets: [{ ...DB_ASSET, asset_id: 'asset.stale', name: '旧版式' }],
+      asset_count: 1,
+      reason_codes: ['db_unavailable: no such table'],
+    };
+
+    const view = (open: boolean) => (
+      <I18nProvider>
+        <CompositionTemplateAssetsPanel open={open} onClose={() => {}} sessionId="sess-1" />
+      </I18nProvider>
+    );
+    const { rerender } = render(view(true));
+    await waitFor(() => expect(mockApi.list).toHaveBeenCalledTimes(1));
+    // 第一次 list 在飞行中时快速关闭再打开 → 触发第二次 list
+    rerender(view(false));
+    rerender(view(true));
+    await waitFor(() => expect(mockApi.list).toHaveBeenCalledTimes(2));
+
+    // 新响应先到，旧响应后到
+    await act(async () => { pending[1](NEWER); });
+    expect(screen.getByText('新版式')).toBeTruthy();
+    await act(async () => { pending[0](STALE); });
+    expect(screen.queryByText('旧版式')).toBeNull();
+    expect(screen.queryByText(/自定义资产暂不可用/)).toBeNull();
   });
 });

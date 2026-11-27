@@ -85,6 +85,38 @@ def _complex_polygon_fc(n_vertices: int) -> dict:
     }
 
 
+def test_spatial_index_entry_estimate_excludes_dropped_features():
+    """Dropped geometries must not consume the retained entry's byte budget."""
+    key = ("s1", "r-estimate")
+    kept_feature = _sample_fc(1, "Point")["features"][0]
+    baseline = build_spatial_index_entry(
+        key, {"type": "FeatureCollection", "features": [kept_feature]}
+    )
+    dropped_geometries = (
+        {
+            "type": "GeometryCollection",
+            "geometries": [{"type": "Point", "coordinates": [0.0, 0.0]}],
+        },
+        {"type": "CircularString", "coordinates": [[0.0, 0.0]] * 1000},
+    )
+
+    for geometry in dropped_geometries:
+        fc = {
+            "type": "FeatureCollection",
+            "features": [
+                kept_feature,
+                {
+                    "type": "Feature",
+                    "geometry": geometry,
+                    "properties": {"payload": "x" * 100_000},
+                },
+            ],
+        }
+        entry = build_spatial_index_entry(key, fc)
+        assert len(entry.features) == 1
+        assert entry.estimated_bytes == baseline.estimated_bytes
+
+
 def test_spatial_index_entry_estimate_scales_with_geometry_vertices():
     """Issue #395: estimated_bytes reflects the real coordinate count, not a flat ~350 B/feature."""
     n_vertices = 50_000
@@ -315,6 +347,44 @@ async def test_singleflight_leader_cancel_waiter_computes_own():
     release.set()
     assert calls["n"] == 1, "等待者必须通过自己的计算成功"
     assert ("s-c", "r-c") not in sf._inflight
+
+
+@pytest.mark.asyncio
+async def test_singleflight_waiter_cancel_after_leader_future_done_propagates():
+    """A waiter cancellation must propagate even if the shared future just completed."""
+    sf = SingleFlightManager(max_inflight=512, wait_timeout=0)
+    key = ("s-cancel-race", "r-cancel-race")
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = {"n": 0}
+
+    async def leader_work():
+        started.set()
+        await release.wait()
+        return b"leader"
+
+    async def waiter_work():
+        calls["n"] += 1
+        return b"waiter-own"
+
+    leader = asyncio.create_task(sf.run(key, leader_work))
+    await started.wait()
+    waiter = asyncio.create_task(sf.run(key, waiter_work))
+    await asyncio.sleep(0)
+    assert sf._waiter_counts[key] == 1
+
+    # Completion queues shield's inner-done callback; cancel the waiter before
+    # that callback runs. The shared future is done while shield still raises
+    # the waiter's own CancelledError.
+    release.set()
+    asyncio.get_running_loop().call_soon(waiter.cancel)
+
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    assert await leader == b"leader"
+    assert calls["n"] == 0
+    assert key not in sf._inflight
+    assert key not in sf._waiter_counts
 
 
 @pytest.mark.asyncio

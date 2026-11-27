@@ -1,4 +1,4 @@
-"""Tests for raster analysis tools: reclassify, calculator, resample."""
+"""Tests for raster analysis tools: reclassify, calculator, resample, change detection."""
 import os
 import numpy as np
 import pytest
@@ -194,7 +194,71 @@ async def test_raster_resample_with_crs_change(advanced_tools, tmp_raster):
 async def test_raster_resample_invalid_path(advanced_tools):
     """Resample with invalid path should error."""
     result = await advanced_tools.dispatch("raster_resample", {
-        "raster_path": "/nonexistent.tif",
+        "raster_path": "/nonexistent/path.tif",
         "target_resolution": 1.0,
     })
     assert result.get("success") is False or "error" in result
+
+
+# ─── detect_raster_change ───────────────────────────────────────
+
+
+def test_detect_raster_change_uses_explicit_args_model(advanced_tools):
+    """detect_raster_change 必须配显式 args_model（与三个同族工具一致）：
+    method/band/threshold 的取值约束在 LLM-facing schema 中可见。"""
+    from app.tools.raster_transform_tools import RasterChangeArgs
+
+    assert advanced_tools.args_model("detect_raster_change") is RasterChangeArgs
+    schema = next(
+        s for s in advanced_tools.get_schemas()
+        if s["function"]["name"] == "detect_raster_change"
+    )
+    props = schema["function"]["parameters"]["properties"]
+    assert props["method"]["enum"] == [
+        "difference", "absolute_difference", "normalized_difference",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_detect_raster_change_rejects_unknown_method(advanced_tools, tmp_raster):
+    """文档外 method 在 dispatch 校验层即被拒（VALIDATION_ERROR），
+    不再拖到下游打开栅格后才炸。"""
+    result = await advanced_tools.dispatch("detect_raster_change", {
+        "raster_a": tmp_raster,
+        "raster_b": tmp_raster,
+        "method": "magic",
+    })
+    assert result.get("code") == "VALIDATION_ERROR"
+    assert "method" in result.get("message", "")
+
+
+@pytest.mark.asyncio
+async def test_detect_raster_change_rejects_invalid_threshold_and_band(advanced_tools, tmp_raster):
+    """threshold ≤ 0 / band < 1 在 dispatch 校验层即被拒。"""
+    for bad in ({"threshold": -1.0}, {"band": 0}):
+        result = await advanced_tools.dispatch("detect_raster_change", {
+            "raster_a": tmp_raster,
+            "raster_b": tmp_raster,
+            **bad,
+        })
+        assert result.get("code") == "VALIDATION_ERROR", bad
+
+
+@pytest.mark.asyncio
+async def test_detect_raster_change_valid_args_still_dispatch(advanced_tools, tmp_raster):
+    """显式 args_model 不误伤文档内取值：absolute_difference 正常执行。"""
+    result = await advanced_tools.dispatch("detect_raster_change", {
+        "raster_a": tmp_raster,
+        "raster_b": tmp_raster,
+        "method": "absolute_difference",
+    })
+    _assert_ok(result)
+    out_path = result.get("data", result).get("output_path")
+    try:
+        assert out_path and os.path.exists(out_path)
+    finally:
+        if out_path:
+            try:
+                os.unlink(out_path)
+            except OSError:
+                pass

@@ -115,4 +115,39 @@ describe('A1 TDD — PoiInfoPanel live sync to authoritative backfill', () => {
     expect(screen.getAllByText('B-auth').length).toBeGreaterThan(0)
     expect(screen.getByText('999')).toBeInTheDocument()
   })
+
+  it('unusable featureId (h-) with multiple hits does NOT merge authoritative props onto the first entry', async () => {
+    const { fireEvent } = await import('@testing-library/react')
+    const tileA = makeFeature({ id: 'feat-A', name: 'A-tile', pop: 1 })
+    const tileB = makeFeature({ id: 'feat-B', name: 'B-tile', pop: 2 })
+    useHudStore.setState({
+      selectedFeature: {
+        layerId: 'ref:big-1',
+        layerName: 'Big MVT',
+        point: [116.4, 39.9] as [number, number],
+        // 瓦片哈希 id 不可用 → 只能靠要素身份确认归属；多要素时不得假定首条目。
+        featureId: 'h-abc123',
+        properties: { id: 'feat-B', name: 'B-auth', pop: 999 },
+        selectedAt: Date.now(),
+        bbox: null,
+        isApproximate: true,
+      },
+    } as any)
+    render(
+      <PoiInfoPanel
+        x={100}
+        y={300}
+        features={[tileA, tileB]}
+        layerIds={layerIds}
+        layersMap={layersMap}
+        onClose={() => {}}
+      />,
+    )
+    // 首条目仍是 A-tile（修复前会被 B-auth 顶替）。
+    expect(screen.getByText('A-tile')).toBeInTheDocument()
+    expect(screen.queryByText('B-auth')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByText('A-tile'))
+    expect(screen.getByText('1')).toBeInTheDocument()
+    expect(screen.queryByText('999')).not.toBeInTheDocument()
+  })
 })

@@ -567,11 +567,11 @@
    ],
    "expect": {
     "kind": "exact",
-    "value": false
+    "value": true
    },
    "id": "crs_class_allows_3",
    "kwargs": {},
-   "note": "Generic projected is insufficient evidence of local metric compatibility",
+   "note": "PROJECTED_REQUIRED 词表：任何投影平面坐标（含 3857）均满足，失真进 limitations",
    "target": "app.lib.gis.crs_safety:crs_class_allows"
   },
   {

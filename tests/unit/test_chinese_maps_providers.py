@@ -651,3 +651,121 @@ async def test_district_tianditu_v2_polygon():
     assert geom["type"] == "Polygon"
     # tianditu is WGS84 — coords unchanged
     assert geom["coordinates"][0][0] == [116.30, 39.95]
+
+
+# ── P3 regression: malformed provider payloads must not crash the tool ──────
+
+
+async def test_route_amap_malformed_polyline_points_are_skipped():
+    """amap.py:711 — 非数值 polyline 坐标跳过而非 ValueError 崩工具。"""
+    fake = FakeGet({
+        "/direction/driving": {
+            "route": {"paths": [{
+                "distance": 100,
+                "duration": 10,
+                "steps": [{
+                    "instruction": "go", "distance": "100", "duration": "10",
+                    "polyline": "abc,def;116.40,39.90",
+                }],
+            }]},
+        },
+    })
+    prov = AmapProvider(get=fake)
+    out = await prov.route([116.0, 39.0], [117.0, 40.0], "driving", "")
+    assert out["provider"] == "amap"
+    assert len(out["polyline"]) == 1  # only the valid point survives
+
+
+async def test_route_amap_transit_malformed_polylines_are_skipped():
+    """amap.py:744/754 — transit 的 walking/busline polyline 同样跳过坏点。"""
+    fake = FakeGet({
+        "/direction/transit/integrated": {
+            "route": {"transits": [{
+                "distance": "1", "duration": "1", "cost": "0",
+                "segments": [{
+                    "walking": {"steps": [{"polyline": "bad,coords;116.40,39.90"}]},
+                    "bus": {"buslines": [{"name": "x", "polyline": "116.41,39.91;nope"}]},
+                }],
+            }]},
+        },
+    })
+    prov = AmapProvider(get=fake)
+    out = await prov.route([116.0, 39.0], [117.0, 40.0], "transit", "北京")
+    assert out["provider"] == "amap"
+    assert len(out["polyline"]) == 2  # one valid point from each polyline
+
+
+async def test_district_amap_non_numeric_center_falls_back_to_zero():
+    """amap.py:787 — center 非数值不再崩，与缺点位同语义回退 (0,0)。"""
+    fake = FakeGet({
+        "/config/district": {"districts": [{"name": "某区", "center": "abc,def"}]},
+    })
+    prov = AmapProvider(get=fake)
+    out = await prov.district("某区", "district")
+    assert out["count"] == 1
+    assert out["features"][0]["geometry"]["coordinates"] == [0.0, 0.0]
+
+
+async def test_reverse_geocode_baidu_null_result_and_address_component():
+    """baidu.py:198 — result / addressComponent 为 null 不再 AttributeError。"""
+    fake = FakeGet({"/reverse_geocoding/v3/": {"result": None}})
+    out = await BaiduProvider(get=fake).reverse_geocode(116.40, 39.90)
+    assert out["formatted_address"] == ""
+    assert out["nearby_pois"] == []
+    assert out["provider"] == "baidu"
+
+    fake2 = FakeGet({
+        "/reverse_geocoding/v3/": {"result": {"addressComponent": None, "pois": None}},
+    })
+    out2 = await BaiduProvider(get=fake2).reverse_geocode(116.40, 39.90)
+    assert out2["province"] == ""
+    assert out2["nearby_pois"] == []
+
+
+async def test_route_baidu_null_result_returns_no_route_error():
+    """baidu.py:224 — result 为 null 时旧实现 AttributeError。"""
+    fake = FakeGet({"/directionlite/v1/driving": {"result": None}})
+    out = await BaiduProvider(get=fake).route(
+        [116.0, 39.0], [117.0, 40.0], "driving", "")
+    assert out == {"error": "未找到路线"}
+
+
+async def test_district_baidu_null_location_entry_does_not_crash():
+    """baidu.py:265 — 条目 location 为 null 不再 AttributeError。"""
+    fake = FakeGet({
+        "/api/v2/administrative": {"results": [{"name": "某区", "location": None}]},
+    })
+    out = await BaiduProvider(get=fake).district("某区", "district")
+    assert out["count"] == 1
+    assert out["features"][0]["geometry"]["coordinates"] == [0.0, 0.0]
+
+
+async def test_search_poi_around_tianditu_clamps_count():
+    """tianditu.py:234 — limit 无下限/非整数会把非法 count 发往 Tianditu。"""
+    import json
+
+    cases = [(0, "1"), (-5, "1"), (999, "50"), ("oops", "20")]
+    for limit, expected in cases:
+        fake = FakeGet({"/v2/search": {"pois": []}})
+        prov = TiandituProvider(get=fake)
+        await prov.search_poi_around([116.40, 39.90], 1000, "餐厅", "", limit)
+        payload = json.loads(fake.calls[0][1]["postStr"])
+        assert payload["count"] == expected, f"limit={limit!r}"
+
+
+async def test_district_v2_tianditu_null_lnt_lat_falls_back_to_zero():
+    """tianditu.py:379/401 — lnt/lat 键存在但为 null/"" 不再 TypeError/ValueError。"""
+    fake = FakeGet({
+        "/administrative": {
+            "status": "100",
+            "data": [{
+                "name": "成都市", "lnt": None, "lat": "", "points": "",
+                "child": [{"name": "锦江区", "lnt": None, "lat": "", "points": ""}],
+            }],
+        },
+    })
+    out = await TiandituProvider(get=fake).district_v2(
+        "成都市", child_level=1, return_polygon=True)
+    assert out["count"] == 2
+    for feat in out["features"]:
+        assert feat["geometry"]["coordinates"] == [0.0, 0.0]

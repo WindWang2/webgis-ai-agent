@@ -127,23 +127,26 @@ class FeedbackCorpusWriter:
                 if sum(1 for _ in fh) >= MAX_RECORDS:
                     self._truncated = True
                     return False
+                # 崩溃残留的半行（末行缺 \n）会把下一条 JSON 拼进同一行：
+                # 两条记录同时损坏且行数少计。写入前补齐换行符。
+                fh.seek(0, os.SEEK_END)
+                size = fh.tell()
+                repair = ""
+                if size:
+                    fh.seek(size - 1)
+                    if fh.read(1) != "\n":   # 文本模式：读回的是 str
+                        repair = "\n"
                 payload = {"schema_version": FEEDBACK_SCHEMA_VERSION, **feedback.model_dump(mode="json")}
                 # This standalone offline sink stores no raw query/identity.
                 for field in ("query", "session_id", "project_id"):
                     text = str(payload.pop(field, ""))
                     payload[field + "_sha256"] = hashlib.sha256(text.encode()).hexdigest() if text else ""
-                fh.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
+                fh.write(repair + json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
                 fh.flush()
                 fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
             return True
         except OSError:
             return False
-
-    def _count_lines(self) -> int:
-        if not os.path.exists(self._sink_path):
-            return 0
-        with open(self._sink_path, "rb") as fh:
-            return sum(1 for _ in fh)
 
 
 __all__ = [

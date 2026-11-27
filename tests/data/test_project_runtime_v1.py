@@ -192,6 +192,38 @@ class TestContract:
         )
         assert len(s2.source_bindings) == SOURCE_BINDING_LIMIT
 
+    def test_plan_projection_is_bounded(self, monkeypatch):
+        from pydantic import ValidationError
+
+        from app.services.project_runtime import contract
+        from app.services.project_runtime.contract import (
+            CAPABILITY_LIMIT,
+            PROGRESS_LIMIT,
+            PlanProjectionRef,
+        )
+
+        projection = PlanProjectionRef(
+            progress=[{"capability": f"c{i}"}
+                      for i in range(PROGRESS_LIMIT + 24)],
+            capability_statuses={
+                f"cap{i}": "ready" for i in range(CAPABILITY_LIMIT + 8)
+            },
+        )
+        assert len(projection.progress) == PROGRESS_LIMIT
+        assert len(projection.capability_statuses) == CAPABILITY_LIMIT
+
+        # 不可信 manifest / 巨型 plan 的 restorable_chapter 必须 fail-closed
+        monkeypatch.setattr(contract, "MAPSPEC_DOC_MAX_BYTES", 64)
+        with pytest.raises(ValidationError):
+            PlanProjectionRef(restorable_chapter={"goal": "x" * 256})
+        # freeze 走属性赋值（_plan_projection），赋值同样不得绕过有界校验
+        assigning = PlanProjectionRef()
+        with pytest.raises(ValidationError):
+            assigning.restorable_chapter = {"goal": "x" * 256}
+        assert PlanProjectionRef(
+            restorable_chapter={"goal": "ok"}
+        ).restorable_chapter == {"goal": "ok"}
+
 
 class TestStore:
     async def test_save_load_roundtrip_and_invalid_ids(self):
@@ -1381,3 +1413,60 @@ async def test_workspace_failure_never_writes_runtime_manifest(db, monkeypatch):
         await _freeze(db, "rt-workspace-failure")
     assert error.value.reason == "workspace_snapshot_failed"
     spy.assert_not_awaited()
+
+
+# ── P3：数据集投影失败/被鉴权过滤不得与「确无数据集」同形 ─────────────
+
+
+async def test_freeze_dataset_read_failure_disclosed(db, monkeypatch):
+    """freeze.py:214 —— 读不到数据集必须在 manifest 里显式披露。"""
+    from app.services.project_service import ProjectService
+    from app.services.project_runtime.freeze import save_runtime_snapshot
+
+    sid_a = "rt-dsfail-session-a"
+    await _seed_session(sid_a)
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("dataset projection down")
+
+    monkeypatch.setattr(
+        ProjectService, "list_project_datasets", staticmethod(_boom))
+    snapshot = await save_runtime_snapshot(
+        db, session_id=sid_a, project_id="proj-rt1", user_id="u_rt")
+    assert snapshot.datasets == []
+    assert snapshot.disclosure.get("datasets_unavailable") is True
+
+
+async def test_freeze_auth_filtered_empty_disclosed(db, monkeypatch):
+    """鉴权门过滤出的空集同样不得被当作「项目无数据集」。"""
+    from app.services.project_service import ProjectService
+    from app.services.project_runtime.freeze import save_runtime_snapshot
+
+    sid_a = "rt-dsauth-session-a"
+    await _seed_session(sid_a)
+    monkeypatch.setattr(
+        ProjectService, "list_project_datasets",
+        staticmethod(lambda *_a, **_k: ([], 0)))
+    monkeypatch.setattr(
+        ProjectService, "get_project_with_auth",
+        staticmethod(lambda *_a, **_k: None))
+    snapshot = await save_runtime_snapshot(
+        db, session_id=sid_a, project_id="proj-rt1", user_id="u_rt")
+    assert snapshot.disclosure.get("datasets_unavailable") is True
+
+
+async def test_freeze_authorized_empty_project_not_flagged(db):
+    """确有权限且确无数据集：unavailable 必须为 False（不误报）。"""
+    from app.core.database import SessionLocal
+    from app.models.project import Project
+    from app.services.project_runtime.freeze import _dataset_descriptors
+
+    with SessionLocal() as s:
+        s.merge(Project(id="proj-rt-empty", name="empty",
+                        owner_id="u_rt", status="active"))
+        s.commit()
+    rows, total, unavailable = await _dataset_descriptors(
+        db, "proj-rt-empty", user_id="u_rt")
+    assert rows == []
+    assert total == 0
+    assert unavailable is False

@@ -245,4 +245,7 @@ async def test_concurrent_mutation_between_base_read_and_checkpoint_is_refused(m
     monkeypatch.setattr(module, "apply_gis_mutation", race)
     outcome = await merge_proposal_intents(sid, proposal, _actor("u2"))
     assert not outcome.ok and outcome.conflict and outcome.failure == "base_revision_drift"
+    # checkpoint superseded 与 base 漂移分支一样必须带存证（审计不能留空）。
+    assert outcome.evidence is not None
+    assert outcome.evidence.failure == "base_revision_drift"
     assert (await engine.store.get_mapspec(sid))["view"]["zoom"] == 7

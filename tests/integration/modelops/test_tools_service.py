@@ -209,6 +209,19 @@ def test_compare_and_provenance(service, synthetic_raster):
     assert full["model"]["model_id"] == "tiny-landcover-seg"
 
 
+def test_compare_results_tolerates_null_checksum(service):
+    """外部/旧 manifest 的 checksum=null：不得 None[:12] 裸 TypeError。"""
+    manifest = {
+        "model": {"model_id": "m", "model_version": "1", "checksum": None},
+        "provider": {},
+        "device_plan": {},
+        "performance": {},
+    }
+    comparison = service.compare_results(manifest, manifest)
+    assert comparison["a"]["checksum"] == ""
+    assert comparison["differences"] == {}
+
+
 def test_manifest_secret_redaction(service, synthetic_raster):
     """secret 词根字段经统一 redaction 后不出现在 manifest。"""
     result = service.run_inference(
@@ -225,3 +238,96 @@ def test_manifest_secret_redaction(service, synthetic_raster):
 
 def test_cancel_unknown_key_returns_false(service):
     assert service.cancel("no-such-key") is False
+
+
+def test_run_inference_rejects_invalid_postgis_table_at_tool_boundary(monkeypatch):
+    """P2 security：LLM 提供的 postgis_table 必须在工具面白名单校验。
+
+    未修复时非法表名直传引擎；修复后 typed ModelOpsError，引擎不被触达。
+    """
+    import asyncio
+
+    from app.lib.modelops.errors import ModelOpsError
+    from app.services.modelops import service as service_mod
+    from app.tools.modelops_tools import register_modelops_tools
+    from app.tools.registry import ToolRegistry
+
+    calls = []
+
+    class _ExplodingService:
+        async def run_inference_async(self, request):
+            calls.append(request)
+            raise AssertionError("engine reached with invalid postgis_table")
+
+    monkeypatch.setattr(
+        service_mod, "get_modelops_service", lambda: _ExplodingService()
+    )
+    registry = ToolRegistry()
+    register_modelops_tools(registry)
+    run_inference = registry.get("modelops_run_inference")
+    with pytest.raises(ModelOpsError, match="table name"):
+        asyncio.run(run_inference(
+            model_id="m", source_uri="/nonexistent.tif", session_id="s1",
+            postgis_table="class_polygons; DROP TABLE layers",
+        ))
+    assert calls == []
+
+    # 合法表名照常放行到引擎（校验不是一刀切拒绝）。
+    class _Sentinel(Exception):
+        pass
+
+    captured = []
+
+    class _CaptureService:
+        async def run_inference_async(self, request):
+            captured.append(request)
+            raise _Sentinel()
+
+    monkeypatch.setattr(
+        service_mod, "get_modelops_service", lambda: _CaptureService()
+    )
+    with pytest.raises(_Sentinel):
+        asyncio.run(run_inference(
+            model_id="m", source_uri="/nonexistent.tif", session_id="s1",
+            postgis_table="class_polygons",
+        ))
+    assert captured[0].postgis_table == "class_polygons"
+
+
+def test_run_inference_rejects_roi_truncated_to_zero_width(monkeypatch):
+    """P3 correctness：roi_bbox 先按 float 校验再 int() 截断，10.0/10.9 会被
+    截成 x0==x1 的零宽窗口直送引擎；修复后按截断值校验，引擎不被触达。"""
+    import asyncio
+
+    from app.lib.modelops.errors import ModelOpsError
+    from app.services.modelops import service as service_mod
+    from app.tools.modelops_tools import register_modelops_tools
+    from app.tools.registry import ToolRegistry
+
+    captured = []
+
+    class _CaptureService:
+        async def run_inference_async(self, request):
+            captured.append(request)
+            raise AssertionError("engine reached with degenerate roi window")
+
+    monkeypatch.setattr(
+        service_mod, "get_modelops_service", lambda: _CaptureService()
+    )
+    registry = ToolRegistry()
+    register_modelops_tools(registry)
+    run_inference = registry.get("modelops_run_inference")
+    with pytest.raises(ModelOpsError, match="invalid roi_bbox"):
+        asyncio.run(run_inference(
+            model_id="m", source_uri="/nonexistent.tif", session_id="s1",
+            roi_bbox=[10.0, 0.0, 10.9, 50.0],
+        ))
+    assert captured == []
+
+    # 整数 ROI 照常放行（校验口径与截断值一致，不是一刀切拒绝）。
+    with pytest.raises(AssertionError, match="degenerate roi window"):
+        asyncio.run(run_inference(
+            model_id="m", source_uri="/nonexistent.tif", session_id="s1",
+            roi_bbox=[10, 0, 11, 50],
+        ))
+    assert captured[0].roi_bbox == (10, 0, 11, 50)

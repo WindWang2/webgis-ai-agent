@@ -144,6 +144,43 @@ def test_payload_roundtrip_and_tamper_detection():
         GeoPromptArtifact.from_payload(tampered)
 
 
+def test_from_payload_wraps_non_numeric_scalars_as_typed_error():
+    with pytest.raises(PromptArtifactError, match="scalar fields"):
+        GeoPromptArtifact.from_payload(
+            {"points": [[1.0, 2.0]], "schema_version": "v1"}
+        )
+    with pytest.raises(PromptArtifactError, match="scalar fields"):
+        GeoPromptArtifact.from_payload(
+            {"points": [[1.0, 2.0]], "labels": ["high"]}
+        )
+
+
+def test_prompt_spec_from_payload_wraps_malformed_points_and_boxes():
+    from app.lib.modelops.errors import DescriptorError
+
+    with pytest.raises(DescriptorError, match="malformed prompt payload"):
+        PromptSpec.from_payload({"points": [["x", 2.0]]})
+    with pytest.raises(DescriptorError, match="point prompts must be"):
+        PromptSpec.from_payload({"points": [[1.0, 2.0, 3.0]]})
+    with pytest.raises(DescriptorError, match="box prompts must be"):
+        PromptSpec.from_payload({"boxes": [[1.0, 2.0]]})
+
+
+def test_compile_prompt_invalid_crs_is_typed():
+    bad_artifact = GeoPromptArtifact(crs="not-a-crs", points=((1.0, 1.0),))
+    with pytest.raises(PromptArtifactError, match="could not be parsed"):
+        compile_prompt(
+            bad_artifact, transform=Affine.identity(), raster_crs="EPSG:4326",
+            raster_height=8, raster_width=8,
+        )
+    good_artifact = GeoPromptArtifact(crs="EPSG:4326", points=((1.0, 1.0),))
+    with pytest.raises(PlanningError, match="could not be parsed"):
+        compile_prompt(
+            good_artifact, transform=Affine.identity(), raster_crs="bogus-crs",
+            raster_height=8, raster_width=8,
+        )
+
+
 # ── 编译：像素直通 ────────────────────────────────────────────────────
 
 
@@ -382,6 +419,25 @@ def test_prompt_windows_anchor_grid_for_large_mask_prompt():
         # 覆盖断言：anchor 区域落在窗口并集内。
         assert col < 6500 and col + w > 6000
         assert row < 6500 and row + h > 6000
+
+
+def test_prompt_windows_rejects_prompts_outside_raster():
+    """越出栅格的 prompt 必须 typed 拒绝（旧实现返回负尺寸窗口）。"""
+    point = PromptSpec(points=((50, 1500),))
+    with pytest.raises(PlanningError, match="outside"):
+        prompt_windows(point, raster_height=1000, raster_width=1000, chip_hw=(64, 64))
+    spread = PromptSpec(points=((10, 10), (10, 1500)))
+    with pytest.raises(PlanningError, match="outside"):
+        prompt_windows(
+            spread, raster_height=1000, raster_width=1000,
+            chip_hw=(64, 64), max_window_px=64,
+        )
+    boxes = PromptSpec(boxes=((10, 10, 10, 10), (10, 1490, 10, 10)))
+    with pytest.raises(PlanningError, match="outside"):
+        prompt_windows(
+            boxes, raster_height=1000, raster_width=1000,
+            chip_hw=(64, 64), max_window_px=64,
+        )
 
 
 def test_schema_version_constant_is_v1():

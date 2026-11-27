@@ -215,6 +215,44 @@ async def test_orchestrator_in_process_mode():
 
 
 @pytest.mark.asyncio
+async def test_orchestrator_task_ids_unique_within_same_second(monkeypatch):
+    """同进程同秒两次探索必须得到不同 task_id（共享 explorer:{task_id}
+    命名空间会数据串味）。"""
+    import app.services.explorer.orchestrator as orchestrator_mod
+
+    class _FrozenLoop:
+        def time(self) -> float:
+            return 1_700_000_000.0
+
+    class _FrozenAsyncio:
+        @staticmethod
+        def get_running_loop():
+            return _FrozenLoop()
+
+        def __getattr__(self, name):  # noqa: ANN001, ANN204
+            import asyncio
+            return getattr(asyncio, name)
+
+    async def _fake_run_in_process(
+        self, task_id, query, context, session_id="", adapter=None
+    ):
+        return StageResult(stage="validate", data={"task_id": task_id}, success=True)
+
+    monkeypatch.setattr(orchestrator_mod, "asyncio", _FrozenAsyncio())
+    monkeypatch.setattr(ExplorerPipeline, "run_in_process", _fake_run_in_process)
+
+    orchestrator = ExplorerOrchestrator()
+    ctx = SearchContext(query="parks")
+    id_a = await orchestrator.start_exploration(
+        "parks", ctx, session_id="sess_same", mode="in_process")
+    id_b = await orchestrator.start_exploration(
+        "parks", ctx, session_id="sess_same", mode="in_process")
+
+    assert id_a.startswith("exp_sess_same_")
+    assert id_a != id_b
+
+
+@pytest.mark.asyncio
 async def test_default_in_process_result_is_persisted_and_bridged_to_owner():
     from app.services.session_data_protocol import get_session_store
 

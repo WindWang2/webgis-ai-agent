@@ -7,6 +7,7 @@ import pytest
 
 from app.services.gis_harness.product_graph import (
     KIND_CHART,
+    KIND_EXPORT,
     KIND_MAP_LAYER,
     KIND_NARRATIVE,
     KIND_STATISTICS,
@@ -155,6 +156,19 @@ def test_empty_chapter_is_safe():
     assert graph.summary_line() == ""
     graph2 = build_product_graph({})
     assert graph2.summary_line() == ""
+
+
+def test_non_dict_layout_does_not_break_projection():
+    """P3：mapspec['layout'] 为非 dict 真值时不得 AttributeError。"""
+    graph = build_product_graph({"map_layers": []}, {"layout": "broken"})
+    assert graph.by_kind(KIND_MAP_LAYER) == []
+
+
+def test_non_dict_template_selection_does_not_break_projection():
+    """P3：chapter['template_selection'] 为非 dict 真值时不得 AttributeError。"""
+    graph = build_product_graph(
+        {"query": "q", "map_layers": [], "template_selection": "broken"}, {})
+    assert graph.by_kind(KIND_EXPORT) == []
 
 
 def test_projection_is_derived_not_persisted():

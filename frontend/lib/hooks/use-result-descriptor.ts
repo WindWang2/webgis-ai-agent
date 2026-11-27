@@ -21,7 +21,6 @@ import type { AnalysisResult, LayerDescriptor } from '@/lib/results/types';
 
 interface InFlightEntry {
   promise: Promise<LayerDescriptor | null>;
-  controller: AbortController;
 }
 
 // Module-level dedup: one in-flight request per ref + a small positive cache so
@@ -45,13 +44,9 @@ async function fetchDescriptor(
 
   const existing = inFlight.get(key);
   if (existing) {
-    // Attach abort linkage: if the outer call aborts we still let the shared
-    // request finish for other consumers, but we race-abort our own wait.
-    try {
-      return await existing.promise;
-    } catch {
-      return null;
-    }
+    // The shared request's own .catch() below always resolves (never rejects),
+    // so attaching is a plain await.
+    return existing.promise;
   }
 
   // FE-P2-2: the shared request must NOT die with its first consumer. The
@@ -90,7 +85,7 @@ async function fetchDescriptor(
       inFlight.delete(key);
     });
 
-  inFlight.set(key, { promise, controller });
+  inFlight.set(key, { promise });
   return promise;
 }
 

@@ -82,7 +82,7 @@ async def run_task(client: httpx.AsyncClient, base: str, task: Dict[str, Any]) -
         "first_token_ms": round(first_token, 1) if first_token else None,
         "total_ms": round((time.perf_counter() - start) * 1000, 1),
         "tool_call": tool_call,
-        "tool_call_ok": (tool_call == task["expect_tool"]) or completed,
+        "tool_call_ok": tool_call == task["expect_tool"],
         "completed": completed,
     }
 

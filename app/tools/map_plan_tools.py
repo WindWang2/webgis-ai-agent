@@ -135,7 +135,18 @@ def register_map_plan_tools(registry: ToolRegistry):
             if not ring:
                 return {"success": False, "error": "该会话无编译回执（先 compile_and_apply）"}
             last = ring[-1] if isinstance(ring[-1], dict) else {}
-            expectations = DisplayExpectation(**(last.get("display_expectations") or {}))
+            try:
+                expectations = DisplayExpectation(
+                    **(last.get("display_expectations") or {}))
+            except (TypeError, ValueError) as exc:
+                # 回执期望面是会话持久化数据（可损坏 / 可跨版本演进）：
+                # 解析失败按契约回执，不穿出工具面（含 pydantic
+                # ValidationError 与非 mapping 载荷的 TypeError）。
+                logger.warning(
+                    "map plan finalize: receipt display_expectations "
+                    "unusable session=%s", sid, exc_info=True)
+                return {"success": False,
+                        "error": f"回执期望面损坏，无法对账: {str(exc)[:160]}"}
             mode = display_mode()
             confirmed = await is_display_confirmed(sid, render_seq=0)
             check = check_final_display(
@@ -161,41 +172,54 @@ def register_map_plan_tools(registry: ToolRegistry):
                     "error": f"未知 operation={operation!r}（compile_and_apply | finalize）"}
 
         # ── 意图（规则快路径，零 LLM）→ planner plan ────────────────────
-        intent, _clar = resolve_intent_adaptive(query, use_llm=False)
-        planner = MapProductPlanner()
-        plan = planner.plan_from_intent(intent, use_memo=False)
+        # 整条编译链按契约回执：声明的 lock_conflict / stale_plan 等失败
+        # （含会话态损坏、引擎拒执）一律以 {"success": False, "error": ...}
+        # 返回，异常不穿出工具面（dispatch 只记指标并原样重抛）。
+        try:
+            intent, _clar = resolve_intent_adaptive(query, use_llm=False)
+            from app.services.chat.pi_decision_wiring import assist_map_request_intent
 
-        # ── 数据绑定选择（LLM 选 ref，编译器验活性 —— review P1-2 配套）──
-        if layer_bindings:
-            clean: Dict[int, str] = {}
-            for i, pl in enumerate(plan.map_layers or [], start=1):
-                minted = f"pl-li-{i:02d}-{pl.role}"
-                ref = layer_bindings.get(minted) or layer_bindings.get(str(i)) or ""
-                if ref:
-                    clean[i] = str(ref)[:128]
-            if clean:
-                layers = [
-                    pl.model_copy(update={"bound_ref": clean.get(i, pl.bound_ref)})
-                    for i, pl in enumerate(plan.map_layers or [], start=1)
-                ]
-                plan = plan.model_copy(update={"map_layers": layers})
+            intent, decision_meta = await assist_map_request_intent(query, intent, scope=sid)
+            planner = MapProductPlanner()
+            plan = planner.plan_from_intent(intent, use_memo=False)
 
-        # ── 投影 → IR（锁快照前置：obligations 在编译前拦截锁冲突，
-        #    杜绝"引擎中途拒 → 部分提交"—— review P1-1）──────────────────
-        lock_snapshot = await map_plan_compiler_service.lock_snapshot_for(sid)
-        ir = map_plan_compiler_service.project(plan, user_locks=lock_snapshot)
-        if amendments:
-            try:
-                parsed = [PlanAmendment(**a) for a in amendments[:_MAX_AMENDMENTS]]
-            except Exception as exc:  # noqa: BLE001 — 非法 amendment 参数面 4xx 语义
-                return {"success": False, "error": f"amendments 非法: {exc}"}
-            ir = map_plan_compiler_service.amend(ir, parsed)
+            # ── 数据绑定选择（LLM 选 ref，编译器验活性 —— review P1-2 配套）──
+            if layer_bindings:
+                clean: Dict[int, str] = {}
+                for i, pl in enumerate(plan.map_layers or [], start=1):
+                    minted = f"pl-li-{i:02d}-{pl.role}"
+                    ref = layer_bindings.get(minted) or layer_bindings.get(str(i)) or ""
+                    if ref:
+                        clean[i] = str(ref)[:128]
+                if clean:
+                    layers = [
+                        pl.model_copy(update={"bound_ref": clean.get(i, pl.bound_ref)})
+                        for i, pl in enumerate(plan.map_layers or [], start=1)
+                    ]
+                    plan = plan.model_copy(update={"map_layers": layers})
 
-        # ── 编译（含 obligations 闸）→ 提交 → 终态对账 ──────────────────
-        compilation = await map_plan_compiler_service.compile_for_session(sid, ir)
-        result = await map_plan_compiler_service.apply(sid, compilation)
-        finalization = await map_plan_compiler_service.finalize(sid, compilation)
-        summary = _bounded_summary(result, finalization)
-        summary["plan_id"] = getattr(plan, "plan_id", "")
-        summary["recipe_id"] = getattr(plan, "recipe_id", "")
-        return summary
+            # ── 投影 → IR（锁快照前置：obligations 在编译前拦截锁冲突，
+            #    杜绝"引擎中途拒 → 部分提交"—— review P1-1）──────────────────
+            lock_snapshot = await map_plan_compiler_service.lock_snapshot_for(sid)
+            ir = map_plan_compiler_service.project(plan, user_locks=lock_snapshot)
+            if amendments:
+                try:
+                    parsed = [PlanAmendment(**a) for a in amendments[:_MAX_AMENDMENTS]]
+                except Exception as exc:  # noqa: BLE001 — 非法 amendment 参数面 4xx 语义
+                    return {"success": False, "error": f"amendments 非法: {exc}"}
+                ir = map_plan_compiler_service.amend(ir, parsed)
+
+            # ── 编译（含 obligations 闸）→ 提交 → 终态对账 ──────────────────
+            compilation = await map_plan_compiler_service.compile_for_session(sid, ir)
+            result = await map_plan_compiler_service.apply(sid, compilation)
+            finalization = await map_plan_compiler_service.finalize(sid, compilation)
+            summary = _bounded_summary(result, finalization)
+            summary["plan_id"] = getattr(plan, "plan_id", "")
+            summary["recipe_id"] = getattr(plan, "recipe_id", "")
+            if decision_meta.get("assists"):
+                summary["decision_assist"] = decision_meta
+            return summary
+        except Exception as exc:  # noqa: BLE001 — 编译链失败 → 结构化错误回执
+            logger.warning("webgis_compile_map_plan chain failed session=%s",
+                           sid, exc_info=True)
+            return {"success": False, "error": f"编译链失败: {str(exc)[:200]}"}

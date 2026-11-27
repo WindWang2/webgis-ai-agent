@@ -58,8 +58,17 @@ def _now_iso() -> str:
 def _findings_dir(session_id: str) -> Path:
     from app.core.config import settings
 
-    safe = "".join(ch for ch in str(session_id) if ch not in ('\\', '/', ':', '*', '?', '"', '<', '>', '|', '\x00'))
-    return Path(settings.DATA_DIR).resolve() / "field-contracts" / safe
+    raw = str(session_id)
+    safe = "".join(ch for ch in raw if ch not in ('\\', '/', ':', '*', '?', '"', '<', '>', '|', '\x00'))
+    # R1-P3：同 ProposalStore 防线 —— 空/./.. 拒绝 + resolve 后必须仍在
+    # field-contracts 根内（否则 ".." 会把 findings 写到 DATA_DIR）。
+    if not safe or safe in (".", ".."):
+        raise FieldContractError("invalid_session_id", f"invalid session id: {session_id!r}")
+    root = Path(settings.DATA_DIR).resolve() / "field-contracts"
+    target = (root / safe).resolve()
+    if root not in target.parents:
+        raise FieldContractError("invalid_session_id", f"invalid session id: {session_id!r}")
+    return target
 
 
 def _write_findings_atomic(assessment_id: str, session_id: str, payload: Dict[str, Any]) -> Optional[str]:
@@ -181,12 +190,12 @@ async def create_contract(
         revision=revision,
         status="draft",
         notes=document.get("notes"),
+        binding={
+            "ref_id": ref_id,
+            "content_revision_at_draft": dataset["content_revision"],
+            "data_digest_at_draft": dataset["fingerprint"],
+        },
     )
-    row["binding"] = {
-        "ref_id": ref_id,
-        "content_revision_at_draft": dataset["content_revision"],
-        "data_digest_at_draft": dataset["fingerprint"],
-    }
     return _contract_view(row, dataset["qualification"])
 
 

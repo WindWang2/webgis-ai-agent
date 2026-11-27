@@ -188,6 +188,32 @@ def test_cancel_cleans_workdir(atlas_exports, atlas_job_db, atlas_spec_store,
                 if n.startswith(f"atlas_{job_id}_")]
 
 
+@pytest.mark.parametrize("max_entries", [None, 0])
+def test_cache_evict_survives_concurrent_removal(tmp_path, monkeypatch, max_entries):
+    """R2-P2：listdir 后共享缓存条目被其它 worker 逐出 → getsize OSError 不得逃逸。"""
+    from app.services.atlas_batch import executor as ex_mod
+
+    (tmp_path / "a.svg").write_text("<svg/>", encoding="utf-8")
+    (tmp_path / "b.svg").write_text("<svg/>", encoding="utf-8")
+    if max_entries is not None:
+        # 0 强制走「条目超限」分支（第二条 getsize 汇总）
+        monkeypatch.setattr(ex_mod, "_PAGE_CACHE_MAX_ENTRIES", max_entries)
+
+    real_getsize = os.path.getsize
+    root = str(tmp_path)
+
+    def vanished_getsize(path):
+        if str(path).startswith(root):
+            raise FileNotFoundError(2, "No such file or directory", str(path))
+        return real_getsize(path)
+
+    monkeypatch.setattr(os.path, "getsize", vanished_getsize)
+    # 未修复时 FileNotFoundError 逃逸（页循环只捕 PageCompileFailure）
+    ex_mod._cache_evict(str(tmp_path))
+    # 容量守卫 best-effort：并发删除面下静默放弃本轮逐出，文件未被误删
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["a.svg", "b.svg"]
+
+
 def test_busy_assembly_typed_failure_keeps_cache(atlas_exports, atlas_job_db,
                                                  atlas_spec_store, compile_counter,
                                                  monkeypatch):
@@ -215,3 +241,74 @@ def test_busy_assembly_typed_failure_keeps_cache(atlas_exports, atlas_job_db,
     assert compile_counter["count"] == 0
     assert result["cache_hits"] == 2
     assert result["page_count_pdf"] == 2
+
+
+def test_atomic_write_cleans_tempfile_on_replace_failure(tmp_path, monkeypatch):
+    """os.replace 失败不得残留无 .svg 后缀的临时文件（逐出按后缀回收）。"""
+    from app.services.atlas_batch import executor as ex_mod
+
+    target = tmp_path / "product.pdf"
+
+    def _fail_replace(src, dst):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(ex_mod.os, "replace", _fail_replace)
+    with pytest.raises(OSError):
+        ex_mod._atomic_write(str(target), b"<svg/>")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_cache_write_oserror_is_typed_page_failure(atlas_exports, atlas_job_db,
+                                                   atlas_spec_store, monkeypatch):
+    """缓存写 IO 失败（磁盘满/权限/并发删除）→ 页级证据 + typed failed。"""
+    from app.services.atlas_batch import executor as ex_mod
+
+    atlas_spec_store["set_document"](district_document(districts=1))
+
+    def _disk_full(path, data):
+        raise OSError(28, "No space left on device", str(path))
+
+    monkeypatch.setattr(ex_mod, "_atomic_write", _disk_full)
+    job_id = _make_job(atlas_job_db)
+    with pytest.raises(AtlasJobError) as ei:
+        execute_atlas_job(job_id)
+    assert ei.value.code == "atlas_pages_failed"
+    assert "atlas_page_io_error" in ei.value.message
+
+    rec = _get_job(atlas_job_db, job_id)
+    pages = rec.result_summary["pages"]
+    assert pages
+    assert all(p["status"] == "failed" for p in pages)
+    assert all("atlas_page_io_error" in (p["error"] or "") for p in pages)
+
+
+def test_page_record_svg_bytes_counts_utf8_bytes(atlas_exports, atlas_job_db,
+                                                 atlas_spec_store, monkeypatch):
+    """预算记账（96MB 累积）必须按 UTF-8 字节而非字符数。"""
+    from app.services.atlas_batch import executor as ex_mod
+    from app.services.publication_export import (
+        PageCompileFailure,
+        PageCompileOutcome,
+    )
+
+    atlas_spec_store["set_document"](district_document(districts=1))
+    svg = '<svg xmlns="http://www.w3.org/2000/svg"><text>金牛区小学分布</text></svg>'
+
+    def _fake_compile(document, page, pub_ir, **kw):
+        if not page.cover:
+            raise PageCompileFailure("atlas_page_skipped", "forced failure")
+        return PageCompileOutcome(
+            svg=svg, width_mm=page.paper.width_mm,
+            height_mm=page.paper.height_mm, page=page)
+
+    monkeypatch.setattr(ex_mod, "compile_atlas_page", _fake_compile)
+    job_id = _make_job(atlas_job_db)
+    with pytest.raises(AtlasJobError):
+        execute_atlas_job(job_id)
+
+    rec = _get_job(atlas_job_db, job_id)
+    rendered = [p for p in rec.result_summary["pages"]
+                if p["status"] == "rendered"]
+    assert len(rendered) == 1
+    assert rendered[0]["svg_bytes"] == len(svg.encode("utf-8"))
+    assert rendered[0]["svg_bytes"] > len(svg)

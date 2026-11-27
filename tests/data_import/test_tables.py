@@ -251,3 +251,27 @@ async def test_xlsx_sheets_empty_and_formula(env, tmp_path):
     r = out["receipts"][key]
     assert r["status"] == "completed" and r["output_rows"] == 2
     assert set(out["receipts"]) == {key}           # 其他 sheet 无产物
+
+
+def test_xlsx_formula_disclosure_counts(tmp_path):
+    """P2（correctness）：公式单元格计数必须真实，并在解释结果中披露无缓存值。"""
+    from openpyxl import Workbook
+
+    from app.services.data_import.interpretation import interpret_table
+    from app.services.data_import.models import TableInterpretation
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "数据"
+    ws.append(["a", "b", "f"])
+    ws.append([1, 2, "=A2+B2"])
+    ws.append([3, 4, "=A3+B3"])
+    path = tmp_path / "formula.xlsx"
+    wb.save(path)
+
+    result = interpret_table(
+        path, TableInterpretation(), sheet="数据", row_limit=10
+    )
+    assert result.formula_disclosure is not None
+    assert "2 个公式单元格" in result.formula_disclosure
+    assert "2 个无缓存值" in result.formula_disclosure

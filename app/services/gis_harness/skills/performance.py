@@ -118,7 +118,8 @@ def _scale_bucket(feature_count: Optional[int]) -> str:
 
 
 def profile_key(skill_id: str, facts: SelectionFacts) -> str:
-    return f"{skill_id}|{situation_signature(facts)}"
+    return (f"{skill_id}|{situation_signature(facts)}"
+            f"|{_scale_bucket(facts.feature_count)}")
 
 
 def profile_from_facts(

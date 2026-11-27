@@ -51,7 +51,9 @@ export function appendSample(samples: MetricsSample[], next: MetricsSample): Met
   return merged.length > MAX_METRICS_SAMPLES ? merged.slice(merged.length - MAX_METRICS_SAMPLES) : merged;
 }
 
-/** 逐采样增量（累计计数 → 速率）；首点无前驱 → null（断点过滤）。 */
+/** 逐采样增量（累计计数 → 速率）；首点无前驱 → null（断点过滤）。
+ * 24h 滑窗计数会随旧事件滑出而合法下降 —— 下降不是 0 速率，退回 null
+ * 让图上留断点，避免钳成 0 的假零。 */
 export function deltas(values: number[]): (number | null)[] {
-  return values.map((v, i) => (i === 0 ? null : Math.max(0, v - values[i - 1])));
+  return values.map((v, i) => (i === 0 || v < values[i - 1] ? null : v - values[i - 1]));
 }

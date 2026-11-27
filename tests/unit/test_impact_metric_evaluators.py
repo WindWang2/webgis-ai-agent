@@ -315,3 +315,87 @@ def test_uncertainty_description_generation():
     assert isinstance(desc, str)
     assert len(desc) > 0
     assert "85" in desc or "0.85" in desc or "confidence" in desc.lower()
+
+
+def test_scenario_radii_not_overridden_by_rule_parameters():
+    """Scenario-specific radii must survive rules that also carry radius params."""
+    from app.services.spatial_decision.impact_engine import SpatialImpactEngine
+
+    engine = SpatialImpactEngine()
+    target_area = TargetAreaSpec(
+        query="Growth Area",
+        geometry_type="Point",
+        center=(116.4074, 39.9042),
+        geometry={"type": "Point", "coordinates": [116.4074, 39.9042]},
+        resolved_name="Growth Area",
+        source="geojson",
+    )
+    rule = DomainRule(
+        id="rule_custom_radius",
+        domain="test",
+        name="Custom radius",
+        statement="Would override the scenario defaults if applied last.",
+        parameters={"direct_radius_m": 100.0, "indirect_radius_m": 200.0},
+    )
+
+    for scenario_type, expected_direct, expected_indirect in (
+        ("population_growth", 1000.0, 3000.0),
+        ("traffic_restriction", 2000.0, 5000.0),
+    ):
+        zones, _ = engine.calculate_impacts(
+            scenario_type=scenario_type,
+            target_area=target_area,
+            rules=[rule],
+            parameters={},
+        )
+        radii = {z.zone_type: z.radius_m for z in zones}
+        assert radii["direct"] == expected_direct
+        assert radii["indirect"] == expected_indirect
+
+
+def test_step_decay_boundary_matches_step_intervals():
+    """P3: 3-tuple step intervals must use the same half-open bounds as evaluate_step_intervals."""
+    from app.services.spatial_decision.impact_engine import SpatialImpactEngine
+
+    engine = SpatialImpactEngine()
+    intervals = [
+        (0.0, 500.0, 20.0),
+        (500.0, 1500.0, 10.0),
+        (1500.0, 3000.0, 5.0),
+    ]
+
+    for distance in (0.0, 500.0, 1500.0, 3000.0):
+        assert engine.evaluate_step_decay(distance, intervals) == engine.evaluate_step_intervals(
+            distance, intervals
+        )
+
+    assert engine.evaluate_step_decay(500.0, intervals) == 10.0
+    assert engine.evaluate_step_decay(3000.0, intervals) == 0.0
+
+
+def test_single_element_rule_ranges_are_not_dropped():
+    """P3: a one-element pct_range/delta_range declares a constant, not zero change."""
+    from app.services.spatial_decision.metric_evaluator import MetricEvaluator
+
+    evaluator = MetricEvaluator()
+    pct_rule = DomainRule(
+        id="r_pct",
+        domain="test",
+        name="Single pct",
+        statement="constant pct",
+        parameters={"pct_range": [0.2]},
+    )
+    kind, bounds = evaluator.extract_rule_interval(rule=pct_rule)
+    assert kind == "pct"
+    assert bounds == (0.2, 0.2, 0.2)
+
+    abs_rule = DomainRule(
+        id="r_abs",
+        domain="test",
+        name="Single abs",
+        statement="constant abs",
+        parameters={"delta_range": [15.0]},
+    )
+    kind, bounds = evaluator.extract_rule_interval(rule=abs_rule)
+    assert kind == "abs"
+    assert bounds == (15.0, 15.0, 15.0)

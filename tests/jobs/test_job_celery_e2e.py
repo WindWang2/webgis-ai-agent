@@ -133,6 +133,9 @@ def test_submit_creates_durable_job_and_enqueues(job_db):
         assert job.agent_task_id == "task-1234"
         assert job.agent_step_id == "step-1"
         assert job.dispatch_spec["task"] == "tests.fake_task"
+        # 重跑描述符必须与真正入队的 kwargs 一致（retry 依它重放）
+        assert job.dispatch_spec["kwargs"] == calls[0]["kwargs"]
+        assert job.dispatch_spec["kwargs"]["job_id"] == job_id
 
 
 def test_submit_is_idempotent_for_duplicate_requests(job_db):

@@ -97,6 +97,18 @@ def check_plan_drift(
             current_runtime_fingerprint=current_rt,
         )
 
+    if current_rt is None:
+        # 当前 runtime 世代不可得 → 无法验证是否可复用；按本模块红线
+        # 诚实 unknown（绝不因"无法比较"而静默判 current/reusable）。
+        return DriftVerdict(
+            state="unknown",
+            reason="current runtime fingerprint unavailable; generation "
+                   "cannot be verified",
+            stored_plan_fingerprint=stored_plan_fp,
+            stored_runtime_fingerprint=_safe_str(stored_rt_fp),
+            current_runtime_fingerprint=None,
+        )
+
     if stored_rt_fp and current_rt and stored_rt_fp != current_rt:
         return DriftVerdict(
             state="stale_runtime",

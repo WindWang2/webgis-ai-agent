@@ -139,7 +139,14 @@ def scan_quantities(
         props = feat.get("properties") if isinstance(feat, dict) else None
         props = props if isinstance(props, dict) else {}
         fid_raw = feat.get("id") if isinstance(feat, dict) else None
-        fid = str(fid_raw) if isinstance(fid_raw, (str, int)) and str(fid_raw) else ""
+        if isinstance(fid_raw, (int, float)) and not isinstance(fid_raw, bool):
+            # 与 geography 层的 id 裁决逐字一致：整数值去小数（123.0 → "123"）、
+            # 非整数值原样（1.5 → "1.5"）。若这里不认 float，浮点 id 会落入
+            # "#rowN" 占位：正值圆与 geography 单元对不上而被静默丢弃，却仍计入
+            # total/max_value（共同系数 k），zero/missing_ids 也会出现幻影 id。
+            fid = str(int(fid_raw)) if float(fid_raw).is_integer() else str(fid_raw)
+        else:
+            fid = str(fid_raw) if isinstance(fid_raw, (str, int)) and str(fid_raw) else ""
         if not fid:
             # 身份由 geography 层统一裁决；这里用序号占位以便诊断可定位。
             fid = f"#row{idx}"

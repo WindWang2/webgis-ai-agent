@@ -144,7 +144,7 @@ class SemanticClassMap:
             raise MultimodalUnsupported(
                 f"classes already registered (pass replace=True): {overlap[:8]}",
             )
-        if len(self._prototypes) + len(names) > MAX_SEMANTIC_CLASSES:
+        if len(set(self._prototypes) | set(names)) > MAX_SEMANTIC_CLASSES:
             raise MultimodalUnsupported(
                 f"semantic class count exceeds cap {MAX_SEMANTIC_CLASSES}"
             )

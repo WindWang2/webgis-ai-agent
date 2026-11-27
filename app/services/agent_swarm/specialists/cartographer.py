@@ -430,6 +430,10 @@ class CartographerAgent(BaseSpecialistAgent):
 
         # ── 组装 + 规范化闸 ──
         bbox = survey["bbox"] or [100.0, 30.0, 105.0, 35.0]
+        if not survey.get("bbox"):
+            warnings.append(
+                "bbox_unavailable: 要素全无几何，view 回退默认范围 [100,30,105,35]"
+            )
         center = [(bbox[0] + bbox[2]) / 2.0, (bbox[1] + bbox[3]) / 2.0]
         paint, paint_warnings = spec_to_paint(legend_spec)
         warnings.extend(paint_warnings[:2])

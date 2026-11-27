@@ -91,4 +91,66 @@ describe('KnowledgeUpload', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('文档上传失败');
     await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
   });
+
+  it('非 UTF-8 字节（Latin-1 / Shift-JIS / UTF-16LE）显式拒收，不静默解出乱码', async () => {
+    render(<KnowledgeUpload onUploaded={vi.fn()} />);
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const cases: Array<[string, number[]]> = [
+      // Latin-1 "caféA"（E9 41）在 GB18030 下可解为 "caf锳"
+      ['latin1.txt', [0x63, 0x61, 0x66, 0xe9, 0x41]],
+      // Shift-JIS「ありがとう」
+      ['sjis.txt', [0x82, 0xa0, 0x82, 0xc2, 0x82, 0xdc, 0x82, 0xb5]],
+      // 无 BOM UTF-16LE「中文」
+      ['utf16le.txt', [0x2d, 0x4e, 0x87, 0x41]],
+    ];
+
+    for (const [name, bytes] of cases) {
+      fireEvent.change(input, {
+        target: { files: [new File([new Uint8Array(bytes)], name, { type: 'text/plain' })] },
+      });
+      expect(
+        await screen.findByText(`无法读取「${name}」（可能不是 UTF-8 文本）。`),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/已读取/)).not.toBeInTheDocument();
+    }
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: /索引文档/ })).toBeDisabled();
+  });
+
+  it('新选择被拒（类型/大小/读取失败）时清空上一文件，避免误索引旧文档', async () => {
+    render(<KnowledgeUpload onUploaded={vi.fn()} />);
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const loadNotes = async () => {
+      fireEvent.change(input, { target: { files: [makeTextFile('notes.txt', '旧文档正文')] } });
+      expect(await screen.findByText(/已读取：notes\.txt/)).toBeInTheDocument();
+      expect(screen.getByLabelText('标题')).toHaveValue('notes');
+    };
+
+    await loadNotes();
+    fireEvent.change(input, { target: { files: [makeTextFile('paper.pdf', '%PDF', 'application/pdf')] } });
+    expect(await screen.findByRole('alert')).toHaveTextContent('后端尚不支持');
+    expect(screen.queryByText(/已读取/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText('标题')).toHaveValue('');
+    expect(screen.getByRole('button', { name: /索引文档/ })).toBeDisabled();
+
+    await loadNotes();
+    fireEvent.change(input, {
+      target: { files: [new File([new Uint8Array([0xff, 0xfe])], 'broken.txt', { type: 'text/plain' })] },
+    });
+    expect(await screen.findByText(/无法读取「broken\.txt」/)).toBeInTheDocument();
+    expect(screen.queryByText(/已读取/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText('标题')).toHaveValue('');
+    expect(screen.queryByLabelText('已读取的文档内容（可编辑）')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /索引文档/ })).toBeDisabled();
+
+    await loadNotes();
+    const oversized = makeTextFile('huge.txt', 'x');
+    Object.defineProperty(oversized, 'size', { value: 100 * 1024 * 1024 + 1 });
+    fireEvent.change(input, { target: { files: [oversized] } });
+    expect(await screen.findByRole('alert')).toHaveTextContent('文件超出后端上限');
+    expect(screen.queryByText(/已读取/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText('标题')).toHaveValue('');
+    expect(screen.getByRole('button', { name: /索引文档/ })).toBeDisabled();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
 });

@@ -313,9 +313,15 @@ def build_draw_plan(
                 "used_height_mm": round(pt_to_mm(tl["used_height_pt"]), 4),
                 "expanded_height_mm": tl["expanded_height_mm"],
                 "continuation_lines": tl["continuation_lines"],
+                "truncated": bool(tl["truncated"]),
+                "truncated_lines": tl["truncated_lines"],
             }
             if tl["status"] == "blocked":
                 diagnostics.append({"code": "TEXT_OVERFLOW_BLOCKED", "component_id": cid})
+            if tl["truncated"]:
+                # 超 MAX_LINES 的行被丢弃（内容损失）——不是「放不下」，而是
+                # 「看不见」，必须进回执与导出诊断，否则导出 PDF/PNG 静默少内容。
+                diagnostics.append({"code": "TEXT_TRUNCATED", "component_id": cid})
         if kind == "legend":
             lay = {**(effective_plan.get("legend_defaults") or {}), **(c.get("legend") or {})}
             content = read_legend_content(mapspec, cid, symbol_assets=symbol_assets,
@@ -403,6 +409,8 @@ def serializable_receipt(draw_plan: Dict[str, Any]) -> Dict[str, Any]:
         "text": [
             {"component_id": c["id"], "lines": (c.get("text") or {}).get("lines", []),
              "overflow": (c.get("text") or {}).get("overflow", False),
+             "truncated": (c.get("text") or {}).get("truncated", False),
+             "truncated_lines": (c.get("text") or {}).get("truncated_lines", 0),
              "status": (c.get("text") or {}).get("status"),
              "font": {"requested_font_id": c["font_status"]["requested_font_id"],
                       "applied_font_id": c["font_status"]["applied_font_id"],

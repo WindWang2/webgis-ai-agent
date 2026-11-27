@@ -356,7 +356,9 @@ async def run_repair_transaction(
             }
 
         session = mark_applied(session, apply_result={
-            "status": "success",
+            # 透传 execute_repair 的真实状态（部分 op failed → "partial"）；
+            # 硬编码 success 会让 mark_applied 的 partial→failed 分支不可达。
+            "status": str(apply_result.get("status") or "success"),
             "feature_count_after": apply_result.get("feature_count"),
             "feature_count_before": apply_result.get("feature_count_before"),
             "content_digest_before": apply_result.get("content_digest_before"),
@@ -364,6 +366,12 @@ async def run_repair_transaction(
             "repaired_ref": apply_result.get("repaired_ref"),
             "ref_registration_error": apply_result.get("ref_registration_error"),
         })
+        if session.state == STATE_FAILED:
+            _cache_put(session)
+            return {
+                "session": session.to_bounded_dict(),
+                "failure": session.failure,
+            }
 
         # ── verify：修复后复评（residual 质量事实）───────────────────────
         repaired = apply_result.get("repaired_geojson")
@@ -439,7 +447,9 @@ async def _verify(repaired: Any, verify_evaluator: Optional[Any]) -> Dict[str, A
         else:
             from app.services.data_quality.engine import evaluate_payload
 
-            report = await asyncio.to_thread(evaluate_payload, repaired)
+            # evaluate_payload 只接受 {"geojson": ...} 信封；裸 FeatureCollection
+            # 会让 _extract_inputs 恒抛 → residual 恒 error、apply 永不 verified。
+            report = await asyncio.to_thread(evaluate_payload, {"geojson": repaired})
         if isinstance(report, dict):
             overall = str(report.get("overall_status", ""))
             return {

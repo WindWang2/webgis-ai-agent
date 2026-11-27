@@ -94,6 +94,23 @@ describe('composeLiveMapSpec', () => {
     expect(spec.layers[1].layout?.visibility).toBe('visible');
   });
 
+  it('shadows a custom- prefixed HUD layer whose committed layer id is the stripped id', () => {
+    const committed: MapSpec = {
+      version: '1.0',
+      sources: { poi: { type: 'geojson', url: 'ref:geojson-poi' } },
+      layers: [
+        { id: 'poi', source: 'poi', type: 'circle', layout: { visibility: 'visible' } },
+      ],
+    };
+    const spec = composeLiveMapSpec(
+      committed,
+      { layers: [hudLayer({ id: 'custom-poi' })], processLayers: {}, activeFilters: {}, is3D: false },
+      {},
+    );
+    // custom- 前缀剥离后的别名与 committed 层同源 → 不得再渲染第二份。
+    expect(spec.layers.map((layer) => layer.id)).toEqual(['poi']);
+  });
+
   it('drops a pending-removed committed layer from the live spec', () => {
     const spec = composeLiveMapSpec(
       committedSpec(),

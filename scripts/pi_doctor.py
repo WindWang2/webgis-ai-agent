@@ -517,16 +517,16 @@ def check_rpc() -> Report:
                 stdout=subprocess.DEVNULL, stderr=fh,
                 env={**os.environ, "DOCTOR_STUB_PORT": "0"},
             )
-        deadline = time.monotonic() + 10
-        stub_port = None
-        while time.monotonic() < deadline:
-            m = re.search(r"STUB_READY (\d+)", stub_err_file.read_text())
-            if m:
-                stub_port = m.group(1)
-                break
-            time.sleep(0.1)
-        assert stub_port, "doctor stub LLM failed to boot"
         try:
+            deadline = time.monotonic() + 10
+            stub_port = None
+            while time.monotonic() < deadline:
+                m = re.search(r"STUB_READY (\d+)", stub_err_file.read_text())
+                if m:
+                    stub_port = m.group(1)
+                    break
+                time.sleep(0.1)
+            assert stub_port, "doctor stub LLM failed to boot"
             time.sleep(0.6)
             rc, out = _run([
                 "node", str(probe_js), str(ident.entry_path), str(EXTENSION_PATH),

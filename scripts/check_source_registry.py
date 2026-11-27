@@ -26,6 +26,13 @@ sys.path.insert(0, str(REPO))
 
 from app.services.data_fabric import source_registry as SR  # noqa: E402
 
+# AdapterSpec carries no ``supports_aggregation`` flag (unlike bbox/cql/pagination),
+# so the aggregation truth is taken from the adapter classes' own ``capabilities()``
+# declarations (the "aggregation" vocabulary entry): postgis (server-side SQL
+# GROUP BY) and local_file sqlite tables. Keyed by canonical name so registry
+# aliases (postgres/postgresql/…) resolve through ``spec.canonical``.
+AGGREGATION_CAPABLE_PROTOCOLS = frozenset({"postgis", "local_file"})
+
 
 def main() -> int:
     errors: list[str] = []
@@ -85,8 +92,8 @@ def main() -> int:
                 mismatches.append("bbox")
             if claims.cql and not spec.supports_filter:
                 mismatches.append("cql")
-            if claims.aggregation and not getattr(spec, "supports_aggregation", False):
-                pass  # aggregation has no AdapterSpec flag yet — lint keeps quiet
+            if claims.aggregation and spec.canonical not in AGGREGATION_CAPABLE_PROTOCOLS:
+                mismatches.append("aggregation")
             if claims.pagination and not spec.supports_pagination:
                 mismatches.append("pagination")
             for m in mismatches:

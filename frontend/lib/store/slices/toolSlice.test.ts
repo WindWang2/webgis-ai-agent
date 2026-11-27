@@ -14,8 +14,8 @@ describe('toolSlice', () => {
     useHudStore.getState().clearToolState();
   });
 
-  // G14 and G16 extend the same closed union; merging either must retain both.
-  const mergedTools: MapToolId[] = ['edit_labels', 'split_feature'];
+  // G14/G16/G48 extend the same closed union; merging any must retain all.
+  const mergedTools: MapToolId[] = ['edit_labels', 'split_feature', 'georef_pick_map'];
   it.each(mergedTools)('retains %s in the shared tool vocabulary and state', (tool) => {
     expect(MAP_TOOLS).toContain(tool);
     useHudStore.getState().setActiveMapTool(tool);

@@ -1,7 +1,7 @@
 /**
  * lineage-adapter 单测（ADR-0143 P3）：分层布局不变式。
  * L1 列位置：上游 −depth、根 0、下游 +depth（BFS 深度钳到 5）。
- * L2 去重：同 artifact 多条边坍缩为一个节点，边保留。
+ * L2 去重：同 artifact 多条记录坍缩为一个节点、一条边。
  * L3 完备：parents+consumers 全部出现在布局中。
  */
 import { describe, it, expect } from 'vitest';
@@ -44,7 +44,7 @@ describe('adaptLineage', () => {
     expect(byId['down-1'].column).toBe(2);
   });
 
-  it('L2: 同节点多边坍缩；深度取最小；边保留', () => {
+  it('L2: 同节点多边坍缩；深度取最小；重复边只保留一条', () => {
     const graph: LineageGraph = {
       artifact_id: 'root',
       parents: [
@@ -57,7 +57,7 @@ describe('adaptLineage', () => {
     const pNodes = layout.nodes.filter((n) => n.id === 'p');
     expect(pNodes).toHaveLength(1);
     expect(pNodes[0].column).toBe(-1);
-    expect(layout.edges.filter((e) => e.from === 'p')).toHaveLength(2);
+    expect(layout.edges.filter((e) => e.from === 'p')).toHaveLength(1);
   });
 
   it('L3: 60 节点血缘图完备且布局有界（压力图夹具）', () => {

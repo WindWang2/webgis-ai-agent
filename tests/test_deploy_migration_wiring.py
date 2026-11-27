@@ -658,3 +658,324 @@ def test_dev_dockerfile_copies_vendor_for_pi_bridge():
     assert "COPY --from=pi-builder" in prod_runner, (
         "Dockerfile.prod runner 必须 COPY --from=pi-builder 的 dist/bundle"
     )
+
+
+# ── 7. create_all 自举库上的迁移幂等（#476/#2207 同源）──────────────────
+#
+# init_db() → Base.metadata.create_all 自举的存量库，其 schema 由**模型**
+# 产出；迁移链切过去时每个迁移都必须在「列/索引/约束已由 create_all 建出」
+# 的库上收敛，而不是 duplicate column / duplicate index / TypeError。
+# 0041 之前的修复只覆盖了部分迁移，这里把三个漏网的钉住。
+
+#: create_all 前必须注册的模型模块（与 _drift_report 同清单 + knowledge_base）。
+_MODEL_MODULES = (
+    "app.models.data_lifecycle",
+    "app.models.data_quality",
+    "app.models.db_model",
+    "app.models.report",
+    "app.models.template_version",
+    "app.models.upload",
+    "app.models.ads_fabric",
+    "app.models.gis_context",
+    "app.models.harness_journal",
+    "app.models.cartography_quality",
+    "app.models.knowledge_base",
+)
+
+
+def _alembic_config(db_url: str):
+    from alembic.config import Config
+
+    cfg = Config(str(REPO_ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(REPO_ROOT / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", db_url)
+    return cfg
+
+
+def _create_all_db(db_url: str) -> None:
+    """init_db() 的产物：Base.metadata.create_all 自举一个库。"""
+    import importlib
+
+    from sqlalchemy import create_engine
+
+    from app.core.database import Base
+
+    for name in _MODEL_MODULES:
+        importlib.import_module(name)
+    engine = create_engine(db_url)
+    try:
+        Base.metadata.create_all(engine)
+    finally:
+        engine.dispose()
+
+
+def test_0016_upgrade_on_create_all_db_skips_existing_columns(tmp_path, monkeypatch):
+    """0016 头注释承诺「幂等：存量列/索引已存在时跳过」。
+
+    create_all 自举的库（模型早已声明 org_id/creator_id + 索引 + FK，正是
+    #476 drift 修复所针对的存量形态）上，SQLite 分支裸
+    add_column/create_index/create_foreign_key 即 duplicate column /
+    duplicate index 失败 —— 修复必须先能在自己针对的库形态上跑通。
+    """
+    import sqlite3
+
+    from alembic import command
+
+    db_path = tmp_path / "createall.db"
+    db_url = f"sqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", db_url)
+    _create_all_db(db_url)
+    cfg = _alembic_config(db_url)
+    command.stamp(cfg, "0015_uploads_session_upload_index")
+    command.upgrade(cfg, "0016_knowledge_documents_owner")
+
+    conn = sqlite3.connect(db_path)
+    try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(knowledge_documents)")}
+        assert {"id", "title", "org_id", "creator_id"} <= cols
+        indexes = {r[1] for r in conn.execute("PRAGMA index_list(knowledge_documents)")}
+        assert "idx_document_org" in indexes
+        referred = {r[2] for r in conn.execute("PRAGMA foreign_key_list(knowledge_documents)")}
+        assert {"organizations", "users"} <= referred
+    finally:
+        conn.close()
+
+
+def test_0033_upgrade_adds_checks_to_pre_existing_tables(tmp_path, monkeypatch):
+    """0033 的 SQLite 分支：batch 形 ``create_check_constraint(name, condition)``
+    不收表名位置参 —— 多传一个就把表名吃成 condition、表达式吃成
+    table_name → TypeError。触发条件：三张表已由 create_all（旧模型，无
+    CHECK）自举在场，0033 只能走 batch 补约束。
+    """
+    from sqlalchemy import create_engine, inspect
+
+    from alembic import command
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+
+    from app.core.database import Base
+    from app.models.db_model import (
+        GeoComputeClusterRun,
+        GeoComputeClusterWorker,
+        GeoComputeResourceUsage,
+    )
+
+    db_url = f"sqlite:///{tmp_path / 'gc33.db'}"
+    monkeypatch.setenv("DATABASE_URL", db_url)
+    cfg = _alembic_config(db_url)
+    command.upgrade(cfg, "0032_harness_v5_resume_anchors")
+
+    # 旧模型 create_all：三张表在场但没有 CHECK 约束（词表是后加的）。
+    engine = create_engine(db_url)
+    Base.metadata.create_all(engine, tables=[
+        GeoComputeClusterRun.__table__,
+        GeoComputeClusterWorker.__table__,
+        GeoComputeResourceUsage.__table__,
+    ])
+    with engine.begin() as conn:
+        ops = Operations(MigrationContext.configure(conn))
+        for table, names in (
+            (GeoComputeClusterRun, ("ck_gc_run_status", "ck_gc_run_priority")),
+            (GeoComputeClusterWorker, ("ck_gc_worker_role",)),
+        ):
+            with ops.batch_alter_table(table.__tablename__) as batch:
+                for name in names:
+                    batch.drop_constraint(name, type_="check")
+    engine.dispose()
+
+    command.upgrade(cfg, "0033_geocompute_v6_cluster")
+
+    engine = create_engine(db_url)
+    try:
+        insp = inspect(engine)
+        run_checks = {c["name"] for c in insp.get_check_constraints("geocompute_runs")}
+        assert {"ck_gc_run_status", "ck_gc_run_priority"} <= run_checks
+        worker_checks = {
+            c["name"] for c in insp.get_check_constraints("geocompute_workers")
+        }
+        assert "ck_gc_worker_role" in worker_checks
+    finally:
+        engine.dispose()
+
+
+def test_0090_upgrade_skips_indexes_create_all_already_built(tmp_path, monkeypatch):
+    """0090 专治 create_all 漂移，而 create_all 自举的库早已按模型
+    ``index=True`` 建出同名索引 —— ``op.create_index`` 无存在性守卫即
+    DuplicateObject（两方言皆无）。"""
+    from sqlalchemy import create_engine, inspect, text
+
+    from alembic import command
+
+    db_url = f"sqlite:///{tmp_path / 'idx90.db'}"
+    monkeypatch.setenv("DATABASE_URL", db_url)
+    cfg = _alembic_config(db_url)
+    command.upgrade(cfg, "0080_gis_spatial_memories")
+
+    engine = create_engine(db_url)
+    with engine.begin() as conn:
+        conn.execute(text(
+            "CREATE INDEX ix_gis_spatial_memories_status"
+            " ON gis_spatial_memories (status)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX ix_carto_feedback_signals_target"
+            " ON carto_feedback_signals (target)"
+        ))
+    engine.dispose()
+
+    command.upgrade(cfg, "0090_close_model_index_drift")
+
+    engine = create_engine(db_url)
+    try:
+        insp = inspect(engine)
+        assert "ix_gis_spatial_memories_status" in {
+            i["name"] for i in insp.get_indexes("gis_spatial_memories")
+        }
+        assert "ix_carto_feedback_signals_target" in {
+            i["name"] for i in insp.get_indexes("carto_feedback_signals")
+        }
+    finally:
+        engine.dispose()
+
+
+_LIFECYCLE_INSERT = (
+    "INSERT INTO lifecycle_policies (id, org_id, name, kind, action, enabled) "
+    "VALUES (:id, :org_id, :name, 'artifact_cache', 'observe', 0)"
+)
+
+
+def _lifecycle_policy_insert(engine, pid: str, org_id, name: str) -> None:
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        conn.execute(text(_LIFECYCLE_INSERT),
+                     {"id": pid, "org_id": org_id, "name": name})
+
+
+def _seed_old_0106_constraint(engine) -> None:
+    """commit d3695d42a 的旧版 0106 落库形态：朴素 UniqueConstraint(org_id, name)。"""
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+
+    with engine.begin() as conn:
+        ops = Operations(MigrationContext.configure(conn))
+        with ops.batch_alter_table("lifecycle_policies") as batch:
+            batch.create_unique_constraint(
+                "uq_lifecycle_policy_org_name", ["org_id", "name"]
+            )
+
+
+def test_0106_upgrade_replaces_constraint_backed_unique(tmp_path, monkeypatch):
+    """旧版 0106 建的朴素 UniqueConstraint(org_id, name) 上，#2209 的
+    COALESCE 修复必须落得了地。
+
+    SQLite 上该约束是表级 UNIQUE（``get_indexes`` 看不见它），旧实现因此
+    整段跳过 —— 约束留着、表达式索引建不出来，「全局默认名全局唯一」静默
+    失效（同名全局行可插入多行）。
+    """
+    from sqlalchemy import create_engine, inspect
+    from sqlalchemy.exc import IntegrityError
+
+    from alembic import command
+
+    db_url = f"sqlite:///{tmp_path / 'lc106.db'}"
+    monkeypatch.setenv("DATABASE_URL", db_url)
+    cfg = _alembic_config(db_url)
+    command.upgrade(cfg, "e6fe5ade5010")
+    engine = create_engine(db_url)
+    _seed_old_0106_constraint(engine)
+    engine.dispose()
+
+    command.upgrade(cfg, "0106_lifecycle_policy_org_unique")
+
+    engine = create_engine(db_url)
+    try:
+        assert not any(
+            uq.get("name") == "uq_lifecycle_policy_org_name"
+            for uq in inspect(engine).get_unique_constraints("lifecycle_policies")
+        ), "朴素 (org_id, name) 唯一约束应已被替换"
+        _lifecycle_policy_insert(engine, "a", None, "global")
+        with pytest.raises(IntegrityError):
+            _lifecycle_policy_insert(engine, "b", None, "global")
+        _lifecycle_policy_insert(engine, "c", 7, "global")
+    finally:
+        engine.dispose()
+
+
+def test_0106_upgrade_drops_constraint_not_index_on_pg_reflection(
+    tmp_path, monkeypatch
+):
+    """PG 反射把 UniqueConstraint 的支撑索引也报进 ``get_indexes``（PG 方言
+    只过滤 indisprimary）—— ``_index_columns`` 于是返回 "org_id,name"，旧
+    实现走 ``batch.drop_index(_NEW)``，PG 以 DEPENDENCY_INTERNAL 拒绝
+    （"cannot drop index ... because constraint ... requires it"），
+    upgrade 硬失败、COALESCE 修复永远落不了地。
+
+    本地无 PG：用一个把「约束存在即报出同名支撑索引」的反射包装模拟 PG
+    方言行为（真实 SQLite 库里该约束是表级 UNIQUE）。
+    """
+    import importlib
+
+    from sqlalchemy import create_engine, inspect, text
+    from sqlalchemy.exc import IntegrityError
+
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+
+    db_url = f"sqlite:///{tmp_path / 'lc106pg.db'}"
+    engine = create_engine(db_url)
+    with engine.begin() as conn:
+        conn.execute(text(
+            "CREATE TABLE lifecycle_policies ("
+            " id VARCHAR(36) PRIMARY KEY, org_id INTEGER, name VARCHAR(64),"
+            " kind VARCHAR(32), action VARCHAR(16), enabled BOOLEAN,"
+            " CONSTRAINT ck_lifecycle_policy_kind CHECK (kind IN ('artifact_cache')),"
+            " CONSTRAINT uq_lifecycle_policy_org_name UNIQUE (org_id, name))"
+        ))
+
+    module = importlib.import_module(
+        "migrations.versions.0106_lifecycle_policy_org_unique"
+    )
+    real_inspect = inspect
+
+    class _PgDialectInspector:
+        """PG 方言：UNIQUE 约束的支撑索引同样出现在 get_indexes 里。"""
+
+        def __init__(self, inner):
+            object.__setattr__(self, "_inner", inner)
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+        def get_indexes(self, table):
+            indexes = list(self._inner.get_indexes(table))
+            if any(
+                uq.get("name") == "uq_lifecycle_policy_org_name"
+                for uq in self._inner.get_unique_constraints(table)
+            ):
+                indexes.append({
+                    "name": "uq_lifecycle_policy_org_name",
+                    "column_names": ["org_id", "name"],
+                    "unique": True,
+                })
+            return indexes
+
+    monkeypatch.setattr(
+        module.sa, "inspect",
+        lambda bind: _PgDialectInspector(real_inspect(bind)),
+    )
+    with engine.begin() as conn:
+        with Operations.context(MigrationContext.configure(conn)):
+            module.upgrade()
+
+    engine2 = create_engine(db_url)
+    try:
+        assert not any(
+            uq.get("name") == "uq_lifecycle_policy_org_name"
+            for uq in real_inspect(engine2).get_unique_constraints("lifecycle_policies")
+        )
+        _lifecycle_policy_insert(engine2, "a", None, "global")
+        with pytest.raises(IntegrityError):
+            _lifecycle_policy_insert(engine2, "b", None, "global")
+    finally:
+        engine2.dispose()

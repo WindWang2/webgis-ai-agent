@@ -595,7 +595,8 @@ def _adjudicate_palette(
                     f"保留族内首选 {first}，类别面打印应辅以形状/图案区分")
             return first, None
     _reject(rejected, "palette", "all_candidates",
-            "全部候选在当前上下文不可分辨——回退感知均匀锚 Viridis 并降低置信")
+            "全部候选在当前上下文不可分辨——回退感知均匀锚 Viridis"
+            "（k 以其可分辨级数为上限）")
     return "Viridis", _palette_max_k("Viridis", context, constraints, k_probe) or None
 
 

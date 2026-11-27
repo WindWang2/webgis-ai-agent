@@ -19,7 +19,7 @@ import math
 import re
 from dataclasses import dataclass, field as dc_field
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.services.data_preparation.field_compute.contracts import (
@@ -490,12 +490,20 @@ def _eval_call(node: ExprNode, st: _RowState) -> Value:
         digits = 0
         if len(vals) > 1 and not vals[1].is_null:
             d = _num(vals[1])
-            if not float(d).is_integer() or not 0 <= d <= 9:
+            # 先做区间判定：超大整数（数据大整数 / to_integer 长串）在
+            # float(d) 上会抛 OverflowError，绝不能逃出 evaluate_rows。
+            if not 0 <= d <= 9 or not float(d).is_integer():
                 raise RowError("CONVERSION_FAILED", "digits 必须是 0–9 的整数")
             digits = int(d)
         x = _num(vals[0])
         q = Decimal(1).scaleb(-digits)
-        r = float(Decimal(str(x)).quantize(q, rounding=ROUND_HALF_UP))
+        try:
+            r = float(Decimal(str(x)).quantize(q, rounding=ROUND_HALF_UP))
+        except InvalidOperation as exc:
+            # |x|≳1e28 或 to_integer 大整数：quantize 超出十进制上下文精度。
+            # 行级错误（NUMERIC_OVERFLOW），不让 InvalidOperation 逃逸成整次崩溃。
+            raise RowError("NUMERIC_OVERFLOW",
+                           f"round 结果超出十进制精度：{x!r}") from exc
         return Value.number(r, unit=vals[0].unit,
                             unit_status=vals[0].unit_status)
     if name == "sqrt":
@@ -563,7 +571,12 @@ def _eval_call(node: ExprNode, st: _RowState) -> Value:
             return Value.null()
         if v.type != "string":
             raise RowError("TYPE_MISMATCH", "pad_left 需要文本（代码类字段按文本处理）")
-        width = int(_num(vals[1]) or 0)
+        width_num = _num(vals[1])
+        if width_num is None:
+            return Value.null()   # null→null（不静默按 0 宽返回原串）
+        if isinstance(width_num, float) and not width_num.is_integer():
+            raise RowError("CONVERSION_FAILED", "pad_left width 必须是整数")
+        width = int(width_num)
         if width < 0 or width > 128:
             raise RowError("RESOURCE_LIMIT", "pad_left width 越界 (0–128)")
         ch = str(vals[2].value)[:1] if len(vals) > 2 and not vals[2].is_null else "0"

@@ -112,6 +112,37 @@ describe('useWorkflowWorkspace — request discipline', () => {
     expect(result.current.datasets.find((d) => d.name === 'STALE')).toBeUndefined();
   });
 
+  it('keeps the in-flight project detail when the current project is re-selected', async () => {
+    let resolveDatasets: (v: unknown) => void = () => {};
+    let resolveWorkflows: (v: unknown) => void = () => {};
+    api.fetchProjectDatasets.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveDatasets = resolve; }),
+    );
+    api.fetchProjectWorkflows.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveWorkflows = resolve; }),
+    );
+
+    const { result } = renderHook(() => useWorkflowWorkspace());
+    await waitFor(() => expect(result.current.selectedProjectId).toBe('p1'));
+    await waitFor(() => expect(api.fetchProjectDatasets).toHaveBeenCalledTimes(1));
+
+    // 同值 setState 会被 bailout：[selectedProjectId] effect 不重跑；旧实现
+    // 仍递增 detailGen → 在途响应被丢弃后永远不再拉取，列表空置。
+    await act(async () => {
+      result.current.selectProject('p1');
+    });
+    await act(async () => {
+      resolveDatasets([{
+        id: 'ds1', project_id: 'p1', name: 'DS', source_type: 'x',
+        crs: null, quality_status: 'ok', created_at: '',
+      }]);
+      resolveWorkflows([workflow]);
+    });
+
+    await waitFor(() => expect(result.current.datasets).toHaveLength(1));
+    expect(result.current.workflows).toHaveLength(1);
+  });
+
   it('does not fetch lineage until requested', async () => {
     const { result } = renderHook(() => useWorkflowWorkspace());
     await waitFor(() => expect(result.current.workflows).toHaveLength(1));
@@ -439,6 +470,41 @@ describe('useWorkflowWorkspace — hidden-tab polling resume (#549)', () => {
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(api.fetchWorkflowRun.mock.calls.length).toBe(before);
+  });
+
+  it('an older run-detail response cannot overwrite a newer visibility refetch', async () => {
+    const pending: Array<{ resolve: (v: unknown) => void }> = [];
+    api.fetchWorkflowRun
+      .mockResolvedValueOnce(detail({ status: 'running' }))
+      .mockImplementation(() => new Promise((resolve) => { pending.push({ resolve }); }));
+
+    const { result } = renderHook(() => useWorkflowWorkspace());
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    await act(async () => { result.current.openWorkflow('wf1'); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    await act(async () => { result.current.openRun('r1'); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(result.current.runDetail?.status).toBe('running');
+
+    // 两次可见性补拉并发（不查在飞请求）：后发请求编号更大。
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'));
+      document.dispatchEvent(new Event('visibilitychange'));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(pending).toHaveLength(2);
+
+    // 新请求先回（completed）→ 旧请求后回（running）不得覆盖。
+    await act(async () => {
+      pending[1].resolve(detail({ status: 'completed' }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(result.current.runDetail?.status).toBe('completed');
+    await act(async () => {
+      pending[0].resolve(detail({ status: 'running' }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(result.current.runDetail?.status).toBe('completed');
   });
 });
 

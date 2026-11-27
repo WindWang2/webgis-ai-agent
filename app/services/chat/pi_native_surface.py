@@ -935,6 +935,19 @@ def compute_turn_active_tools(
             (*distribution_cartography_tools(message), *od_flow_tools(message)),
             skip=qual_dropped | avail_suppressed,
         )
+        # 重钉回激活面的工具实际可调用 —— 不得同时声称被字节预算逐出
+        # （receipt/披露必须自洽）。
+        if budget_info is not None:
+            _repinned = set(safe)
+            _dropped_after_pin = [
+                n for n in (budget_info.get("dropped") or []) if n not in _repinned
+            ]
+            budget_info["dropped"] = _dropped_after_pin
+            if disclosure is not None:
+                if _dropped_after_pin:
+                    disclosure["budget_dropped"] = _dropped_after_pin
+                else:
+                    disclosure.pop("budget_dropped", None)
         # ADR-0224：铸造 SurfaceReceipt（最终激活面 + 资格/预算全部逐出因；
         # 同 turn 幂等 —— 首次铸造后本 turn 内 surface 不可变）。
         _turn_receipt = None

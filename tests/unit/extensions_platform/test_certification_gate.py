@@ -316,6 +316,36 @@ class TestPersistence:
                 sign_key_file=v4_env.tmp_path / "missing.key",
             )
 
+    def test_unwritable_report_target_raises_typed(self, v4_env, monkeypatch):
+        """P1：只读目录 / 磁盘满（write_text → OSError）归一为 typed 诊断，
+        不逃逸为裸 OSError；半份 tmp 报告不得残留。"""
+        from pathlib import Path
+
+        def _disk_full(self, *args, **kwargs):
+            raise OSError(28, "No space left on device")
+
+        v4_env.build()
+        pack_dir = v4_env.tmp_path / "certv4-pack"
+        monkeypatch.setattr(Path, "write_text", _disk_full)
+        with pytest.raises(ExtensionPlatformError):
+            save_certification_report(pack_dir, {"schema_version": 1, "certified": True})
+        assert not (pack_dir / ".certification.json.tmp").exists()
+
+    def test_save_io_failure_is_reported_not_raised(self, v4_env, monkeypatch):
+        """P1：run_pack_certification(save=True) 遭遇 I/O 失败时记
+        saved="failed: …" 干净返回——CLI 不裸 traceback 崩溃。"""
+        from pathlib import Path
+
+        def _disk_full(self, *args, **kwargs):
+            raise OSError(28, "No space left on device")
+
+        v4_env.build()
+        host, _ = v4_env.make_host()
+        monkeypatch.setattr(Path, "write_text", _disk_full)
+        report = run_pack_certification(host, EXTENSION_ID, save=True)
+        assert report["certified"] is True
+        assert str(report["saved"]).startswith("failed:")
+
     def test_tampered_certified_field_detected_under_strict(self, v4_env):
         """伪造 certified=true：strict 模式 HMAC 失配拒绝。"""
         from app.extensions_platform.discovery import compute_fingerprint

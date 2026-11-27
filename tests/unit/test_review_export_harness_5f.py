@@ -24,6 +24,44 @@ def test_signed_charts_stay_inside_plot_domain():
             assert all(16 <= float(pair.split(",")[1]) <= 116 for pair in polyline.attrib["points"].split())
 
 
+def test_single_point_markers_keep_per_series_color():
+    """单点序列颜色按序列索引取，不得用 values.index 错配到首个同值序列。"""
+    from app.lib.cartography.svg_charts import _render_line_family
+    fragment = _render_line_family(
+        0, 0, "One point", [[("a", 5.0)], [("b", 5.0)]],
+        area=False, cumulative=False)
+    tree = ET.fromstring(f"<svg>{fragment}</svg>")
+    fills = [circle.attrib["fill"] for circle in tree.findall("circle")]
+    assert fills == ["#2563eb", "#f59e0b"]
+
+
+def test_box_plot_panel_height_covers_rendered_rows():
+    from app.lib.cartography.svg_charts import chart_panel_height
+    points = [
+        {"name": f"b{i}", "value": 2, "q1": 1, "q3": 3, "min": 0, "max": 4}
+        for i in range(6)
+    ]
+    height = chart_panel_height({"type": "box_plot", "data": points})
+    assert height == 22.0 + 22.0 * 6
+
+
+def test_horizontal_bar_panel_height_uses_longest_series():
+    """高度估算须与渲染器同口径（max 各序列点数，而非仅 series[0]）。"""
+    from app.lib.cartography.svg_charts import chart_panel_height
+    chart = {
+        "type": "horizontal_bar",
+        "series": [
+            {"name": "short", "data": [{"name": "a", "value": 1}]},
+            {"name": "long", "data": [
+                {"name": name, "value": value}
+                for name, value in (("b", 2), ("c", 3), ("d", 4),
+                                    ("e", 5), ("f", 6))
+            ]},
+        ],
+    }
+    assert chart_panel_height(chart) == 30.0 + 16.0 * 5
+
+
 def test_concave_polygon_anchor_is_inside():
     from app.lib.cartography.label_engine import LabelFeature, _polygon_candidates
     ring = [[0, 0], [100, 0], [100, 100], [70, 100], [70, 30], [30, 30], [30, 100], [0, 100]]

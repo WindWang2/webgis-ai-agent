@@ -71,7 +71,7 @@ def audit_registration(
             detail="heavy 工具声明 INLINE：INLINE 直接在事件循环执行且无法被"
                    " asyncio.timeout 抢占 —— 挂死会阻塞整个进程。改 THREAD/CELERY 或降 cost。",
         ))
-    if policy is ToolExecutionPolicy.INLINE and timeout:
+    if policy is ToolExecutionPolicy.INLINE and timeout is not None:
         findings.append(PolicyFinding(
             tool=name, severity=Severity.INFO, code="inline_timeout_ineffective",
             detail="INLINE 工具声明了 timeout 元数据：INLINE 无法被预算抢占，"
@@ -96,6 +96,10 @@ def audit_registry_policies(registry: ToolRegistry) -> List[PolicyFinding]:
             continue
         policy = meta.get("execution_policy")
         if not isinstance(policy, ToolExecutionPolicy):
+            findings.append(PolicyFinding(
+                tool=name, severity=Severity.ERROR, code="invalid_execution_policy",
+                detail=f"execution_policy 不是有效的 ToolExecutionPolicy：{policy!r}。",
+            ))
             continue
         findings.extend(audit_registration(
             name, func, policy,

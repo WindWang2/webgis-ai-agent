@@ -500,6 +500,12 @@ async def run_runtime_repair(
     )
     if not isinstance(ledger, dict):
         ledger = {"passes": []}
+    # 分代（:448-450 承诺）：spec 内容变化（observation fingerprint 变）即
+    # 重置预算。fingerprint 字段此前只写不读 —— 轮数按 distinct 计划全局
+    # 累计，spec 编辑后的新发散仍被旧 passes 压制（len(passes)>=2 直接判
+    # exhausted 而不尝试；仅某轮计划为空才清账）。
+    if str(ledger.get("fingerprint") or "") != obs_fingerprint:
+        ledger["passes"] = []
     ledger["fingerprint"] = obs_fingerprint
     passes = [
         p for p in (ledger.get("passes") or [])[:_MAX_LEDGER_PASSES] if isinstance(p, dict)
@@ -561,6 +567,12 @@ async def run_runtime_repair(
             for ly in (mapspec.get("layers") or [])
             if isinstance(ly, dict)
         }
+        # 轮内 CAS 基线：reassert 靠 revision 前进触发 reconcile（:14-15）——
+        # 逐层/逐组件提交必须把基线推进到上次成功提交的 revision。复用同一
+        # current_revision 会让第 2 个起全部 superseded，且原代码无 else
+        # 分支 → 静默丢弃（配合 ledger 按指纹累计上限 2，第 3 个起的问题层
+        # 永远修不到）。
+        expected = int(current_revision or 0)
         if plan.reassert_layers:
             # reassert = 内容保持的整层重提交（UpsertLayerIntent 透传既有
             # user-wins 守卫：durable presentation 继承 + owner 印记）。
@@ -579,12 +591,14 @@ async def run_runtime_repair(
                         UpsertLayerIntent(layer=dict(layer)),
                         origin="agent",
                         actor="runtime_repair",
-                        expected_revision=current_revision,
+                        expected_revision=expected,
                     )
                     if not getattr(res, "is_error", False) and not getattr(
                         res, "superseded", False
                     ):
                         applied.append(f"{REPAIR_REASSERT_LAYER}:{lid}")
+                        expected = int(
+                            getattr(res, "mutation_revision", 0) or 0) or expected
                 except Exception:  # noqa: BLE001 — 单项失败留给下一轮披露
                     logger.warning(
                         "[RuntimeRepair] reassert layer failed id=%s", lid
@@ -599,13 +613,15 @@ async def run_runtime_repair(
             ]
             batch = await apply_gis_mutation_batch(
                 session_id, intents, origin="agent", actor="runtime_repair",
-                expected_revision=current_revision,
+                expected_revision=expected,
             )
             if batch.committed and any(o.status == "applied" for o in batch.outcomes):
                 applied.extend(
                     f"{REPAIR_RESTORE_VISIBILITY}:{lid}"
                     for lid in plan.visibility_restores[:8]
                 )
+                expected = int(
+                    getattr(batch, "mutation_revision", 0) or 0) or expected
         for repair_type in plan.reassert_components[:4]:
             from app.services.mapspec_store import mapspec_store
 
@@ -613,7 +629,7 @@ async def run_runtime_repair(
             try:
                 res = await mapspec_store.patch_component(
                     session_id,
-                    expected_revision=current_revision,
+                    expected_revision=expected,
                     component_id=default_id,
                     component_type=repair_type,
                     enabled=True,
@@ -622,6 +638,7 @@ async def run_runtime_repair(
                 )
                 if res.get("success"):
                     applied.append(f"{REPAIR_REASSERT_COMPONENT}:{repair_type}")
+                    expected = int(res.get("mutation_revision") or 0) or expected
             except Exception:  # noqa: BLE001 — 单项失败留给下一轮披露
                 logger.warning(
                     "[RuntimeRepair] reassert_component failed type=%s", repair_type

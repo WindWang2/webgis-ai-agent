@@ -205,7 +205,8 @@ def _walk_repo_bounded(root: Path) -> List[str]:
                 ['git', 'ls-files', '--cached', '--others', '--exclude-standard', '-z'],
                 cwd=root, capture_output=True, check=True, timeout=10,
             )
-        except (FileNotFoundError, subprocess.CalledProcessError):
+        except (FileNotFoundError, subprocess.CalledProcessError,
+                subprocess.TimeoutExpired):
             source_files = None
         else:
             source_files = sorted({

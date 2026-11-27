@@ -165,6 +165,38 @@ def test_policy_upsert_requires_admin():
     assert bad.status_code == 400, "observe-only 类拒绝删除动作"
 
 
+def test_policy_upsert_long_name_is_idempotent():
+    """>64 字符策略名（存储截断为 name[:64]）：二次 PUT 必须命中同一行并
+    更新它 —— 查询键若用完整 name 则永远查不到既有行：重复插入撞唯一索引
+    uq_lifecycle_policy_org_name → 500，且 list_policies 按 name 折叠后
+    生效行不确定。"""
+    from app.models.db_model import Organization
+
+    with SessionLocal() as db:
+        if db.get(Organization, 7) is None:
+            db.add(Organization(id=7, name="lc", slug="lc-org-7"))
+            db.flush()
+        db.get(User, "lc-admin").org_id = 7
+        db.commit()
+
+    long_name = "org.policy." + "x" * 80  # 91 chars > String(64)
+    body = {"kind": "cog_output", "action": "stage_delete",
+            "enabled": True, "staging_hours": 0}
+    first = client.put(f"/api/v1/data-lifecycle/policies/{long_name}",
+                       json=body, headers=_token("admin", "lc-admin"))
+    assert first.status_code == 200, first.text
+    second = client.put(f"/api/v1/data-lifecycle/policies/{long_name}",
+                        json={**body, "action": "observe", "enabled": False},
+                        headers=_token("admin", "lc-admin"))
+    assert second.status_code == 200, second.text
+
+    with SessionLocal() as db:
+        rows = db.query(LifecyclePolicy).filter_by(org_id=7).all()
+        assert len(rows) == 1, f"同一策略名只允许一行，得到 {len(rows)}"
+        assert rows[0].name == long_name[:64]
+        assert rows[0].action == "observe" and rows[0].enabled is False
+
+
 def test_gc_loop_via_api(roots):
     _enable_cog_policy_admin()
     from app.models.db_model import Conversation

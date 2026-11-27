@@ -60,6 +60,25 @@ def test_geographic_crs_metric_buffer_not_silent() -> None:
     assert any("非静默" in d for d in report.disclosures)
 
 
+def test_crs_scale_unknown_when_all_referenced_algorithms_missing(monkeypatch):
+    """方法引用的算法全部未注册 → crs_scale unknown（不得 fail-open 成 pass）。"""
+    from types import SimpleNamespace
+
+    import app.lib.gis.algorithm_registry as ar
+    import app.lib.gis.methodology.qualification as q
+
+    class _EmptyRegistry:
+        def get(self, _aid):
+            return None
+
+    monkeypatch.setattr(ar, "get_algorithm_registry", lambda: _EmptyRegistry())
+    state = q._adjudicate_crs_scale(
+        SimpleNamespace(algorithm_ids=["ghost.algorithm"]),
+        {"crs": "EPSG:4326"})
+    assert state.state == "unknown"
+    assert state.evidence["reason"] == "algorithm_refs_unresolved"
+
+
 def test_tiny_sample_hotspot_rejected() -> None:
     """极少样本不得声称显著热点（V4 min_sample_size=20 同源）。"""
     report = qualify_method("stats.local_cluster", QualificationFacts.from_profile(

@@ -269,10 +269,14 @@ export function RasterSamplingPanel({ sessionId, ownerToken }: PanelProps) {
       if (epoch !== sessionEpochRef.current) return null;
       setStatusData(res);
       return res;
-    } catch {
+    } catch (err) {
+      // 评审 P2：这里曾裸 catch 吞掉一切错误 —— 轮询腿 st 恒 null，终态永不
+      // 识别、interval 不清、executing 永久卡真，且用户看不到任何报错。
+      if (epoch !== sessionEpochRef.current) return null;
+      addToast(`${t('errorPrefix')}: ${(err as Error).message.slice(0, 160)}`, 'error');
       return null;
     }
-  }, [sessionId, opts]);
+  }, [sessionId, opts, addToast, t]);
 
   const loadResultsPage = useCallback(async (page: number) => {
     if (!sessionId || !plan) return;
@@ -324,6 +328,12 @@ export function RasterSamplingPanel({ sessionId, ownerToken }: PanelProps) {
               pollRef.current = null;
               setExecuting(false);
               if (jobStatus === 'completed') await loadResultsPage(1);
+            } else if (!st) {
+              // 状态查询失败（refreshStatus 已 toast 披露）—— 停掉轮询并解除
+              // executing，否则每 2.5s 无限打后端且按钮永久卡 loading。
+              if (pollRef.current) clearInterval(pollRef.current);
+              pollRef.current = null;
+              setExecuting(false);
             }
           }, 2500);
         }

@@ -149,6 +149,14 @@ class TestProducerClassification:
         assert merged == {"color": "red", "width": 2, "dash": "solid"}
         assert sorted(filled) == ["dash", "width"]
 
+    def test_ownerless_declared_value_is_not_template_fillable(self):
+        """P3：incumbent 无主（None / 未知分类）但值已声明 → 按 SYSTEM_DEFAULT
+        档裁决，TEMPLATE 不得覆盖（与 SYSTEM_DEFAULT incumbent 行一致）。"""
+        assert can_override("TEMPLATE", None) is False
+        assert can_override("TEMPLATE", "SYSTEM_DEFAULT") is False
+        # REPAIR_AUTOFILL 及更高阶仍可覆盖 system/无主已声明值。
+        assert can_override("REPAIR_AUTOFILL", None) is True
+
 
 @pytest.mark.cartography
 async def test_facade_records_envelope_in_provenance(clean_session):

@@ -244,7 +244,9 @@ def list_snapshots(
             from app.models.db_model import GeoComputeRunEvidence
 
             q = db.query(GeoComputeRunEvidence).filter(
-                GeoComputeRunEvidence.owner_scope == owner_scope
+                # 写侧按列宽截断为 [:40]；读侧同一投影，否则长 owner 域
+                # 永不命中（缓存静默失效）。
+                GeoComputeRunEvidence.owner_scope == owner_scope[:40]
             )
             if exclude_ids:
                 q = q.filter(~GeoComputeRunEvidence.run_id.in_(set(exclude_ids)))
@@ -284,7 +286,7 @@ def load_snapshot(
             )
             if row is None:
                 return None
-            if owner_scope is not None and row.owner_scope != owner_scope:
+            if owner_scope is not None and row.owner_scope != owner_scope[:40]:
                 return None
             return _run_from_snapshot(row.snapshot)
     except Exception:  # noqa: BLE001 - 回放 fail-open
@@ -314,7 +316,7 @@ def load_snapshot_extras(
             )
             if row is None:
                 return {}
-            if owner_scope is not None and row.owner_scope != owner_scope:
+            if owner_scope is not None and row.owner_scope != owner_scope[:40]:
                 return {}
             if not isinstance(row.snapshot, dict):
                 return {}

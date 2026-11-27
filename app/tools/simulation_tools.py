@@ -101,12 +101,29 @@ def run_spatial_simulation_impl(
         )
         work_units = (params_model.grid.width * params_model.grid.height if model_kind == "hydro_diffusion"
                       else len(params_model.edges)) * n_steps
+        async_forced = False
         if work_units > 2_000_000:
+            async_forced = True
+            if not run_async:
+                logger.info(
+                    "[simulation] work_units=%s > 2M：显式 run_async=False "
+                    "已强制转为后台任务（回执带 async_forced 标记）",
+                    work_units,
+                )
             run_async = True
         if run_async:
             envelope = enqueue_simulation(
                 params_model, config_model, session_id=session_id or None,
             )
+            if async_forced:
+                # 显式标识「同步请求被规模阈值强制转异步」：回执是 job
+                # envelope（无 products/conservation），同步调用方据此分流，
+                # 不会把提货券误当成推演结果。
+                envelope = {
+                    **envelope,
+                    "async_forced": True,
+                    "work_units": work_units,
+                }
             return {"success": True, "data": envelope}
 
         from app.services.simulation.api import build_tool_result, run_simulation

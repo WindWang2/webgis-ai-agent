@@ -71,11 +71,6 @@ class ExecuteBody(BaseModel):
     background: bool = True
 
 
-class PageQuery(BaseModel):
-    cursor: int = Field(default=0, ge=0)
-    limit: int = Field(default=50, ge=1, le=200)
-
-
 # ─── 源卡 ──────────────────────────────────────────────────────────────────
 
 @router.post("/sessions/{session_id}/sources/describe", response_model=DataJoinDescribeSourceResponse)

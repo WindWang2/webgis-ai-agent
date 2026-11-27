@@ -79,7 +79,14 @@ BULK_KEYS: tuple[str, ...] = (
 
 def _is_sensitive(key: str) -> bool:
     lowered = key.lower()
-    return any(part in lowered for part in SENSITIVE_KEY_PARTS)
+    matched = [part for part in SENSITIVE_KEY_PARTS if part in lowered]
+    if not matched:
+        return False
+    # 裸 "auth" 子串会误伤 author / authority / coauthor 这类正常键（摘要在
+    # 任务中心静默丢数据）；"auth" 是唯一命中且键里含 "author" 时不算凭据。
+    if matched == ["auth"] and "author" in lowered:
+        return False
+    return True
 
 
 def _is_bulk(key: str) -> bool:
@@ -214,9 +221,10 @@ MAX_DISPATCH_BYTES = 4_096
 
 
 def _contains_sensitive_key(value: Any, depth: int = 0) -> bool:
-    """递归判断结构里是否出现敏感键名。"""
+    """递归判断结构里是否出现敏感键名。超过深度上限时**失败关闭**（视为敏感）。"""
     if depth > MAX_DEPTH:
-        return False
+        # 超深结构的键无法逐一核查：按敏感处理，宁可丢掉重跑描述符也不落库凭据。
+        return True
     if isinstance(value, dict):
         for key, val in value.items():
             if _is_sensitive(str(key)):

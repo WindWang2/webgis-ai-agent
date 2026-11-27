@@ -448,3 +448,51 @@ def test_extract_contours_tool(tmp_path, terrain_tools):
     res2 = call(str(path), n_levels=4)
     assert res2["feature_count"] >= 1
     assert res2["meta"]["levels_policy"] == "n_levels equal-interval"
+
+
+def test_extract_contours_json_levels_length_checked_after_parse(tmp_path, terrain_tools):
+    """JSON 文本 levels 的上限校验必须按解析后的水平个数，而非字符数。"""
+    ramp = np.tile(np.arange(10, dtype=float), (10, 1))
+    tf = (10.0, 0.0, 0.0, 0.0, -10.0, 100.0)
+    path = tmp_path / "ramp_json_levels.tif"
+    _write_tif(path, ramp, tf, crs="EPSG:32650")
+    call = terrain_tools._tools["extract_contours"]
+
+    # 6 个水平、带空白的 JSON 文本 >30 字符：合法，不得按字符数误拒。
+    json_levels = "[ 0.5, 1.5, 2.5, 3.5, 4.5, 5.5 ]"
+    assert len(json_levels) > 30
+    res = call(str(path), levels=json_levels)
+    assert res["success"] is True
+    assert res["feature_count"] == 6
+    assert res["scientific_evidence"]["parameters_applied"]["levels"] == [
+        0.5, 1.5, 2.5, 3.5, 4.5, 5.5,
+    ]
+    assert res["scientific_evidence"]["parameters_applied"]["explicit_levels"] is True
+
+    # 31 个水平（逗号文本）超限：报错里的数字必须是 31（水平个数），不是字符数。
+    too_many = ",".join(str(i) for i in range(31))
+    with pytest.raises(ValueError, match=r"31 > 30"):
+        call(str(path), levels=too_many)
+
+
+def test_extract_contours_feature_count_is_untrimmed_total(tmp_path, terrain_tools, monkeypatch):
+    """trim_features 截断 contours 时 feature_count 仍报真实总数并披露截断。"""
+    from app.tools import _utils as tool_utils
+    from app.tools import terrain_analysis as ta
+
+    ramp = np.tile(np.arange(10, dtype=float), (10, 1))
+    tf = (10.0, 0.0, 0.0, 0.0, -10.0, 100.0)
+    path = tmp_path / "ramp_trim.tif"
+    _write_tif(path, ramp, tf, crs="EPSG:32650")
+    call = terrain_tools._tools["extract_contours"]
+
+    # 强制 1 条上限以触发截断，无需构造 >5000 条等值线的大栅格。
+    monkeypatch.setattr(
+        ta,
+        "trim_features",
+        lambda fc: tool_utils.trim_features(fc, max_features=1),
+    )
+    res = call(str(path), levels=[2.0, 5.0])
+    assert res["feature_count"] == 2
+    assert len(res["contours"]["features"]) == 1
+    assert res["_features_trimmed"] == {"original_count": 2, "kept_count": 1}

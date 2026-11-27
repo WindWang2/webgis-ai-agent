@@ -76,7 +76,13 @@ async def seed(session_id: str, frame_kind: str) -> dict:
     out = await _seed_intents(session_id, frame_kind)
     engine = MapSpecLifecycleEngine()
     spec = await engine.store.get_mapspec(session_id)
-    out["mapspec_fingerprint"] = cartographic_fingerprint(spec if isinstance(spec, dict) else {})
+    if not isinstance(spec, dict):
+        # 静默按 {} 算指纹只会让 POST 指纹门收到空投影指纹（无意义 mismatch），
+        # 掩盖读回路径本身的类型损坏 —— 必须显式失败。
+        raise TypeError(
+            f"get_mapspec returned {type(spec).__name__}, expected a MapSpec dict"
+        )
+    out["mapspec_fingerprint"] = cartographic_fingerprint(spec)
     return out
 
 

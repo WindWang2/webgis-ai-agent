@@ -39,6 +39,15 @@ def test_env_fingerprint_deterministic():
     assert collect_env_fingerprint() == collect_env_fingerprint()
 
 
+def test_budgets_digest_independent_of_cwd(tmp_path, monkeypatch):
+    """config 路径按仓库根解析：非 repo-root CWD 不得退化成 'absent'。"""
+    from app.lib.harness.replay import drift
+
+    drift._BUDGETS_MEMO.clear()
+    monkeypatch.chdir(tmp_path)
+    assert drift._budgets_digest() != "absent"
+
+
 def test_env_fingerprint_reflects_flag_overrides(monkeypatch):
     monkeypatch.setenv("GIS_ANALYSIS_REUSE", "0")
     monkeypatch.setenv("HARNESS_REPLAY_RECORD", "1")

@@ -116,15 +116,19 @@ def build_evidence_corpus() -> List[GISBenchmarkCase]:
     cases.sort(key=lambda c: c.id)
     # 构建期守卫：id 唯一 / 全部声明证据契约 / 七情境全覆盖
     ids = [c.id for c in cases]
-    assert len(ids) == len(set(ids)), f"duplicate evidence case ids: {ids}"
+    if not (len(ids) == len(set(ids))):
+        raise ValueError(f"duplicate evidence case ids: {ids}")
     all_scenarios = {
         ev.scenario for c in cases for ev in c.expected_evidence
     }
-    assert all_scenarios >= {
+    if not all_scenarios >= {
         "supported", "unsupported", "missing_evidence", "cross_tenant",
         "stale", "stale_propagation", "contradicted",
-    }, f"evidence scenario coverage hole: {all_scenarios}"
+    }:
+        raise ValueError(f"evidence scenario coverage hole: {all_scenarios}")
     for c in cases:
-        assert c.expected_evidence, f"{c.id} missing expected_evidence"
-        assert c.plan_only
+        if not c.expected_evidence:
+            raise ValueError(f"{c.id} missing expected_evidence")
+        if not c.plan_only:
+            raise ValueError(f"{c.id} must be plan_only")
     return cases

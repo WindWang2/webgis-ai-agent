@@ -84,6 +84,18 @@ describe("AC-06 P2: 密度自适应切换", () => {
     expect(snap.counts["density-switch"] ?? 0).toBe(0);
   });
 
+  it("簇计数图例按 LegendDef 契约输出 items（不再用 entries）", () => {
+    const spec = pointSpec(6000);
+    (spec.sources.pts as any).cluster = { radius: 30, maxzoom: 12 };
+    const result = compileMapSpec(spec);
+    const legend = result.legend.find((l) => l.layerId === "L");
+    expect(legend).toBeDefined();
+    expect(legend!.title).toBe("L");
+    expect(legend!.items).toHaveLength(4);
+    expect(legend!.items[0]).toEqual({ color: "#9ecae1", label: "1–9", type: "point" });
+    expect((legend as unknown as { entries?: unknown }).entries).toBeUndefined();
+  });
+
   it("稀疏点层保持 native + presentation-decision evidence", () => {
     const result = compileMapSpec(pointSpec(500));
     expect((result.style.sources.pts as Record<string, unknown>).cluster).toBeUndefined();

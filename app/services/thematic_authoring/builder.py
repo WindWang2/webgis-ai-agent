@@ -161,15 +161,19 @@ def size_style_method(ch: SizeChannel) -> Dict[str, Any]:
 def size_for_value(value: float, ch: SizeChannel) -> Optional[float]:
     """图例/预览样本的同一尺寸函数（与 paint 表达式逐点一致）。
 
-    值域外钳到端点（与 interpolate 端点钳制一致）；非法输入返回 None。
+    值域外钳到端点（与 interpolate 端点钳制一致）；非法输入（非有限值、
+    退化/非有限值域）返回 None。
     """
     if not math.isfinite(value):
         return None
+    span = ch.max_value - ch.min_value
+    if not math.isfinite(span) or span <= 0:
+        return None
     if ch.scaling == "area_sqrt":
-        area = ch.min_size ** 2 + (value - ch.min_value) * (ch.max_size ** 2 - ch.min_size ** 2) / (ch.max_value - ch.min_value)
+        area = ch.min_size ** 2 + (value - ch.min_value) * (ch.max_size ** 2 - ch.min_size ** 2) / span
         area = min(max(area, ch.min_size ** 2), ch.max_size ** 2)
         return math.sqrt(area)
-    t = (value - ch.min_value) / (ch.max_value - ch.min_value)
+    t = (value - ch.min_value) / span
     t = min(max(t, 0.0), 1.0)
     return ch.min_size + t * (ch.max_size - ch.min_size)
 

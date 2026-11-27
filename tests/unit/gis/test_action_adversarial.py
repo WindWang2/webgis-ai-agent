@@ -109,6 +109,62 @@ class TestP0RealRegistration:
         assert result["code"] == "INVALID_ACTION"
 
 
+class TestP3ToolResponseContracts:
+    async def test_unknown_action_field_is_rejected(self):
+        from app.tools.gis_action_tools import register_gis_action_tools
+        from app.tools.registry import ToolRegistry
+
+        reg = ToolRegistry()
+        register_gis_action_tools(reg)
+        result = await reg.dispatch("webgis_action_plan", {
+            "operation": "dry_run",
+            "actions": [{"kind": "inspect", "tool": "webgis_action_plan",
+                         "param": {"p": 1}}],
+        })
+        assert result["success"] is False
+        assert result["code"] == "INVALID_ACTION"
+        assert "param" in result["message"]
+
+    async def test_truncated_lists_are_disclosed_with_returned_counts(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from app.services.gis_action.compiler import ActionFinding, ResourceSummary
+        from app.services.gis_action.service import gis_action_service
+        from app.tools.gis_action_tools import register_gis_action_tools
+        from app.tools.registry import ToolRegistry
+
+        compilation = SimpleNamespace(
+            blocked=False,
+            compile_id="gacc-test",
+            status="compiled",
+            steps=[SimpleNamespace(
+                step=i, kind="inspect", tool="webgis_action_plan",
+                client_action_id=f"gac.test.{i:02d}.inspect",
+                side_effect="pure", failure="fail_closed", wave=0,
+            ) for i in range(1, 18)],
+            findings=[ActionFinding(code="TEST_FINDING", detail=str(i))
+                      for i in range(9)],
+            reason_codes=[f"TEST_REASON_{i}" for i in range(9)],
+            resource_summary=ResourceSummary(actions_total=17),
+        )
+        monkeypatch.setattr(
+            gis_action_service, "compile", lambda *args, **kwargs: compilation)
+        reg = ToolRegistry()
+        register_gis_action_tools(reg)
+        result = await reg.dispatch("webgis_action_plan", {
+            "operation": "dry_run",
+            "actions": [{"kind": "inspect", "tool": "webgis_action_plan"}],
+        })
+        assert len(result["steps"]) == 16
+        assert len(result["findings"]) == 8
+        assert len(result["reason_codes"]) == 8
+        assert "16 步可执行" in result["summary"]
+        assert "8 条 findings" in result["summary"]
+        assert "steps 16/17" in result["summary"]
+        assert "findings 8/9" in result["summary"]
+        assert "reason_codes 8/9" in result["summary"]
+
+
 class TestP1KClamp:
     async def test_oversized_k_skipped_not_computed(self):
         """k=999999 → DERIVE_SKIPPED（修复前：numpy 3 秒阻塞 + 百万 breaks）。"""

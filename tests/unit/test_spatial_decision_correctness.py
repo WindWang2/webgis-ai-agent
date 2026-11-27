@@ -240,3 +240,216 @@ async def test_comparison_report_unsimulated_metrics_renders_placeholder():
     # And the report still names both scenarios in the matrix header.
     assert "Scenario A" in report
     assert "Scenario B" in report
+
+
+def test_none_baseline_without_missing_flag_is_not_simulated():
+    """A model-allowed baseline=None/missing_baseline=False must not crash.
+
+    Previously the facade trusted ``missing_baseline`` alone and passed
+    ``baseline=None`` into ``evaluate_metric``, where ``baseline * (1 + x)``
+    raised TypeError.
+    """
+    me = _evaluator()
+    baseline_metrics = {
+        "housing_price": MetricDeltaV2(
+            metric_key="housing_price",
+            metric_name="Housing Price",
+            baseline=None,
+            missing_baseline=False,
+        ),
+    }
+    metrics, assumptions, _, _ = me.evaluate(
+        scenario_type="subway",
+        baseline_metrics=baseline_metrics,
+        rules=[],
+        parameters={},
+        target_area=_target_area(),
+        evidence_chain=[],
+    )
+    hp = metrics["housing_price"]
+    assert hp.missing_baseline is True
+    assert hp.baseline is None
+    assert hp.simulated is None
+    assert hp.delta_pct is None
+    assert hp.evidence_gap_note is not None
+    assert assumptions
+
+
+def test_decision_report_zero_baseline_without_missing_flag_renders():
+    """A real zero baseline yields delta_pct=None; the report must not crash."""
+    from app.services.spatial_decision.models import (
+        SpatialDecisionResult,
+        ScenarioSpec,
+    )
+    from app.services.spatial_decision.report_integration import (
+        generate_decision_report_markdown,
+    )
+
+    result = SpatialDecisionResult(
+        decision_id="dec_zero",
+        scenario=ScenarioSpec(
+            scenario_id="A",
+            scenario_type="custom",
+            name="Zero baseline",
+            description="d",
+            target_area=_target_area(),
+        ),
+        target_area=_target_area(),
+        metrics={
+            "noise": MetricDeltaV2(
+                metric_key="noise",
+                metric_name="Noise",
+                baseline=0.0,
+                simulated=5.0,
+                delta_abs=5.0,
+                delta_pct=None,
+                unit="dB",
+                missing_baseline=False,
+            ),
+        },
+        spatial_impacts=[],
+        simulation_geojson={"type": "FeatureCollection", "features": []},
+        simulation_ref_id="",
+        confidence=0.8,
+        uncertainty_description="test",
+    )
+
+    report = generate_decision_report_markdown(result)
+    assert "| Noise (dB) | 0.00 | 5.00 |" in report
+    assert "—" in report
+
+
+def test_comparison_report_tolerates_unknown_affected_area_scenario_id():
+    """An extra scenario_id in affected_area_comparison must not StopIteration."""
+    from app.services.spatial_decision.models import (
+        ScenarioComparisonResult,
+        SpatialDecisionResult,
+        ScenarioSpec,
+    )
+    from app.services.spatial_decision.report_integration import (
+        generate_comparison_report_markdown,
+    )
+
+    scenario = SpatialDecisionResult(
+        decision_id="A",
+        scenario=ScenarioSpec(
+            scenario_id="A",
+            scenario_type="subway",
+            name="Scenario A",
+            description="d",
+            target_area=_target_area(),
+        ),
+        target_area=_target_area(),
+        spatial_impacts=[],
+        simulation_geojson={"type": "FeatureCollection", "features": []},
+        simulation_ref_id="",
+        confidence=0.8,
+        uncertainty_description="test",
+    )
+    comparison = ScenarioComparisonResult(
+        comparison_id="cmp",
+        scenarios=[scenario],
+        metric_matrix={},
+        affected_area_comparison={"A": 1.5, "ghost": 2.0},
+        recommended_scenario_id="A",
+        recommendation_rationale="test",
+        comparison_geojson={"type": "FeatureCollection", "features": []},
+        comparison_ref_id="",
+    )
+
+    report = generate_comparison_report_markdown(comparison)
+    assert "Scenario A" in report
+    assert "ghost" in report
+    assert "2.00" in report
+
+
+@pytest.mark.asyncio
+async def test_trade_offs_skip_metrics_without_declared_direction():
+    """P3: metrics excluded from scoring must not be narrated as best/worst."""
+    from app.services.spatial_decision.comparison_engine import ScenarioComparisonEngine
+    from app.services.spatial_decision.models import (
+        SpatialDecisionResult,
+        ScenarioSpec,
+    )
+
+    def _make_result(sid: str, value: float):
+        return SpatialDecisionResult(
+            decision_id=sid,
+            scenario=ScenarioSpec(
+                scenario_id=sid,
+                scenario_type="custom",
+                name=f"Scenario {sid}",
+                description="d",
+                target_area=_target_area(),
+            ),
+            target_area=_target_area(),
+            metrics={
+                "unscored_metric": MetricDeltaV2(
+                    metric_key="unscored_metric",
+                    metric_name="Unscored",
+                    baseline=100.0,
+                    simulated=value,
+                    delta_abs=value - 100.0,
+                    delta_pct=(value - 100.0),
+                    missing_baseline=False,
+                ),
+            },
+            spatial_impacts=[],
+            simulation_geojson={"type": "FeatureCollection", "features": []},
+            simulation_ref_id="",
+            confidence=0.8,
+            uncertainty_description="test",
+        )
+
+    cmp = ScenarioComparisonEngine()
+    result = await cmp.compare_scenarios(
+        results=[_make_result("A", 100.0), _make_result("B", 200.0)]
+    )
+
+    assert result.trade_offs == []
+
+
+def test_comparison_report_missing_scenario_value_renders_placeholder_not_zero():
+    """P3: a scenario missing from a metric row is missing data, not 0.00."""
+    from app.services.spatial_decision.models import (
+        ScenarioComparisonResult,
+        SpatialDecisionResult,
+        ScenarioSpec,
+    )
+    from app.services.spatial_decision.report_integration import (
+        generate_comparison_report_markdown,
+    )
+
+    def _scenario(sid: str):
+        return SpatialDecisionResult(
+            decision_id=sid,
+            scenario=ScenarioSpec(
+                scenario_id=sid,
+                scenario_type="custom",
+                name=f"Scenario {sid}",
+                description="d",
+                target_area=_target_area(),
+            ),
+            target_area=_target_area(),
+            spatial_impacts=[],
+            simulation_geojson={"type": "FeatureCollection", "features": []},
+            simulation_ref_id="",
+            confidence=0.8,
+            uncertainty_description="test",
+        )
+
+    comparison = ScenarioComparisonResult(
+        comparison_id="cmp_missing_cell",
+        scenarios=[_scenario("A"), _scenario("B")],
+        metric_matrix={"price": {"A": 123.0}},
+        affected_area_comparison={"A": 1.0, "B": 2.0},
+        recommended_scenario_id="A",
+        recommendation_rationale="test",
+        comparison_geojson={"type": "FeatureCollection", "features": []},
+        comparison_ref_id="",
+    )
+
+    report = generate_comparison_report_markdown(comparison)
+    row = next(line for line in report.splitlines() if line.startswith("| price |"))
+    assert row.count("—") == 1
+    assert "0.00" not in row

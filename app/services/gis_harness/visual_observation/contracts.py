@@ -104,7 +104,7 @@ class VisualObservationInput:
 
     def to_snapshot(self) -> Dict[str, Any]:
         """seam 传输形状（有界、JSON 化、ref-only；键面白名单锁定）。"""
-        return {
+        snapshot = {
             "trigger": _clip(self.trigger, 32),
             "session_id": _clip(self.session_id, 64),
             "mapspec_revision": int(self.mapspec_revision),
@@ -122,6 +122,9 @@ class VisualObservationInput:
             ],
             "screenshot": self.screenshot.to_dict() if self.screenshot else None,
         }
+        # 白名单在出口真正生效（注释承诺的「可执行形态」）：任何未来新增键
+        # 未登记即被剥离，而不是靠维护者自觉。
+        return {k: v for k, v in snapshot.items() if k in _SNAPSHOT_KEYS}
 
     @classmethod
     def from_snapshot(cls, raw: Any) -> Optional["VisualObservationInput"]:

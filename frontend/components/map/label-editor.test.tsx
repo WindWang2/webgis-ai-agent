@@ -18,8 +18,10 @@ const commitLabelAuthoring = vi.fn(async (_layerId: string, _ops: LabelAuthoring
 vi.mock('@/lib/mapspec/user-mutation', () => ({
   commitLabelAuthoring: (...args: [string, LabelAuthoringOp[]]) => commitLabelAuthoring(...args),
 }));
-vi.mock('@/lib/mapspec/session-cursor', () => ({
-  getCommittedMapSpec: () => ({
+// committed spec 可变：提交成功后组件会重读 override 基准（P2-12 回归需要
+// 模拟 applyCommittedMapSpec 的 spec 更新）。
+const committedSpecMock = vi.hoisted(() => ({
+  doc: {
     layers: [{
       id: 'schools',
       label: {
@@ -27,7 +29,10 @@ vi.mock('@/lib/mapspec/session-cursor', () => ({
         authoring: { overrides: [{ featureId: 's1', pinned: true, offset: { dx: 1, dy: 2 } }] },
       },
     }],
-  }),
+  } as { layers: Array<{ id: string; label?: { field?: string; size?: number; authoring?: { overrides?: Array<Record<string, unknown>> } } }> },
+}));
+vi.mock('@/lib/mapspec/session-cursor', () => ({
+  getCommittedMapSpec: () => committedSpecMock.doc,
 }));
 vi.mock('@/lib/workbench/undo', () => ({
   recordCommand: vi.fn(() => 'cmd-1'),
@@ -257,5 +262,70 @@ describe('LabelEditor R1 review fixes', () => {
     });
     const [, ops] = commitLabelAuthoring.mock.calls[0];
     expect(ops[0].set?.offset).toEqual({ dx: 0.75, dy: 0 });
+  });
+
+  it('P2-12：拖动提交后 Enter 微调以新 offset 为基准（override 刷新，不回退拖动成果）', async () => {
+    const { ref, handlers } = makeMapRef();
+    act(() => useHudStore.getState().setActiveMapTool('edit_labels'));
+    render(<LabelEditor mapRef={ref} />);
+    const down = Array.from(handlers.get('mousedown') ?? [])[0] as never as (e: unknown) => void;
+    const move = Array.from(handlers.get('mousemove') ?? [])[0] as never as (e: unknown) => void;
+    const up = Array.from(handlers.get('mouseup') ?? [])[0] as never as (e: unknown) => void;
+    act(() => down({ point: { x: 0, y: 0 }, lngLat: { lng: 116, lat: 39 } }));
+    act(() => move({ point: { x: 60, y: 40 } }));
+    // committed spec 随提交更新（applyCommittedMapSpec 在 commitLabelAuthoring
+    // resolve 前落地）：offset = (6, 5.33)。先于 up() 写入，模拟真实时序。
+    committedSpecMock.doc.layers[0].label!.authoring!.overrides = [
+      { featureId: 's1', pinned: true, offset: { dx: 6, dy: 5.33 } },
+    ];
+    await act(async () => { up({}); });
+    expect(commitLabelAuthoring).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    });
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    expect(commitLabelAuthoring).toHaveBeenCalledTimes(2);
+    const [, ops] = commitLabelAuthoring.mock.calls[1];
+    // 修复前：基准仍是拖动前的 (1,2) → (1.25, 5.33)，拖动成果被静默回退。
+    expect(ops[0].set?.offset).toEqual({ dx: 6.25, dy: 5.33 });
+    committedSpecMock.doc.layers[0].label!.authoring!.overrides = [
+      { featureId: 's1', pinned: true, offset: { dx: 1, dy: 2 } },
+    ];
+  });
+
+  it('P2-13：文字输入框内的方向键/Enter 不触发窗口微调（输入面不劫键、不双提交）', async () => {
+    const { ref, handlers, map } = makeMapRef();
+    map.queryRenderedFeatures = () => [{
+      layer: { id: 'schools-label' },
+      id: 's2',
+      properties: { name: '第二小学' },
+    }];
+    act(() => useHudStore.getState().setActiveMapTool('edit_labels'));
+    render(<LabelEditor mapRef={ref} />);
+    const down = Array.from(handlers.get('mousedown') ?? [])[0] as never as (e: unknown) => void;
+    act(() => down({ point: { x: 0, y: 0 }, lngLat: { lng: 116, lat: 39 } }));
+    const input = await screen.findByTestId('label-editor-text-input');
+    await act(async () => {
+      fireEvent.change(input, { target: { value: '市重点一小' } });
+    });
+    // 先在窗口积累一次微调：若 Enter 未跳过输入面，将与文字提交双发。
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    });
+    expect(commitLabelAuthoring).not.toHaveBeenCalled();
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'ArrowLeft' }); // 输入框内方向键：归光标，不微调
+    });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' }); // 输入框内 Enter：只提交文字
+    });
+    expect(commitLabelAuthoring).toHaveBeenCalledTimes(1);
+    const [layerId, ops] = commitLabelAuthoring.mock.calls[0];
+    expect(layerId).toBe('schools');
+    expect(ops).toEqual([
+      { featureId: 's2', op: 'set', set: { text: '市重点一小' } },
+    ]);
   });
 });

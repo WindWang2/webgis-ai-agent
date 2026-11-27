@@ -97,7 +97,11 @@ def terrain_owner_binding(owner_token: object | None) -> str:
     from app.core.owner_tokens import owner_token_digest
 
     try:
-        return owner_token_digest(str(owner_token))
+        # ``str()`` 会把 DB 加载的 OwnerTokenDigest 降级为普通 str，导致
+        # owner_token_digest 对其二次哈希 —— 保留子类让 issue/verify 一致。
+        return owner_token_digest(
+            owner_token if isinstance(owner_token, str) else str(owner_token)
+        )
     except UnicodeError:
         return ""
 

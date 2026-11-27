@@ -4,6 +4,8 @@
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from app.lib.gis.execution_catalog import (
@@ -266,6 +268,75 @@ def test_reconcile_tolerates_non_manifest_shape():
     issues = reconcile_with_manifest(catalog, object())
     assert len(issues) == 1
     assert issues[0].code == "catalog_manifest_id_mismatch"
+
+
+def test_reconcile_recipe_fingerprint_lookup_failure_never_raises(monkeypatch):
+    """对账器绝不 raise：live registry 查找失败只跳过该条。"""
+    import app.services.gis_harness.recipes as recipes_mod
+
+    def _boom():
+        raise RuntimeError("registry unavailable")
+
+    monkeypatch.setattr(recipes_mod, "get_recipe_registry", _boom)
+    catalog = _catalog(_entry("recipe", "r1", version="1.0", status="stable"))
+
+    class FakeManifest:
+        capabilities = {}
+        algorithms = {}
+        tools = {}
+        recipes = {"r1": {"content_fingerprint": "deadbeef"}}
+
+    assert reconcile_with_manifest(catalog, FakeManifest()) == []
+
+
+def test_algorithm_superseded_by_uses_declared_fallback_order():
+    """多 fallback 弃用算法：canonical 后继 = 声明序首项（非字母序）。"""
+    from app.lib.gis.execution_catalog import _algorithm_entry
+
+    algo = SimpleNamespace(
+        id="algo.deprecated", name="Deprecated", capabilities=["cap_x"],
+        output_artifact_type="stats_table",
+        fallback_algorithms=["z_target", "a_target"],
+        scientific_status="DEPRECATED",
+    )
+    entry = _algorithm_entry(algo, {})
+    assert entry.fallback_targets == ("a_target", "z_target")
+    assert entry.superseded_by == "z_target"
+
+
+def test_tool_projection_failure_keeps_other_entries(monkeypatch):
+    """单条 tool descriptor 投影失败 → 其余条目保留 + degraded 披露。"""
+    from app.lib.gis.execution_catalog import compile_execution_catalog
+
+    class FakeToolRegistry:
+        def descriptors(self):
+            return {
+                "good_tool": SimpleNamespace(name="good_tool"),
+                "bad_tool": object(),  # 无 .name → 投影抛错
+            }
+
+    catalog = compile_execution_catalog(tool_registry=FakeToolRegistry())
+    assert catalog.get("tool", "good_tool") is not None
+    assert catalog.get("tool", "bad_tool") is None
+    assert "tools" in catalog.degraded_sources
+
+
+def test_degraded_catalog_is_cached(monkeypatch):
+    """degraded 快照同样入单例缓存，避免热路径每次全量重编译。"""
+    import app.lib.gis.execution_catalog as ec
+
+    calls = []
+
+    def _compile():
+        calls.append(1)
+        return ExecutionCatalog(degraded_sources=["tools"])
+
+    monkeypatch.setattr(ec, "compile_execution_catalog", _compile)
+    monkeypatch.setattr(ec, "_cached_catalog", None)
+    first = ec.get_execution_catalog()
+    second = ec.get_execution_catalog()
+    assert first is second is not None
+    assert len(calls) == 1
 
 
 def test_reconcile_with_real_capability_graph_no_missing_nodes():

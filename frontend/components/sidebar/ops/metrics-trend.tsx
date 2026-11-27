@@ -28,6 +28,12 @@ export interface BreakerMark {
   label: string;
 }
 
+/** 标注横向位置钳制在 0..100（防止越界到图外）。 */
+function clampPercent(pct: number): number {
+  if (!Number.isFinite(pct)) return 0;
+  return Math.min(100, Math.max(0, pct));
+}
+
 export function MetricsTrend({
   samples,
   breakerMarks = [],
@@ -74,6 +80,11 @@ export function MetricsTrend({
   }, [windowed, t]);
 
   const latest = windowed[windowed.length - 1];
+  // BreakerMark.index 是全量 samples 的下标；窗口截断后必须换算成窗内偏移，
+  // 否则 index ≥ windowed.length 时 left > 100%，标注跑到图外（评审 P2）。
+  // 窗外的采样本就没画出来 —— 相应标注不渲染（不虚指到边缘）。
+  const windowStart = Math.max(0, samples.length - windowed.length);
+  const visibleMarks = breakerMarks.filter((m) => m.index >= windowStart);
 
   return (
     <OpsCard
@@ -111,14 +122,18 @@ export function MetricsTrend({
               <p className="mb-0.5 text-micro font-medium text-ink-secondary">{chart.title}</p>
               <div className="relative">
                 {/* 断路器跳闸时间带（装饰层，纯底纹 + 底部说明） */}
-                {breakerMarks.length > 0 && (
+                {visibleMarks.length > 0 && (
                   <div aria-hidden className="pointer-events-none absolute inset-0" data-testid="breaker-marks">
-                    {breakerMarks.map((m) => (
+                    {visibleMarks.map((m) => (
                       <div
                         key={m.index}
                         data-testid="breaker-mark"
                         className="absolute inset-y-0 w-1.5 bg-status-critical/20"
-                        style={{ left: `${(m.index / Math.max(1, windowed.length - 1)) * 100}%` }}
+                        style={{
+                          left: `${clampPercent(
+                            ((m.index - windowStart) / Math.max(1, windowed.length - 1)) * 100,
+                          )}%`,
+                        }}
                       />
                     ))}
                   </div>

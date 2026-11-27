@@ -106,6 +106,40 @@ class TestRoundtripClosedLoop:
         assert scenario.turns[0].ops[0].tool == "webgis_layer_upsert"
         assert scenario.decisions[0]["kind"] == DECISION_KIND_PLAN_SELECTION
 
+    def test_receipt_repeat_key_is_first_tool_op(self):
+        """receipt_repeat 的 key 必须是 T4 的重发对象（首个带工具的 op），
+        而不是首个带终态收据的调用。"""
+        chain = GisTraceChain(turn_id="rt-r", session_id="rs-r")
+        chain.record(Stage.TOOL_CALLS, tool="webgis_view_set",
+                     call_id="c1")
+        chain.record(Stage.TOOL_CALLS, tool="webgis_layer_upsert",
+                     call_id="c2")
+        chain.record(Stage.TOOL_RESULTS, tool="webgis_layer_upsert",
+                     status="ok")
+        trace = build_trace(
+            session_id="rs-r", turn_id="rt-r",
+            chain_dict=chain.as_dict(),
+            turn_summary={"outcome": {"outcome": "succeeded"}},
+        ).to_dict()
+        scenario = traces_to_scenario([trace])
+        expect = scenario.turns[0].expect
+        assert expect["receipt_repeat"] == {"c1": "repeated"}
+        assert set(expect["receipt"]) == {"c2"}
+
+    def test_recorded_final_text_carried_as_output_text(self):
+        """录制 final_text 进入 TurnSpec.output_text（重放实际侧文本证据）。"""
+        chain = GisTraceChain(turn_id="rt-t", session_id="rs-t")
+        chain.record(Stage.TOOL_CALLS, tool="webgis_view_set",
+                     call_id="c1")
+        trace = build_trace(
+            session_id="rs-t", turn_id="rt-t",
+            chain_dict=chain.as_dict(),
+            turn_summary={"outcome": {"outcome": "succeeded"}},
+            final_text="已完成制图",
+        ).to_dict()
+        scenario = traces_to_scenario([trace])
+        assert scenario.turns[0].output_text == "已完成制图"
+
     def test_roundtrip_replay_is_deterministic(self):
         """frozen tool output replay + 确定性：同一录制件两次重放同 digest。"""
         trace = _recorded_trace(turn_id="rt-b", session_id="rs-b")
@@ -278,6 +312,39 @@ class TestDriftAndDelta:
         assert registry_drift("abc", "abc") is None
         drift = registry_drift("a" * 64, "b" * 64)
         assert drift is not None and drift["kind"] == "registry_drift"
+
+    def test_rederive_skips_false_removed_for_uncomparable_decisions(
+            self, monkeypatch):
+        """>16 条 / 单条重推导 None → 未参与对比的录制项不得误报 removed。"""
+        import app.lib.harness.replay.drift as drift_mod
+        from app.lib.harness.replay.bench import _drift_attributes
+        from app.lib.harness.replay.replayer import Scenario
+
+        calls = {"n": 0}
+
+        def _rederive(record):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                return None  # 单条重推导失败 → 无 current 对应项
+            return {
+                "decision_id": record["decision_id"],
+                "kind": "capability_resolution",
+                "selected": record["selected"],
+                "alternatives": record.get("alternatives") or [],
+            }
+
+        monkeypatch.setattr(
+            drift_mod, "rederive_capability_decision", _rederive)
+        decisions = [
+            {"decision_id": f"d{i}", "kind": "capability_resolution",
+             "selected": "tool:x", "alternatives": []}
+            for i in range(20)
+        ]
+        attrs = _drift_attributes(
+            Scenario(scenario_id="s-drift", category="recorded",
+                     decisions=decisions),
+            current_registry_digest="")
+        assert "decision_diffs" not in attrs
 
     def test_rederive_and_decision_delta(self):
         """capability_resolution 决策用冻结 inputs 重跑 → 决策级 delta。"""

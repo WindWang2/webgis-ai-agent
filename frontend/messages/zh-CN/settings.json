@@ -104,11 +104,13 @@
     "failed": "连接失败"
   },
   "skills": {
+    "title": "技能中心",
     "uploaded": "已上传并热加载：{name}",
     "subtitle": "Agent 技能管理",
     "uploading": "上传中",
     "uploadFailed": "上传失败",
     "uploadForbidden": "需要管理员权限才能上传技能",
+    "uploadCta": "上传自定义技能",
     "categories": {
       "dataAccess": "数据获取",
       "remoteSensing": "遥感分析",

@@ -69,10 +69,22 @@ export function PreviewModal({ result, title, onClose }: PreviewModalProps) {
   // Copy full JSON payload
   const handleCopyJson = useCallback(() => {
     const rawData = JSON.stringify(result, null, 2);
-    navigator.clipboard.writeText(rawData).then(() => {
-      setJsonCopied(true);
-      setTimeout(() => setJsonCopied(false), 2000);
-    });
+    // 非安全上下文 / 旧浏览器没有 navigator.clipboard（同步 TypeError），
+    // 权限被拒时 promise reject —— 两条路径都要接管，否则产生 unhandled rejection。
+    let task: Promise<void>;
+    try {
+      task = navigator.clipboard.writeText(rawData);
+    } catch {
+      return; // 剪贴板 API 不可用：静默降级
+    }
+    task
+      .then(() => {
+        setJsonCopied(true);
+        setTimeout(() => setJsonCopied(false), 2000);
+      })
+      .catch(() => {
+        // 权限被拒 / 文档失焦：剪贴板不可用，静默降级
+      });
   }, [result]);
 
   // Tab keyboard navigation (WAI-APG tablist)
@@ -88,7 +100,7 @@ export function PreviewModal({ result, title, onClose }: PreviewModalProps) {
       ref={dialogRef}
       role="dialog"
       aria-modal="true"
-      aria-label={t('defaultTitle')}
+      aria-labelledby="preview-modal-title"
       tabIndex={-1}
       className="fixed inset-0 z-50 flex items-center justify-center bg-surface-scrim p-3 sm:p-6"
     >
@@ -101,7 +113,7 @@ export function PreviewModal({ result, title, onClose }: PreviewModalProps) {
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <h3 className="truncate text-title font-bold text-ink" title={displayTitle}>
+                <h3 id="preview-modal-title" className="truncate text-title font-bold text-ink" title={displayTitle}>
                   {displayTitle}
                 </h3>
                 <span className="shrink-0 rounded-pill bg-surface-sunken border border-edge-subtle px-2 py-0.5 font-mono text-micro text-ink-secondary">

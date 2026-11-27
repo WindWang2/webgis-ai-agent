@@ -22,6 +22,7 @@ from app.contracts.modelops import (
 )
 
 import logging
+import re
 import threading
 import time
 import uuid
@@ -114,6 +115,14 @@ MAX_OOM_DOWNSHIFTS = 2
 _RUN_LOCAL: Dict[str, Any] = {}
 #: 单次 run 的 tile 数硬上限（C-1：TileSpec 物化 + 指纹都是有界的）。
 MAX_TILES_PER_RUN = 65536
+#: owner scope **值**白名单（R1-C6：与 registry / embedding_cache / reuse
+#: 同口径）—— 值含 "/" 或 ".." 会拼出 output 根路径之外的目录（穿越）。
+_SCOPE_VALUE_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,128}$")
+#: run_key / run_id 白名单（同 R1-C6 口径）——run_id 进 output 目录名
+#: （``outputs/<scope>/<run_id>``）与重投影产物名
+#: （``reprojected/<run_id>_reprojected.tif``），含 "/" / ".." 即写出
+#: registry_dir 之外（目录穿越）。首字符禁 dots：裸 ".." / "." 也是逃逸。
+_RUN_KEY_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.\-]{0,127}$")
 
 
 def _prior_masks_digest(prompt: Optional[PromptSpec]) -> Optional[str]:
@@ -306,7 +315,23 @@ class InferenceEngine:
     ) -> InferenceResult:
         if set(request.owner_scope) - {"session_id", "project_id"} or len(request.owner_scope) != 1:
             raise ModelOpsError("owner_scope must be exactly one of session_id/project_id")
+        # R1-C6：scope 值白名单在进任何路径拼装之前（output 根 = registry_dir/
+        # outputs/<scope_key>；未校验值含 "/" / ".." 即目录穿越）。
+        for _scope_key, _scope_value in request.owner_scope.items():
+            if not isinstance(_scope_value, str) or not _SCOPE_VALUE_RE.match(_scope_value):
+                raise ModelOpsError(
+                    f"invalid owner scope value for {_scope_key!r} "
+                    "(charset/length whitelist)"
+                )
         run_id = request.run_key or uuid.uuid4().hex[:16]
+        # R1-C6 同口径：run_id 进 output 目录名 / 重投影产物名 —— 未校验的
+        # run_key 含 ".." 会写出 registry_dir 之外（:763 output_dir 与
+        # :1939 重投影产物路径两个拼装点）。
+        if not _RUN_KEY_RE.match(run_id):
+            raise ModelOpsError(
+                "run_key must match ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ "
+                "(path-safe run id)"
+            )
         perf = PerfCounters()
         run_started = time.perf_counter()
         queued_from = time.perf_counter()
@@ -550,7 +575,6 @@ class InferenceEngine:
             source_band_names=profile.band_names,
             expected_bands=per_image_bands,
         )
-        tile_plan = plan_tiles(descriptor, raster_height=meta.height, raster_width=meta.width)
         roi_origin: Optional[Tuple[int, int]] = None
         if request.roi_bbox is not None:
             if task in (TASK_PROMPTABLE_SEGMENTATION, TASK_TEMPORAL_FORECAST,
@@ -560,11 +584,18 @@ class InferenceEngine:
                     "(single-window path); omit roi_bbox or use a tiled task",
                     correction_hint="run promptable/temporal tasks on the full raster",
                 )
+            # ROI 请求直接在 ROI 尺寸上规划 —— 先按全幅物化再裁剪会让
+            # C-1 守门（按 ROI 尺寸估算）失去意义：大栅格 + 小 ROI 即
+            # 物化全幅 TileSpec。
             tile_plan, roi_origin = _clip_plan_to_roi(
                 descriptor,
                 request.roi_bbox,
                 raster_width=meta.width,
                 raster_height=meta.height,
+            )
+        else:
+            tile_plan = plan_tiles(
+                descriptor, raster_height=meta.height, raster_width=meta.width
             )
         perf.chips_total = len(tile_plan.tiles)
         provider_payload = {
@@ -1153,12 +1184,17 @@ class InferenceEngine:
                 from affine import Affine
                 from app.lib.modelops.stitching import _polygonize
 
-                inst_transform = reader.dataset.transform
-                if roi_origin is not None:
-                    inst_transform = inst_transform * Affine.translation(*roi_origin)
-                merged.polygon_geojson = _polygonize(
-                    merged.instance_ids, transform=inst_transform, crs=reader.dataset.crs,
-                )
+                # #1209 纪律：georef 从**打开中**的 reader 取 —— infer 循环的
+                # reader 已随 with 块关闭（此前引用已关闭的 dataset，
+                # polygonize 分支必抛 RasterReaderError）。
+                with RasterReader.open(str(source_path)) as _tpl:
+                    inst_transform = _tpl.dataset.transform
+                    if roi_origin is not None:
+                        inst_transform = inst_transform * Affine.translation(*roi_origin)
+                    merged.polygon_geojson = _polygonize(
+                        merged.instance_ids, transform=inst_transform,
+                        crs=_tpl.dataset.crs,
+                    )
                 poly_path = write_geojson_output(
                     output_dir / "instances.geojson", merged.polygon_geojson
                 )
@@ -2056,10 +2092,21 @@ class InferenceEngine:
             from app.services.modelops.geo_output import publish_geojson_to_postgis
 
             # PostGIS 是增量通道：失败 honest skip（GeoJSON 文件已兜底）。
-            result["class_polygons"]["postgis"] = publish_geojson_to_postgis(
-                feature_collection,
-                table=request.postgis_table,
-            )
+            # 发布在推理**完成之后**调用 —— 任何逃逸异常都会让已跑完的
+            # 整次推理失败（产物已在盘上），故就地兜底为 reason。
+            try:
+                result["class_polygons"]["postgis"] = publish_geojson_to_postgis(
+                    feature_collection,
+                    table=request.postgis_table,
+                )
+            except Exception as exc:  # noqa: BLE001 — 增量通道失败不影响产物
+                logger.warning(
+                    "postgis publish to %s failed: %s", request.postgis_table, exc
+                )
+                result["class_polygons"]["postgis"] = {
+                    "published": False,
+                    "reason": f"postgis publish raised: {exc}",
+                }
         return result
 
     def _publish_raster(
@@ -2174,8 +2221,11 @@ def _process_peak_rss_bytes() -> int:
     """进程峰值 RSS（R2-M8）：POSIX resource / win32 ctypes；失败 = 0。"""
     try:
         import resource
+        import sys
 
-        return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) * 1024
+        rss = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        # ru_maxrss 单位随平台而异：Linux = KiB，macOS = 字节。
+        return rss if sys.platform == "darwin" else rss * 1024
     except Exception:  # noqa: BLE001
         pass
     try:

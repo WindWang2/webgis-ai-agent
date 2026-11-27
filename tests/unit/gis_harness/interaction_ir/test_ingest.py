@@ -250,3 +250,24 @@ async def test_ingest_batch_roundtrip_with_memory_store():
     assert r2["stale"] == 2 and r2["accepted"] == 0
     state = await load_ledger_state(store, "sess-x")
     assert len(state.events) == 2
+
+
+@pytest.mark.asyncio
+async def test_batch_response_tolerates_malformed_persisted_clients():
+    """P3：持久化 clients 含非 dict 条目时 watermarks 投影不得抛错（500）。"""
+    from app.services.gis_harness.interaction_ir.ingest import (
+        CLIENTS_KEY, ingest_interaction_batch,
+    )
+    from app.services.session_data import MemorySessionStore
+
+    store = MemorySessionStore()
+    await store.set_map_state("sess-bad-clients", CLIENTS_KEY, {
+        "tab-bad": "oops",
+        "tab-worse": {"acked_seq": "not-a-number"},
+    })
+    resp = await ingest_interaction_batch(
+        store, "sess-bad-clients", [_event(1, instance="tab-good0001")])
+    assert resp["accepted"] == 1
+    assert resp["watermarks"]["tab-bad"] == 0
+    assert resp["watermarks"]["tab-worse"] == 0
+    assert resp["watermarks"]["tab-good0001"] == 1

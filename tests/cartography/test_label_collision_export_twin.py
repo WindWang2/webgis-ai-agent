@@ -121,6 +121,20 @@ def test_collision_budget_diagnostic():
     assert budget[0]["detail"] == str(MAX_LABELS_PER_EXPORT)
 
 
+def test_explicit_nonpositive_max_labels_disables_auto_labels():
+    spec = _spec({"collision": "deterministic", "maxLabels": 1})
+    for budget in (0, -1):
+        result = compile_mapspec_to_svg_detailed(
+            spec, target_dpi=72, width=400, height=300, padding=10,
+            max_labels=budget,
+        )
+        assert '<g class="mapspec-labels">' not in result.svg
+        assert "北京" not in result.svg
+        exceeded = [d for d in result.diagnostics
+                    if d["code"] == "label_budget_exceeded"]
+        assert exceeded and exceeded[0]["detail"] == "0"
+
+
 def test_legacy_path_unchanged_no_labels_group():
     spec = _spec(None)
     r_legacy = compile_mapspec_to_svg_detailed(spec, target_dpi=72, width=400, height=300, padding=10)

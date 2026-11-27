@@ -354,11 +354,18 @@ def plan_from_data(
 
             digest = hashlib.sha256(
                 str(f.get("title") or fid).encode("utf-8")).hexdigest()[:6]
-            f["frame_id"] = f"{fid}-{digest}"[:64]
-            fid = f["frame_id"]
-            while fid in seen_ids:
-                f["frame_id"] = f"{f['frame_id']}-x"[:64]
-                fid = f["frame_id"]
+            # 后缀必须**改变**字符串：fid 满 64 字符时 f"{fid}-{digest}"[:64]
+            # 与 f"{fid}-x"[:64] 都是恒等变换 → while 永不退出挂死
+            # plan_from_data（两类 slug 前 59 字符相同的长标签即触发）。
+            # 先截断给后缀腾位再拼：哈希候选 64 字符、计数候选恒 64 字符且
+            # 尾数递增两两互异 —— 每轮必生成未见 id，循环有限步收敛。
+            candidate = f"{fid[:64 - len(digest) - 1]}-{digest}"
+            n = 0
+            while candidate in seen_ids:
+                n += 1
+                candidate = f"{fid[:64 - len(str(n)) - 1]}-{n}"
+            f["frame_id"] = candidate
+            fid = candidate
         seen_ids.add(fid)
 
     # 统一计算每帧参与共享分级的过滤后数据（binding_where 单一路径）。

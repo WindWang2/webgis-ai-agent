@@ -57,6 +57,13 @@ const EFFECT_LABEL_KEYS: Record<string, string> = {
   remove_layer: 'effectRemove',
 };
 
+/** 只认自有键：未知/原型链 kind 一律回退 effectOther（不把函数对象传给 t）。 */
+function effectLabelKey(kind: string): string {
+  return Object.prototype.hasOwnProperty.call(EFFECT_LABEL_KEYS, kind)
+    ? EFFECT_LABEL_KEYS[kind]
+    : 'effectOther';
+}
+
 function _fmtValue(value: unknown): string {
   if (value === null || value === undefined) return '—';
   if (typeof value === 'boolean') return value ? 'on' : 'off';
@@ -79,6 +86,9 @@ function ReceiptCard(props: {
   const [error, setError] = useState<string | null>(null);
 
   const status = String(receipt.status || '');
+  const statusTone = Object.prototype.hasOwnProperty.call(STATUS_TONE, status)
+    ? STATUS_TONE[status]
+    : 'text-ink';
   const effects = Array.isArray(receipt.effects) ? receipt.effects : [];
 
   const approve = useCallback(async () => {
@@ -106,7 +116,7 @@ function ReceiptCard(props: {
         <div className="min-w-0">
           <span
             data-testid={`map-op-status-${receipt.operation_id}`}
-            className={`text-xs font-semibold ${STATUS_TONE[status] || 'text-ink'}`}
+            className={`text-xs font-semibold ${statusTone}`}
           >
             {t(`map.opCard.status_${status || 'unknown'}`)}
           </span>
@@ -157,7 +167,7 @@ function ReceiptCard(props: {
           {effects.slice(0, 8).map((eff) => (
             <li key={eff.index} className="flex items-baseline justify-between gap-2 text-micro">
               <span className="truncate text-ink">
-                {t(`map.opCard.${EFFECT_LABEL_KEYS[eff.kind] || 'effectOther'}`)}
+                {t(`map.opCard.${effectLabelKey(eff.kind)}`)}
                 {(eff.targets?.length ?? 0) > 0 ? ` · ${eff.targets!.join(', ')}` : ''}
               </span>
               <span
@@ -174,6 +184,11 @@ function ReceiptCard(props: {
               </span>
             </li>
           ))}
+          {effects.length > 8 && (
+            <li className="text-micro text-ink-muted" data-testid={`map-op-effects-more-${receipt.operation_id}`}>
+              …+{effects.length - 8}
+            </li>
+          )}
         </ul>
       ) : null}
 
@@ -240,6 +255,14 @@ function DisplayConfirmationCard(props: {
   const [acking, setAcking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  // done 只对设置它时的观测代次生效：live generation 前进后 required
+  // 模式再现 pending（新 latest_observation_seq）时卡片必须回归 —— 否则
+  // 「稍后」一次 dismissal 会把新一代次的用户确认静默跳过。
+  const doneSeqRef = useRef<number | null>(null);
+  const markDone = useCallback(() => {
+    doneSeqRef.current = status.latest_observation_seq;
+    setDone(true);
+  }, [status.latest_observation_seq]);
 
   const acknowledge = useCallback(async () => {
     if (acking) return;
@@ -250,10 +273,10 @@ function DisplayConfirmationCard(props: {
         sessionId, status.latest_observation_seq, ownerToken,
       );
       if (resp.accepted && resp.confirmed) {
-        setDone(true);
+        markDone();
         onAcked({ ...status, confirmed: true, pending: false });
       } else if (resp.reason === 'mode_auto') {
-        setDone(true);
+        markDone();
         onAcked({ ...status, confirmed: true, pending: false });
       } else {
         setError(t('map.finalAck.notConfirmed'));
@@ -263,9 +286,9 @@ function DisplayConfirmationCard(props: {
     } finally {
       setAcking(false);
     }
-  }, [acking, onAcked, ownerToken, sessionId, status, t]);
+  }, [acking, markDone, onAcked, ownerToken, sessionId, status, t]);
 
-  if (done || !status.pending) return null;
+  if ((done && doneSeqRef.current === status.latest_observation_seq) || !status.pending) return null;
 
   return (
     <div
@@ -295,7 +318,7 @@ function DisplayConfirmationCard(props: {
         <button
           type="button"
           data-testid="display-confirm-dismiss"
-          onClick={() => setDone(true)}
+          onClick={markDone}
           className="rounded-md border border-edge-subtle px-2 py-1 text-micro text-ink-muted hover:bg-surface-overlay"
         >
           {t('map.finalAck.later')}
@@ -317,8 +340,6 @@ export function MapHarnessCards(props: {
   const { sessionId, ownerToken } = props;
   const receipts = useSyncExternalStore(subscribeReceipts, getOperationReceipts);
   const [confirmStatus, setConfirmStatus] = useState<DisplayConfirmationStatus | null>(null);
-  const confirmStatusRef = useRef<DisplayConfirmationStatus | null>(null);
-  confirmStatusRef.current = confirmStatus;
   const mountedSessionRef = useRef<string | null>(null);
 
   // 会话绑定/切换：bus 清空 + 确认状态重置。
@@ -338,15 +359,21 @@ export function MapHarnessCards(props: {
     let cancelled = false;
     let mountTimer: ReturnType<typeof setTimeout> | null = null;
     let debounce: ReturnType<typeof setTimeout> | null = null;
+    // 水合序号守卫：挂载兜底（5s）与 live-generation debounce（2s）两次水合
+    // 可并发，慢的旧响应后到会用陈旧裁决覆盖新态 —— required 模式可把「等待
+    // 用户确认」伪造成「已确认」并吞掉待确认卡。只接受最新一次水合的响应。
+    let hydrateSeq = 0;
     const hydrate = async () => {
       if (cancelled || mountedSessionRef.current !== sessionId) return;
+      const seq = ++hydrateSeq;
       try {
         const status = await fetchDisplayConfirmation(sessionId, ownerToken);
-        if (!cancelled && mountedSessionRef.current === sessionId) {
+        if (cancelled || seq !== hydrateSeq) return;
+        if (mountedSessionRef.current === sessionId) {
           setConfirmStatus(status);
         }
       } catch {
-        if (!cancelled) setConfirmStatus(null);
+        if (!cancelled && seq === hydrateSeq) setConfirmStatus(null);
       }
     };
     mountTimer = setTimeout(() => {

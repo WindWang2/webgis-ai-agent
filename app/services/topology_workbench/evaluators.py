@@ -522,7 +522,10 @@ def eval_objects_covered_by_target(
             if note:
                 out.notes.append(note)
 
-    tgt_geoms = [p.geometry for p in target.features if p.geometry is not None]
+    # tgt_items 与 tgt_geoms/tgt_tree 同序（STRtree 下标只在有效几何上成立，
+    # 不能回填到含剔除要素的 target.features 上）
+    tgt_items = [p for p in target.features if p.geometry is not None]
+    tgt_geoms = [p.geometry for p in tgt_items]
     if not tgt_geoms:
         return out.blocked("target_empty", "target 角色没有有效面几何 —— 无法判定包含")
     if not budget.tick_time():
@@ -539,15 +542,21 @@ def eval_objects_covered_by_target(
         g = p.geometry
         # covered 语义：贴边合法；within 语义：贴边（触及目标边界）即违规。
         outside = g.difference(tgt_union)
-        if (policy == "within" and outside.is_empty
-                and g.intersects(tgt_union.boundary) and not g.within(tgt_union)):
-            # 严格内部政策下贴边违规：witness 取接触边界段
+        # 贴边违规仅在"其余部分已被覆盖"（差集为空）时单独判定。差集为空
+        # 已蕴含 g.within(tgt_union)，再叠加 not within 守卫本分支永不可达。
+        touch_only = False
+        if policy == "within" and outside.is_empty and g.intersects(tgt_union.boundary):
+            # 严格内部政策下贴边违规：witness 取接触边界段（1-D 接触段按长度
+            # 族度量 —— 面族面积恒 0.0 会被阈值吞掉，违规永不生成 finding）
             outside = g.intersection(tgt_union.boundary)
+            touch_only = True
         if outside is None or outside.is_empty:
             continue
         family = ("area" if g.geom_type in ("Polygon", "MultiPolygon")
                   else "length" if g.geom_type in ("LineString", "MultiLineString")
                   else "distance")
+        if touch_only:
+            family = "length"
         for part, digest in _iter_pieces(outside):
             if not budget.room_for_finding():
                 break
@@ -566,8 +575,7 @@ def eval_objects_covered_by_target(
             # 相关 target 要素（含被越界部分触及的）
             touched = [int(k) for k in tgt_tree.query(part)][:4]
             locators = [_locator(checked, p.index)]
-            locators += [_locator(target, target.features[t].index) for t in touched
-                         if target.features[t].geometry is not None][:4]
+            locators += [_locator(target, tgt_items[t].index) for t in touched][:4]
             msg = (
                 f"对象越界：{p.identity['value']} 未被 target 覆盖"
                 f"（政策 {policy}；越界分量 {value:.2f} {unit} > 阈值 {th:.2f}）"

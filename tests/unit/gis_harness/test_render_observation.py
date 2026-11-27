@@ -15,6 +15,7 @@ import pytest
 
 from app.services.gis_harness.map_completion import (
     STATUS_COMPLETE,
+    F_CHART_DATA_MISSING,
     F_RENDER_COMPONENT_MISSING,
     F_RENDER_ERROR,
     F_RENDER_LAYER_MISSING,
@@ -246,6 +247,29 @@ def test_required_component_slot_not_observed():
     )
     missing = [f for f in findings if f.code == F_RENDER_COMPONENT_MISSING]
     assert missing and missing[0].target == "legend"
+
+
+def test_chart_required_with_empty_chart_list_discloses_missing_data():
+    """P3：chart_required 且 charts==[] 时不得静默跳过数据级核验。"""
+    chapter, mapspec = _chapter_and_spec()
+    obs = _observation(
+        10,
+        layers=[{
+            "id": "poi-heatmap", "runtime_layer_count": 1, "visible": True,
+        }],
+        components=[
+            {"id": "chart-1", "type": "chart_panel", "enabled": True,
+             "mounted": True},
+        ],
+    )
+    obs["charts"] = []
+    status, findings = validate_render_observation(
+        chapter, mapspec, obs, current_revision=10,
+        required_slots=[["chart_panel"]],
+    )
+    chart_findings = [f for f in findings if f.code == F_CHART_DATA_MISSING]
+    assert chart_findings
+    assert chart_findings[0].severity == "warning"
 
 
 def test_runtime_errors_disclosed_bounded_as_warning():

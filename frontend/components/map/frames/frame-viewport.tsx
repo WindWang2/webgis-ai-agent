@@ -93,6 +93,12 @@ export const FrameViewport = forwardRef<FrameViewportHandle, FrameViewportProps>
   ) {
     const mapRef = useRef<MapRef | null>(null);
     const runtimeRef = useRef<MapSpecRuntime | null>(null);
+    /**
+     * runtimeRef 当前绑定的 map 实例。context loss 重建（key 变更）后 Map
+     * 换实例而 runtimeRef 非空即复用 —— 旧 runtime 仍绑在已销毁的 map 上，
+     * 新视窗不渲染业务图层且旧 runtime 泄漏到组件卸载。凭此引用识别换实例。
+     */
+    const runtimeMapRef = useRef<ReturnType<MapRef['getMap']> | null>(null);
     const registrationRef = useRef<{ release: () => void; generation: number } | null>(null);
     // 底图世代（basemap 切换 → setStyle → runtime 缓存失效重挂）。
     const [styleEpoch, setStyleEpoch] = useState(0);
@@ -117,6 +123,7 @@ export const FrameViewport = forwardRef<FrameViewportHandle, FrameViewportProps>
       return () => {
         runtimeRef.current?.dispose();
         runtimeRef.current = null;
+        runtimeMapRef.current = null;
       };
     }, []);
 
@@ -139,10 +146,18 @@ export const FrameViewport = forwardRef<FrameViewportHandle, FrameViewportProps>
       if (!mapReady) return;
       const map = mapRef.current?.getMap();
       if (!map) return;
+      if (runtimeRef.current && runtimeMapRef.current !== map) {
+        // key 重建（webglcontextlost）后 Map 换了实例：旧 runtime 仍绑在
+        // 已销毁的 map 上 —— 先 dispose 再为新 map 新建，否则新视窗不渲染
+        // 业务图层且旧 runtime 泄漏到组件卸载才释放。
+        runtimeRef.current.dispose();
+        runtimeRef.current = null;
+      }
       if (!runtimeRef.current) {
         runtimeRef.current = new MapSpecRuntime(map, {
           onStyleRecovery: () => setStyleEpoch((e) => e + 1),
         });
+        runtimeMapRef.current = map;
       }
       if (!effectiveSpec) return;
       runtimeRef.current
@@ -263,7 +278,11 @@ export const FrameViewport = forwardRef<FrameViewportHandle, FrameViewportProps>
 
     return (
       <Map
-        key={`frame-map-${frameId}-g${registrationRef.current?.generation ?? 0}-r${rebuildEpoch}`}
+        // key 只用「身份 + 重建代际」：registrationRef 由挂载 effect 赋值，
+        // 首渲染为 null（g0）、赋值后再渲染变 g1 —— 代际进 key 会让每次挂载
+        // 先建后弃一张地图（WebGL 上下文/加载耗时翻倍）。context loss 重建
+        // 由 rebuildEpoch 驱动，frameId 变化已改变 key，代际项是冗余的。
+        key={`frame-map-${frameId}-r${rebuildEpoch}`}
         id={`frame-${frameId}`}
         ref={mapRef}
         mapStyle={mapStyle}

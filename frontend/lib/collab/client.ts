@@ -128,6 +128,7 @@ function clearTimers(): void {
     clearTimeout(presenceTimer);
     presenceTimer = null;
   }
+  pendingPresence = null;
 }
 
 function buildAuthFrame(): { type: 'auth'; mode: 'session' | 'bearer'; token: string } | null {

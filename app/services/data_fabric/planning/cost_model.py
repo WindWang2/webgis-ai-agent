@@ -24,8 +24,7 @@ from app.services.data_fabric.contracts import CostEstimate
 
 #: Per-row byte overhead for the GeoJSON carrier envelope.
 _ROW_OVERHEAD_BYTES = 40
-#: Per-field size by declared/observed type class.
-_FIELD_BYTES = {"number": 8, "integer": 8, "float": 8, "bool": 4, "date": 12}
+#: Per-field size heuristic (all declared/observed types share one default).
 _DEFAULT_FIELD_BYTES = 28
 #: Geometry carrier bytes per geometry type class.
 _GEOMETRY_BYTES = {"point": 32, "line": 160, "polygon": 224, "raster": 0, "table": 0, "none": 0}
@@ -71,6 +70,10 @@ def bbox_selectivity(
         rx0, ry0, rx1, ry1 = (float(v) for v in request_bbox)
         cx0, cy0, cx1, cy1 = (float(v) for v in coverage_bbox)
     except (TypeError, ValueError):
+        return 1.0
+    if rx0 > rx1:
+        # 请求 bbox 跨反子午线（minx>maxx）：朴素交宽恒 0 → selectivity=0 会谎报
+        # 0 行/0 字节、预算恒过。无法可靠声称缩减 → 保守上界 1.0。
         return 1.0
     inter_w = max(0.0, min(rx1, cx1) - max(rx0, cx0))
     inter_h = max(0.0, min(ry1, cy1) - max(ry0, cy0))

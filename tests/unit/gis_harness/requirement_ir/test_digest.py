@@ -73,6 +73,20 @@ class TestNormalizeTime:
         start, end, granularity, series = norm.normalize_time("逐年变化")
         assert series is True and granularity == "year"
 
+    def test_granularity_word_with_explicit_range_keeps_range(self):
+        """粒度词 + 显式年份区间：区间不得被提前 return 丢弃（digest 丢失
+        range → 不同年份同 digest 且误报 time_range_missing_for_series）。"""
+        assert norm.normalize_time("逐年 2020-2024") == (
+            "2020", "2024", "year", True)
+        assert norm.normalize_time("每年 2019到2021年统计") == (
+            "2019", "2021", "year", True)
+        # 单年 + 粒度词：年份入 range（digest 可区分不同单年话语）
+        assert norm.normalize_time("逐年 2023") == ("2023", "2023", "year", True)
+        # 纯相对词（近五年）仍无区间 —— 不发明区间
+        assert norm.normalize_time("近五年")[:2] == ("", "")
+        assert norm.normalize_time("逐月 2020-2024") == (
+            "2020", "2024", "month", True)
+
     def test_empty(self):
         assert norm.normalize_time("") == ("", "", "none", False)
 

@@ -119,6 +119,8 @@ export function useWorkflowWorkspace(): UseWorkflowWorkspaceResult {
   const detailGen = useRef(0);
   const workflowGen = useRef(0);
   const runGen = useRef(0);
+  /** 在飞 run 明细请求序号：轮询/可见性补拉并发时只有最新响应可写回。 */
+  const runDetailReq = useRef(0);
   const projectAbort = useRef<AbortController | null>(null);
   const workflowAbort = useRef<AbortController | null>(null);
   const runAbort = useRef<AbortController | null>(null);
@@ -142,6 +144,10 @@ export function useWorkflowWorkspace(): UseWorkflowWorkspaceResult {
   const selectedWorkflow = workflows.find((w) => w.id === selectedWorkflowId) ?? null;
 
   const selectProject = useCallback((id: string) => {
+    // P2：同值 setState 会被 React bailout，[selectedProjectId] 数据 effect
+    // 不会重跑；而下面会清空 runs/revisions 并递增 detailGen —— 在途的项目
+    // 明细请求被丢弃后也可能永远不再拉取（列表空置）。同项目再选 = no-op。
+    if (id === selectedProjectIdRef.current) return;
     detailGen.current += 1;
     workflowGen.current += 1;
     runGen.current += 1;
@@ -267,8 +273,9 @@ export function useWorkflowWorkspace(): UseWorkflowWorkspaceResult {
 
   const loadRunDetail = useCallback(
     async (projectId: string, runId: string, signal: AbortSignal, gen: number) => {
+      const req = ++runDetailReq.current;
       const detail = await fetchWorkflowRun(projectId, runId, { forceRefresh: true, signal });
-      if (!mounted.current || gen !== runGen.current) return null;
+      if (!mounted.current || gen !== runGen.current || req !== runDetailReq.current) return null;
       setRunDetail(detail);
       return detail;
     },

@@ -237,6 +237,27 @@ def test_cache_key_changes_on_registry_generation():
     assert snap2 is not snap1
 
 
+def test_structural_key_covers_capability_ids_not_only_count(monkeypatch):
+    """能力 id 等量替换（域包增删同数）必须换代，不能只看 len(all_ids)。"""
+    import app.lib.gis.capability_availability_cache as cac
+    import app.lib.gis.capability_registry as cr
+
+    class _Reg:
+        def __init__(self, ids):
+            self.all_ids = ids
+            self.count = len(ids)
+
+    monkeypatch.setattr(
+        cr, "get_capability_registry",
+        lambda: _Reg([f"cap{i}" for i in range(8)]))
+    key1 = cac._CACHE._structural_key()
+    monkeypatch.setattr(
+        cr, "get_capability_registry",
+        lambda: _Reg([f"cap{i}" for i in range(7)] + ["replacement"]))
+    key2 = cac._CACHE._structural_key()
+    assert key1 != key2
+
+
 # ── WP04：真实候选检索接通 ───────────────────────────────────────────
 
 def _patch_snapshot(monkeypatch, snapshot: CapabilityAvailabilitySnapshot):

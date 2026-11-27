@@ -1,5 +1,4 @@
 import json
-import hashlib
 import logging
 import threading
 from typing import Any, Optional
@@ -145,7 +144,7 @@ def to_feature_collection(data: Any) -> dict:
     """Normalize input data into a valid FeatureCollection dict.
 
     Accepts a GeoJSON dict, a features list, a string (parsed via
-    :func:`safe_parse`, which also repairs truncated JSON), a single Feature,
+    :func:`safe_parse`, which rejects truncated JSON), a single Feature,
     or a bare geometry — and always returns a ``{"type": "FeatureCollection",
     "features": [...]}`` dict (never None). Never raises.
     """
@@ -326,16 +325,20 @@ def declare_crs(fc: dict, crs: Any) -> dict:
 # then can the address be reused.
 # ---------------------------------------------------------------------------
 _UTM_CACHE_MAX = 64
+_UTM_CACHE_BYTES_MAX = 64 * 1024 * 1024
 _utm_cache: dict[tuple, tuple] = {}  # key -> (geojson_ref, gdf, utm_crs_str, crs_note)
+_utm_cache_bytes = 0                 # running total of cached gdf sizes (bytes)
 _utm_cache_order: list[tuple] = []   # LRU order (MRU at end)
 _utm_cache_lock = threading.Lock()
 
 
 def clear_utm_cache() -> None:
     """Drop all cached to_utm_gdf results (tests / memory-pressure escape hatch)."""
+    global _utm_cache_bytes
     with _utm_cache_lock:
         _utm_cache.clear()
         _utm_cache_order.clear()
+        _utm_cache_bytes = 0
 
 
 def get_utm_cache_info() -> dict:
@@ -351,7 +354,7 @@ def _cache_key_for(geojson: Any, source_crs: Optional[str]) -> Optional[tuple]:
     are parsed-and-discarded so identity caching is unsafe for them.
     """
     if isinstance(geojson, (dict, list)):
-        return (hashlib.sha256(json.dumps(geojson, sort_keys=True, default=str).encode()).hexdigest(), source_crs)
+        return (id(geojson), source_crs)
     return None
 
 
@@ -367,18 +370,29 @@ def _cache_get(key: tuple) -> Optional[tuple]:
         return gdf, utm, note
 
 
+def _entry_nbytes(entry: tuple) -> int:
+    """Deep byte size of the cached gdf in a cache entry (computed once per entry)."""
+    return int(entry[1].memory_usage(deep=True).sum())
+
+
 def _cache_put(key: tuple, geojson_ref: Any, value: tuple) -> None:
     """Store (gdf, utm_crs_str, crs_note) keyed by id(geojson), pinning geojson_ref alive."""
+    global _utm_cache_bytes
     with _utm_cache_lock:
         if key in _utm_cache:
             _utm_cache_order.remove(key)
+            _utm_cache_bytes -= _entry_nbytes(_utm_cache[key])
         gdf, utm, note = value
-        _utm_cache[key] = (geojson_ref, gdf, utm, note)  # 引用钉子：防 id 复用
+        entry = (geojson_ref, gdf, utm, note)  # 引用钉子：防 id 复用
+        _utm_cache[key] = entry
+        _utm_cache_bytes += _entry_nbytes(entry)
         _utm_cache_order.append(key)
-        # evict LRU entries beyond capacity
-        while _utm_cache_order and (len(_utm_cache_order) > _UTM_CACHE_MAX or sum(int(entry[1].memory_usage(deep=True).sum()) for entry in _utm_cache.values()) > 64 * 1024 * 1024):
+        # evict LRU entries beyond capacity (count or bytes)
+        while _utm_cache_order and (len(_utm_cache_order) > _UTM_CACHE_MAX or _utm_cache_bytes > _UTM_CACHE_BYTES_MAX):
             old = _utm_cache_order.pop(0)
-            _utm_cache.pop(old, None)
+            evicted = _utm_cache.pop(old, None)
+            if evicted is not None:
+                _utm_cache_bytes -= _entry_nbytes(evicted)
 
 
 def to_utm_gdf_with_note(

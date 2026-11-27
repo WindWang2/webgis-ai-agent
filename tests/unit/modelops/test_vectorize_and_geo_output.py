@@ -131,13 +131,35 @@ def test_postgis_honest_skip_without_dsn(monkeypatch):
 
 
 def test_postgis_if_exists_closed_vocab():
+    """if_exists 封闭词表：不抛、honest skip（引擎在推理完成后调用本函数）。
+
+    未修复时 ``if_exists="replace"`` 在 honest-skip 分支之前直接 raise
+    ValueError —— 异常逃逸到推理完成后的调用点，毁掉已跑完的产物。
+    """
     from app.services.modelops.geo_output import publish_geojson_to_postgis
 
-    with pytest.raises(ValueError):
-        publish_geojson_to_postgis(
-            {"type": "FeatureCollection", "features": []},
-            table="t", if_exists="replace",  # 静默毁表不在授权面
-        )
+    result = publish_geojson_to_postgis(
+        {"type": "FeatureCollection",
+         "features": [{"type": "Feature", "properties": {},
+                       "geometry": {"type": "Point", "coordinates": [1, 2]}}]},
+        table="t", if_exists="replace",  # 静默毁表不在授权面
+    )
+    assert result["published"] is False
+    assert "if_exists" in result["reason"]
+
+
+def test_postgis_invalid_table_name_honest_skip():
+    """非法表名同样 honest skip（注释承诺"发布失败不抛"）。"""
+    from app.services.modelops.geo_output import publish_geojson_to_postgis
+
+    result = publish_geojson_to_postgis(
+        {"type": "FeatureCollection",
+         "features": [{"type": "Feature", "properties": {},
+                       "geometry": {"type": "Point", "coordinates": [1, 2]}}]},
+        table="UPPER",
+    )
+    assert result["published"] is False
+    assert "table name" in result["reason"]
 
 
 def test_postgis_publish_captures_frame(monkeypatch):

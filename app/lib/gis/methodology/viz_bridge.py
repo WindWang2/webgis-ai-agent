@@ -255,13 +255,14 @@ def bridge_plan(
         entry = bridge_artifact(at, artifacts=registry)
         if entry is None:
             # 有类型无桥接条目 → 披露（不虚构）
-            disclosures.append(VizDisclosure(
-                artifact_type=at,
-                resolution="无审定桥接条目：回退 artifact typical_map_models 投影。",
-            ).to_bounded_dict())
             desc = registry.get(at)
             models = list(getattr(desc, "typical_map_models", ()) or ())
             geometry_kind = str(getattr(desc, "geometry_kind", "unknown"))
+            disclosures.append(VizDisclosure(
+                artifact_type=at,
+                models=tuple(models),
+                resolution="无审定桥接条目：回退 artifact typical_map_models 投影。",
+            ).to_bounded_dict())
             family = {"point": "point_distribution", "polygon": "choropleth_raw", "raster": "interpolation_surface", "line": "flow_map", "network": "flow_map", "table": "statistics_chart"}.get(geometry_kind)
             if family is None:
                 disclosures.append(VizDisclosure(artifact_type=at, resolution="Geometry is unknown; visualization family requires explicit selection.").to_bounded_dict())
@@ -270,7 +271,11 @@ def bridge_plan(
             entries.append({"artifact_type": at[:40],
                             "family": family,
                             "legend": legend,
-                            "models": ",".join(m[:32] for m in models[:4])})
+                            "note": "无审定桥接条目：回退 artifact typical_map_models 投影。"})
+            for s in (("continuous_colorbar", "title")
+                      if legend == "continuous" else ("legend", "title")):
+                if s not in slots:
+                    slots.append(s)
             families.append(family)
             legends.append(legend)
             continue

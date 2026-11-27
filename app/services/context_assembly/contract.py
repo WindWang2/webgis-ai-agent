@@ -103,7 +103,7 @@ _DOMAIN_TABLE: Dict[ContextDomain, Dict[str, Any]] = {
     ContextDomain.TOOL_SURFACE:      dict(pool=Pool.SESSION_PLAN, rank=8, fence="none", priority=25),
     ContextDomain.EVICTED_REFS:      dict(pool=Pool.TRACE_SUMMARIES, rank=9, fence="internal", priority=60),
     ContextDomain.V6_BLOCKS:         dict(pool=Pool.MAP_STATE, rank=10, fence="internal", priority=45),
-    ContextDomain.HARNESS_STATE:     dict(pool=Pool.HARNESS_EVIDENCE, rank=11, fence="none", priority=22),
+    ContextDomain.HARNESS_STATE:     dict(pool=Pool.HARNESS_EVIDENCE, rank=11, fence="internal", priority=22),
     # ADR-0219：插在 control-plane 之前（相对序不变；wrap fence——layer id
     # 等值面可能携带任意字符，整块 untrusted 包裹）。
     ContextDomain.REPRESENTATION_BINDING: dict(pool=Pool.MAP_STATE, rank=12, fence="wrap", priority=24),

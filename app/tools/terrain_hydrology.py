@@ -62,6 +62,10 @@ def _register_hydrology_v4_tool(
             "latitude_deg": "solar 纬度（度）",
             "day_of_year": "solar 年积日（1-366）",
             "nodata": "可选 nodata 覆盖值",
+            "transmissivity": "solar 晴空透射率（0.1-1.0，默认 0.75）",
+            "persist_output": (
+                "持久化 breach/HAND 产物（*_filled.tif）并返回路径"
+            ),
         },
         network=False,
         deterministic=True,
@@ -80,7 +84,10 @@ def _register_hydrology_v4_tool(
         output_semantic_type="stats",
         result_size_policy="ref_offload",
         crs_semantics="crs_agnostic",
-        side_effect="deterministic_compute",
+        # persist_output=True 会写 data_dir（*_filled.tif）—— 按「可能写」
+        # 诚实标注（与 depression_fill 同披露纪律）；缺省 False 仍为纯计算。
+        side_effect="artifact_creation",
+        data_mutations=("artifact_write",),
         failure_modes=("invalid_args", "missing_data", "memory"),
     )
     def hydrology_v4_analysis(
@@ -111,9 +118,10 @@ def _register_hydrology_v4_tool(
                 "latitude_deg": float(latitude_deg),
                 "day_of_year": int(day_of_year),
                 "transmissivity": float(transmissivity),
+                "nodata": nodata,
             },
         )
-        params.setdefault("nodata", None)
+        nodata = params.get("nodata")
         analysis = params["analysis"]
         stream_threshold = float(params["stream_threshold"])
         latitude_deg = float(params["latitude_deg"])
@@ -350,7 +358,10 @@ def _register_hydrology_v4_tool(
             "sources_geojson": "源点要素 GeoJSON（Point FeatureCollection）或数据引用(ref:xxx)",
             "nodata": "nodata 覆盖值（0=用栅格自带 nodata；NaN 一律视为无效）",
         },
-        side_effect="deterministic_compute",
+        # 无条件写盘 *_costdist.tif（下游 least_cost_path 消费）——
+        # 按「写产物」诚实标注（与 depression_fill 同披露纪律）。
+        side_effect="artifact_creation",
+        data_mutations=("artifact_write",),
         network=False,
         deterministic=True,
         latency_class="slow",

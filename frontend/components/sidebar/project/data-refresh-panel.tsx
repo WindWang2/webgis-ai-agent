@@ -105,7 +105,9 @@ export function DataRefreshPanel({ projectId, sessionId, authed }: DataRefreshPa
     if (!sessionId) throw new Error(t('g10NeedSession'));
     const result = await checkProjectSourceUpdates(projectId, sessionId, true);
     setCheck(result);
-    setNotice(result.inventory.warnings[0] ?? null);
+    const warnings = [...(result.warnings ?? []), ...(result.inventory.warnings ?? [])]
+      .filter((w) => typeof w === 'string' && w.trim());
+    setNotice(warnings.length > 0 ? warnings.join(' · ') : null);
   });
 
   const onPreview = () => void run('preview', async () => {
@@ -204,7 +206,7 @@ export function DataRefreshPanel({ projectId, sessionId, authed }: DataRefreshPa
                   {item.display_name || item.logical_id}
                 </span>
                 <span className="shrink-0 text-ink-muted">
-                  {item.verdict} · {item.evidence}
+                  {item.verdict} · {item.evidence}{item.note ? ` · ${item.note}` : ''}
                 </span>
               </li>
             ))}

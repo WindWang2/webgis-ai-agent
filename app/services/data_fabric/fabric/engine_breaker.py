@@ -64,11 +64,14 @@ class EngineFallbackBreaker:
     def allow_v6(self) -> bool:
         """engine=v6 请求是否允许进入 V6 栈（False = 直接走 V5）。"""
         with self._lock:
-            self._trial_context.set(None)
             if self._state == EngineBreakerState.OPEN:
                 if self._clock() - self._opened_at >= self.cool_down_s:
                     self._state = EngineBreakerState.HALF_OPEN
                     self._half_open_trial_inflight = False
+                    # 仅在新一轮 half-open 过渡时清 trial owner（与 trial_inflight
+                    # 同步）；此前无条件 set(None) 会清掉同上下文 replan 已获取的
+                    # owner → 提前退出时 release_trial 失配 → HALF_OPEN 名额泄漏。
+                    self._trial_context.set(None)
                 else:
                     return False
             if self._state == EngineBreakerState.HALF_OPEN:

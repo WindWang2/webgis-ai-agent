@@ -137,14 +137,25 @@ def register_mixed_map_export_tools(registry: ToolRegistry) -> None:
         from app.services.jobs.context import current_origin
 
         _origin = current_origin()
-        async with async_db_session() as _db:
+        delivered = None
+        try:
+            async with async_db_session() as _db:
+                delivered = await persist_mixed_export(
+                    session_id, artifact, principal=f"session:{session_id}",
+                    user_id=(getattr(_origin, "owner_id", None) or "unknown"),
+                    owner_token=getattr(_origin, "owner_token", None),
+                    db=_db)
+                if hasattr(_db, "commit"):
+                    await _db.commit()
+        except Exception:  # noqa: BLE001 — lineage 失败不阻断交付本身
+            logger.warning(
+                "[g26] export lineage session failed; retrying without db",
+                exc_info=True)
+        if delivered is None:
             delivered = await persist_mixed_export(
                 session_id, artifact, principal=f"session:{session_id}",
                 user_id=(getattr(_origin, "owner_id", None) or "unknown"),
-                owner_token=getattr(_origin, "owner_token", None),
-                db=_db)
-            if hasattr(_db, "commit"):
-                await _db.commit()
+                owner_token=getattr(_origin, "owner_token", None))
         if not delivered.get("success"):
             return delivered
         manifest = delivered["manifest"]

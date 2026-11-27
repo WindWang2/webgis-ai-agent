@@ -142,9 +142,6 @@ DATA_STATE_PROFILES: Tuple[DataStateProfile, ...] = (
                      _facts(geometryTypes=["Point"], temporalObservationCount=1)),
 )
 
-#: state_id → 索引（构建期校验 + 确定性查表）。
-_STATE_BY_ID: Dict[str, DataStateProfile] = {s.state_id: s for s in DATA_STATE_PROFILES}
-
 #: 数据语义状态（data_ 前缀 scenario_kind 的来源；几何态沿用族类别标签）。
 _DATA_STATES = (
     "bad_crs", "missing_required_field", "too_few_samples", "zero_variance",
@@ -1331,6 +1328,15 @@ def build_quality_scenario_corpus() -> List[GISBenchmarkCase]:
     for family in CONFORMANCE_FAMILIES:
         if family.family_id not in _FAMILY_CATEGORY:  # pragma: no cover - 审定表遗漏哨兵
             raise AssertionError(f"family missing goal-doc category: {family.family_id}")
+        if family.family_id not in _TOOL_CONTRACTS:  # pragma: no cover - 审定表遗漏哨兵
+            raise AssertionError(f"family missing tool contract: {family.family_id}")
+        missing_states = [
+            state.state_id for state in DATA_STATE_PROFILES
+            if (family.family_id, state.state_id) not in _STATE_CONTRACTS
+        ]
+        if missing_states:  # pragma: no cover - 审定表遗漏哨兵
+            raise AssertionError(
+                f"family {family.family_id} missing state contracts: {missing_states}")
         for state in DATA_STATE_PROFILES:
             cases.append(_conformance_reference_case(family, state))
             ref_query = _reference_query(family.phrases_zh[0], state)
@@ -1348,8 +1354,6 @@ def build_quality_scenario_corpus() -> List[GISBenchmarkCase]:
     ids = [c.id for c in cases]
     if not (len(ids) == len(set(ids))):
         raise ValueError("quality corpus has duplicate ids")
-    if not (len(DATA_STATE_PROFILES) <= 64):
-        raise ValueError("per-family profile variants must stay <= 64")
     return cases
 
 

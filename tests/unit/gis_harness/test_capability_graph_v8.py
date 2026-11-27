@@ -189,6 +189,22 @@ class TestExecutionEstimate:
         est = estimate_for_node(models[0])
         assert est.basis["latency_class"] == "declared"
 
+    def test_celery_cpu_basis_counts_toward_confidence(self) -> None:
+        """P3：execution_policy=celery → cpu declared 必须计入 3/4 维置信度。"""
+        from app.services.gis_harness.capability_graph import GraphNode
+
+        node = GraphNode(
+            "tool-x", "tool", "test",
+            extras={
+                "latency_class": "fast",
+                "memory_class": "medium",
+                "execution_policy": "celery",
+            },
+        )
+        est = estimate_for_node(node)
+        assert est.basis["cpu"] == "declared"
+        assert est.confidence == 0.75
+
 
 class TestCandidatePlanner:
     """V8.6：资格过滤 + 成本排序 + 确定性。"""
@@ -331,3 +347,35 @@ class TestReviewAFixes:
         assert result.status == QualificationStatus.UNKNOWN, result.to_dict()
         checks = {r.check for r in result.reasons}
         assert "raster_bands_unknown" in checks or "resolution_unknown" in checks
+
+
+def test_reset_serializes_with_concurrent_model_registry_creation(monkeypatch):
+    """reset 与 _shared_model_registry_store 同锁：并发首建不得把旧单例
+    写回 reset 之后（测试隔离失效）。"""
+    import threading
+
+    from app.services.gis_harness import capability_graph as cg
+    import app.services.modelops.registry as registry_mod
+
+    started = threading.Event()
+    release = threading.Event()
+
+    class _SlowStore:
+        def __init__(self):
+            started.set()
+            release.wait(2)
+
+    monkeypatch.setattr(cg, "_MODEL_REGISTRY_STORE", None)
+    monkeypatch.setattr(registry_mod, "ModelRegistryStore", _SlowStore)
+
+    creator = threading.Thread(target=cg._shared_model_registry_store)
+    creator.start()
+    assert started.wait(2)
+    resetter = threading.Thread(target=cg.reset_capability_graph)
+    resetter.start()
+    resetter.join(0.5)
+    release.set()
+    creator.join(2)
+    resetter.join(2)
+    assert not creator.is_alive() and not resetter.is_alive()
+    assert cg._MODEL_REGISTRY_STORE is None

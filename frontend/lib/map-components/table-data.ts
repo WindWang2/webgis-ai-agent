@@ -126,6 +126,17 @@ const inFlight = new Map<string, Promise<TablePayload>>();
 let generation = 0;
 const listeners = new Set<() => void>();
 const FAILURE_TTL_MS = 30_000;
+const MAX_TABLE_ARTIFACT_CACHE_ENTRIES = 16;
+
+function cacheTableArtifact(key: string, payload: TablePayload): void {
+  cache.set(key, payload);
+  while (cache.size > MAX_TABLE_ARTIFACT_CACHE_ENTRIES) {
+    const oldest = cache.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+    failureAt.delete(oldest);
+  }
+}
 
 function emit(): void {
   generation += 1;
@@ -182,12 +193,12 @@ export async function loadTableArtifact(ref: string): Promise<TablePayload> {
       // cursor 已指向新会话时丢弃结果（不污染新会话缓存）。
       if (getMapSpecSessionCursor().sessionId !== sessionId) return null;
       const table = (data as { table?: unknown } | null)?.table;
-      cache.set(key, table ?? null);
+      cacheTableArtifact(key, table ?? null);
       return table ?? null;
     } catch (e) {
       if (getMapSpecSessionCursor().sessionId !== sessionId) return null;
       devOnly.warn(`[table-data] ref ${key} 拉取失败`, e);
-      cache.set(key, null);
+      cacheTableArtifact(key, null);
       failureAt.set(key, Date.now());
       return null;
     }

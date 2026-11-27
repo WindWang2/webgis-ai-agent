@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 from typing import List
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -240,6 +241,43 @@ def test_c2_driver_fails_node_on_truncated_input():
     assert outcome.error_code == "INPUT_TRUNCATED"
 
 
+def test_driver_gather_inputs_uses_six_input_budget():
+    """driver 与 typed_dag/指纹统一保留前 6 个上游，不得静默丢第 5、6 个。"""
+    from app.services.workflow_runtime.driver import Driver
+
+    sources = [f"src:{i}" for i in range(7)]
+    dag = {
+        "nodes": [
+            *[{"node_id": nid, "outputs": [{"name": "output"}]}
+              for nid in sources],
+            {"node_id": "cap:fan_in",
+             "inputs": [{"name": f"input{i + 1}"} for i in range(7)]},
+        ],
+        "edges": [
+            {"from": f"{nid}.output", "to": f"cap:fan_in.input{i + 1}"}
+            for i, nid in enumerate(sources)
+        ],
+    }
+
+    class _Store:
+        def get_node(self, _instance_id, node_id):
+            return {"output_ref": f"ref:{node_id}"}
+
+    async def _probe(_session_id, ref):
+        return {"ref_id": ref, "content_hash": ref[-1] * 32,
+                "content_revision": "1"}
+
+    driver = Driver(_Store(), owner_scope=_OWNER, descriptor_probe=_probe)
+
+    async def _gather():
+        return await driver._gather_inputs("wi-1", dag, "cap:fan_in", "s1")
+
+    refs, descs, idents = asyncio.run(_gather())
+    assert refs == [f"ref:{nid}" for nid in sources[:6]]
+    assert set(descs) == {f"input{i}" for i in range(1, 7)}
+    assert set(idents) == set(descs)
+
+
 # ── C3: 完成边界 drain（门控写反已修）────────────────────────────────────
 
 def test_c3_pending_changes_drained_at_completion_boundary():
@@ -309,9 +347,9 @@ def test_m1_ready_node_binding_failure_goes_blocked():
 
 # ── M2: 跨会话探测自毁修复 + anonymous 同域 ──────────────────────────────
 
-def test_cross_session_run_recomputes_instead_of_reusing_foreign_ref():
-    """产物属会话 A；当前 run 会话 B —— 探测必须用 artifact_session_id
-    （旧实现用当前会话探测 → 必失败 → 误删活缓存并重算）。"""
+def test_cross_session_run_reuses_artifact_via_artifact_session():
+    """产物属会话 A；当前 run 会话 B —— 真实用户域跨会话复用，探测必须用
+    artifact_session_id（旧实现用当前会话探测 → 必失败 → 误删活缓存并重算）。"""
     dag = _chain_dag()
     env = Env(dag)
     inst = env.svc.instantiate("recipe-r1", owner_scope=_OWNER,
@@ -336,8 +374,8 @@ def test_cross_session_run_recomputes_instead_of_reusing_foreign_ref():
         package_fingerprint="pf" * 16, package_id="recipe-r1"))
     assert r2["status"] == "succeeded"
     node = env.svc.store.get_node(iid, "transform:buffer:t1")
-    assert not (node["reuse"] or {}).get("reused")
-    assert len(env.exec_calls) > len(calls_first)  # 未误删未重算
+    assert (node["reuse"] or {}).get("reused")
+    assert len(env.exec_calls) == len(calls_first)  # 跨会话复用命中，不重算
 
 
 def test_m2_anonymous_domain_find_scoped_by_session(env=None):
@@ -413,6 +451,161 @@ def test_m4_eligibility_rejects_absent_input_identity():
     assert not ok and why == "input_identity_absent:b"
 
 
+def test_m4_reuse_level_aggregation_takes_weakest_level():
+    """content + profile_digest 混合 → 记 profile_digest（最低水位），
+    不得把弱端口掩盖成最强级 content。"""
+    from types import SimpleNamespace
+
+    from app.services.workflow_runtime.driver import Driver
+
+    recorded = []
+
+    class _Index:
+        def record(self, rec):
+            recorded.append(rec)
+
+    drv = Driver(SimpleNamespace(), reuse_index=_Index(),
+                 owner_scope="u:r1")
+    drv._package_fp = "pf" * 16
+    dag = {"compiler_version": "4.0.0", "methodology_fingerprint": "",
+           "nodes": [], "edges": []}
+    node = {"node_id": "transform:buffer:x", "capability": "buffer"}
+    ports = {
+        "a": {"level": "content", "fp": "a" * 32, "content_revision": "1"},
+        "b": {"level": "profile_digest", "fp": "b" * 32,
+              "content_revision": "2"},
+    }
+    asyncio.run(drv._record_reuse(
+        "wi-1", dag, node, "transform:buffer:x", ports, "s-r1", "ref:out",
+        "fp" * 16))
+    assert recorded and recorded[-1].fingerprint_level == "profile_digest"
+
+
 def _get_rows(env):
     with env.svc.store._factory() as db:
         return list(db.query(WorkflowNodeReuseRow).all())
+
+
+# ── P1: reproject 未接线 geocompute 算子 → 诚实 NODE_NOT_EXECUTABLE ────────
+
+def test_p1_reproject_transform_node_not_executable():
+    """reproject 不在 _TRANSFORM_OPS（geocompute ops REGISTRY 无 REPROJECT
+    执行体）：node_params 非空也不得绕过内联输入门建出无输入数据的 op
+    节点（旧形态：reproject 登记为可执行 → op 节点无 features 仍"成功"
+    执行，静默产出空/错误结果）。"""
+    from types import SimpleNamespace
+
+    from app.services.geocompute.ops import has_operator
+    from app.services.geocompute.plan import NodeCategory
+    from app.services.workflow_runtime.adapters_geocompute import (
+        NodeNotExecutable,
+        build_node_plan,
+        node_executable_op,
+    )
+
+    assert not has_operator(NodeCategory.REPROJECT)  # 未接线事实前提
+    node = SimpleNamespace(node_id="transform:reproject:subject",
+                           kind="transform", role="subject")
+    assert node_executable_op(node) is None
+    # 携带 remediation 参数（target_crs）同样不得建计划
+    with pytest.raises(NodeNotExecutable):
+        build_node_plan(
+            node, node_params={"target_crs": "EPSG:4326"},
+            input_features=[{"type": "Feature", "properties": {},
+                             "geometry": None}],
+            input_fingerprints={"input": "f" * 32},
+            session_id="s-p1", owner_scope="u:p1")
+
+
+def test_p1_wired_transform_ops_still_inline_features():
+    """守卫：已接线 transform op（buffer）仍可执行且内联 features
+    （摘除 reproject 不误伤可执行路径）。"""
+    from types import SimpleNamespace
+
+    from app.services.workflow_runtime.adapters_geocompute import (
+        build_node_plan,
+        node_executable_op,
+    )
+
+    node = SimpleNamespace(node_id="transform:buffer:x", kind="transform")
+    assert node_executable_op(node) is not None
+    plan = build_node_plan(
+        node, node_params={"distance": 100},
+        input_features=[{"type": "Feature", "properties": {"a": 1},
+                         "geometry": {"type": "Point",
+                                      "coordinates": [116.3, 39.9]}}],
+        input_fingerprints={"input": "f" * 32},
+        session_id="s-p1", owner_scope="u:p1")
+    assert plan.nodes[0].parameters.get("features")  # 既有内联契约进门
+
+
+def test_p1_driver_reproject_node_fails_not_executable():
+    """driver 面（真实 store + 真实 engine 选择链）：reproject 节点 →
+    适配器诚实 NODE_NOT_EXECUTABLE（不可重试、留阻断证据），而非把无
+    输入数据的 op 节点发给 geocompute。"""
+    from app.services.session_data import session_data_manager
+    from app.services.workflow_runtime import contracts as C
+    from app.services.workflow_runtime.driver import Driver
+    from app.services.workflow_runtime.store import InstanceStore
+
+    dag = {
+        "nodes": [
+            {"node_id": "data:subject", "kind": "data_input",
+             "role": "subject", "optional": False,
+             "outputs": [{"name": "data"}]},
+            {"node_id": "transform:reproject:subject", "kind": "transform",
+             "optional": False, "params": {"target_crs": "EPSG:4326"},
+             "inputs": [{"name": "input"}],
+             "outputs": [{"name": "output"}]},
+            {"node_id": "output:zone", "kind": "output", "optional": False,
+             "inputs": [{"name": "product"}]},
+        ],
+        "edges": [
+            {"from": "data:subject.data",
+             "to": "transform:reproject:subject.input"},
+            {"from": "transform:reproject:subject.output",
+             "to": "output:zone.product"},
+        ],
+        "primary_output": "output:zone",
+    }
+    fc = {"type": "FeatureCollection", "features": [
+        {"type": "Feature", "properties": {"i": i},
+         "geometry": {"type": "Point", "coordinates": [116.3, 39.9]}}
+        for i in range(3)]}
+
+    async def probe(session_id, ref):
+        return {"ref_id": ref, "feature_count": 3,
+                "content_hash": "h" * 32, "content_revision": 1,
+                "geometry_types": ["Point"]}
+
+    async def scenario():
+        session = "s-p1-driver"
+        ref = await session_data_manager.store(session, fc, prefix="p1")
+        engine = create_engine(
+            "sqlite://", connect_args={"check_same_thread": False},
+            poolclass=StaticPool)
+        Base.metadata.create_all(engine)
+        store = InstanceStore(factory=sessionmaker(bind=engine))
+        inst = store.create_instance(
+            package_id="recipe-p1", package_version="1.0.0",
+            package_fingerprint="pf" * 16, owner_scope=_OWNER,
+            session_id=session,
+            node_specs=[{"node_id": n["node_id"], "optional": False}
+                        for n in dag["nodes"]])
+        iid = inst["instance_id"]
+        store.transition_node(
+            iid, "data:subject", C.NodeState.READY,
+            expected_from=C.NodeState.PENDING, reason="ROLE_BOUND",
+            event="attach", patch={"bound_ref": ref[:96]})
+        driver = Driver(store, owner_scope=_OWNER, deadline_s=10.0,
+                        descriptor_probe=probe)
+        summary = await driver.run(
+            iid, dag, node_params={}, session_id=session,
+            run_token="rt-p1", package_fingerprint="pf" * 16,
+            package_id="recipe-p1")
+        return summary, store.get_node(iid, "transform:reproject:subject")
+
+    summary, row = asyncio.run(scenario())
+    assert row["state"] == C.NodeState.FAILED
+    assert row["error_code"] == "NODE_NOT_EXECUTABLE"
+    assert (row["binding"] or {}).get("action") == "blocked"

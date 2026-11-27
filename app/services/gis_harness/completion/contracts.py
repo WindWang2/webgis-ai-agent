@@ -101,7 +101,9 @@ F_LAYER_TRANSPARENT = "layer_transparent"
 # H01（K4）：任务语义存续 —— 受保护分析任务（intent 层 hint 护栏的
 # 完成层对偶）不得由纯视觉族交付：定量密度被降级为视觉热力是语义违约，
 # 不能被「渲染完美」掩盖。family 词表 = recipe_packs 的 workflow_family。
-F_TASK_SEMANTIC_DOWNGRADED = "F_TASK_SEMANTIC_DOWNGRADED"
+# 值 = 小写 snake 机器码（本模块词表约定；随 verdict reasons 外泄给
+# 前端/测试，不能是常量名本身）。
+F_TASK_SEMANTIC_DOWNGRADED = "task_semantic_downgraded"
 TASK_SEMANTIC_FAMILY_GUARDS: Dict[str, Tuple[str, ...]] = {
     "analytical_density": ("visual_density",),
 }

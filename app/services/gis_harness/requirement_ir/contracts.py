@@ -414,6 +414,7 @@ PatchOp = Literal[
     "remove_measure",   # value: measure id
     "answer_ambiguity",  # value: {context_key, answer}
     "waive_ambiguity",  # value: context_key
+    "record_ambiguity",  # value: Ambiguity（system 入档；asked_turn 取 patch.turn）
     "add_lock",         # value: {scope, value}
     "remove_lock",      # value: {scope, value}
     "accept",           # 用户接受当前需求文档

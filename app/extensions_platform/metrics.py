@@ -71,13 +71,6 @@ def record_worker_crash() -> None:
     _WORKER_CRASH_TOTAL.inc()
 
 
-class _NullObserver:
-    """metrics 缺席时的空转观察者（host 无 prometheus 环境可安全调用）。"""
-
-    def observe(self, seconds: float) -> None:  # pragma: no cover
-        pass
-
-
 class InvocationTimer:
     """provider 调用计时（host 侧 with 语义；计量失败绝不阻断调用）。"""
 

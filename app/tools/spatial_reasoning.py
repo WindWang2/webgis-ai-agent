@@ -304,6 +304,8 @@ async def spatial_reasoning(
         logger.error(f"[SpatialReasoning] Failed: {e}")
         return {
             "type": "spatial_reasoning",
+            "success": False,
+            "code": "spatial_reasoning_error",
             "conclusion": "推演过程中发生错误",
             "reasoning_chain": [],
             "confidence": 0.0,

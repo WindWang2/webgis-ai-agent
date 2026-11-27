@@ -82,9 +82,15 @@ _SOFT_TRANSFORM_DIMS = frozenset({
 _ROUTING_BONUS = 0.15
 
 #: 不确定性查询词 → uncertainty_support 的语义满足分（查询显式要求
-#: 不确定性产物时：field=完全满足；none=完全不满足——词面到不了的
-#: 产出语义差异，只有克里金族产预测方差）。
-_UNCERTAINTY_QUERY_TERMS = ("不确定性", "方差", "误差面", "置信", "可靠")
+#: 不确定性产物时：field=完全满足；none=完全不满足——词面到不到的
+#: 产出语义差异，只有克里金族产预测方差）。中英同权：英文查询
+#: （variance / uncertainty / confidence…）同样显式要求不确定性产物，
+#: 只收中文词会让英文诉求静默丢掉该约束（IDW 因此压过克里金）。
+_UNCERTAINTY_QUERY_TERMS = (
+    "不确定性", "方差", "误差面", "置信", "可靠",
+    "uncertainty", "variance", "confidence", "reliability",
+    "error surface", "error map", "prediction error",
+)
 _UNCERTAINTY_SUPPORT_SCORE = {"field": 1.0, "ensemble": 0.8, "analytic": 0.5}
 
 #: 最小层兜底族（ontology minimal tier 的物化：全部候选被拒/降级时，
@@ -325,11 +331,16 @@ def rank_family_methods(
     ranked = _partition_sort(scored, methodology_registry)
     all_rejected = bool(scored) and all(
         s.qualification_status == "rejected" for s in scored)
+    # 空候选池（族无候选方法，或全部被 exclude）同样是无选择：不置
+    # abstained 会让「无选择」与成功无法区分（selected=None 却
+    # abstained=False，调用方拿到一个既没选中也没弃权的结果）。
+    no_candidates = not scored
     # selected 必须与 ranked[0] 一致（rejected 不入选——Round1 #2）
     return RankResult(
         selected=ranked[0] if ranked and not all_rejected else None,
-        abstained=all_rejected,
-        abstain_reason=ABSTAIN_ALL_REJECTED if all_rejected else "",
+        abstained=all_rejected or no_candidates,
+        abstain_reason=(ABSTAIN_ALL_REJECTED if all_rejected
+                        else ABSTAIN_NO_EVIDENCE if no_candidates else ""),
         ranked=ranked,
         evidence={"family": family_id, "category": category_id,
                   "candidates": len(scored)},

@@ -121,6 +121,38 @@ def test_bind_kill_switch(monkeypatch):
     assert bind_tool_capability("t", registry=reg) is None
 
 
+def test_bind_allowed_survives_candidate_without_score_or_qualification(monkeypatch):
+    """证据构造直取 c.score / c.qualification.status 时，候选面缺字段
+    （score=None / qualification=None）会抛异常逃出 dispatch 咽喉点 ——
+    违反本模块 fail-open 契约。防御读取后照常产出 allowed 证据。"""
+    from types import SimpleNamespace
+
+    from app.services.gis_harness.candidate_planner_v8 import CandidatePlan
+    from app.services.gis_harness.hotpath_convergence.capability_bind import (
+        bind_tool_capability,
+    )
+
+    plan = CandidatePlan(
+        capability_id="cap_x",
+        candidates=[
+            SimpleNamespace(kind="tool", id="alt_tool", score=None,
+                            qualification=None),
+            SimpleNamespace(kind="tool", id="my_tool", score=None,
+                            qualification=None),
+        ],
+        excluded=[],
+    )
+    _patch_plan(monkeypatch, plan)
+    reg = MagicMock()
+    reg.metadata.return_value = {"capabilities": ["cap_x"]}
+    outcome = bind_tool_capability("my_tool", registry=reg)
+    assert outcome is not None and not outcome.refused
+    assert outcome.evidence["score"] == 0.0
+    assert outcome.evidence["status"] == ""
+    assert outcome.evidence["alternatives"][0]["score"] == 0.0
+    assert outcome.evidence["alternatives"][0]["status"] == ""
+
+
 def test_bind_allowed_carries_rank_and_alternatives(monkeypatch):
     from app.services.gis_harness.hotpath_convergence.capability_bind import (
         bind_tool_capability,

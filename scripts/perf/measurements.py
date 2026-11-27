@@ -113,38 +113,48 @@ def measure_cube_window_p95(iterations: int = 10, tmp_root: str | None = None) -
 
     from app.services.lakehouse.cube_store import read_cube_window
 
+    import shutil
     import tempfile
 
-    root_path = Path(tmp_root or tempfile.mkdtemp(prefix="perf-cube-")) / "cube"
-    times = [f"2026-01-{d:02d}" for d in range(1, 5)]
-    import numpy as np
-
-    root = zarr.open_group(str(root_path), mode="w")
-    root.attrs["bands"] = ["ndvi"]
-    root.attrs["times"] = times
-    root.attrs["crs"] = "EPSG:4326"
-    # v1 layout: root[band] IS the (time, y, x) array; times/crs/transform on
-    # the array's attrs (read_cube_window reads exactly these).
-    stack = np.stack([np.full((64, 64), float(t), dtype="float32") for t in range(4)])
+    if tmp_root:
+        tmp_dir: str | None = None
+        root_path = Path(tmp_root) / "cube"
+    else:
+        tmp_dir = tempfile.mkdtemp(prefix="perf-cube-")
+        root_path = Path(tmp_dir) / "cube"
     try:
-        arr = root.create_array("ndvi", data=stack, chunks=(2, 32, 32))
-    except AttributeError:  # zarr v2
-        arr = root.create_dataset("ndvi", data=stack, chunks=(2, 32, 32))
-    arr.attrs["times"] = times
-    arr.attrs["crs"] = "EPSG:4326"
-    arr.attrs["transform"] = [0.01, 0, 116.0, 0, -0.01, 40.0]
+        times = [f"2026-01-{d:02d}" for d in range(1, 5)]
+        import numpy as np
 
-    timings: List[float] = []
-    read_cube_window(root_path, bands=["ndvi"], y=slice(0, 32), x=slice(0, 32))
-    for i in range(iterations):
-        start = time.perf_counter()
-        out = read_cube_window(root_path, bands=["ndvi"],
-                               time=slice(i % 2, (i % 2) + 2),
-                               y=slice(0, 32), x=slice(0, 32))
-        timings.append((time.perf_counter() - start) * 1000)
-        if "ndvi" not in out["bands"]:
-            raise RuntimeError("cube window read returned wrong shape")
-    return _percentile(timings, 95)
+        root = zarr.open_group(str(root_path), mode="w")
+        root.attrs["bands"] = ["ndvi"]
+        root.attrs["times"] = times
+        root.attrs["crs"] = "EPSG:4326"
+        # v1 layout: root[band] IS the (time, y, x) array; times/crs/transform on
+        # the array's attrs (read_cube_window reads exactly these).
+        stack = np.stack([np.full((64, 64), float(t), dtype="float32") for t in range(4)])
+        try:
+            arr = root.create_array("ndvi", data=stack, chunks=(2, 32, 32))
+        except AttributeError:  # zarr v2
+            arr = root.create_dataset("ndvi", data=stack, chunks=(2, 32, 32))
+        arr.attrs["times"] = times
+        arr.attrs["crs"] = "EPSG:4326"
+        arr.attrs["transform"] = [0.01, 0, 116.0, 0, -0.01, 40.0]
+
+        timings: List[float] = []
+        read_cube_window(root_path, bands=["ndvi"], y=slice(0, 32), x=slice(0, 32))
+        for i in range(iterations):
+            start = time.perf_counter()
+            out = read_cube_window(root_path, bands=["ndvi"],
+                                   time=slice(i % 2, (i % 2) + 2),
+                                   y=slice(0, 32), x=slice(0, 32))
+            timings.append((time.perf_counter() - start) * 1000)
+            if "ndvi" not in out["bands"]:
+                raise RuntimeError("cube window read returned wrong shape")
+        return _percentile(timings, 95)
+    finally:
+        if tmp_dir is not None:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 # ── Chat first-token route overhead P95 ───────────────────────────────────

@@ -28,13 +28,18 @@ from app.core.auth import create_access_token
 from app.core.database import Base, Engine, SessionLocal
 from app.main import app
 from app.models.db_model import Conversation, User
-from app.models.topology_workbench import TopologyException, TopologyFinding
+from app.models.topology_workbench import (
+    TopologyException,
+    TopologyFinding,
+    TopologyRun,
+)
 from app.services.session_data import session_data_manager
 
 from tests.topology_workbench.fixtures_g31 import (
     BUILDING_CROSS,
     PARCEL_E_HOLE,
     PARCEL_E_RECT,
+    PARCEL_W,
     aoi_source,
     fc,
     feat,
@@ -204,6 +209,44 @@ def test_journey_g31_full(client: TestClient):
     counts = r.json()["status_counts"]
     assert counts.get("resolved", 0) >= 1  # 建筑越界已 resolved
     assert counts.get("accepted_exception") == 1  # 洞的例外跨运行延续（锚点匹配）
+
+
+def test_recheck_blocked_rule_is_not_resolved(client: TestClient):
+    """复验：新运行该规则被阻断 → 不判 resolved（"无法判定"≠"证据消失"）。
+
+    blocked 规则的 computation 仍是 full —— resolved 判定只查
+    computation=full 会把规则阻断（target 为空等）误判成旧问题已解决。
+    """
+    target_ref = _store("rc-tgt", fc(feat("parcel-e", PARCEL_E_RECT)))
+    bld_ref = _store("rc-bld", fc(feat("bld-1", BUILDING_CROSS)))
+    ruleset_id = _create_ruleset(client, "recheck-blocked", [
+        {"rule_id": "in", "rule_type": "objects_covered_by_target", "severity": "error",
+         "params": {"boundary_policy": "covered", "outside_area_threshold_m2": 1.0}}])
+    res = _submit(client, ruleset_id, {
+        "checked": {"kind": "session_ref", "ref": bld_ref, "session_id": "twb-sess"},
+        "target": {"kind": "session_ref", "ref": target_ref, "session_id": "twb-sess"},
+    })
+    run = _wait_completed(client, res["run_id"])
+    rules = {rr["rule_id"]: rr for rr in run["rule_results"]}
+    assert rules["in"]["outcome"] == "violations_found"
+
+    # target 源换成"无有效几何"的载荷 → 新运行该规则 blocked（target_empty）
+    payload = asyncio.get_event_loop().run_until_complete(
+        session_data_manager.get("twb-sess", target_ref))
+    payload["features"] = [{"type": "Feature", "properties": {"id": "null-geom"},
+                            "geometry": None}]
+    asyncio.get_event_loop().run_until_complete(
+        session_data_manager.overwrite("twb-sess", target_ref, payload))
+
+    r = client.post(f"{PREFIX}/runs/{res['run_id']}/recheck", headers=_auth(), json={})
+    rj = r.json()
+    assert rj["status"] == "completed"
+    assert rj["resolved_count"] == 0
+    assert rj["persisted_count"] >= 1
+    counts = client.get(f"{PREFIX}/runs/{res['run_id']}/findings",
+                        headers=_auth()).json()["status_counts"]
+    assert counts.get("resolved", 0) == 0  # 阻断不是 resolved 的证据
+    assert counts.get("open", 0) >= 1
 
 
 # ═══ T12/T13/T14：scope 语义 ═══════════════════════════════════════
@@ -617,3 +660,275 @@ def test_review2_session_only_tool_journey(client: TestClient):
     detail = asyncio.get_event_loop().run_until_complete(registry.dispatch(
         "topology_finding_detail", {"finding_id": fl["findings"][0]["finding_id"]}))
     assert detail.get("success"), detail
+
+
+# ═══ P2 回归：无身份可见性 / 原子 claim / 复用键 / scope 形状 ═════════
+
+
+def test_p2_exceptions_actor_none_sees_nothing(client: TestClient):
+    """P2-回归：无 actor 的例外列表不得回退全表（anchor 含源指纹/locator）。"""
+    from app.services.topology_workbench.exceptions_svc import list_exceptions
+
+    ruleset_id = _create_ruleset(client, "p2-exc-vis", [
+        {"rule_id": "cov", "rule_type": "area_coverage", "severity": "error",
+         "params": {}}])
+    with SessionLocal() as db:
+        db.add(TopologyException(
+            ruleset_id=ruleset_id, rule_id="cov",
+            finding_key="p2-exc-vis-key",
+            anchor={"source_fingerprints": {"coverage": "fp-secret"},
+                    "metric": {"value": 123}},
+            reason="visibility-regression", status="active",
+            created_by="twb-owner",
+        ))
+        db.commit()
+    assert list_exceptions(ruleset_id=ruleset_id, actor_user_id=None) == []
+    assert len(list_exceptions(
+        ruleset_id=ruleset_id, actor_user_id="twb-owner")) == 1
+
+
+def _exception_fixture(client: TestClient, tag: str) -> tuple:
+    """单规则集 + 带洞覆盖运行 → (ruleset_id, run_id, finding)。"""
+    aoi_ref = _store(f"{tag}aoi", aoi_source())
+    parcels_ref = _store(f"{tag}ph", parcels_with_hole())
+    ruleset_id = _create_ruleset(client, f"{tag}-ruleset", [
+        {"rule_id": "cov", "rule_type": "area_coverage", "severity": "error",
+         "params": {"gap_area_threshold_m2": 5.0}}])
+    bindings = {
+        "coverage": {"kind": "session_ref", "ref": parcels_ref, "session_id": "twb-sess"},
+        "aoi": {"kind": "session_ref", "ref": aoi_ref, "session_id": "twb-sess"},
+    }
+    res = _submit(client, ruleset_id, bindings)
+    run = _wait_completed(client, res["run_id"])
+    finding = client.get(
+        f"{PREFIX}/runs/{run['id']}/findings", headers=_auth()).json()["items"][0]
+    return ruleset_id, run["id"], finding
+
+
+def test_p3_revoke_requires_actor(client: TestClient):
+    """P3 回归：actor 为空不得绕过 revoke 的归属校验（无身份 ≠ 有权撤销）。"""
+    from app.services.topology_workbench.exceptions_svc import revoke_exception
+    from app.services.topology_workbench.service import WorkbenchError
+
+    _, run_id, finding = _exception_fixture(client, "p3revoke")
+    exc = client.post(f"{PREFIX}/findings/{finding['id']}/exception",
+                      headers=_auth(), json={"reason": "p3-revoke"}).json()["exception"]
+    with pytest.raises(WorkbenchError) as ei:
+        revoke_exception(exc["id"], actor_user_id=None)
+    assert ei.value.code == "not_owned"
+    with SessionLocal() as db:
+        assert db.get(TopologyException, exc["id"]).status == "active"
+
+
+def test_p3_revoke_only_reopens_same_ruleset(client: TestClient):
+    """P3 回归：撤销只回开本规则集下的同 key finding —— digest 相同的两个
+    规则集不得互相 reopen 对方已接受的例外。"""
+    rules = [{"rule_id": "cov", "rule_type": "area_coverage", "severity": "error",
+              "params": {"gap_area_threshold_m2": 5.0}}]
+    aoi_ref = _store("p3scopeaoi", aoi_source())
+    parcels_ref = _store("p3scopeph", parcels_with_hole())
+    rs_a = _create_ruleset(client, "p3-scope-a", rules)
+    rs_b = _create_ruleset(client, "p3-scope-b", rules)
+    bindings = {
+        "coverage": {"kind": "session_ref", "ref": parcels_ref, "session_id": "twb-sess"},
+        "aoi": {"kind": "session_ref", "ref": aoi_ref, "session_id": "twb-sess"},
+    }
+    run_a = _wait_completed(client, _submit(client, rs_a, bindings)["run_id"])
+    run_b = _wait_completed(client, _submit(client, rs_b, bindings)["run_id"])
+    assert run_a["ruleset_digest"] == run_b["ruleset_digest"]
+    find_a = client.get(
+        f"{PREFIX}/runs/{run_a['id']}/findings", headers=_auth()).json()["items"][0]
+    find_b = client.get(
+        f"{PREFIX}/runs/{run_b['id']}/findings", headers=_auth()).json()["items"][0]
+    assert find_a["finding_key"] == find_b["finding_key"]
+    exc_a = client.post(f"{PREFIX}/findings/{find_a['id']}/exception",
+                        headers=_auth(), json={"reason": "p3-scope-a"}).json()["exception"]
+    client.post(f"{PREFIX}/findings/{find_b['id']}/exception",
+                headers=_auth(), json={"reason": "p3-scope-b"})
+    r = client.delete(f"{PREFIX}/exceptions/{exc_a['id']}", headers=_auth())
+    assert r.status_code == 200
+    counts_a = client.get(
+        f"{PREFIX}/runs/{run_a['id']}/findings",
+        headers=_auth()).json()["status_counts"]
+    counts_b = client.get(
+        f"{PREFIX}/runs/{run_b['id']}/findings",
+        headers=_auth()).json()["status_counts"]
+    assert counts_a.get("open") == 1
+    assert counts_b.get("accepted_exception") == 1
+    assert counts_b.get("open", 0) == 0
+
+
+def test_p3_accept_after_stale_reuses_exception_row(client: TestClient):
+    """P3 回归：stale 例外再次接受时复用同一行，不累积重复例外记录。"""
+    ruleset_id, run_id, finding = _exception_fixture(client, "p3stale")
+    first = client.post(f"{PREFIX}/findings/{finding['id']}/exception",
+                        headers=_auth(), json={"reason": "p3-stale-first"}).json()["exception"]
+    # 模拟 runner 的 stale 判定结果（规则/源变化 → 例外 stale、finding 回 open）
+    with SessionLocal() as db:
+        exc_row = db.get(TopologyException, first["id"])
+        exc_row.status = "stale"
+        f_row = db.get(TopologyFinding, finding["id"])
+        f_row.status = "open"
+        f_row.exception_id = None
+        db.commit()
+    second = client.post(f"{PREFIX}/findings/{finding['id']}/exception",
+                         headers=_auth(), json={"reason": "p3-stale-second"}).json()["exception"]
+    assert second["id"] == first["id"]
+    with SessionLocal() as db:
+        rows = db.execute(select(TopologyException).where(
+            TopologyException.ruleset_id == ruleset_id,
+            TopologyException.finding_key == finding["finding_key"],
+        )).scalars().all()
+        assert len(rows) == 1
+        assert rows[0].status == "active"
+    counts = client.get(
+        f"{PREFIX}/runs/{run_id}/findings", headers=_auth()).json()["status_counts"]
+    assert counts.get("accepted_exception") == 1
+
+
+def test_p2_list_visibility_actor_none_returns_no_rows(client: TestClient):
+    """P2-回归：list_runs/list_rulesets 无身份时不得返回全表行。"""
+    from app.services.topology_workbench.service import list_rulesets, list_runs
+
+    ruleset_id = _create_ruleset(client, "p2-list-vis", [
+        {"rule_id": "cov", "rule_type": "area_coverage", "severity": "error",
+         "params": {}}])
+    with SessionLocal() as db:
+        db.add(TopologyRun(
+            ruleset_id=ruleset_id, ruleset_digest="d", ruleset_version=1,
+            status="pending", bindings={"coverage": {"ref": "ref:secret"}},
+            method_version="m", created_by="twb-owner",
+        ))
+        db.commit()
+    assert list_rulesets(
+        project_id=None, session_id=None, actor_user_id=None) == ([], 0)
+    assert list_runs(actor_user_id=None) == ([], 0)
+
+
+def test_p2_run_claim_is_atomic_pending_only(client: TestClient):
+    """P2-回归：已被他人 claim（running）的运行不再执行/不再落 finding。"""
+    from app.services.topology_workbench.runner import execute_topology_run
+    from app.services.topology_workbench.service import submit_run
+
+    aoi_ref = _store("p2claim-aoi", aoi_source())
+    parcels_ref = _store("p2claim-pc", parcels_cover())
+    ruleset_id = _create_ruleset(client, "p2-claim", [
+        {"rule_id": "cov", "rule_type": "area_coverage", "severity": "error",
+         "params": {"gap_area_threshold_m2": 5.0}}])
+    sub = asyncio.get_event_loop().run_until_complete(submit_run(
+        ruleset_id=ruleset_id,
+        bindings={
+            "coverage": {"kind": "session_ref", "ref": parcels_ref,
+                          "session_id": "twb-sess"},
+            "aoi": {"kind": "session_ref", "ref": aoi_ref,
+                     "session_id": "twb-sess"},
+        },
+        actor_user_id="twb-owner", actor_owner_token=None,
+        session_id="twb-sess", submit_job=False))
+    run_id = sub["run_id"]
+    with SessionLocal() as db:  # 模拟另一 worker 已原子 claim
+        row = db.get(TopologyRun, run_id)
+        row.status = "running"
+        db.commit()
+
+    result = asyncio.get_event_loop().run_until_complete(
+        execute_topology_run(run_id))
+    assert result["status"] == "running"
+    assert result["already_terminal"] is False
+    with SessionLocal() as db:
+        assert db.get(TopologyRun, run_id).status == "running"
+        assert db.execute(select(TopologyFinding).where(
+            TopologyFinding.run_id == run_id)).first() is None
+
+
+def test_p2_input_digest_binds_source_ref(client: TestClient):
+    """P2-回归：同内容不同 ref 不得复用（locators 必须指向当前绑定源）。"""
+    import copy
+
+    payload = parcels_with_hole()
+    payload["features"][0]["properties"]["p2_digest_marker"] = "ref-binding"
+    aoi_payload = aoi_source()
+    aoi_payload["features"][0]["properties"]["p2_digest_marker"] = "ref-binding"
+    ref_a = _store("p2dig-a", copy.deepcopy(payload))
+    ref_b = _store("p2dig-b", copy.deepcopy(payload))
+    aoi_ref = _store("p2dig-aoi", copy.deepcopy(aoi_payload))
+    ruleset_id = _create_ruleset(client, "p2-digest", [
+        {"rule_id": "cov", "rule_type": "area_coverage", "severity": "error",
+         "params": {"gap_area_threshold_m2": 5.0}}])
+
+    def _bindings(ref: str) -> dict:
+        return {
+            "coverage": {"kind": "session_ref", "ref": ref,
+                          "session_id": "twb-sess"},
+            "aoi": {"kind": "session_ref", "ref": aoi_ref,
+                     "session_id": "twb-sess"},
+        }
+
+    res1 = _submit(client, ruleset_id, _bindings(ref_a))
+    run1 = _wait_completed(client, res1["run_id"])
+    assert run1["status"] == "completed"
+    res2 = _submit(client, ruleset_id, _bindings(ref_b))
+    run2 = _wait_completed(client, res2["run_id"])
+    assert run2["status"] == "completed"
+    assert not (run2["completeness"] or {}).get("reused_from")
+
+    f2 = client.get(f"{PREFIX}/runs/{res2['run_id']}/findings",
+                    headers=_auth()).json()["items"][0]
+    detail = client.get(f"{PREFIX}/findings/{f2['id']}",
+                        headers=_auth()).json()["finding"]
+    refs = {loc.get("ref") for loc in detail["locators"]}
+    assert ref_b in refs
+    assert ref_a not in refs
+
+
+def test_p2_bbox_scope_shape_is_typed_error():
+    """P2-回归：缺 bbox/空 boxes → typed invalid_scope（不是裸 TypeError/空子集）。"""
+    from app.services.topology_workbench.snapshots import SnapshotError, apply_scope
+
+    feats = [feat("p2-bbox", PARCEL_W)]
+    for scope in (
+        {"kind": "bbox"},
+        {"kind": "bbox", "boxes": []},
+        {"kind": "bbox", "bbox": [116.4, 39.9, 116.5]},
+    ):
+        with pytest.raises(SnapshotError) as exc:
+            apply_scope(feats, scope)
+        assert exc.value.code == "invalid_scope"
+
+
+def test_p2_project_artifact_scope_offloaded(monkeypatch):
+    """P2-回归：project_artifact 的 scope 全量扫描必须在工作线程（不阻塞循环）。"""
+    import threading
+
+    from app.services.topology_workbench import snapshots as snap_mod
+
+    main_thread = threading.main_thread()
+    seen: dict = {}
+
+    def _fake_apply_scope(features, scope, **kwargs):
+        seen["thread"] = threading.current_thread()
+        return features, {"semantics": "bbox_intersects_coarse"}
+
+    async def _fake_verify(*args, **kwargs):
+        return None
+
+    def _fake_resolve(*args, **kwargs):
+        return ([feat("p2-art", PARCEL_W)], 1, "EPSG:4326", "fp", "artifact")
+
+    monkeypatch.setattr(snap_mod, "apply_scope", _fake_apply_scope)
+    monkeypatch.setattr(snap_mod, "_verify_project_access", _fake_verify)
+    monkeypatch.setattr(snap_mod, "_resolve_project_artifact_sync", _fake_resolve)
+
+    snap = asyncio.get_event_loop().run_until_complete(
+        snap_mod.resolve_role_snapshot(
+            role="checked",
+            binding={"kind": "project_artifact", "project_id": "p2-proj",
+                     "artifact_id": "p2-art",
+                     "scope": {"kind": "bbox",
+                               "bbox": [116.0, 39.0, 117.0, 40.0]}},
+            rule_type="", run_session_id=None, actor_user_id="twb-owner",
+            actor_owner_token=None, max_features=0,
+        )
+    )
+    assert seen.get("thread") is not main_thread
+    assert snap.completeness == "full"

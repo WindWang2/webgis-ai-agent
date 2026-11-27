@@ -120,3 +120,44 @@ class TestNullEqualityAlignment:
         assert _assert_both_sides(where, FEATURES[0])   # f null 命中，g 缺席 ≠ 1
         assert _assert_both_sides(where, FEATURES[2])   # f=1，g 缺席
         assert not _assert_both_sides(where, _feat({"f": 1, "g": 1}))
+
+
+class TestLegacyBareKeyTypeId:
+    """旧式裸键 $type/$id（adapter 实际发射的 ["==","$type",t] 一族）。
+
+    P3 修复回归：``in`` 分支曾在 $type/$id 解析之前提前返回，
+    ["in","$type",["literal",[…]]] 恒判 False（supported_filter 却放行）
+    —— 整层要素在 SVG/PNG/PDF 导出中被静默排除。
+    """
+
+    def test_supported_filter_accepts_bare_key_in(self):
+        assert supported_filter(["in", "$type", ["literal", ["Point", "LineString"]]])
+        assert supported_filter(["in", "$id", ["literal", ["f1", "f9"]]])
+
+    def test_in_type_matches_geometry_family(self):
+        point = _feat({"f": 1})
+        assert evaluate_filter(["in", "$type", ["literal", ["Point", "LineString"]]], point)
+        assert not evaluate_filter(["in", "$type", ["literal", ["Polygon"]]], point)
+        # Multi* 按几何族归约（与 == 分支的 removeprefix("Multi") 同口径）
+        multi = {"type": "Feature",
+                 "geometry": {"type": "MultiPolygon", "coordinates": [[[[0, 0]]]]},
+                 "properties": {}}
+        assert evaluate_filter(["in", "$type", ["literal", ["Polygon"]]], multi)
+
+    def test_in_id_matches_feature_id(self):
+        feat = _feat({"f": 1})
+        feat["id"] = "f1"
+        assert evaluate_filter(["in", "$id", ["literal", ["f1", "f9"]]], feat)
+        assert not evaluate_filter(["in", "$id", ["literal", ["f9"]]], feat)
+        numeric = _feat({})
+        numeric["id"] = 7
+        assert evaluate_filter(["in", "$id", ["literal", [7, 8]]], numeric)
+
+    def test_eq_ne_type_id_unchanged_after_reorder(self):
+        """挪位后 == / != 分支语义不变（$type/$id 仍解析）。"""
+        point = _feat({})
+        point["id"] = "p1"
+        assert evaluate_filter(["==", "$type", "Point"], point)
+        assert not evaluate_filter(["!=", "$type", "Point"], point)
+        assert evaluate_filter(["==", "$id", "p1"], point)
+        assert not evaluate_filter(["==", "$id", "other"], point)

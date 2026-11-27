@@ -66,6 +66,22 @@ def test_clip_p99_emits_out_of_range_entry():
     assert spec["out_of_range_label"]
 
 
+def test_clip_p99_colors_span_the_classified_domain():
+    """clip_p99 生效时色带归一化域必须与分类域同源。
+
+    breaks 已按裁剪后值域计算；若 min/max 仍取未裁剪 values，离群极值把
+    [min,max] 撑大后各类中点归一化趋 0 → 颜色全塌向色带底端（近单色图）。
+    """
+    values = [float(i % 10 + 1) for i in range(1195)] + [100.0] * 5
+    spec = build_graduated_spec(_fc(values), "pop")
+    assert spec["clip_policy"] == "clip_p99"
+    colors = spec["palette_colors"]
+    assert len(colors) == spec["k"] >= 3
+    # 各类一色且互不相同（修复前 5 类全为色带底端同一色）
+    assert len(set(colors)) == len(colors), colors
+    assert spec["out_of_range"]["color"] == colors[-1]
+
+
 def test_log_policy_breaks_back_in_original_domain():
     values = [1.0 + i * (100000.0 - 1.0) / 199 for i in range(200)]
     spec = build_graduated_spec(_fc(values), "pop")

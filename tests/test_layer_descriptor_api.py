@@ -179,9 +179,7 @@ async def test_descriptor_orphaned_descriptor_404(client, store):
 
 @pytest.mark.asyncio
 async def test_pre_v3_ref_fallback_still_works(client, store):
-    """Pre-V3 ref (no stored descriptor): seam NotFound → route-level fallback
-    get_ref_data() hydrates and recomputes → 200 with correct feature_count.
-    get_ref_data IS legitimately called this time."""
+    """Pre-V3 ref (no stored descriptor): store-level lazy recompute → 200."""
     ref_id = await store.store(_VALID_SID, _point_fc(25), prefix="data")
     store._descriptors[_VALID_SID].pop(ref_id)
 
@@ -195,7 +193,7 @@ async def test_pre_v3_ref_fallback_still_works(client, store):
     body = resp.json()
     assert body["feature_count"] == 25
     assert body["point_count"] == 25
-    assert spy_grd.call_count >= 1
+    assert spy_grd.call_count == 0
 
 
 @pytest.mark.asyncio
@@ -210,12 +208,8 @@ async def test_descriptor_invalid_ref_id_400(client, store):
 
 
 # ─────────────────────────────────────────────── Redis end-to-end path ────
-# Locking in the seam-internal on-the-fly recompute that only exists on Redis:
-# when the descriptor/meta key is missing (pre-V3 ref, or its TTL expired first)
-# RedisSessionStore.get_ref_descriptor reads the full payload, recomputes and
-# caches the descriptor — the seam then returns success (Memory instead returns
-# NotFound here and the route falls back to get_ref_data). End-user outcome is
-# a 200 with correct fields on both backends; this case pins the Redis one.
+# Both backends lazily recompute and cache a missing descriptor while the
+# payload remains live; this case pins the Redis end-to-end path.
 
 
 def _redis_store_factory():

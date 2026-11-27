@@ -5,9 +5,10 @@
 """
 from __future__ import annotations
 
+import math
 from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.contracts.cartography_components import ComponentPlacement
 
@@ -91,6 +92,17 @@ class SetViewBody(ClientMutationIdMixin):
     pitch: Optional[float] = None
     bearing: Optional[float] = None
 
+    @field_validator("center", "zoom", "pitch", "bearing")
+    @classmethod
+    def _finite_view_values(cls, v: Any) -> Any:
+        """NaN/Inf 视图值在边界拒绝（JSON 解析默认放行 NaN，不可写入 MapSpec）。"""
+        if v is None:
+            return v
+        values = v if isinstance(v, list) else [v]
+        if any(not math.isfinite(float(x)) for x in values):
+            raise ValueError("view values must be finite")
+        return v
+
 
 class SetSceneBody(ClientMutationIdMixin):
     """G3D05（ADR-0275）：用户场景控制器写通道。
@@ -153,12 +165,12 @@ class SetLayoutBody(ClientMutationIdMixin):
     intent: Literal["set_layout"]
     expected_revision: int = Field(ge=0)
     legend: Optional[dict[str, Any]] = None
-    controls: Optional[list[dict[str, Any]]] = None
+    controls: Optional[list[dict[str, Any]]] = Field(default=None, max_length=64)
     margins: Optional[dict[str, Any]] = None
     # CartographyComponent 列表（id/type/enabled/position/priority/style/options）
-    components: Optional[list[dict[str, Any]]] = None
+    components: Optional[list[dict[str, Any]]] = Field(default=None, max_length=128)
     # G15：spec 级 atlas 帧整表写入（MapSpecFrame 列表；None = 不触碰）
-    frames: Optional[list[dict[str, Any]]] = None
+    frames: Optional[list[dict[str, Any]]] = Field(default=None, max_length=200)
     # G34：纸面作者计划整笔写入（print_layout.v1；None = 不触碰）。
     # 关闭词表/未知版本/越界由 print_layout_schema 在 handler 严格复验。
     print_layout: Optional[dict[str, Any]] = None

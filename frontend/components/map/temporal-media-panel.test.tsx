@@ -232,4 +232,52 @@ describe('TemporalMediaPanel', () => {
     await waitFor(() => expect(screen.getByTestId('temporal-media-error')).toBeTruthy());
     expect(screen.queryByTestId('temporal-media-preview')).toBeNull();
   });
+
+  it('下载失败（URL 过期/403）时展示错误，不留下未处理拒绝', async () => {
+    api.listMediaJobs.mockResolvedValue({ success: true, jobs: [
+      { job_id: 'g35-1', status: 'completed', phase: 'completed', progress: 100,
+        plan_hash: preview.plan_hash, message: 'ok' },
+    ] });
+    api.getMediaJobStatus.mockResolvedValue({
+      success: true, status: 'completed', phase: 'completed', progress: 100,
+      message: 'ok', completed: true,
+    });
+    api.getMediaJobResult.mockResolvedValue(completedResult);
+    api.downloadWithAuth.mockRejectedValue(new Error('URL expired'));
+    render(<TemporalMediaPanel />);
+    await waitFor(() => expect(screen.getByTestId('temporal-media-result')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('temporal-media-download-animation'));
+    await waitFor(() => {
+      expect(screen.getByTestId('temporal-media-error').textContent).toContain('URL expired');
+    });
+  });
+
+  it('刷新后服务端不再提供当前格式 → select 收敛到可用格式且提交一致', async () => {
+    render(<TemporalMediaPanel />);
+    await waitFor(() => expect(screen.getByTestId('temporal-media-preview')).toBeTruthy());
+    const select = screen.getByTestId('temporal-media-format') as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: 'gif' } });
+    expect(select.value).toBe('gif');
+
+    // 服务端能力变化：gif 不再可用（仅 apng）。
+    api.getMediaCapabilities.mockResolvedValue({
+      success: true,
+      capabilities: {
+        formats: [{ name: 'apng', available: true, core: true }],
+        renderer: { available: true, engine: 'mapspec-to-svg+rsvg-convert' },
+        limits: { max_observations: 120, max_encoded_frames: 240,
+          max_total_display_ms: 120000, width: [320, 1920], height: [240, 1080] },
+      },
+      binding: { available: true, observations: 3 },
+    });
+    fireEvent.click(screen.getByTestId('temporal-media-refresh'));
+    await waitFor(() => {
+      expect((screen.getByTestId('temporal-media-format') as HTMLSelectElement).value).toBe('apng');
+    });
+
+    fireEvent.click(screen.getByTestId('temporal-media-submit'));
+    await waitFor(() => expect(api.submitMediaJob).toHaveBeenCalled());
+    const body = api.submitMediaJob.mock.calls.at(-1)?.[0] as { format?: string };
+    expect(body.format).toBe('apng');
+  });
 });

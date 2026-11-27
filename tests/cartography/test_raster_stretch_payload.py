@@ -84,6 +84,12 @@ def test_dual_path_parity_with_baked_png() -> None:
     assert diff.max() <= 3, f"双路径最大通道差 {diff.max()} 超容差"
 
 
+def test_reversed_clip_percentiles_rejected() -> None:
+    """倒置 clip_percentiles（如 (98,2)）曾致负 span、拉伸静默倒置且无报错。"""
+    with pytest.raises(ValueError, match="clip_percentiles"):
+        build_raster_stretch_payload(ARRAY, "Viridis", clip_percentiles=(98.0, 2.0))
+
+
 def test_golden_fixture_frozen() -> None:
     """payload + 期望 RGBA 冻结；TS 镜像消费同一 fixture。"""
     golden = json.loads(GOLDEN.read_text(encoding="utf-8"))

@@ -29,14 +29,16 @@ describe('runtime filter fast path', () => {
   it('applies a filter-only change via setFilter with zero layer churn', async () => {
     const map = makeMockMaplibreMap();
     const runtime = new MapSpecRuntime(map as never);
-    await runtime.reconcileAsync(specWith(['==', '$type', 'Point']));
+    const specA = specWith(['==', '$type', 'Point']);
+    await runtime.reconcileAsync(specA);
     runtime.flush();
 
     const addCallsBefore = (map.addLayer as ReturnType<typeof vi.fn>).mock.calls.length;
     const removeCallsBefore = (map.removeLayer as ReturnType<typeof vi.fn>).mock.calls.length;
     const filterCallsBefore = (map.setFilter as ReturnType<typeof vi.fn>).mock.calls.length;
 
-    await runtime.reconcileAsync(specWith(['in', ['get', 'district'], ['literal', ['武侯区']]]));
+    const specB = specWith(['in', ['get', 'district'], ['literal', ['武侯区']]]);
+    await runtime.reconcileAsync(specB);
     runtime.flush();
 
     expect((map.addLayer as ReturnType<typeof vi.fn>).mock.calls.length).toBe(addCallsBefore);
@@ -46,8 +48,9 @@ describe('runtime filter fast path', () => {
     expect(filterCalls[filterCalls.length - 1][0]).toBe('l__point');
     expect(filterCalls[filterCalls.length - 1][1]).toEqual(['in', ['get', 'district'], ['literal', ['武侯区']]]);
 
-    // appliedSpec 前进（下一次 diff 基准正确）。
-    expect(runtime.getAppliedSpec()).toBe(runtime.getAppliedSpec());
+    // appliedSpec 前进到本次 spec（下一次 diff 基准正确）。
+    expect(runtime.getAppliedSpec()).toBe(specB);
+    expect(runtime.getAppliedSpec()).not.toBe(specA);
     runtime.dispose();
   });
 

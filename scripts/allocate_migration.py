@@ -15,7 +15,7 @@
 - 分配后必须推进 ``docs/integration/ownership.json.migration_watermark``
   （preflight 红线提示），本命令打印提醒。
 
-退出码：0 可分配（--dry-run 时同样）；2 拒绝（多 head / slug 非法）。
+退出码：0 可分配（--dry-run 时同样）；2 拒绝（多 head / slug 非法 / base SHA 获取失败）。
 """
 from __future__ import annotations
 
@@ -59,8 +59,13 @@ def main() -> int:
         print(f"拒绝：{filename} 已存在（撞号）：{existing}")
         return 2
 
-    base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO,
-                          capture_output=True, text=True, timeout=10).stdout.strip()
+    proc = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO,
+                          capture_output=True, text=True, timeout=10)
+    if proc.returncode != 0:
+        print(f"拒绝：无法获取 base SHA（git rev-parse HEAD 失败，"
+              f"returncode={proc.returncode}）：{proc.stderr.strip()}")
+        return 2
+    base = proc.stdout.strip()
     print(f"分配成功：{filename}")
     print(f"  base SHA       : {base}")
     print(f"  down_revision  : \"{heads[0]}\"")

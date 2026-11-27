@@ -45,7 +45,7 @@ class ExecutionNodeIn(BaseModel):
     # Wave-11（audit 08 §6.2.4）：到既有 Artifact/DatasetVersion 身份的
     # lineage 边（{ref_id, kind}，≤16）—— 与 api.build_plan_from_json 同一
     # 契约；缺省时构建侧从参数里的可证源身份诚实派生（或为空）。
-    lineage_inputs: list[Dict[str, str]] = Field(default_factory=list)
+    lineage_inputs: list[Dict[str, str]] = Field(default_factory=list, max_length=16)
 
 
 class ExecutionPlanIn(BaseModel):

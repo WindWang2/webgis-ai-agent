@@ -214,3 +214,29 @@ def test_fcls_tool_wrapper_inline_and_guard():
         tool_fn(
             bands={f"band_{b}": big.tolist() for b in range(4)},
             endmembers=ENDMEMBERS.tolist())
+
+
+def test_fcls_nnls_budget_exceeded_is_disclosed_not_raised(monkeypatch):
+    """P2 修复：边界像元超过 NNLS 耗时面预算时**仅披露、不拒绝**。
+
+    review R2-4 契约（rs_v3.py fcls_unmix 处注释）明确「超过仅披露，
+    不拒绝——闭式解主路径不受影响」。旧实现直接 raise ValueError，
+    与注释相反，且令 meta.nnls_budget_exceeded 永为 False（死键）。
+    """
+    import app.lib.geo_analysis.rs_v3 as rs_v3
+
+    monkeypatch.setattr(rs_v3, "_FCLS_NNLS_BUDGET", 2)
+    rng = np.random.default_rng(3)
+    h = w = 12
+    ab_true = rng.dirichlet([1.2, 1.2, 1.2], size=(h, w)).transpose(2, 0, 1)
+    mixed = _mix(ENDMEMBERS, ab_true) + rng.normal(0.0, 0.03, (4, h, w))
+
+    res = fcls_unmix(mixed, ENDMEMBERS)      # 超预算也不得 raise
+    meta = res["meta"]
+    assert meta["n_boundary_pixels_nnls"] > 2
+    assert meta["nnls_budget_pixels"] == 2
+    assert meta["nnls_budget_exceeded"] is True
+    # 披露不改变数值路径：约束性质保持
+    ab = np.stack(res["abundances"])
+    assert ab.min() >= 0.0
+    np.testing.assert_allclose(ab.sum(axis=0), 1.0, rtol=0, atol=1e-9)

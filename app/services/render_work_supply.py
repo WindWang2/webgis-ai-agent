@@ -50,7 +50,17 @@ def _cache_get(session_id: str) -> Optional[_Entry]:
 
 
 def _cache_put(session_id: str, entry: _Entry) -> None:
+    """写入 last-emitted 记忆；单调比较与写入在同一锁内完成。
+
+    调用方不得用锁外读取的快照决定是否写入：并发下迟到的旧代投影会在
+    新代落盘后基于过期快照覆盖缓存，把记忆回退到旧 (revision, seq)。
+    """
     with _cache_lock:
+        current = _cache.get(session_id)
+        if current is not None and (
+            (current[1], current[2]) > (entry[1], entry[2])
+        ):
+            return
         _cache[session_id] = entry
         _cache.move_to_end(session_id)
         while len(_cache) > _MAX_CACHED_SESSIONS:
@@ -173,12 +183,9 @@ def _project_and_store(
             observation_seq=seq,
             previous=previous,
         )
-        # 只有单调前进（或首份）才推进 last-emitted 记忆；迟到旧代按无前代
-        # 投影返回，不回退缓存。
-        if cached is None or (cached[1], cached[2]) <= (revision, seq):
-            _cache_put(
-                session_id, (fingerprint, revision, seq, envelope)
-            )
+        # 只有单调前进（或首份）才推进 last-emitted 记忆；单调比较在
+        # _cache_put 的锁内针对**当前**缓存完成（并发旧代不得回退缓存）。
+        _cache_put(session_id, (fingerprint, revision, seq, envelope))
         return envelope
     except Exception:  # noqa: BLE001 — fail-open：信封缺席 ≠ 主链路失败
         logger.debug(

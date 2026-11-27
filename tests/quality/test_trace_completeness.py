@@ -159,6 +159,21 @@ def test_geocompute_missing_terminal_is_blocker():
     assert "TERMINAL_EVENT_MISSING" in codes
 
 
+@pytest.mark.parametrize("bad_attempts", ["not-a-number", [1], {"n": 1}])
+def test_geocompute_non_numeric_attempts_records_gap_not_crash(bad_attempts):
+    """P3 review：attempts 非数字时必须记 gap，不得让认证面 ValueError 崩溃。"""
+    from app.lib.quality.trace_contract import validate_geocompute_events
+
+    events = [
+        {"event": "run_started", "run_id": "r-bad", "ts": 0},
+        {"event": "node_attempt_failed", "run_id": "r-bad", "node_id": "n1",
+         "attempts": bad_attempts, "ts": 1},
+        {"event": "run_finished", "run_id": "r-bad", "ts": 2},
+    ]
+    gaps = validate_geocompute_events(events)
+    assert any(g.code == "RETRY_RELATION_INCONSISTENT" for g in gaps)
+
+
 # ── 脱敏 ─────────────────────────────────────────────────────────────────
 
 

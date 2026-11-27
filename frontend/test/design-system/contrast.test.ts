@@ -23,6 +23,7 @@ type RGBA = [number, number, number, number];
 
 function blockBody(selector: string): string {
   const start = CSS.indexOf(selector);
+  if (start === -1) throw new Error(`selector ${selector} not found in globals.css`);
   const open = CSS.indexOf('{', start);
   let depth = 0;
   for (let i = open; i < CSS.length; i += 1) {

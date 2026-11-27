@@ -290,6 +290,26 @@ def test_legacy_descriptor_without_schema_stays_unknown():
     assert derived["fields"] == {}
 
 
+def test_profile_from_descriptor_does_not_mutate_input_field_schema():
+    """P3: dict(field_schema) 只浅拷贝内层 meta —— 写 null_ratio 必须换新
+    dict，不得把派生键静默写回调用方 descriptor（缓存/持久化会泄漏该键）。"""
+    descriptor = {
+        "feature_count": 4,
+        "bbox": None,
+        "geometry_types": [],
+        "field_schema": {
+            "v": {"type": "number", "null_count": 1},
+            "name": {"type": "string", "null_count": 0},
+        },
+        "field_schema_complete": True,
+    }
+    derived = profile_from_descriptor(descriptor)
+    assert derived["fields"]["v"]["null_ratio"] == 0.25
+    assert derived["fields"]["name"]["null_ratio"] == 0.0
+    assert "null_ratio" not in descriptor["field_schema"]["v"]
+    assert "null_ratio" not in descriptor["field_schema"]["name"]
+
+
 def test_mixed_type_field_is_string():
     """混合类型列（数值+字符串）→ "string"（与全量 profiler 的回退一致）。"""
     from app.schemas.ref_descriptor import collect_field_schema

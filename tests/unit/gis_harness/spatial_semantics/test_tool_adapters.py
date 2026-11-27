@@ -254,6 +254,56 @@ async def test_inspect_spatial_semantics_tool_discoverable(registry) -> None:
     assert sem["working_crs"] == "EPSG:32648"
 
 
+# ── scope_bbox 形状校验（AOI 对账不静默缺失）──────────────────────────────
+
+@pytest.mark.asyncio
+async def test_inspect_spatial_semantics_valid_scope_bbox_reconciled(
+        registry) -> None:
+    """正对照：合法 scope_bbox → AOI 对账真实发生（非 unknown）。"""
+    res = await registry.dispatch("inspect_spatial_semantics", {
+        "geojson": chengdu_points_fc(),
+        "scope_bbox": [104.05, 30.65, 104.07, 30.67],
+        "scope_name": "成都"})
+    assert res["success"] is True
+    assert res["spatial_semantics"]["scope_overlap"] != "unknown"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_bbox", [
+    [104.05, 30.65],
+    [104.05, 30.65, 104.07],
+    [104.05, 30.65, 104.07, 30.67, 104.08],
+])
+async def test_inspect_spatial_semantics_wrong_length_scope_bbox_rejected(
+        registry, bad_bbox) -> None:
+    """非 4 元素 scope_bbox：typed 拒绝（不再被静默忽略、AOI 无声缺失）。"""
+    res = await registry.dispatch("inspect_spatial_semantics", {
+        "geojson": chengdu_points_fc(), "scope_bbox": bad_bbox})
+    assert res.get("success") is not True
+    assert res.get("code") == "VALIDATION_ERROR"
+    assert "scope_bbox" in str(res)
+    assert res.get("correction_hint")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_bbox", [
+    ["成都", 30.65, 104.07, 30.67],
+    [104.05, "30.65度", 104.07, 30.67],
+    [104.05, 30.65, None, 30.67],
+])
+async def test_inspect_spatial_semantics_non_numeric_scope_bbox_rejected(
+        registry, bad_bbox) -> None:
+    """长度 4 但含非数值：typed 拒绝 + 结构化 correction_hint（不再是裸 float 错误）。"""
+    res = await registry.dispatch("inspect_spatial_semantics", {
+        "geojson": chengdu_points_fc(), "scope_bbox": bad_bbox})
+    assert res.get("success") is not True
+    assert res.get("code") == "VALIDATION_ERROR"
+    dumped = str(res)
+    assert "scope_bbox" in dumped
+    assert "could not convert string to float" not in dumped
+    assert res.get("correction_hint")
+
+
 # ── M6：Pi / legacy 双入口一致 ─────────────────────────────────────────────
 
 _DUAL_CASES = [

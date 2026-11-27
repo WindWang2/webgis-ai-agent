@@ -227,6 +227,25 @@ class TestCandidateContract:
         assert env1["network_enabled"] is False  # 运行时禁自动联网
         assert env1["pyproj_version"] and env1["proj_version"]
 
+    def test_environment_fingerprint_splits_proj_data_by_os_pathsep(
+            self, tmp_path, monkeypatch):
+        """P3：PROJ_DATA 多目录按 os.pathsep 切分（Windows 为 ';'）——
+        固定按 ':' 切分会漏掉全部格网，环境证据与真实不符。"""
+        from pyproj import datadir
+
+        g1 = tmp_path / "d1" / "grids"
+        g2 = tmp_path / "d2" / "grids"
+        g1.mkdir(parents=True)
+        g2.mkdir(parents=True)
+        (g1 / "one.tif").write_bytes(b"1")
+        (g2 / "two.tif").write_bytes(b"22")
+        monkeypatch.setattr(candidates.os, "pathsep", ";")
+        monkeypatch.setattr(
+            datadir, "get_data_dir",
+            lambda: f"{tmp_path / 'd1'};{tmp_path / 'd2'}")
+        env = candidates.environment_fingerprint()
+        assert env["trusted_grid_count"] == 2
+
     def test_c10_env_drift_detected(self):
         """环境证据漂移 → FrozenOperation 构造即阻断（OPERATION_ENV_CHANGED）。"""
         _, locked, _op = _frozen_op_for("EPSG:4326", "EPSG:32650")
@@ -351,6 +370,23 @@ class TestGeometryKernel:
         # 属性与顺序保持
         assert [o["properties"]["i"] for o in outs] == [1, 2, 3, 4, 5, 6]
 
+    def test_coordinates_and_geometries_share_leaf_cursor(self):
+        """P3：coordinates 与 geometries 并存时共用游标，同一批变换值不重复套用。"""
+        op = self._op()
+        feat = {"type": "Feature", "properties": {}, "geometry": {
+            "type": "GeometryCollection",
+            "coordinates": [[116.0, 40.0]],
+            "geometries": [{"type": "Point", "coordinates": [116.5, 40.5]}]}}
+        out = execute.transform_feature(
+            feat, op, execute.BatchStats(), row_index=1)
+        geom = out["geometry"]
+        want_c = _utm50n_analytic(116.0, 40.0)
+        want_g = _utm50n_analytic(116.5, 40.5)
+        assert abs(geom["coordinates"][0][0] - want_c[0]) < 0.01
+        pt = geom["geometries"][0]["coordinates"]
+        assert abs(pt[0] - want_g[0]) < 0.01
+        assert abs(pt[1] - want_g[1]) < 0.01
+
     def test_c18_null_and_empty_geometry_counted_separately(self):
         op = self._op()
         feats = [
@@ -464,3 +500,30 @@ class TestGeometryKernel:
         with pytest.raises(CoordinateOperationError) as ei:
             execute.verify_staged_output(d, "output", "EPSG:32650", 1)
         assert ei.value.error_code == "internal_error"
+
+    def test_geojson_crs_member_escapes_quoted_crs(self, tmp_path):
+        """P2：target_crs 为含引号的 WKT 时仍产出合法 JSON（可回读核验）。"""
+        import json as _json
+
+        from pyproj import CRS
+
+        op = self._op()
+        wkt = CRS.from_epsg(32650).to_wkt()  # AXIS["..."] 含双引号
+        assert '"' in wkt
+        feats = make_point_features(2)
+        src = tmp_path / "src.json"
+        src.write_text(_json.dumps({
+            "type": "FeatureCollection", "features": feats}), encoding="utf-8")
+        frozen = {
+            "frozen_path": str(src), "carrier": "json",
+            "row_count": len(feats), "crs": "EPSG:4326",
+        }
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        execute.run_streaming_transform(frozen, out_dir, op, wkt)
+        doc = _json.loads((out_dir / "output.geojson").read_text())
+        assert doc["crs"]["properties"]["name"] == wkt
+        assert doc["properties"]["schema_info"]["crs"] == wkt
+        verified = execute.verify_staged_output(
+            out_dir, "output", wkt, len(feats))
+        assert verified["crs"] == wkt

@@ -870,6 +870,9 @@ def test_data_gc_endpoints_plan_and_confirm_gate(db, monkeypatch, tmp_path):
     assert store.exists(key_orphan) is True
     assert "promotion_store_gc" not in result
     assert result["orphan_revisions"]["deleted_count"] == 0
+    # P3：项目路由不做孤儿修订清理（全局 sweep 负责），必须显式披露
+    # 「未实现」，不能让 0 同时表示「无孤儿」与「没跑」。
+    assert result["orphan_revisions"]["implemented"] is False
 
 
 # ── 5. 孤儿修订行（FK-less drift）有界清理 ────────────────────────────────
@@ -1090,3 +1093,275 @@ def test_protected_tier_constants_are_uniform():
     assert _GC_PROTECTED_TIERS == _PROTECTED_TIERS == PROTECTED_PERSISTENCE_TIERS
     assert promotion_blob_protection is not None
     assert _promotion_blob_protection is not None
+
+
+# ── 8. 保护扫描失败 = 保护面未知（fail-closed 不变式）────────────────────────
+
+
+def test_snapshot_pointer_scan_failure_marks_truncated(monkeypatch):
+    """扫描自身失败（root 解析异常 / iterdir OSError）⇒ truncated=True：
+    调用方只认 truncated，空保护面 + truncated=False 的 fail-open 组合会让
+    仅被 manifest 指针持有的 blob 被永久删除。"""
+    from app.services.workspace import snapshot as ws_snapshot
+    from app.services.data_lifecycle import quota as quota_mod
+
+    def _boom():
+        raise RuntimeError("config drift")
+
+    monkeypatch.setattr(ws_snapshot, "_workspaces_root", _boom)
+    locations, shas, truncated = quota_mod.workspace_snapshot_protected_pointers()
+    assert locations == set() and shas == set()
+    assert truncated is True
+
+    class _ListingBoom:
+        def is_dir(self):
+            return True
+
+        def iterdir(self):
+            raise OSError("listing failed")
+
+    monkeypatch.setattr(ws_snapshot, "_workspaces_root", lambda: _ListingBoom())
+    locations, shas, truncated = quota_mod.workspace_snapshot_protected_pointers()
+    assert locations == set() and shas == set()
+    assert truncated is True
+
+    # 根目录不存在 = 确实零 manifest（保护面完整且为空）⇒ 不视为截断
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as td:
+        monkeypatch.setattr(ws_snapshot, "_workspaces_root",
+                            lambda: Path(td) / "no-workspaces")
+        _l, _s, not_truncated = quota_mod.workspace_snapshot_protected_pointers()
+        assert not_truncated is False
+
+
+def test_retention_skips_blob_deletion_when_snapshot_scan_fails(
+    db, tmp_path, monkeypatch,
+):
+    """保护扫描失败时 retention 的 plan 与 execute 双侧跳过 blob 删除阶段
+    （修订行照常删；blob 绝不带残缺保护面删除）。"""
+    from app.services import project_artifact_promotion as pap
+    from app.services.workspace import snapshot as ws_snapshot
+    from app.services.data_lifecycle.quota import (
+        execute_retention_cleanup,
+        plan_retention_cleanup,
+    )
+    from app.services.durable_blob_store import get_filesystem_blob_store
+
+    def _boom():
+        raise RuntimeError("config drift")
+
+    _retention_env(monkeypatch)  # max_age_days=1, grace_hours=1
+    monkeypatch.setattr(pap, "content_store_root", lambda: tmp_path / "blobs")
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "DATA_DIR", str(tmp_path / "data"))
+    store = get_filesystem_blob_store()
+    pid = f"proj_{uuid.uuid4().hex[:8]}"
+    _mk_project(pid)
+    art_id = f"art_{uuid.uuid4().hex[:8]}"
+    _mk_artifact(pid, art_id)
+    # 超龄修订 + 超龄 blob（无 pin、非 head、零引用 —— 本可删）
+    key_v, loc_v, _ = _mk_blob(store, "victim", age_hours=48)
+    _mk_revision(art_id, key_v, loc_v, age_days=10, revision_no=1)
+    _mk_revision(art_id, "f" * 64, "ffff/" + "f" * 64 + ".json", revision_no=2)
+
+    monkeypatch.setattr(ws_snapshot, "_workspaces_root", _boom)
+    with SessionLocal() as s:
+        plan = plan_retention_cleanup(s, pid)
+    assert plan["candidate_revision_count"] == 1
+    assert plan["candidate_blobs"] == [], "扫描失败 ⇒ blob 删除阶段整轮跳过"
+    assert plan["protection_scan_truncated"] is True
+    result = execute_retention_cleanup(plan)
+    assert len(result["deleted_revisions"]) == 1
+    assert result["deleted_blobs"] == []
+    assert result.get("protection_scan_truncated") is True
+    assert store.exists(key_v) is True
+
+
+def test_orphan_revision_cleanup_protects_domain_blobs(db, tmp_path, monkeypatch):
+    """孤儿修订清理 blob 阶段必须带域侧持有面（G40 资产版本行 + G48 georef
+    会话 refcount）—— 与 retention execute / promotion GC 同一保护谓词；
+    缺了它，仍被域侧引用的 blob 会被永久删除。"""
+    import json
+    from pathlib import Path
+
+    from app.core.config import settings
+    from app.models.cartographic_symbol_asset import (
+        CartographicSymbolAsset,
+        CartographicSymbolAssetVersion,
+    )
+    from app.models.project import ArtifactRevision
+    from app.services import project_artifact_promotion as pap
+    from app.services.data_lifecycle.quota import (
+        execute_orphan_revision_cleanup,
+        plan_orphan_revision_cleanup,
+    )
+    from app.services.durable_blob_store import get_filesystem_blob_store
+
+    monkeypatch.setattr(pap, "content_store_root", lambda: tmp_path / "blobs")
+    monkeypatch.setattr(settings, "DATA_DIR", str(tmp_path / "data"))
+    store = get_filesystem_blob_store()
+
+    # 三个孤儿 blob：超龄超宽限（删除前的唯一账面 = 孤儿修订行自身）
+    key_sym, loc_sym, _ = _mk_blob(store, "sym", age_hours=24 * 10)
+    geo_sha = hashlib.sha256(b"georef-orphan-blob").hexdigest()
+    key_geo = f"georefbin-{geo_sha}"
+    store.put_blob(key_geo, b"georef-orphan-blob", "json")
+    loc_geo = f"{key_geo[:4]}/{key_geo}.json"
+    old = time.time() - 24 * 10 * 3600.0
+    os.utime(store.root / loc_geo, (old, old))
+    key_free, loc_free, _ = _mk_blob(store, "free", age_hours=24 * 10)
+
+    # G40：符号资产 + 版本行在场 = 引用保护（blob_key = CAS 键）
+    asset_id = f"cartoasset.{uuid.uuid4().hex}"
+    with SessionLocal() as s:
+        s.add(CartographicSymbolAsset(
+            id=asset_id, name="sym", kind="point_symbol", status="published"))
+        s.add(CartographicSymbolAssetVersion(
+            id=str(uuid.uuid4()), asset_id=asset_id, revision=1,
+            document={"v": 1}, status="published",
+            content_digest="d" * 64, blob_key=key_sym,
+        ))
+        s.commit()
+
+    # G48：georef 会话 refcount sidecar（live refs）点名 georefbin-* 键
+    sidecar = (Path(settings.DATA_DIR) / "georeferencing" / "_refs"
+               / geo_sha[:4] / f"{geo_sha}.json")
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
+    sidecar.write_text(json.dumps({"v": 1, "refs": {"sess-a": 1}}))
+
+    # 三条孤儿修订行（artifact 行不存在）
+    with SessionLocal() as s:
+        for key, loc in ((key_sym, loc_sym), (key_geo, loc_geo),
+                         (key_free, loc_free)):
+            s.add(ArtifactRevision(
+                id=str(uuid.uuid4()),
+                artifact_id=f"art_gone_{uuid.uuid4().hex[:6]}",
+                revision_no=1, content_sha256=key, content_location=loc,
+                content_type="json", byte_size=10,
+            ))
+        s.commit()
+
+    with SessionLocal() as s:
+        plan = plan_orphan_revision_cleanup(s)
+    assert plan["candidate_count"] == 3
+    result = execute_orphan_revision_cleanup(plan)
+    assert result["deleted_count"] == 3
+    assert key_free in result["deleted_blobs"], "无域侧引用的孤儿 blob 正常回收"
+    assert key_sym not in result["deleted_blobs"], "G40 资产版本行保护的 blob"
+    assert key_geo not in result["deleted_blobs"], "G48 会话 refcount 保护的 blob"
+    assert store.exists(key_sym) is True
+    assert store.exists(key_geo) is True
+    assert store.exists(key_free) is False
+
+
+def test_env_int_non_finite_falls_back_to_default(monkeypatch):
+    """env 设 inf/Infinity 时 int(float(raw)) 抛 OverflowError —— 必须回退
+    默认值（0=无限），而不是让配额读取把请求打成 500。"""
+    from app.services.data_lifecycle.quota import ProjectQuotaPolicy
+
+    monkeypatch.setenv("WEBGIS_PROJECT_ARTIFACT_MAX_BYTES", "inf")
+    monkeypatch.setenv("WEBGIS_PROJECT_ARTIFACT_MAX_COUNT", "Infinity")
+    monkeypatch.setenv("WEBGIS_PROJECT_ARTIFACT_MAX_REVISION_BYTES", "-inf")
+    policy = ProjectQuotaPolicy.from_env()
+    assert policy.max_bytes == 0
+    assert policy.max_artifact_count == 0
+    assert policy.max_revision_bytes_per_artifact == 0
+    assert policy.unlimited is True
+
+
+def test_retention_multiple_candidates_sharing_location_are_reclaimed(
+    db, monkeypatch, tmp_path
+):
+    """2+ 候选修订共享同一 content_location/sha：存活引用必须减去全部候选
+    修订自身（不是每个 location 只减 1），否则该 blob 永不进入候选。"""
+    from app.services import project_artifact_promotion as pap
+    from app.services.data_lifecycle.quota import plan_retention_cleanup
+    from app.services.durable_blob_store import get_filesystem_blob_store
+
+    _retention_env(monkeypatch)
+    monkeypatch.setattr(pap, "content_store_root", lambda: tmp_path)
+    store = get_filesystem_blob_store()
+    pid = f"proj_{uuid.uuid4().hex[:8]}"
+    _mk_project(pid)
+    art_a = f"art_{uuid.uuid4().hex[:8]}"
+    art_b = f"art_{uuid.uuid4().hex[:8]}"
+    _mk_artifact(pid, art_a)
+    _mk_artifact(pid, art_b)
+    key, loc, _ = _mk_blob(store, "shared-content", age_hours=48)
+    _mk_revision(art_a, key, loc, age_days=10, revision_no=1)
+    _mk_revision(art_a, "1" * 64, "1111/" + "1" * 64 + ".json", revision_no=2)
+    _mk_revision(art_b, key, loc, age_days=10, revision_no=1)
+    _mk_revision(art_b, "2" * 64, "2222/" + "2" * 64 + ".json", revision_no=2)
+
+    with SessionLocal() as s:
+        plan = plan_retention_cleanup(s, pid)
+    assert plan["candidate_revision_count"] == 2
+    assert [b["key"] for b in plan["candidate_blobs"]] == [key], (
+        "两个候选修订是同一 blob 的全部引用：减去全部候选后应零存活引用"
+    )
+
+
+def test_retention_plan_protects_domain_blob_keys(db, tmp_path, monkeypatch):
+    """plan 必须与 execute 同源带上域侧保护面（G40 资产版本行 + G48 georef
+    refcount）：仍被域侧引用的 blob 不得进入候选，否则审批指纹覆盖范围
+    大于 execute 实际删除集。"""
+    import json
+    from pathlib import Path
+
+    from app.core.config import settings
+    from app.models.cartographic_symbol_asset import (
+        CartographicSymbolAsset,
+        CartographicSymbolAssetVersion,
+    )
+    from app.services import project_artifact_promotion as pap
+    from app.services.data_lifecycle.quota import plan_retention_cleanup
+    from app.services.durable_blob_store import get_filesystem_blob_store
+
+    _retention_env(monkeypatch)
+    monkeypatch.setattr(pap, "content_store_root", lambda: tmp_path / "blobs")
+    monkeypatch.setattr(settings, "DATA_DIR", str(tmp_path / "data"))
+    store = get_filesystem_blob_store()
+    pid = f"proj_{uuid.uuid4().hex[:8]}"
+    _mk_project(pid)
+
+    key_sym, loc_sym, _ = _mk_blob(store, "sym-plan", age_hours=48)
+    geo_sha = hashlib.sha256(b"georef-plan-blob").hexdigest()
+    key_geo = f"georefbin-{geo_sha}"
+    store.put_blob(key_geo, b"georef-plan-blob", "json")
+    loc_geo = f"{key_geo[:4]}/{key_geo}.json"
+    old = time.time() - 48 * 3600.0
+    os.utime(store.root / loc_geo, (old, old))
+
+    for art_name, key, loc in (("sym", key_sym, loc_sym), ("geo", key_geo, loc_geo)):
+        art = f"art_{art_name}_{uuid.uuid4().hex[:8]}"
+        _mk_artifact(pid, art)
+        _mk_revision(art, key, loc, age_days=10, revision_no=1)
+        _mk_revision(art, hashlib.sha256(art_name.encode()).hexdigest(),
+                     f"{art_name}/head.json", revision_no=2)
+
+    asset_id = f"cartoasset.{uuid.uuid4().hex}"
+    with SessionLocal() as s:
+        s.add(CartographicSymbolAsset(
+            id=asset_id, name="sym", kind="point_symbol", status="published"))
+        s.add(CartographicSymbolAssetVersion(
+            id=str(uuid.uuid4()), asset_id=asset_id, revision=1,
+            document={"v": 1}, status="published",
+            content_digest="d" * 64, blob_key=key_sym,
+        ))
+        s.commit()
+
+    sidecar = (Path(settings.DATA_DIR) / "georeferencing" / "_refs"
+               / geo_sha[:4] / f"{geo_sha}.json")
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
+    sidecar.write_text(json.dumps({"v": 1, "refs": {"sess-a": 1}}))
+
+    with SessionLocal() as s:
+        plan = plan_retention_cleanup(s, pid)
+    assert plan["candidate_revision_count"] == 2
+    assert plan["candidate_blobs"] == [], "域侧仍引用的 blob 不得进入 plan 候选"
+    reasons = plan["blob_protected_counts"]
+    assert reasons.get("cartographic symbol asset version row") == 1
+    assert reasons.get("georeferencing session refcount") == 1

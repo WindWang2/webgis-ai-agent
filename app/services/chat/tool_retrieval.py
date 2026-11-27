@@ -33,7 +33,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from app.tools.descriptor import manifest_fingerprint
 
@@ -55,7 +55,6 @@ _W_EXAMPLE = 2.0    # V4：examples 语料命中（典型正确调用意图）
 _W_FAILURE = 1.0    # V4：failure_modes 词表命中
 _W_ANTI = 1.5       # V4：anti_examples 负证据（每命中扣减，总量有界）
 _ANTI_CAP = 3.0
-_MATCH_CAP = 3  # 单词最多计 3 次命中（防长描述刷分）
 _ANTI_MATCH_CAP = 4  # 负证据匹配记录上限（可解释面有界）
 
 # ---------------------------------------------------------------------------
@@ -193,15 +192,6 @@ class ToolLexicon:
         )
 
 
-def _count_hits(terms: Iterable[str], corpus: Iterable[str]) -> int:
-    corpus_set = corpus if isinstance(corpus, (set, frozenset)) else set(corpus)
-    hits = 0
-    for t in terms:
-        if t in corpus_set:
-            hits += 1
-    return hits
-
-
 @dataclass(frozen=True)
 class RetrievalHit:
     name: str
@@ -318,8 +308,7 @@ class ToolRetrievalIndex:
                 if local == 0.0 and t in lex.desc_tokens:
                     local = _W_DESC
                 if local > 0.0:
-                    if matched.count(t) < _MATCH_CAP:
-                        matched.append(t)
+                    matched.append(t)
                     contribution = local * w_scale
                     if v6_scoring and len(t) == 1:
                         contribution = min(

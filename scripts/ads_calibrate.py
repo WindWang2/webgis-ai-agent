@@ -2,7 +2,7 @@
 """ads-v1 calibration runner (DS8, ADR-0178): 阈值与排序权重校准.
 
 1. **排序权重校准** — grid sweep over the DS2 ranker weights against the
-   retrieval eval (278 samples); reports the best candidate and whether it
+   retrieval eval (tests/data/ads2_retrieval_eval.json); reports the best candidate and whether it
    beats the shipped weights. Weight updates are applied to
    ``ranker.WEIGHTS`` by editing the single point (never ad-hoc overrides).
 2. **代价模型校准** — measured bytes/row on the fixture grid vs the
@@ -72,7 +72,7 @@ def main() -> int:
     lines = [
         "# ads-v1 校准报告（DS8 · ADR-0178）",
         "",
-        "## 排序权重（278 样本，keyword-only 模式）",
+        f"## 排序权重（{len(samples)} 样本，keyword-only 模式）",
         "",
         f"- shipped 权重 MRR：**{shipped_mrr:.4f}**（Recall@5 闸 0.80 已由测试锁定）",
         f"- sweep 最优 MRR：**{best[0]:.4f}**，候选 = {json.dumps(best[1])}",

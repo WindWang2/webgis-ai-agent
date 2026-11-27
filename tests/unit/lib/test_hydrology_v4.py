@@ -60,6 +60,31 @@ def test_breach_max_depth_fallback_to_fill():
     assert bm["fallback_filled_cells"] >= 0  # 超深洼地回退填洼（诚实计数）
 
 
+def test_breach_outlet_extension_guards_receiver_sentinel():
+    """出口延伸段必须守卫 receiver 哨兵 −1（R1-C1 同族：负索引静默出错）。
+
+    洼地溢流链终到「无更低在网邻域」的出口像元（边界/全局最小，常见）时
+    ``flat[outlet] == -1``：旧实现让 −1 通过 ``nxt in seen`` 检查，负索引读到
+    **格尾像元**并把它的高程刻低（``bflat[-1]``），还沿错误的接收链把整行
+    下游一起刻低。出口本身就是最低地形时延伸段应立即停止。
+    """
+    z = np.array([
+        [30.0, 30.0, 30.0, 30.0, 30.0],
+        [30.0, 20.0, 21.0, 22.0, 30.0],
+        [30.0, 21.0, 22.0, 23.0, 30.0],
+        [30.0, 22.0, 23.0, 24.0, 30.0],
+        [21.0, 22.0, 23.0, 24.0, 30.0],  # r4c0 = 全局最小（汇，receiver −1）
+    ])
+    breached, bm = breach_depressions(z, CELL)
+    assert bm["n_depressions"] >= 1
+    # 出口即最低地形：出口下游一律不许被延伸段改动
+    np.testing.assert_array_equal(breached[4, 1:], z[4, 1:])
+    # 负索引 −1 的落点（格尾像元）高程不变
+    assert breached[-1, -1] == z[-1, -1]
+    # 洼地本意未被削弱：pit→出口仍切出下降通道
+    assert float(z[4, 0] - breached[4, 0]) > 0.0
+
+
 def test_hand_zero_on_streams_and_finite_offstream():
     z = _basin()
     hand_arr, hm = hand(z, CELL, stream_threshold=200)
@@ -247,3 +272,52 @@ def test_hydrology_tool_hypsometry_branch(tmp_path, monkeypatch):
     body = out if isinstance(out, dict) else out.get("data", out)
     assert "高程积分" in str(body.get("summary", ""))
     assert "curve_preview" in body
+
+
+def test_hydrology_tool_nodata_validated_by_contract(tmp_path, monkeypatch):
+    """nodata 覆盖值必须经 apply_contract 校验（此前 setdefault 死写入绕过）。
+
+    非数值 nodata 在旧实现中被 ``float(...)`` 直接转换（绕过契约）；
+    修复后应在数据读取前以 parameter_contract_violation 拒绝。
+    """
+    import rasterio
+    from rasterio.transform import from_origin
+
+    from app.tools.terrain_analysis import ToolRegistry, register_terrain_tools
+
+    monkeypatch.setattr("app.utils.path.validate_data_path.__defaults__",
+                        (str(tmp_path),))
+    z = _basin()
+    path = tmp_path / "dem.tif"
+    with rasterio.open(
+        path, "w", driver="GTiff", width=z.shape[1], height=z.shape[0],
+        count=1, dtype="float32", crs="EPSG:4326",
+        transform=from_origin(103.0, 30.0, 0.001, 0.001),
+    ) as dst:
+        dst.write(z.astype("float32"), 1)
+
+    registry = ToolRegistry()
+    register_terrain_tools(registry)
+    with pytest.raises(ValueError, match="parameter_contract_violation"):
+        registry._tools["hydrology_v4_analysis"](
+            raster_path=str(path), analysis="hypsometry", nodata="not-a-number",
+        )
+
+
+def test_hydrology_tool_discloses_artifact_write_and_param_descriptions():
+    """persist_output=True 会写 *_filled.tif：须披露 artifact_creation/
+    artifact_write；transmissivity/persist_output 须对 LLM 可见（有描述）。"""
+    from app.tools.terrain_analysis import ToolRegistry, register_terrain_tools
+
+    registry = ToolRegistry()
+    register_terrain_tools(registry)
+    meta = registry.metadata("hydrology_v4_analysis")
+    assert meta["side_effect"] == "artifact_creation"
+    assert "artifact_write" in meta["data_mutations"]
+    schema = next(
+        s for s in registry.get_schemas()
+        if s["function"]["name"] == "hydrology_v4_analysis"
+    )
+    props = schema["function"]["parameters"]["properties"]
+    assert props["transmissivity"]["description"]
+    assert props["persist_output"]["description"]

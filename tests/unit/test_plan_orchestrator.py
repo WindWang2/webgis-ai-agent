@@ -479,3 +479,58 @@ async def test_make_plan_supersedes_after_process_cache_miss(monkeypatch):
     assert hist.status == PlanStatus.superseded
     assert (await plan_store.load_current(sid)).plan_id != old_id
     await plan_store.clear(sid)
+
+
+# ─── P2 data-integrity：store 读失败时不得静默覆盖旧计划 ────────────
+
+
+@pytest.mark.asyncio
+async def test_persist_new_plan_refuses_overwrite_on_store_read_failure(monkeypatch):
+    """P2：_canonical 缓存未命中 + store 读失败 → prev=None → 走 save 而非
+    supersede：仍活跃的旧计划被静默覆盖、丢失 supersede 审计。必须放弃本次
+    持久化（降级无计划），绝不静默覆盖。"""
+    from app.services.chat import planner as planner_mod
+    from app.services.chat.llm_client import LLMConfig
+
+    monkeypatch.setattr("app.services.chat.plan_orchestrator._get_registry", lambda: None)
+
+    orch = AgentPlanOrchestrator()
+    sid = "sess-store-read-fail"
+    cfg = LLMConfig(base_url="http://x", model="m", api_key="k")
+    responses = iter([
+        '{"intent":"旧计划","domains":["raster"],"steps":[{"n":1,"goal":"NDVI","tool_family":"raster"}]}',
+        '{"intent":"新计划","domains":["network"],"steps":[{"n":1,"goal":"路线","tool_family":"network"}]}',
+    ])
+
+    async def fake_call_llm(_cfg, _messages, _tools=None):
+        return {"choices": [{"message": {"content": next(responses)}}]}
+
+    monkeypatch.setattr(planner_mod, "call_llm", fake_call_llm)
+
+    old = await orch.make_plan(cfg, sid, "算一下 NDVI", "[环境感知]")
+    assert old is not None
+    old_id = (await plan_store.load_current(sid)).plan_id
+
+    # 新 worker（canonical 缓存未命中）+ store 读失败
+    fresh = AgentPlanOrchestrator()
+    real_load_current = plan_store.load_current
+
+    async def boom(session_id):
+        raise RuntimeError("store read jitter")
+
+    monkeypatch.setattr(plan_store, "load_current", boom)
+    new = await fresh.make_plan(cfg, sid, "换成查路线", "[环境感知]")
+    assert new is not None and new.intent == "新计划"  # 规划本身不失败
+
+    monkeypatch.setattr(plan_store, "load_current", real_load_current)
+
+    current = await plan_store.load_current(sid)
+    assert current is not None and current.plan_id == old_id, (
+        "store read failure silently overwrote the still-active plan (P2)"
+    )
+    assert current.status not in TERMINAL_STATUSES
+    hist = await plan_store.get_by_id(sid, old_id)
+    assert hist is not None and hist.status not in TERMINAL_STATUSES, (
+        "supersede audit was lost (or a bogus supersede happened) on read failure (P2)"
+    )
+    await plan_store.clear(sid)

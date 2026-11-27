@@ -386,8 +386,20 @@ async def _run_delivery_job(
                 token, _make_progress(job_id))
 
         # 阶段 C（async）：durable/台账登记（增值记录，绝不阻断交付本体）
-        await _finalize_delivery(job_id, delivery_id, spec, snapshot, outcome,
-                                 project_id, worker_id, actor=actor)
+        try:
+            await _finalize_delivery(job_id, delivery_id, spec, snapshot, outcome,
+                                     project_id, worker_id, actor=actor)
+        except (OperationCancelled, DeliveryError):
+            raise
+        except Exception:  # noqa: BLE001 — 已发布交付不得因收尾异常被标记失败
+            # 阶段 B 的 atomic_publish 已成功：终态目录是唯一真相。收尾
+            # （重写回执/DB 迁移/登记）异常不得让外层 _fail 把已发布交付
+            # 标记 failed —— 否则终态目录成孤儿、resolve_download 404。
+            logger.exception(
+                "[data-delivery] finalize degraded after publish for %s",
+                delivery_id)
+            _converge_completed_after_publish(
+                job_id, delivery_id, outcome, worker_id)
     except OperationCancelled:
         dl_store.discard_staging(delivery_id)
         from app.core.database import SessionLocal
@@ -514,29 +526,37 @@ def _execute_delivery_sync(
         progress(60, f"安全复制完成（{rows_written} 行，无中间格式转换）")
     else:
         writer = _build_writer(ctx, spec, snapshot, losses)
-        transformer = _build_transformer(snapshot, spec, losses)
-        transform = _make_transform(field_pairs, spec, transformer, snapshot)
-        batches = 0
-        for batch in snapshot.iter_feature_batches(dl_contracts.READ_BATCH_ROWS):
-            token.raise_if_cancelled()
-            batches += 1
-            kept = batch_filter(batch)
-            if not kept:
-                continue
-            if spec.format == "csv" and snapshot.is_table:
-                writer.write_batch(kept)  # 表格行原样（无 geometry 包装）
-            else:
-                writer.write_batch(transform(kept))
-            rows_written += len(kept)
-            if rows_written > dl_contracts.MAX_ROWS_PER_DELIVERY:
-                raise DeliveryError(
-                    dl_contracts.ERR_ROW_LIMIT_EXCEEDED,
-                    f"实际行数超过上限 {dl_contracts.MAX_ROWS_PER_DELIVERY}")
-            _check_output_budget(staging)
-            _check_main_output_budget(writer)
-            if batches % 5 == 0:
-                progress(30, f"已写入 {rows_written} 行（批 {batches}）")
-        result = writer.close()
+        try:
+            transformer = _build_transformer(snapshot, spec, losses)
+            transform = _make_transform(field_pairs, spec, transformer, snapshot)
+            batches = 0
+            for batch in snapshot.iter_feature_batches(dl_contracts.READ_BATCH_ROWS):
+                token.raise_if_cancelled()
+                batches += 1
+                kept = batch_filter(batch)
+                if not kept:
+                    continue
+                if spec.format == "csv" and snapshot.is_table:
+                    writer.write_batch(kept)  # 表格行原样（无 geometry 包装）
+                else:
+                    writer.write_batch(transform(kept))
+                rows_written += len(kept)
+                if rows_written > dl_contracts.MAX_ROWS_PER_DELIVERY:
+                    raise DeliveryError(
+                        dl_contracts.ERR_ROW_LIMIT_EXCEEDED,
+                        f"实际行数超过上限 {dl_contracts.MAX_ROWS_PER_DELIVERY}")
+                _check_output_budget(staging)
+                _check_main_output_budget(writer)
+                if batches % 5 == 0:
+                    progress(30, f"已写入 {rows_written} 行（批 {batches}）")
+            result = writer.close()
+        except BaseException:
+            # 失败/取消路径立即关闭 writer 句柄（否则 staging 清理时 fd 仍
+            # 存活，只能靠 GC 兜底）。
+            abort = getattr(writer, "abort", None)
+            if abort is not None:
+                abort()
+            raise
         rows_written = result.rows
         members = [dict(m) for m in result.members]
         losses_applied.extend(result.losses_applied)
@@ -690,6 +710,41 @@ async def _finalize_delivery(
         # 计数管理，不在此删）。completed 则保留可下载终态。
         dl_store.discard_final(delivery_id)
     progress(100, "交付完成")
+
+
+def _converge_completed_after_publish(
+    job_id: str, delivery_id: str, outcome: Dict[str, Any], worker_id: str,
+) -> None:
+    """发布成功后的收尾降级：尽力把 job 收敛为 completed（下载以终态为准）。
+
+    atomic_publish 已成功时，收尾异常（回执重写/DB/登记）不代表交付本体失败；
+    绝不能走 _fail 把已发布交付标记 failed（终态目录会成孤儿且下载 404）。
+    """
+    from app.services.jobs.store import DurableJobStore
+
+    receipt: DeliveryReceipt = outcome["receipt"]
+    try:
+        from app.core.database import SessionLocal
+
+        with SessionLocal() as db:
+            final_status = DurableJobStore.mark_succeeded_sync(
+                db, job_id,
+                result=_receipt_summary(receipt),
+                result_ref=f"data-delivery/{delivery_id}",
+                message=(f"交付完成（收尾登记降级）：{receipt.row_count} 行 · "
+                         f"{receipt.bytes_total} 字节"),
+                worker_id=worker_id,
+            )
+            db.commit()
+        if final_status is not None and str(getattr(final_status, "value",
+                                                    final_status)) == "cancelled":
+            dl_store.discard_final(delivery_id)
+        progress = _make_progress(job_id)
+        progress(100, "交付完成")
+    except Exception:  # noqa: BLE001 — 无 DB 可用时保持原状（绝不谎报成功）
+        logger.exception(
+            "[data-delivery] degraded finalize could not mark job %s completed",
+            job_id)
 
 
 def _load_frozen(job_id: str) -> Dict[str, Any]:
@@ -949,10 +1004,11 @@ def _verify_output(staging: Path, fmt: str, expected_rows: Optional[int],
             raise DeliveryError(
                 dl_contracts.ERR_VERIFY_FAILED,
                 f"反读行数 {evidence['rows_read']} ≠ 写入 {expected_rows}")
-        if crs_meta.get("transformed") and fmt in ("geojson",) and crs_meta.get("target") \
-                and "4326" not in (crs_meta["target"] or "").upper():
-            raise DeliveryError(dl_contracts.ERR_VERIFY_FAILED,
-                                "GeoJSON 变换目标必须是 EPSG:4326")
+        if crs_meta.get("transformed") and fmt in ("geojson",) and crs_meta.get("target"):
+            target_crs = (crs_meta["target"] or "").strip().upper()
+            if target_crs not in ("EPSG:4326", "WGS84", "OGC:CRS84"):
+                raise DeliveryError(dl_contracts.ERR_VERIFY_FAILED,
+                                    "GeoJSON 变换目标必须是 EPSG:4326")
         return evidence
     except DeliveryError:
         raise
@@ -1034,12 +1090,14 @@ def _receipt_summary(receipt: DeliveryReceipt) -> Dict[str, Any]:
 
 def _job_authorize(record: Any, actor: DeliveryActor) -> None:
     """job 行归属：creator / owner_token / 会话 / 项目成员（404 语义不泄漏）。"""
+    from app.core.auth import owner_token_matches
     from app.core.database import SessionLocal
     from app.services.project_service import ProjectService
 
     if actor.user_id and record.creator_id == actor.user_id:
         return
-    if actor.owner_token and record.owner_token == actor.owner_token:
+    if actor.owner_token and owner_token_matches(record.owner_token,
+                                                 actor.owner_token):
         return
     if record.session_id:
         from app.core.auth import authorize_session_write
@@ -1077,41 +1135,46 @@ def _get_delivery_job_sync(job_id: str, actor: DeliveryActor) -> DeliveryJobView
             raise DeliveryError(dl_contracts.ERR_SOURCE_NOT_FOUND,
                                 "交付任务不存在", status_code=404)
         _job_authorize(record, actor)
-        params = record.parameters if isinstance(record.parameters, dict) else {}
-        receipt_data = None
-        if record.status == "completed":
-            delivery_id = params.get("delivery_id") or (
-                record.result_summary or {}).get("delivery_id")
-            if delivery_id is None and record.result_ref:
-                delivery_id = record.result_ref.rsplit("/", 1)[-1]
-            if delivery_id:
-                receipt_data = dl_store.read_receipt(delivery_id)
-        receipt = None
-        if receipt_data is not None:
-            try:
-                receipt = DeliveryReceipt(**receipt_data)
-            except Exception as e:  # noqa: BLE001 — 损坏回执 → typed 500 语义
-                raise DeliveryError(
-                    dl_contracts.ERR_SOURCE_NOT_FOUND,
-                    f"交付回执损坏（{e}）—— 文件可能仍在，但回执不可信",
-                    status_code=500) from e
-        return DeliveryJobView(
-            job_id=str(record.id),
-            status=record.status,
-            progress=record.progress or 0,
-            progress_message=record.progress_message,
-            stage=_stage_of(record.status, record.progress_message),
-            created_at=record.created_at.isoformat() if record.created_at else None,
-            completed_at=record.completed_at.isoformat() if record.completed_at else None,
-            spec_fingerprint=params.get("spec_fingerprint"),
-            format=params.get("format"),
-            filename=params.get("filename"),
-            receipt=receipt,
-            download_url=(f"/api/v1/data-delivery/jobs/{record.id}/download"
-                          if record.status == "completed" else None),
-            error_code=_error_code_of(record.error_trace),
-            error=record.error_trace[:500] if record.error_trace else None,
-        )
+        return _job_view_from_record(record)
+
+
+def _job_view_from_record(record: Any) -> DeliveryJobView:
+    """DB 行 → 视图（调用方负责先完成授权；列表路径复用已加载行）。"""
+    params = record.parameters if isinstance(record.parameters, dict) else {}
+    receipt_data = None
+    if record.status == "completed":
+        delivery_id = params.get("delivery_id") or (
+            record.result_summary or {}).get("delivery_id")
+        if delivery_id is None and record.result_ref:
+            delivery_id = record.result_ref.rsplit("/", 1)[-1]
+        if delivery_id:
+            receipt_data = dl_store.read_receipt(delivery_id)
+    receipt = None
+    if receipt_data is not None:
+        try:
+            receipt = DeliveryReceipt(**receipt_data)
+        except Exception as e:  # noqa: BLE001 — 损坏回执 → typed 500 语义
+            raise DeliveryError(
+                dl_contracts.ERR_SOURCE_NOT_FOUND,
+                f"交付回执损坏（{e}）—— 文件可能仍在，但回执不可信",
+                status_code=500) from e
+    return DeliveryJobView(
+        job_id=str(record.id),
+        status=record.status,
+        progress=record.progress or 0,
+        progress_message=record.progress_message,
+        stage=_stage_of(record.status, record.progress_message),
+        created_at=record.created_at.isoformat() if record.created_at else None,
+        completed_at=record.completed_at.isoformat() if record.completed_at else None,
+        spec_fingerprint=params.get("spec_fingerprint"),
+        format=params.get("format"),
+        filename=params.get("filename"),
+        receipt=receipt,
+        download_url=(f"/api/v1/data-delivery/jobs/{record.id}/download"
+                      if record.status == "completed" else None),
+        error_code=_error_code_of(record.error_trace),
+        error=record.error_trace[:500] if record.error_trace else None,
+    )
 
 
 def _stage_of(status: str, message: Optional[str]) -> Optional[str]:
@@ -1204,7 +1267,9 @@ def _list_delivery_jobs_sync(
                 _job_authorize(record, actor)
             except DeliveryError:
                 continue
-            views.append(_get_delivery_job_sync(str(record.id), actor))
+            # 行已在手且授权通过 —— 复用同一 ORM 行构造视图，避免每行再开
+            # 会话/重跑授权（200 行约 600 次查询的 N+1）。
+            views.append(_job_view_from_record(record))
         return views
 
 

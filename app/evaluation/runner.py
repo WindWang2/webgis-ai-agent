@@ -187,7 +187,8 @@ class GISBenchmarkRunner:
 
     def __init__(self, registry=None):
         self._registry = registry
-        self._planner = None
+        #: ``_tool_names`` 最近一次调用的基础设施故障（None = 正常）。
+        self._tool_names_error: Optional[str] = None
 
     def _ensure_registry(self):
         if self._registry is None:
@@ -200,9 +201,11 @@ class GISBenchmarkRunner:
         return self._registry
 
     def _tool_names(self) -> set:
+        self._tool_names_error = None
         try:
             return set(self._ensure_registry().list_tools())
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 — 基础设施故障如实记账
+            self._tool_names_error = f"{type(exc).__name__}: {exc}"[:300]
             return set()
 
     # ── plan tier ─────────────────────────────────────────────────────
@@ -213,9 +216,23 @@ class GISBenchmarkRunner:
 
         planner = MapProductPlanner()
         intent = resolve_map_request_intent(case.query)
+        tool_names = self._tool_names()
+        if self._tool_names_error is not None:
+            # 注册表初始化/列举失败是基础设施故障，不是「工具视图未知」
+            # 的产品事实 —— 不得让 planner 在虚构工具面上裁决。
+            return (
+                {
+                    "metrics": {},
+                    "tool_registry_lookup_error": self._tool_names_error,
+                },
+                [
+                    "tool registry lookup failed (infrastructure, not "
+                    f"product): {self._tool_names_error}"
+                ],
+            )
         plan = planner.plan_from_intent(
             intent,
-            available_tools=self._tool_names() or None,
+            available_tools=tool_names or None,
             use_memo=False,
         )
         resolved = [
@@ -546,13 +563,20 @@ class GISBenchmarkRunner:
 
             planner2 = MapProductPlanner()
             intent2 = resolve_map_request_intent(case.query)
-            plan2 = planner2.plan_from_intent(
-                intent2, available_tools=self._tool_names() or None, use_memo=False)
-            dump1 = plan.model_dump(mode="json")
-            dump2 = plan2.model_dump(mode="json")
-            metrics["planning_deterministic"] = dump1 == dump2
-            if dump1 != dump2:
-                failures.append("planning determinism: double run diverged")
+            tool_names2 = self._tool_names()
+            if self._tool_names_error is not None:
+                failures.append(
+                    "planning determinism unknown (infrastructure, not "
+                    f"product): {self._tool_names_error}")
+            else:
+                plan2 = planner2.plan_from_intent(
+                    intent2, available_tools=tool_names2 or None,
+                    use_memo=False)
+                dump1 = plan.model_dump(mode="json")
+                dump2 = plan2.model_dump(mode="json")
+                metrics["planning_deterministic"] = dump1 == dump2
+                if dump1 != dump2:
+                    failures.append("planning determinism: double run diverged")
         return failures, metrics
 
     # ── V2 opt-in tiers（同 _run_v3_contract_tier 规约：零声明零行为，
@@ -897,16 +921,25 @@ class GISBenchmarkRunner:
         from app.services.gis_harness.planner import MapProductPlanner
 
         planner = MapProductPlanner()
-        tools = self._tool_names() or None
+        tools = self._tool_names()
+        if self._tool_names_error is not None:
+            # 基础设施故障不得折算成 contained/escaped 产品裁决。
+            return (
+                [
+                    "injection containment unknown (infrastructure, not "
+                    f"product): {self._tool_names_error}"
+                ],
+                metrics,
+            )
         twin_intent = resolve_map_request_intent(exp.benign_twin)
         twin_plan = planner.plan_from_intent(
-            twin_intent, available_tools=tools, use_memo=False)
+            twin_intent, available_tools=tools or None, use_memo=False)
         twin_algos = {
             r.algorithm for r in twin_plan.algorithm_selections if r.algorithm
         }
         payload_intent = resolve_map_request_intent(case.query)
         payload_plan = planner.plan_from_intent(
-            payload_intent, available_tools=tools, use_memo=False)
+            payload_intent, available_tools=tools or None, use_memo=False)
         payload_algos = {
             r.algorithm for r in payload_plan.algorithm_selections if r.algorithm
         }
@@ -938,7 +971,14 @@ class GISBenchmarkRunner:
         metrics["injection_expected_contained"] = exp.expected_contained
         metrics["injection_escalation_count"] = float(len(escalation))
         if contained == exp.expected_contained:
-            return [], metrics
+            if exp.expected_contained or escalation:
+                return [], metrics
+            # expected_contained=False 的回归锁必须由升级签名本身触发：
+            # 其它失败（如任务解析为空）不得冒充「已检出升级」。
+            return failures + [
+                "known escalation not detected: no algorithms beyond benign "
+                f"twin {sorted(twin_algos)}"
+            ], metrics
         if not exp.expected_contained:
             return ["injection containment changed: known escalation is now contained; review expectation"], metrics
         return failures, metrics
@@ -1123,7 +1163,6 @@ class GISBenchmarkRunner:
     ) -> Dict[str, Any]:
         """Scripted deterministic execution. Returns an evidence dict with
         failures appended by the caller."""
-        reg = self._ensure_registry()
         registered = self._tool_names()
         evidence: Dict[str, Any] = {
             "tool_calls": 0,
@@ -1133,6 +1172,15 @@ class GISBenchmarkRunner:
             "failures": [],
             "quantities": {},
         }
+        if self._tool_names_error is not None:
+            # 注册表故障不是「工具未注册」的产品事实：单独记账，不得
+            # 静默 skipped("tools not registered")。
+            evidence["tool_registry_lookup_error"] = self._tool_names_error
+            evidence["failures"].append(
+                "tool registry lookup failed (infrastructure, not "
+                f"product): {self._tool_names_error}")
+            return evidence
+        reg = self._ensure_registry()
         if any(step.tool not in registered for step in case.script):
             missing = sorted({s.tool for s in case.script} - registered)
             evidence["skipped"] = f"tools not registered: {missing}"
@@ -1261,12 +1309,22 @@ class GISBenchmarkRunner:
                         f"component missing in MapSpec: {ctype} (have {sorted(types)})"
                     )
         if case.expected_artifact_types:
-            session_types = await self._session_artifact_types(session_id)
-            for atype in case.expected_artifact_types:
-                if atype not in session_types:
-                    evidence["failures"].append(
-                        f"artifact type missing: {atype} (have {sorted(session_types)})"
-                    )
+            # 读取抛错是基础设施故障，不是「artifact type 缺失」的产品
+            # 事实 —— 单独记账，不产生伪产品失败（同 mapspec 模式）。
+            try:
+                session_types = await self._session_artifact_types(session_id)
+            except Exception as exc:  # noqa: BLE001 — 基础设施故障如实记账
+                artifact_lookup_error = f"{type(exc).__name__}: {exc}"[:300]
+                evidence["artifact_lookup_error"] = artifact_lookup_error
+                evidence["failures"].append(
+                    "session artifact lookup failed (infrastructure, not "
+                    f"product): {artifact_lookup_error}")
+            else:
+                for atype in case.expected_artifact_types:
+                    if atype not in session_types:
+                        evidence["failures"].append(
+                            f"artifact type missing: {atype} (have {sorted(session_types)})"
+                        )
         if case.expected_interaction_semantics:
             evidence["failures"].extend(
                 self._check_interaction_semantics(case, results)
@@ -1314,17 +1372,14 @@ class GISBenchmarkRunner:
         return quantities
 
     async def _session_artifact_types(self, session_id: str) -> set:
-        try:
-            from app.services.artifact_registry import list_artifacts
+        from app.services.artifact_registry import list_artifacts
 
-            records = await list_artifacts(session_id)
-            return {
-                str(r.get("artifact_type") or "")
-                for r in records
-                if r.get("artifact_type")
-            }
-        except Exception:  # noqa: BLE001
-            return set()
+        records = await list_artifacts(session_id)
+        return {
+            str(r.get("artifact_type") or "")
+            for r in records
+            if r.get("artifact_type")
+        }
 
     def _check_interaction_semantics(
         self, case: GISBenchmarkCase, results: List[Dict[str, Any]]
@@ -1451,7 +1506,14 @@ class GISBenchmarkRunner:
                     result.skipped_reason = exec_evidence["skipped"]
                     result.metrics = {
                         **plan_evidence.get("metrics", {}),
+                        **turn_metrics,
+                        "numerical_correct": None,
+                        "artifact_contract_valid": None,
+                        "map_product_complete": None,
+                        "render_verified": None,
                         "tool_call_count": 0,
+                        "retry_count": 0,
+                        "reused_artifact_count": 0,
                     }
                     result.elapsed_ms = int((time.monotonic() - started) * 1000)
                     return result

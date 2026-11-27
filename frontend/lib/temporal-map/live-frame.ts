@@ -28,6 +28,14 @@ export let activeController: TemporalPlaybackController | null = null;
 export function setActiveController(controller: TemporalPlaybackController | null): void {
   if (activeController && activeController !== controller) {
     activeController.destroy();
+    // 更替控制器 = 更替会话/面板：旧 live 帧、displayed 与 seq 令牌立即作废。
+    // 帧 id 跨会话复用（f-2021）时，陈旧帧会被新控制器的 reconcile 采用
+    // （新控制器 lastAppliedSeq=-1 / pending=null，不拒绝旧 seq）→ 图表与
+    // 表格被锁在旧时间窗。
+    state.frame = null;
+    state.seq = 0;
+    state.displayed = null;
+    bump();
   }
   activeController = controller;
   if (!controller) {

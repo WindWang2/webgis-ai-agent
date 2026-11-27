@@ -203,12 +203,15 @@ def evaluate_spatial_constraint(
             return ConstraintEvaluation(
                 constraint_id=constraint.id,
                 alternative_id=alt_id,
-                passed=True,
+                passed=False,
                 observed_value="no_boundary",
                 threshold="within",
-                margin=None,
-                penalty=0.0,
-                evidence_statement="No boundary specified.",
+                margin=-1.0,
+                penalty=constraint.penalty_weight if constraint.constraint_type == ConstraintType.SOFT else 0.0,
+                evidence_statement=(
+                    "No boundary specified; WITHIN constraint cannot be verified "
+                    "and fails closed."
+                ),
             )
 
         within = alt_geom.within(ref_geom)
@@ -233,7 +236,26 @@ def evaluate_spatial_constraint(
 
     # 3. MIN_DISTANCE Predicate (e.g. Must be at least 500m away from toxic site or existing hospital)
     elif predicate == SpatialPredicate.MIN_DISTANCE:
-        threshold_m = float(constraint.threshold or 0.0)
+        try:
+            threshold_m = float(constraint.threshold)
+        except (TypeError, ValueError):
+            threshold_m = None
+        if threshold_m is None or not math.isfinite(threshold_m):
+            # A hard minimum distance without a real threshold cannot be
+            # verified; fail closed instead of clamping it to 0.0 (always pass).
+            return ConstraintEvaluation(
+                constraint_id=constraint.id,
+                alternative_id=alt_id,
+                passed=False,
+                observed_value=None,
+                threshold=constraint.threshold,
+                margin=None,
+                penalty=constraint.penalty_weight if constraint.constraint_type == ConstraintType.SOFT else 0.0,
+                evidence_statement=(
+                    f"Constraint '{constraint.name}' has no usable distance threshold; "
+                    "MIN_DISTANCE cannot be verified and fails closed."
+                ),
+            )
         ref_geoms = _extract_leaf_geometries(ref_geom)
         if not ref_geoms:
             return ConstraintEvaluation(
@@ -279,7 +301,26 @@ def evaluate_spatial_constraint(
 
     # 4. MAX_DISTANCE Predicate (e.g. Accessibility distance <= threshold)
     elif predicate == SpatialPredicate.MAX_DISTANCE:
-        threshold_m = float(constraint.threshold or 1000.0)
+        try:
+            threshold_m = float(constraint.threshold)
+        except (TypeError, ValueError):
+            threshold_m = None
+        if threshold_m is None or not math.isfinite(threshold_m):
+            # Do not silently substitute a 1000m default: an unverifiable hard
+            # accessibility constraint fails closed.
+            return ConstraintEvaluation(
+                constraint_id=constraint.id,
+                alternative_id=alt_id,
+                passed=False,
+                observed_value=None,
+                threshold=constraint.threshold,
+                margin=None,
+                penalty=constraint.penalty_weight if constraint.constraint_type == ConstraintType.SOFT else 0.0,
+                evidence_statement=(
+                    f"Constraint '{constraint.name}' has no usable distance threshold; "
+                    "MAX_DISTANCE cannot be verified and fails closed."
+                ),
+            )
         ref_geoms = _extract_leaf_geometries(ref_geom)
         if not ref_geoms:
             return ConstraintEvaluation(

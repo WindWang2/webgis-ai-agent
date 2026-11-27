@@ -340,6 +340,19 @@ class TestTimeDisclosure:
         status, _, _, _ = evaluate_kind(base_mapspec(), "time_disclosure")
         assert status == "not_applicable"
 
+    def test_temporal_tokens_match_whole_morphemes(self):
+        """date 仅作词素命中：candidate/update 等子串不得伪触发 temporal。"""
+        spec = base_mapspec()
+        spec["sources"]["s1"]["profile"]["fields"]["candidate"] = {"type": "number"}
+        spec["sources"]["s1"]["profile"]["fields"]["update"] = {"type": "number"}
+        status, _, _, _ = evaluate_kind(spec, "time_disclosure")
+        assert status == "not_applicable"
+
+        spec2 = base_mapspec()
+        spec2["sources"]["s1"]["profile"]["fields"]["event_date"] = {"type": "number"}
+        status2, violations, _, _ = evaluate_kind(spec2, "time_disclosure")
+        assert status2 == "violated" and len(violations) == 1
+
 
 class TestUncertaintyDisclosure:
     def test_uncertainty_without_panel_violates(self):

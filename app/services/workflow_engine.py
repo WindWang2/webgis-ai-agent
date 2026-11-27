@@ -585,10 +585,13 @@ class WorkflowEngine:
         # helper as _attach_outcome_context) and pass it at the record_lineage
         # call below. Best-effort: absent session/mapspec → None → column
         # untouched (INV-LIN guards preserved; evidence never load-bearing).
-        session_mapspec_fingerprint = await WorkflowEngine._session_mapspec_fingerprint(
-            session_id
-        )
         try:
+            # Kept INSIDE the try: cancellation at this await must reach the
+            # except handler (run persisted as cancelled) instead of escaping
+            # and leaving the committed row stuck in "running".
+            session_mapspec_fingerprint = await WorkflowEngine._session_mapspec_fingerprint(
+                session_id
+            )
             for step_id in execution_order:
                 step_spec = step_map[step_id]
                 # ADR-0092 A5: capability-bearing steps re-resolve through the
@@ -808,13 +811,16 @@ class WorkflowEngine:
                     run_id, exc_info=True,
                 )
 
-        if run.status == "cancelled":
-            raise asyncio.CancelledError("workflow execution cancelled")
-
         # Build the reproducibility manifest + fingerprint from whatever
         # completed (full or partial). Both fresh and resumed runs get a manifest
         # spanning every step that has a record (seed + executed).
         try:
+            # Raised INSIDE the try so the finally below (context reset) runs
+            # for cancelled runs too — otherwise the ToolExecutionContext leaks
+            # and INV-AUTH1 is violated.
+            if run.status == "cancelled":
+                raise asyncio.CancelledError("workflow execution cancelled")
+
             # ADR-0092 A2: attach bounded product-outcome evidence when this run
             # executed inside a session/map-product context. Every field is
             # best-effort — an absent session or map state simply omits the
@@ -1635,7 +1641,6 @@ class WorkflowEngine:
             except IntegrityError:
                 if attempt == 2:
                     raise
-        raise RuntimeError("workflow revision retry exhausted")
 
     @staticmethod
     async def _reconstruct_prior(

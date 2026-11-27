@@ -407,6 +407,21 @@ class NetworkGraphEngine:
         return None
 
     @staticmethod
+    def _require_layer_items(layer: Any, label: str) -> List[Any]:
+        """Normalize a layer or raise on an unrecognized shape (audit #814).
+
+        High-level solvers must not turn an unrecognized layer into an empty
+        input and return a success result with zero facilities/demands."""
+        items = NetworkGraphEngine._layer_items(layer)
+        if items is None:
+            raise ValueError(
+                f"{label} must be a list of points, a GeoJSON FeatureCollection, "
+                f"or a single Feature — got {type(layer).__name__} "
+                "(audit #814: unrecognized shapes must not fabricate empty results)."
+            )
+        return items
+
+    @staticmethod
     def _to_facility(raw: Any, idx: int) -> Facility:
         """Converts raw input to a Facility domain object."""
         if isinstance(raw, Facility):
@@ -666,7 +681,7 @@ class NetworkGraphEngine:
             prof = profile or TravelProfile()
             graph, net_ds = self._ensure_graph(network, prof)
             inc_pts = [self._parse_point(p, f"incident[{i}]") for i, p in enumerate(incidents)]
-            fac_objs = [self._to_facility(f, i) for i, f in enumerate(self._layer_items(facilities) or [])]
+            fac_objs = [self._to_facility(f, i) for i, f in enumerate(self._require_layer_items(facilities, "facilities"))]
 
             fac_res = self.closest_facility(
                 demand_points=inc_pts,
@@ -709,7 +724,7 @@ class NetworkGraphEngine:
             prof = profile or TravelProfile()
             b_minutes = breaks_minutes or [5.0, 10.0, 15.0]
             graph, net_ds = self._ensure_graph(network, prof)
-            fac_objs = [self._to_facility(f, i) for i, f in enumerate(self._layer_items(facilities) or [])]
+            fac_objs = [self._to_facility(f, i) for i, f in enumerate(self._require_layer_items(facilities, "facilities"))]
 
             sa_breaks = self.service_area(
                 facilities=fac_objs,
@@ -865,8 +880,8 @@ class NetworkGraphEngine:
             prof = profile or TravelProfile()
             graph, net_ds = self._ensure_graph(network, prof)
 
-            cand_objs = [self._to_facility(c, i) for i, c in enumerate(self._layer_items(candidate_facilities) or [])]
-            demands = [self._to_demand(d, i) for i, d in enumerate(self._layer_items(demand_points) or [])]
+            cand_objs = [self._to_facility(c, i) for i, c in enumerate(self._require_layer_items(candidate_facilities, "candidate_facilities"))]
+            demands = [self._to_demand(d, i) for i, d in enumerate(self._require_layer_items(demand_points, "demand_points"))]
 
             return self.location_allocation(
                 candidate_facilities=cand_objs,
@@ -896,8 +911,8 @@ class NetworkGraphEngine:
         def _sync_solve():
             prof = profile or TravelProfile()
             graph, net_ds = self._ensure_graph(network, prof)
-            demands = [self._to_demand(d, i) for i, d in enumerate(self._layer_items(demand_points) or [])]
-            fac_objs = [self._to_facility(f, i) for i, f in enumerate(self._layer_items(facilities) or [])]
+            demands = [self._to_demand(d, i) for i, d in enumerate(self._require_layer_items(demand_points, "demand_points"))]
+            fac_objs = [self._to_facility(f, i) for i, f in enumerate(self._require_layer_items(facilities, "facilities"))]
             return self.gravity_access(
                 demand_points=demands,
                 facilities=fac_objs,
@@ -925,8 +940,8 @@ class NetworkGraphEngine:
         def _sync_solve():
             prof = profile or TravelProfile()
             graph, net_ds = self._ensure_graph(network, prof)
-            demands = [self._to_demand(d, i) for i, d in enumerate(self._layer_items(demand_points) or [])]
-            fac_objs = [self._to_facility(f, i) for i, f in enumerate(self._layer_items(facilities) or [])]
+            demands = [self._to_demand(d, i) for i, d in enumerate(self._require_layer_items(demand_points, "demand_points"))]
+            fac_objs = [self._to_facility(f, i) for i, f in enumerate(self._require_layer_items(facilities, "facilities"))]
             return self.huff_interaction(
                 demand_points=demands,
                 facilities=fac_objs,

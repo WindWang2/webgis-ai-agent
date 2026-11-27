@@ -153,9 +153,10 @@ def _windowed_zonal_stats(
     whole-band reads for every zone. Each zone reads only its own pixel
     window (bbox → window, clamped to the raster), masks by the polygon,
     and computes the requested statistics in numpy; zones larger than the
-    memory-budget window are read in row chunks with incremental
-    (Welford-merged) statistics — per-zone memory stays O(chunk), so a
-    national-scale polygon no longer means a whole-raster read (#2134).
+    memory-budget window are read in budget-sized blocks (rows × columns,
+    area ≤ side²) with incremental (Welford-merged) statistics — per-zone
+    memory stays O(chunk), so a national-scale polygon no longer means a
+    whole-raster read (#2134).
     Semantics preserved from the rasterstats contract: statistic keys
     exactly as requested
     (min/max/mean/sum/count), nodata excluded, ``all_touched=False``-style
@@ -190,9 +191,14 @@ def _windowed_zonal_stats(
             elif polygons_geojson.get("type") in ("Polygon", "MultiPolygon"):
                 feat_list = [{"type": "Feature", "geometry": polygons_geojson, "properties": {}}]
             else:
-                feat_list = []
+                raise ValueError(
+                    "polygons_geojson must be a FeatureCollection, Feature, or "
+                    "GeoJSON Polygon/MultiPolygon; got dict "
+                    f"type={polygons_geojson.get('type')!r}")
         else:
-            feat_list = []
+            raise ValueError(
+                "polygons_geojson must be a dict FeatureCollection/Feature/"
+                f"geometry (got {type(polygons_geojson).__name__})")
         out: list[dict] = []
         for f in feat_list:
             geom = (f or {}).get("geometry")
@@ -243,7 +249,14 @@ def _windowed_zonal_stats(
                 window_side_from_budget,
             )
 
-            chunk_rows = max(1, int(window_side_from_budget()))
+            side = int(window_side_from_budget())
+            # #2134 后续修复：分块必须同时约束行与列。只按行分块时，宽
+            # zone 的单块是 chunk_rows×zone_width（2048 行 × 10 万列 ≈
+            # 1.6GB float64，再加掩膜/抽取多份拷贝）—— 远超预算窗口，
+            # 违背逐 zone O(chunk) 承诺（P2 修复）。块面积 ≤ side²
+            # （预算窗口）；窄 zone（width ≤ side）分块行为逐位不变。
+            chunk_rows = max(1, min(side, int(win.height)))
+            chunk_cols = max(1, min(side, int(win.width)))
             n_vals = 0
             acc_mean = 0.0
             acc_m2 = 0.0
@@ -251,44 +264,44 @@ def _windowed_zonal_stats(
             acc_min = math.inf
             acc_max = -math.inf
             total_masked = 0
-            for row0 in range(int(win.row_off),
-                              int(win.row_off) + int(win.height), chunk_rows):
-                n_rows = min(chunk_rows,
-                             int(win.row_off) + int(win.height) - row0)
-                sub = _rio.windows.Window(
-                    int(win.col_off), row0, int(win.width), n_rows)
-                arr_chunk = reader.read_window(
-                    (int(sub.col_off), int(sub.row_off),
-                     int(sub.width), int(sub.height))
-                ).astype(np.float64, copy=False)
-                # #1736：掩膜必须用**修复后**的 poly —— 窗口由 poly.bounds 定，
-                # 若仍用修复前的 geom 做掩膜，统计区与披露的 geometry_repair
-                # 记录不是同一个几何（无效环在栅格化规则下甚至可能整片落空，
-                # 产出全 None 的「貌似无数据」行）。
-                mask_chunk = geometry_mask(
-                    [poly], out_shape=arr_chunk.shape,
-                    transform=reader.window_transform(sub), invert=True,
-                )
-                vals_all = arr_chunk[mask_chunk]
-                total_masked += int(vals_all.size)
-                if meta.nodata is not None:
-                    vals = vals_all[vals_all != meta.nodata]
-                else:
-                    vals = vals_all
-                vals = vals[np.isfinite(vals)]
-                c = int(vals.size)
-                if c == 0:
-                    continue
-                chunk_mean = float(vals.mean())
-                chunk_m2 = float(((vals - chunk_mean) ** 2).sum())
-                tot = n_vals + c
-                delta = chunk_mean - acc_mean
-                acc_mean += delta * c / tot
-                acc_m2 += chunk_m2 + delta * delta * n_vals * c / tot
-                n_vals = tot
-                acc_sum += float(vals.sum())
-                acc_min = min(acc_min, float(vals.min()))
-                acc_max = max(acc_max, float(vals.max()))
+            w_row0, w_rows = int(win.row_off), int(win.height)
+            w_col0, w_cols = int(win.col_off), int(win.width)
+            for row0 in range(w_row0, w_row0 + w_rows, chunk_rows):
+                n_rows = min(chunk_rows, w_row0 + w_rows - row0)
+                for col0 in range(w_col0, w_col0 + w_cols, chunk_cols):
+                    n_cols = min(chunk_cols, w_col0 + w_cols - col0)
+                    sub = _rio.windows.Window(col0, row0, n_cols, n_rows)
+                    arr_chunk = reader.read_window(
+                        (col0, row0, n_cols, n_rows)
+                    ).astype(np.float64, copy=False)
+                    # #1736：掩膜必须用**修复后**的 poly —— 窗口由 poly.bounds 定，
+                    # 若仍用修复前的 geom 做掩膜，统计区与披露的 geometry_repair
+                    # 记录不是同一个几何（无效环在栅格化规则下甚至可能整片落空，
+                    # 产出全 None 的「貌似无数据」行）。
+                    mask_chunk = geometry_mask(
+                        [poly], out_shape=arr_chunk.shape,
+                        transform=reader.window_transform(sub), invert=True,
+                    )
+                    vals_all = arr_chunk[mask_chunk]
+                    total_masked += int(vals_all.size)
+                    if meta.nodata is not None:
+                        vals = vals_all[vals_all != meta.nodata]
+                    else:
+                        vals = vals_all
+                    vals = vals[np.isfinite(vals)]
+                    c = int(vals.size)
+                    if c == 0:
+                        continue
+                    chunk_mean = float(vals.mean())
+                    chunk_m2 = float(((vals - chunk_mean) ** 2).sum())
+                    tot = n_vals + c
+                    delta = chunk_mean - acc_mean
+                    acc_mean += delta * c / tot
+                    acc_m2 += chunk_m2 + delta * delta * n_vals * c / tot
+                    n_vals = tot
+                    acc_sum += float(vals.sum())
+                    acc_min = min(acc_min, float(vals.min()))
+                    acc_max = max(acc_max, float(vals.max()))
             # ADR-0284（断点 9 修复）：逐 zone 有效像元覆盖率披露——
             # 90% nodata 的 zone 均值与全有效 zone 在产物上不再不可区分。
             coverage = (float(n_vals) / total_masked

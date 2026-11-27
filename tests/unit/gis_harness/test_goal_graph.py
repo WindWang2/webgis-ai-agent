@@ -106,6 +106,63 @@ def test_bounded_and_serializable():
     assert len(g.summary_line()) <= 400
 
 
+def test_oversize_chapter_keeps_terminal_skeleton_and_bound():
+    """12 需求×3 + 16 步 + 警告 + 制图 + 收口可远超 _MAX_NODES=48 ——
+    此前只在 to_bounded_dict 静默截断、node_count 报全量，终端
+    verify/observe/deliver 被整段丢弃。红线：图恒 ≤48 且终节骨架在场。"""
+    ch = _equity_chapter()
+    ch["data_requirements"] = [
+        {"capability": f"cap_{i}", "purpose": f"p{i}", "status": "pending",
+         "bound_ref": "", "optional": False}
+        for i in range(12)]
+    ch["analysis_steps"] = [
+        {"capability": f"step_cap_{i}", "purpose": f"分析 {i}",
+         "status": "pending", "bound_ref": "", "depends_on": []}
+        for i in range(16)]
+    ch["map_layers"] = [{"role": "primary", "layer_id": "L1", "enabled": True}]
+    g = build_goal_graph(ch)
+    ids = _ids(g)
+    assert len(g.nodes) <= 48
+    for terminal in ("goal", "verify", "observe", "deliver",
+                     "cartography:primary"):
+        assert terminal in ids, f"终节骨架 {terminal} 被截断丢弃"
+    # 计数与所列节点一致（不再自相矛盾）
+    d = g.to_bounded_dict()
+    assert d["node_count"] == len(d["nodes"]) <= 48
+    # 无悬空依赖边（裁剪清掉了指向被丢节点的引用）
+    for n in g.nodes:
+        for dep in n.depends_on:
+            assert dep in ids, f"{n.id} 依赖被裁掉的节点 {dep}"
+
+
+def test_duplicate_capability_rows_do_not_duplicate_nodes():
+    """data_requirements/analysis_steps 出现重复 capability（或 warning
+    code 重复）→ 节点 id 必须唯一（node()/diff/下游 dict 化只认首个）。"""
+    ch = _equity_chapter()
+    ch["data_requirements"] = [
+        {"capability": "poi_query", "purpose": "POI", "status": "pending",
+         "bound_ref": "", "optional": False},
+        {"capability": "poi_query", "purpose": "POI 重复行", "status": "pending",
+         "bound_ref": "", "optional": False},
+    ]
+    ch["analysis_steps"] = [
+        {"capability": "density_surface", "purpose": "density",
+         "status": "pending", "bound_ref": "", "depends_on": []},
+        {"capability": "density_surface", "purpose": "density 重复行",
+         "status": "pending", "bound_ref": "", "depends_on": []},
+    ]
+    ch["methodology_warnings"] = [
+        {"code": "SITE_SELECTION_CRITERIA_UNDECLARED", "pattern": "p"},
+        {"code": "SITE_SELECTION_CRITERIA_UNDECLARED", "pattern": "p"},
+    ]
+    g = build_goal_graph(ch)
+    ids = [n.id for n in g.nodes]
+    assert len(ids) == len(set(ids)), f"重复节点 id: {ids}"
+    assert ids.count("acquire:poi_query") == 1
+    assert ids.count("aggregate:density_surface") == 1
+    assert ids.count("disclose:SITE_SELECTION_CRITERIA_UNDECLARED") == 1
+
+
 def test_diff_added_removed_changed():
     ch = _equity_chapter()
     a = build_goal_graph(ch)
@@ -184,3 +241,16 @@ def test_candidate_validator_rejects_oversize_and_drops_dangling_deps():
     assert result["valid"], result["errors"]
     node = [n for n in result["normalized"]["nodes"] if n["id"] == "a"][0]
     assert node["depends_on"] == ["goal"]
+
+
+def test_candidate_validator_rejects_duplicate_node_ids():
+    """重复节点 id 会让 adj/node() 静默丢节点 → 显式 valid=False。"""
+    ch = _equity_chapter()
+    candidate = {"nodes": [
+        {"id": "dup", "kind": "verify", "depends_on": []},
+        {"id": "dup", "kind": "deliver", "depends_on": ["dup"]},
+    ]}
+    result = validate_candidate_graph(candidate, ch)
+    assert not result["valid"]
+    assert any("duplicate node ids" in e for e in result["errors"])
+    assert result["normalized"] is None

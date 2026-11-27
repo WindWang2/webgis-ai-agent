@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class StoryCompileRequest(BaseModel):
@@ -13,10 +13,13 @@ class StoryCompileRequest(BaseModel):
     走 /storymap/sessions/{id}/compile 挂 require_owned_session）。
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     session_id: str = ""
     turn_id: str = ""
     trace: Optional[Dict[str, Any]] = None
-    messages: Optional[List[Dict[str, Any]]] = None
+    # 与会话路径的 _SESSION_MESSAGE_LIMIT 同值：无状态编译不接超长会话回放。
+    messages: Optional[List[Dict[str, Any]]] = Field(default=None, max_length=200)
     title: Optional[str] = None
 
     @model_validator(mode="after")

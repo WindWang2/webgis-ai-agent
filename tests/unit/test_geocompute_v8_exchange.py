@@ -43,6 +43,19 @@ def ex(tmp_path):
     eng.dispose()
 
 
+class TestExchangeSingleton:
+    def test_lock_created_at_import_not_lazily(self):
+        """单例锁必须在 import 期就位：懒建会让并发首次调用各持一把锁，
+        构造两个 exchange 实例（其一被丢弃）。"""
+        import importlib
+        import threading
+
+        import app.services.geocompute.cluster.exchange as ex_mod
+
+        reloaded = importlib.reload(ex_mod)
+        assert isinstance(reloaded._exchange_lock, type(threading.Lock()))
+
+
 class TestExchangeCore:
     def test_put_get_roundtrip_raw_and_zlib(self, ex):
         exchange, _ = ex
@@ -204,6 +217,17 @@ class TestNodeResultStoreSpill:
             assert store._bytes == min(_SPILLED_STUB_BYTES, 1000)
             assert store._bytes >= 0
             assert "__spilled__" in store._entries["k"]
+
+    def test_respilled_rehydrate_keeps_size_marker_for_reuse(self, tmp_path):
+        """re-spill 分支返回的载荷必须带 __size__：复用点入口检查是
+        ``_SIZE_KEY in cached``，裸载荷会让 spill 命中永远退化为 miss。"""
+        from app.services.geocompute.executor import _SPILLED_STUB_BYTES
+
+        store = self._store(tmp_path, max_bytes=1000)
+        store.put("k", self._payload(200))
+        got = store.get("k")
+        assert got is not None and got["features"]
+        assert got["__size__"] == min(_SPILLED_STUB_BYTES, 1000)
 
     def test_spill_blob_corruption_degrades_to_miss(self, tmp_path):
         """blob 字节被删（TTL 清扫竞态）→ rehydrate 失败 → 复用 miss

@@ -22,10 +22,10 @@ export function refreshDatasetLayer(
 ): void {
   try {
     const hud = useHudStore.getState();
-    const layer = (hud.layers as Array<{ id: string; _refId?: string }>).find(
+    const layers = (hud.layers as Array<{ id: string; _refId?: string }>).filter(
       (l) => l._refId === refId,
     );
-    if (!layer) return;
+    if (layers.length === 0) return;
     void requestRefFC({
       sessionId: sid,
       refId,
@@ -37,29 +37,36 @@ export function refreshDatasetLayer(
     }).then((res) => {
       if (!res.fc) return;
       const cur = useHudStore.getState();
-      const row = (
+      const rows = (
         cur.layers as unknown as Array<Record<string, unknown> & { id: string; _refId?: string }>
-      ).find((l) => l._refId === refId);
-      if (!row) return;
-      const descriptor = (row._descriptor as Record<string, unknown> | undefined) ?? {};
-      const featureCount = descriptor.feature_count as number | undefined;
-      const isMvt =
-        featureCount !== undefined && featureCount > 5000
-        && descriptor.mvt_capable === true
-        && typeof (row as { _tileUrl?: unknown })._tileUrl === 'string';
-      if (isMvt) {
-        // MVT 层不内联 GeoJSON —— descriptor revision 与 _tileUrl（v= 缓存键）
-        // 必须一起重建，否则组合 spec 零变化、reconciler 不重加 source。
-        cur.updateLayer(row.id, {
-          _tileUrl: buildMvtTileUrl(refId, sid, revision),
-          _descriptor: { ...descriptor, content_revision: revision } as unknown as never,
-        } as never, { source: 'server' });
-      } else {
-        cur.updateLayer(row.id, {
-          source: res.fc as unknown as never,
-          _descriptor: { ...descriptor, content_revision: revision } as unknown as never,
-        }, { source: 'server' });
+      ).filter((l) => l._refId === refId);
+      for (const row of rows) {
+        const descriptor = (row._descriptor as Record<string, unknown> | undefined) ?? {};
+        const featureCount = descriptor.feature_count as number | undefined;
+        const hasTileUrl = typeof (row as { _tileUrl?: unknown })._tileUrl === 'string';
+        const isMvt =
+          featureCount !== undefined && featureCount > 5000
+          && descriptor.mvt_capable === true
+          && hasTileUrl;
+        if (isMvt) {
+          // MVT 层不内联 GeoJSON —— descriptor revision 与 _tileUrl（v= 缓存键）
+          // 必须一起重建，否则组合 spec 零变化、reconciler 不重加 source。
+          cur.updateLayer(row.id, {
+            _tileUrl: buildMvtTileUrl(refId, sid, revision),
+            _descriptor: { ...descriptor, content_revision: revision } as unknown as never,
+          } as never, { source: 'server' });
+        } else {
+          cur.updateLayer(row.id, {
+            source: res.fc as unknown as never,
+            // descriptor 缺 feature_count 时 isMvt 判定不到，但既有 _tileUrl
+            // 仍带 v= 缓存键 —— 与 revision 一起重建，避免编辑后留旧版键。
+            ...(hasTileUrl ? { _tileUrl: buildMvtTileUrl(refId, sid, revision) } : {}),
+            _descriptor: { ...descriptor, content_revision: revision } as unknown as never,
+          }, { source: 'server' });
+        }
       }
+    }).catch(() => {
+      // 取数/写回失败：SSE mapspec 盖章镜像会随后收敛（content_revision 管线）
     });
   } catch {
     // 刷新失败：SSE mapspec 盖章镜像会随后收敛（content_revision 管线）

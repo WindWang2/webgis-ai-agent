@@ -121,6 +121,16 @@ def _remove_confined(path: Path, root: Path, *, directory: bool = False) -> int:
         return 0
 
 
+def _confined_entry_remains(path: Path, root: Path) -> bool:
+    """``path`` 仍是 ``root`` 内的现存条目（删除失败可留待下轮重试的判据）。"""
+    try:
+        if path.resolve().parent != root.resolve():
+            return False
+        return path.exists() or path.is_symlink()
+    except OSError:
+        return False
+
+
 async def purge_session_artifacts(session_id: str) -> Dict[str, Any]:
     """Session-delete/eviction hook: reclaim session-keyed artifacts.
 
@@ -148,7 +158,13 @@ async def purge_session_artifacts(session_id: str) -> Dict[str, Any]:
                 if fp:
                     # only ever delete inside REPORT_DIR (defense in depth)
                     candidate = Path(fp)
-                    await asyncio.to_thread(_remove_confined, candidate, REPORT_DIR)
+                    freed = await asyncio.to_thread(
+                        _remove_confined, candidate, REPORT_DIR)
+                    # 删除失败且文件仍留在 REPORT_DIR 内 → 保留 DB 行留给
+                    # 下一轮 sweep 重试；先删行会让残留文件无任何清扫入口。
+                    if not freed and await asyncio.to_thread(
+                            _confined_entry_remains, candidate, REPORT_DIR):
+                        continue
                 await db.delete(row)
                 removed += 1
             await db.commit()
@@ -651,8 +667,12 @@ async def sweep_aged_artifacts() -> Dict[str, Any]:
                     # #1068(E-11): 两次 unlink 之间崩溃会留下永生孤儿边车 ——
                     # 超龄且主件已缺失的边车按孤儿一并清除。
                     if entry.is_file() and entry.stat().st_mtime < cutoff:
-                        primary = entry.with_name(entry.name[: -len(".owner")])
-                        if not primary.exists():
+                        stem = entry.name[: -len(".owner")]
+                        # 名字恰为 ".owner"（空主件名）时 with_name("") 抛
+                        # ValueError 且不被 except OSError 捕获 —— 会中断整轮
+                        # 导出清扫；空名即无主件，按孤儿清除。
+                        primary = entry.with_name(stem) if stem else None
+                        if primary is None or not primary.exists():
                             removed += int(_safe_unlink(entry))
                     continue  # 有主件的随主件删除
                 if entry.name.endswith(".diagnostics.json"):
@@ -660,9 +680,11 @@ async def sweep_aged_artifacts() -> Dict[str, Any]:
                     # 主件缺失按孤儿清除；否则随主件删除（不因名字不匹配
                     # 生成器正则而永生累积）。
                     if entry.is_file() and entry.stat().st_mtime < cutoff:
-                        primary = entry.with_name(
-                            entry.name[: -len(".diagnostics.json")])
-                        if not primary.exists():
+                        stem = entry.name[: -len(".diagnostics.json")]
+                        # 同 .owner：空主件名（文件恰名为 ".diagnostics.json"）
+                        # 不调 with_name("")，按孤儿清除。
+                        primary = entry.with_name(stem) if stem else None
+                        if primary is None or not primary.exists():
                             removed += int(_safe_unlink(entry))
                     continue
                 if not (entry.is_file() and entry.stat().st_mtime < cutoff):
@@ -709,7 +731,12 @@ async def sweep_aged_artifacts() -> Dict[str, Any]:
             for row in rows:
                 if row.file_path:
                     candidate = Path(row.file_path)
-                    await asyncio.to_thread(_remove_confined, candidate, REPORT_DIR)
+                    freed = await asyncio.to_thread(
+                        _remove_confined, candidate, REPORT_DIR)
+                    # 同 purge_session_artifacts：文件残留则保留行供下轮重试。
+                    if not freed and await asyncio.to_thread(
+                            _confined_entry_remains, candidate, REPORT_DIR):
+                        continue
                 await db.delete(row)
                 removed += 1
             await db.commit()

@@ -89,3 +89,35 @@ def test_apply_writes_schema_valid_identity():
     identity = read_composition_identity(reparsed)
     assert identity is not None
     assert identity.template_id == BASIC.template_id
+
+
+def test_zero_abi_version_is_read_as_zero_not_current():
+    """显式 ABI 0 是旧/损坏声明，不得被伪装箱成当前 ABI。"""
+    spec = _base_spec()
+    spec["layout"]["composition"] = {
+        "template_id": "t",
+        "template_version": "1.0.0",
+        "component_abi_version": 0,
+    }
+    identity = read_composition_identity(spec)
+    assert identity is not None
+    assert identity.component_abi_version == 0
+
+
+def test_single_bad_numeric_field_does_not_discard_identity():
+    """单字段坏值按 0 兜底，其余身份证据仍可诊断（不整体返回 None）。"""
+    spec = _base_spec()
+    spec["layout"]["composition"] = {
+        "template_id": "t",
+        "template_version": "1.0.0",
+        "contract_id": "contract.test",
+        "component_abi_version": 1,
+        "applied_revision": "not-a-number",
+        "asset_revision": "also-bad",
+    }
+    identity = read_composition_identity(spec)
+    assert identity is not None
+    assert identity.contract_id == "contract.test"
+    assert identity.component_abi_version == 1
+    assert identity.applied_revision == 0
+    assert identity.asset_revision == 0

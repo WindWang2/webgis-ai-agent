@@ -53,6 +53,37 @@ class TestSetPatch:
         assert new.intent.statistics.group_by == "grid"
         assert new.intent.core.group_by == "grid"
 
+    def test_set_syncs_core_normalization(self):
+        """反证（review P2）：statistics.normalization 的 patch 必须同步
+        core.comparison（derive_sections 由 core.comparison 派生 normalization）
+        —— 不同步则 patch 过的口径在下次从 core 重派生时静默回退，
+        intent_view 外泄陈旧 core。"""
+        doc = _doc("统计成都各区小学数量")
+        assert doc.intent.core.comparison == ""
+        new, applied = apply_patch(doc, _patch(
+            path="statistics.normalization", value="per_capita", op_id="n1"))
+        assert applied
+        assert new.intent.statistics.normalization == "per_capita"
+        assert new.intent.core.comparison == "per_capita"
+        # 重派生口径一致（intent_view 不再陈旧）
+        from app.services.gis_harness.requirement_ir.projection import intent_view
+        from app.services.gis_harness.requirement_ir.normalize import (
+            normalize_normalization,
+        )
+        assert normalize_normalization(
+            intent_view(new).comparison) == "per_capita"
+
+    def test_remove_last_measure_clears_core_measure(self):
+        """反证（review P2）：删空 measures 后 core.measure 必须跟着清 ——
+        否则 intent_view 外泄陈旧度量、重派生时复活已删除的 measure。"""
+        doc = _doc("统计成都各区小学的平均身高")
+        assert doc.intent.measures and doc.intent.core.measure
+        mid = doc.intent.measures[0].id
+        new, applied = apply_patch(doc, _patch(
+            op="remove_measure", value={"id": mid}, op_id="rm1"))
+        assert applied and new.intent.measures == []
+        assert new.intent.core.measure == ""
+
     def test_set_syncs_core_scope(self):
         doc = _doc()
         new, _ = apply_patch(doc, _patch(
@@ -159,6 +190,37 @@ class TestMeasureOps:
         assert applied
         assert all(m.statistic != "density" for m in doc.intent.measures)
 
+    def test_add_measure_long_phrase_not_rejected_by_container_cap(self):
+        """2 段路径（measures.phrase / datasets）曾解析到**容器**字段，
+        把容器计数上限（MAX_MEASURES=8 / MAX_DATASETS=16）当成单项长度上限
+        —— measure 短语 >8 字、数据集名 >16 字即被 patch_value_invalid
+        拒绝（schema 允许 128）。"""
+        doc = _doc()
+        long_phrase = "成都市每万名常住人口普通小学学位供给数"
+        assert len(long_phrase) > 8
+        doc, applied = apply_patch(doc, _patch(
+            op="add_measure", value={"statistic": "density",
+                                     "phrase": long_phrase},
+            op_id="m-long"))
+        assert applied
+        added = next(m for m in doc.intent.measures if m.statistic == "density")
+        assert added.phrase == long_phrase
+        # 真越界（>MeasureSpec.phrase 的 128）仍拒绝
+        with pytest.raises(PatchValueInvalid):
+            apply_patch(doc, _patch(
+                op="add_measure", value={"statistic": "density",
+                                         "phrase": "x" * 200},
+                op_id="m-too-long"))
+
+    def test_set_datasets_long_name_not_rejected_by_container_cap(self):
+        doc = _doc()
+        name = "chengdu_primary_schools_full_precision_dataset"
+        assert len(name) > 16
+        doc, applied = apply_patch(doc, _patch(
+            path="datasets", value=[name], op_id="d1"))
+        assert applied
+        assert name in doc.intent.datasets
+
     def test_remove_user_measure_requires_user(self):
         doc = _doc()
         doc, _ = apply_patch(doc, _patch(
@@ -172,6 +234,52 @@ class TestMeasureOps:
 
 
 class TestAmbiguityOps:
+    def test_record_ambiguity_is_system_journal_bookkeeping(self):
+        from app.services.gis_harness.requirement_ir.contracts import Ambiguity
+        from app.services.gis_harness.requirement_ir.digest import requirement_digest
+
+        doc = _doc("成都的小学分布情况，做一张图")
+        ambiguity = Ambiguity(
+            code="aoi_unresolved", path="aoi.name", context_key="recorded-ctx",
+            blocking=True, question_zh="分析范围是哪个城市/区域？")
+        record = _patch(
+            op="record_ambiguity", value=ambiguity.model_dump(),
+            actor="system", op_id="record-1", turn=4)
+        new, applied = apply_patch(doc, record)
+        assert applied and new.revision == doc.revision + 1
+        assert new.lifecycle == "clarifying"
+        assert new.intent.ambiguities[0].asked_turn == 4
+        assert new.intent.ambiguities[0].state == "open"
+        assert requirement_digest(new) == requirement_digest(doc)
+        assert replay(doc, [record]) == new
+
+    def test_record_ambiguity_rejects_user_and_cannot_reopen_answer(self):
+        from app.services.gis_harness.requirement_ir.contracts import Ambiguity
+
+        doc = _doc("成都的小学分布情况，做一张图")
+        ambiguity = Ambiguity(
+            code="aoi_unresolved", path="aoi.name", context_key="recorded-ctx",
+            blocking=True, question_zh="分析范围是哪个城市/区域？")
+        payload = ambiguity.model_dump()
+        with pytest.raises(PatchConflict):
+            apply_patch(doc, _patch(
+                op="record_ambiguity", value=payload,
+                actor="user", op_id="record-user"))
+        doc, applied = apply_patch(doc, _patch(
+            op="record_ambiguity", value=payload,
+            actor="system", op_id="record-system", turn=2))
+        assert applied
+        doc, applied = apply_patch(doc, _patch(
+            op="answer_ambiguity",
+            value={"context_key": ambiguity.context_key, "answer": "成都"},
+            op_id="answer-recorded", turn=3))
+        assert applied and doc.intent.ambiguities[0].state == "answered"
+        snapshot = doc.model_dump()
+        unchanged, applied = apply_patch(doc, _patch(
+            op="record_ambiguity", value=payload,
+            actor="system", op_id="record-again", turn=4))
+        assert not applied and unchanged.model_dump() == snapshot
+
     def test_answer_and_waive(self):
         from app.services.gis_harness.requirement_ir import (
             plan_clarifications, record_ambiguities)
@@ -259,3 +367,11 @@ class TestDiffAndAttribution:
         doc_b, _ = apply_patch(old, _patch(
             path="representation.palette", value="blue", op_id="x2", actor="agent"))
         assert diff_documents(doc_a, doc_b)["changes"] == []
+
+
+def test_is_default_value_does_not_treat_zero_as_default():
+    from app.services.gis_harness.requirement_ir.patch import _is_default_value
+
+    assert _is_default_value(False) is True
+    assert _is_default_value(0) is False
+    assert _is_default_value(0.0) is False

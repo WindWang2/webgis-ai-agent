@@ -399,20 +399,24 @@ async def list_execution_runs(
 
     owner_scope = owner_scope_for(user)
     statuses = [s.strip() for s in status.split(",") if s.strip()] if status else None
+    # API-08：store/快照域与应答元数据用同一钳制值（负 offset / 超大 limit
+    # 原样透传会让实际查询与回显分页不一致）。
+    limit_n = max(1, min(int(limit), 100))
+    offset_n = max(0, int(offset))
 
     def _list():
         from app.core import tenancy
 
         store = ClusterRunStore()
         items = store.list_runs(owner_scope, org_id=tenancy.effective_org_in_thread(user),
-                                statuses=statuses, limit=limit, offset=offset)
+                                statuses=statuses, limit=limit_n, offset=offset_n)
         listed_ids = {item["run_id"] for item in items}
         snapshots: list[Dict[str, Any]] = []
         try:
             from app.services.geocompute import run_evidence
 
             snapshots = run_evidence.list_snapshots(
-                owner_scope, limit=limit, exclude_ids=listed_ids
+                owner_scope, limit=limit_n, exclude_ids=listed_ids
             )
         except Exception:  # noqa: BLE001 - 证据域缺席不阻塞列表
             snapshots = []
@@ -426,8 +430,8 @@ async def list_execution_runs(
     return {
         "runs": items,
         "terminal_snapshots": snapshots,
-        "limit": max(1, min(int(limit), 100)),
-        "offset": max(0, int(offset)),
+        "limit": limit_n,
+        "offset": offset_n,
     }
 
 

@@ -184,3 +184,34 @@
 | v1.5.2 | G22（2026-11-11） | pin-only 升级；消费面零漂移（§4 正式裁决）；interactive missing-cwd UX/导入清理不触及 rpc 面 |
 | v1.6.0 | 01 线（ADR-0305，2026-11-25） | 行为修复升级（C17–C20）；wire 文档零漂移；前置修复 master broken symlink（1b3f9e415 回归） |
 | **v1.6.1**（当前） | goal-pi-native-gis-host-20261125（ADR-0301，2026-11-26） | 先修 #2169 symlink 回归再升 pin；消费面零漂移（§4.5 裁决，json/rpc/rpc-extension-ui 文档逐字节一致）；新契约面 C17–C24（供应链守卫/manifest/版本探针/能力快照/v1.6.x 生命周期与 provider 事件）|
+
+## 6. 能力消费与决策治理（goal-pi-native-decision-governance，2026-11-27）
+
+> 基线 59eb3f527（#2282 后）；上游 v1.6.1 仍为最新 stable（执行时实查，
+> 无 prerelease/draft/新 tag）→ pin 不动。14 项能力消费台账见
+> `planning/GOAL-20261126-01-PI-NATIVE-DECISION-GOVERNANCE/WP1_CAPABILITY_LEDGER.md`。
+
+- **决策能力（C22 消费裁定）**：`models.classify()`/`responseId` 经
+  vendor `ctx.modelRegistry.classify()`（扩展侧，不经 codemode、不扩大
+  模型工具面）可达；宿主主流程内（工具 dispatch 期间）扩展被占用，
+  **不适合**在 dispatch 内做同步 classify 往返。采纳 opt-in 有界辅助：
+  `app/services/chat/pi_decision.py`（闭集出题/严格验证/宿主闸）+
+  `pi_decision_wiring.py`（任务识别经既有 `merge_intent_hints` 管线，
+  protected 护栏/特异性平级闸/澄清默认项联动）；`PI_DECISION_ASSIST=1`
+  才启用，无 classifier provider 时诚实 `no_provider` 回落确定性规则。
+  传输层注入点已留（`set_decision_assist_transport`），生产 classify
+  传输未接线（如实披露）。
+- **schema 卫生（C20 增量）**：`query_local_poi` 补 typed args_model
+  （bare 桶清零，输入面等价，`tests/unit/test_pi_schema_poi_typed.py`）；
+  与 `webgis_component_update` 的开放字典/typed union 均为真实语义，
+  按「禁止删约束换 strict」归 `typed_non_strict`，hygiene lane xfail
+  reason 清单已同步。strict 仍未线上启用（registerTool 未设
+  constrainedSampling → `strict:false`），车道保持预接入卫生定位。
+- **阻塞语义裁定（dialog `blockedKind`）**：上游 blockedKind 为 TUI
+  terminal program-status（extensions.md），RPC headless 不可达 →
+  不假冒；Web 侧保留既有三代显式确认协议（requirement-IR 阻塞澄清
+  CAS/actor 闸、G29 HMAC dialog 状态机、tier3/destructive 服务端确认），
+  负例由既有测试锁定（`test_g29_runtime_interaction.py`、
+  `test_pi_stub_llm_journeys.py` 等）。
+- **`notices.*`**：TUI display 设置，宿主 settings.json 投影不写该键，
+  无消费需求（不接入）。

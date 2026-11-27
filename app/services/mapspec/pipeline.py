@@ -38,6 +38,12 @@ def process_layer_ingestion(
     """处理图层转换与封装逻辑 (支持 GeoJSON, Raster, DataFabric 延迟/实例化源)"""
     processed_layer = dict(layer)
     processed_source_data = source_data
+    # result_ref already present on the caller's layer describes the previous
+    # generation (a converter may overwrite it with this ingestion's own ref).
+    _incoming_provenance = (
+        layer.get("provenance") if isinstance(layer.get("provenance"), dict) else {}
+    )
+    incoming_result_ref = _incoming_provenance.get("result_ref")
 
     is_raster = False
     if isinstance(processed_source_data, dict):
@@ -69,6 +75,11 @@ def process_layer_ingestion(
     sources = mapspec.get("sources", {})
     existing_entry = sources.get(source_id, {"type": "geojson"})
     source_entry = dict(existing_entry)
+    # The carrier this source entry currently resolves to. An upsert that
+    # supplies new data must replace it; a provenance.result_ref naming this
+    # same prior carrier belongs to the previous generation, not to this
+    # ingestion, and must not redirect the entry back to the old ref.
+    prior_carrier_ref = existing_entry.get("ref_id") or existing_entry.get("ref")
 
     if processed_source_data is not None:
         # An explicit upsert replaces the prior source generation.  Keeping an
@@ -120,12 +131,27 @@ def process_layer_ingestion(
     elif isinstance(processed_source_data, str) and processed_source_data.startswith("ref:"):
         explicit_ref = processed_source_data
     result_ref = provenance.get("result_ref")
-    if explicit_ref is None and isinstance(result_ref, str) and result_ref:
+    # Previous-generation result_ref must not overwrite the fresh carrier.
+    stale_result_ref = (
+        explicit_ref is None
+        and processed_source_data is not None
+        and isinstance(result_ref, str)
+        and bool(result_ref)
+        and result_ref == prior_carrier_ref
+        and result_ref == incoming_result_ref
+    )
+    result_ref_applied = False
+    if (
+        explicit_ref is None
+        and isinstance(result_ref, str) and result_ref
+        and not stale_result_ref
+    ):
         source_entry["ref"] = result_ref
         source_entry["ref_id"] = result_ref
         source_entry["data_fingerprint"] = (
             "ref-sha256:" + hashlib.sha256(result_ref.encode()).hexdigest()
         )
+        result_ref_applied = True
 
     # P3-1: stamp the ref's content_revision (V5-E) onto ref-carrying source
     # entries so the frontend session-restore/mirror path can build revisioned
@@ -181,11 +207,14 @@ def process_layer_ingestion(
     # A session ref is the authoritative carrier. Profiling above may inspect
     # caller-owned inline data once during ingestion, but the persisted MapSpec
     # must not duplicate a 100k-feature payload merely to describe the map.
-    if isinstance(result_ref, str) and result_ref:
+    # Only drop the new carrier when a ref actually won (explicit source ref or
+    # this generation's result_ref) — a stale result_ref must leave it intact.
+    if isinstance(result_ref, str) and result_ref and (
+        explicit_ref is not None or result_ref_applied
+    ):
         source_entry.pop("inlineData", None)
         source_entry.pop("url", None)
-        # #1403: dataPath must not survive beside ref — mixed carrier mounts
-        # raster tiles at a non-tile URL and breaks MapLibre layer types.
+        # #1403: dataPath must not survive beside ref.
         source_entry.pop("dataPath", None)
 
     return processed_layer, source_entry, suggested_view

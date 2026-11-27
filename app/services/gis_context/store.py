@@ -154,7 +154,9 @@ class WorkingContextStore:
         # CAS lost / insert race on every attempt → re-base onto the stored winner.
         stored = self.load(mid, org_id=str(wc.org_id or ""))
         if stored is None:
-            raise WorkingContextConflict("working_context_vanished")
+            if not self._reground_corrupt(wc):
+                raise WorkingContextConflict("working_context_vanished")
+            return wc
         rebased = _rebase(stored, wc)
         rebased = rebased.next_revision()
         return self._save_final(rebased, expected_revision=stored.revision)
@@ -188,6 +190,31 @@ class WorkingContextStore:
         except OperationalError as exc:
             logger.warning("[gis_context] rebase save failed for %s: %s", mid, type(exc).__name__)
             raise
+
+    def _reground_corrupt(self, wc: GISWorkingContext) -> bool:
+        """Overwrite an active same-org row whose payload ``load`` treats as
+        corrupt (schema drift / truncation) — the load docstring's "next
+        save re-grounds" contract. False when no writable row exists."""
+        with self._sf() as db:
+            row = (
+                db.query(GISWorkingContextRow)
+                .filter(
+                    GISWorkingContextRow.mission_id == str(wc.mission_id or "")[:64],
+                    GISWorkingContextRow.org_id == str(wc.org_id or ""),
+                )
+                .with_for_update()
+                .first()
+            )
+            if row is None or row.state != "active":
+                return False
+            row.payload = wc.payload()
+            row.revision = wc.revision
+            row.goal_revision_mirror = int(wc.goal_revision_mirror)
+            row.project_id = wc.project_id or None
+            row.user_id = str(wc.user_id or "")
+            row.schema_version = str(wc.schema_version or "gis_working_context.v1")
+            db.commit()
+            return True
 
     # ── purge ───────────────────────────────────────────────────────────
 
@@ -266,10 +293,20 @@ def _rebase(stored: GISWorkingContext, incoming: GISWorkingContext) -> GISWorkin
     if int(incoming.rtv_seq) > int(merged.rtv_seq):
         merged.rtv_seq = int(incoming.rtv_seq)
     # Receipt ring: union by deterministic id (CAS losers keep their
-    # evidence trail too), newest wins, FIFO cap re-applied.
+    # evidence trail too), newest wins, FIFO cap re-applied. ``receipt_id``
+    # is a per-copy ``rtv_seq`` counter (working_context.py), so two
+    # replicas can stamp the same id on different receipts — re-stamp the
+    # collision instead of silently dropping either evidence trail.
     if incoming.revalidations:
         by_id = {r.receipt_id: r for r in merged.revalidations}
         for r in incoming.revalidations:
+            if by_id.get(r.receipt_id) is not None and by_id[r.receipt_id] != r:
+                while True:
+                    merged.rtv_seq = int(merged.rtv_seq) + 1
+                    fresh_id = f"rtv-{merged.rtv_seq}"
+                    if fresh_id not in by_id:
+                        break
+                r = r.model_copy(update={"receipt_id": fresh_id})
             by_id[r.receipt_id] = r
         merged.revalidations = list(by_id.values())[-MAX_REVALIDATIONS:]
 

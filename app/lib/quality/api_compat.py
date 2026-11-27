@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -60,13 +61,6 @@ def snapshot_openapi() -> Dict[str, Any]:
 
 
 # ── diff 规则 ────────────────────────────────────────────────────────────
-
-
-def _param_required(op: Dict[str, Any], name: str, where: str) -> bool:
-    for p in op.get("parameters", []) or []:
-        if p.get("name") == name and p.get("in") == where:
-            return bool(p.get("required"))
-    return False
 
 
 def diff_operation_params(
@@ -154,6 +148,46 @@ def diff_operation_params(
             )
 
 
+def _schema_change_is_additive_only(old: Any, new: Any) -> bool:
+    """内联 schema 差异是否纯 additive（新可选字段 / enum 扩张 / 描述文本）。
+
+    保守方向：无法证明 additive 的差异返回 False（调用方维持 breaking），
+    避免放宽闸门后漏掉真实破坏。
+    """
+    if old == new:
+        return True
+    if not isinstance(old, dict) or not isinstance(new, dict):
+        return False
+    for key in set(old) | set(new):
+        if key in ("properties", "required", "description", "title", "examples"):
+            continue
+        if old.get(key) == new.get(key):
+            continue
+        if (
+            key == "enum"
+            and isinstance(old.get(key), list)
+            and isinstance(new.get(key), list)
+            and set(old[key]) <= set(new[key])
+        ):
+            continue
+        if key == "items" and _schema_change_is_additive_only(
+                old.get(key), new.get(key)):
+            continue
+        return False
+    old_props = old.get("properties") or {}
+    new_props = new.get("properties") or {}
+    if not isinstance(old_props, dict) or not isinstance(new_props, dict):
+        return False
+    for name, old_prop in old_props.items():
+        if name not in new_props:
+            return False
+        if not _schema_change_is_additive_only(old_prop, new_props[name]):
+            return False
+    if set(new.get("required") or []) - set(old.get("required") or []):
+        return False
+    return True
+
+
 def diff_operation_responses(
     changes: List[CompatChange],
     path: str,
@@ -197,7 +231,7 @@ def diff_operation_responses(
                 changes.append(
                     CompatChange(
                         "response_schema_changed",
-                        True,
+                        not _schema_change_is_additive_only(old_schema, new_schema),
                         f"{method.upper()} {path}",
                         f"response {code} {media} schema changed: {old_schema} → {new_schema}",
                     )
@@ -383,6 +417,10 @@ def diff_openapi(old: Dict[str, Any], new: Dict[str, Any]) -> List[CompatChange]
         changes.append(
             CompatChange("schema_removed", True, name, "schema component removed")
         )
+    for name in sorted(set(new_comp) - set(old_comp)):
+        changes.append(
+            CompatChange("schema_added", False, name, "schema component added")
+        )
     for name in sorted(set(old_comp) & set(new_comp)):
         if old_comp[name] != new_comp[name]:
             diff_schema_component(changes, name, old_comp[name], new_comp[name])
@@ -390,8 +428,6 @@ def diff_openapi(old: Dict[str, Any], new: Dict[str, Any]) -> List[CompatChange]
 
 
 # ── Realtime 契约（Quality V2 W6）：WS + SSE ─────────────────────────────
-
-_REALTIME_BOUND_SNIPPETS_CACHE: Dict[str, Dict[str, Any]] = {}
 
 
 def _read(app_relative: str) -> str:
@@ -472,6 +508,7 @@ def _matches_call(node: ast.Call, names: tuple) -> bool:
     return False
 
 
+@lru_cache(maxsize=1)
 def _module_str_constants() -> Dict[str, str]:
     """{CONST_NAME: value} —— app/** 模块级 str 赋值，**仅收无歧义名字**。
 
@@ -500,6 +537,7 @@ def _module_str_constants() -> Dict[str, str]:
     return {name: next(iter(vals)) for name, vals in values.items() if len(vals) == 1}
 
 
+@lru_cache(maxsize=1)
 def scan_sse_event_names() -> List[str]:
     """后端实际发射的 SSE 事件名全集（升序）——契约词表的锚。
 
@@ -537,6 +575,7 @@ def scan_sse_event_names() -> List[str]:
     return sorted(names)
 
 
+@lru_cache(maxsize=1)
 def _scan_ws_outbound_events() -> List[str]:
     """出站事件词表：任何 *broadcast 形态调用的第 2 参字面量。
 

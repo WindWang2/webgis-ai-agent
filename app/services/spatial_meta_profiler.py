@@ -209,7 +209,10 @@ def profile_from_descriptor(descriptor: Optional[Dict[str, Any]]) -> Optional[Di
     for name, ratio in derived["null_ratios"].items():
         entry = fields_out.get(name)
         if isinstance(entry, dict):
-            entry["null_ratio"] = ratio
+            # dict(field_schema) is a shallow copy: entry is still the caller's
+            # inner meta dict. Rebind to a fresh dict instead of assigning into
+            # it, so the derivation stays O(1) and never mutates the descriptor.
+            fields_out[name] = {**entry, "null_ratio": ratio}
     numeric_fields = list(derived["numericFields"])
     binary_fields = list(derived["binaryFields"])
     categorical_fields = list(derived["categoricalFields"])
@@ -349,6 +352,10 @@ def profile_geojson_source(geojson_data: Union[Dict[str, Any], str, bytes, Path]
   field_values: Dict[str, List[Any]] = {}
   field_keys: set[str] = set()
   for f in features:
+    if not isinstance(f, dict):
+      # Malformed FeatureCollection (null/scalar entries): the geometry loop
+      # above already guards this; field profiling must too.
+      continue
     props = f.get("properties") or {}
     field_keys.update(str(k) for k in props)
     for k, v in props.items():
@@ -369,6 +376,9 @@ def profile_geojson_source(geojson_data: Union[Dict[str, Any], str, bytes, Path]
           "type": "string",
           "sampleValues": [],
           "null_count": null_count,
+          "null_ratio": (
+              round(null_count / feature_count, 6) if feature_count else 0.0
+          ),
       }
       continue
 
@@ -409,6 +419,9 @@ def profile_geojson_source(geojson_data: Union[Dict[str, Any], str, bytes, Path]
           "type": "boolean",
           "sampleValues": _sample_values(vals),
           "null_count": null_count,
+          "null_ratio": (
+              round(null_count / feature_count, 6) if feature_count else 0.0
+          ),
       }
     else:
       # String / Date
@@ -417,13 +430,30 @@ def profile_geojson_source(geojson_data: Union[Dict[str, Any], str, bytes, Path]
           "type": "string",
           "sampleValues": sample,
           "null_count": null_count,
+          "null_ratio": (
+              round(null_count / feature_count, 6) if feature_count else 0.0
+          ),
       }
+
+  # Derived fact keys, matching profile_from_descriptor's Spatial Meta Profile
+  # contract (the descriptor-missing fallback must not lose them): only
+  # positive evidence is emitted — empty lists stay absent exactly like the
+  # descriptor path.
+  numeric_fields = [
+      k for k, meta in fields_profile.items() if meta["type"] == "number"
+  ]
+  categorical_fields = [
+      k for k, meta in fields_profile.items() if meta["type"] in ("string", "boolean")
+  ]
+  binary_fields = [
+      k for k, meta in fields_profile.items() if meta["type"] == "boolean"
+  ]
 
   # Temporal profiling
   from app.services.temporal.profiler import profile_temporal_dataset
   temporal_profile = profile_temporal_dataset(features)
 
-  return {
+  profile: Dict[str, Any] = {
       "bbox": bbox,
       "crs": crs,
       "crs_status": crs_status,
@@ -438,3 +468,12 @@ def profile_geojson_source(geojson_data: Union[Dict[str, Any], str, bytes, Path]
       "suggestedView": suggested_view,
       "temporalProfile": temporal_profile.model_dump() if temporal_profile.overall_confidence > 0 else None,
   }
+  if numeric_fields:
+    profile["numericFields"] = numeric_fields
+  if categorical_fields:
+    profile["categoricalFields"] = categorical_fields
+  if binary_fields:
+    profile["binaryFields"] = binary_fields
+  if temporal_profile.overall_confidence > 0:
+    profile["hasTimeField"] = True
+  return profile

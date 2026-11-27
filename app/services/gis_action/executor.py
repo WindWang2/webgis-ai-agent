@@ -83,8 +83,32 @@ class PlanRunReceipt(BaseModel):
         return self.model_dump()
 
 
+_PROJECTED_KEY_SUFFIX = "__sha"
+_HEX_CHARS = frozenset("0123456789abcdef")
+
+
+def _projected_placeholder_keys(params: Dict[str, Any]) -> List[str]:
+    """legacy_adapter 的结构性占位键（``<key>__sha`` + 16 hex 采样指纹）。"""
+    return [
+        str(key) for key, value in params.items()
+        if str(key).endswith(_PROJECTED_KEY_SUFFIX)
+        and isinstance(value, str) and len(value) == 16
+        and all(ch in _HEX_CHARS for ch in value)
+    ]
+
+
 def _default_args_provider(step: ResolvedAction) -> Dict[str, Any]:
-    """确定性 args 重建：params token + 具名 input refs（无 IO）。"""
+    """确定性 args 重建：params token + 具名 input refs（无 IO）。
+
+    ``*__sha`` 是 legacy_adapter 对 >256 字符/大结构值的结构性投影，真实
+    值不可从摘要还原 —— 默认 provider 必须 fail-closed，绝不把占位摘要当
+    参数 dispatch（调用方持有原始 args 时应注入 args_provider 重新绑定）。
+    """
+    lost = _projected_placeholder_keys(step.params)
+    if lost:
+        raise ValueError(
+            "projected placeholder params require an explicit args_provider: "
+            + ", ".join(lost[:4]))
     args: Dict[str, Any] = dict(step.params)
     for descriptor in step.inputs:
         if descriptor.ref:

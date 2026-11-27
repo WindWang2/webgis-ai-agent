@@ -66,3 +66,39 @@ def test_no_runtime_rewrite_path() -> None:
     forbidden = {"load_corpus_into_registry", "rewrite_knowledge",
                  "update_taxonomy", "patch_descriptor", "apply_feedback"}
     assert not (public & forbidden)
+
+
+def test_writer_repairs_half_line_left_by_crash(tmp_path) -> None:
+    """崩溃残留的半行（末行无 \n）不得把下一条 JSON 拼成同一行。
+
+    旧实现直接 append：半行 + 新记录挤在一行，两条记录同时损坏且行数
+    少计（JSONL 逐行解析对两者都失败）。
+    """
+    import json
+
+    sink = tmp_path / "half_line.jsonl"
+    sink.write_text('{"schema_version":"x","kind":"meth', encoding="utf-8")
+    writer = FeedbackCorpusWriter(str(sink))
+    record = MethodologyFeedbackRecord(kind="method_selected",
+                                       method_id="interp.idw")
+    assert writer.record(record) is True
+
+    lines = sink.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2, "半行必须被换行补齐，行数不得少计"
+    # 半行原样保留（不伪造内容），新记录是独立可解析的一行
+    assert lines[0] == '{"schema_version":"x","kind":"meth'
+    payload = json.loads(lines[1])
+    assert payload["kind"] == "method_selected"
+    assert payload["method_id"] == "interp.idw"
+
+
+def test_writer_does_not_double_newline_on_clean_sink(tmp_path) -> None:
+    """末行已以 \n 结束时不得插入空行（行数/逐行解析不回退）。"""
+    sink = tmp_path / "clean.jsonl"
+    sink.write_text('{"i":0}\n', encoding="utf-8")
+    writer = FeedbackCorpusWriter(str(sink))
+    assert writer.record(MethodologyFeedbackRecord(
+        kind="method_selected", method_id="interp.idw")) is True
+    lines = sink.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    assert lines[0] == '{"i":0}'

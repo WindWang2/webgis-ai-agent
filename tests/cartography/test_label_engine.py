@@ -174,6 +174,37 @@ def test_min_zoom_gate() -> None:
     assert _by_id(at, "metro") is not None  # zoom == min_zoom 时参与
 
 
+# ── 6b. font_size<=0 门控（零尺寸盒 / 除零防御，与孪生同口径）──────────────
+def test_non_positive_font_size_suppressed_without_division_by_zero() -> None:
+    # kind="line" + font_size=0 → estimate_label_box 宽=0，_line_candidates 的
+    # total/(text_width*1.5) 曾抛 ZeroDivisionError；零尺寸盒同时使格网失效。
+    line = LabelFeature(id="r0", text="River", kind="line",
+                        geometry=[[10.0, 10.0], [110.0, 110.0]], font_size=0.0)
+    sol = solve_labels(LabelEngineInput(features=[line],
+                                        viewport=[0.0, 0.0, 400.0, 400.0]))
+    sup = _sup(sol, "r0")
+    assert sup is not None and sup.reason == "empty_text"
+    assert _by_id(sol, "r0") is None
+    assert sol.stats["suppressed"] == 1 and sol.stats["candidates"] == 0
+    # point 同口径抑制（导出孪生 label_collision 对 font_size<=0 亦然）
+    pt = _point("p0", 100.0, 100.0, "PA", font_size=0.0)
+    sol2 = solve_labels(LabelEngineInput(features=[pt],
+                                         viewport=[0.0, 0.0, 400.0, 400.0]))
+    assert _sup(sol2, "p0") is not None and _sup(sol2, "p0").reason == "empty_text"
+    assert _by_id(sol2, "p0") is None
+    # 负字号同理；正常字号不受影响（回归护栏）
+    neg = LabelFeature(id="r-1", text="River", kind="line",
+                       geometry=[[10.0, 10.0], [110.0, 110.0]], font_size=-3.0)
+    sol3 = solve_labels(LabelEngineInput(features=[neg],
+                                         viewport=[0.0, 0.0, 400.0, 400.0]))
+    assert _sup(sol3, "r-1") is not None and _sup(sol3, "r-1").reason == "empty_text"
+    ok = solve_labels(LabelEngineInput(
+        features=[LabelFeature(id="r1", text="River", kind="line",
+                               geometry=[[10.0, 10.0], [110.0, 110.0]])],
+        viewport=[0.0, 0.0, 400.0, 400.0]))
+    assert _by_id(ok, "r1") is not None and _by_id(ok, "r1").status == "placed"
+
+
 # ── 7. callout：位移超限时引线标注 ───────────────────────────────────────
 def test_callout_when_displacement_exceeded() -> None:
     # 两个多边形标签先占满低优先级点的全部 8 个候选位与 max_displacement 位，

@@ -140,8 +140,16 @@ export const exportCommands: Record<string, CommandEntry> = {
             settle({ status: 'failed', error: 'export_error' });
           }
         };
-        map.once('render', handles.onRender);
-        map.triggerRepaint();
+        // A destroyed map (or a stub missing these methods) must still settle
+        // the action — a throw escaping the Promise executor would reject and
+        // stall the queue instead of a structured failed ack.
+        try {
+          map.once('render', handles.onRender);
+          map.triggerRepaint();
+        } catch (e) {
+          devOnly.error('[export_map] render hook failed:', e);
+          settle({ status: 'failed', error: 'export_error' });
+        }
       });
     },
   },

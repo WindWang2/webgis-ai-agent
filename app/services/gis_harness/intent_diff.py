@@ -162,7 +162,7 @@ def _coarse_dim(old_row: Dict[str, Any], new_row: Dict[str, Any]) -> Tuple[str, 
     """行级字段对比 → coarse 维（runtime_bridge W4 同规则：算法 > 参数 > 数据）。"""
     old_alg = str(old_row.get("resolved_algorithm") or "")
     new_alg = str(new_row.get("resolved_algorithm") or "")
-    if new_alg and old_alg != new_alg:
+    if old_alg != new_alg:
         return "algorithm", f"{old_alg}->{new_alg}"[:200]
     old_tool = str(old_row.get("resolved_tool") or "")
     new_tool = str(new_row.get("resolved_tool") or "")
@@ -190,8 +190,12 @@ def canonical_params(params: Any, *, _depth: int = 0) -> Any:
         return [canonical_params(x, _depth=_depth + 1) for x in params]
     if isinstance(params, bool) or params is None:
         return params
-    if isinstance(params, (int, float)):
-        return float(params)
+    if isinstance(params, float):
+        return params
+    if isinstance(params, int):
+        # 小整数保持 int/float 同值 canonical 化；>2^53 的整数转 float 会
+        # 丢精度（不同参数收敛为同一签名 → 误判可携带），原样保留。
+        return params if abs(params) > 2 ** 53 else float(params)
     return str(params)
 
 

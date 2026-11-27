@@ -29,7 +29,7 @@ import contextvars
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from typing import Any, Dict, List, Optional, Tuple, Type
 
 from pydantic import BaseModel
 
@@ -307,11 +307,12 @@ FIELD_RULES_BY_TOOL["admin_boundary_query"] = FIELD_RULES_BY_TOOL["get_local_adm
 # ---------------------------------------------------------------------------
 
 def _is_list_annotation(annotation: Any) -> bool:
-    """annotation 是否为 list 族（list / list[T] / List[T] / Optional[List[T]]）。"""
+    """annotation 是否为 list 族（含 Optional[List[T]] 与 list[T] | None）。"""
+    import types as _types
     import typing as _typing
 
     ann = annotation
-    if _typing.get_origin(ann) is Union:
+    if _typing.get_origin(ann) in (_typing.Union, _types.UnionType):
         return any(_is_list_annotation(a) for a in _typing.get_args(ann))
     if ann is list or ann is List:
         return True
@@ -378,6 +379,12 @@ def normalize_tool_arguments(
     for k, v in arguments.items():
         if isinstance(k, str) and "-" in k and not k.startswith("-"):
             fixed = k.replace("-", "_")
+            if fixed in arguments:
+                repairs.append(ArgRepair(
+                    kind="key_style", source=k, target=fixed,
+                    detail="dropped conflicting kebab-case value; kept snake_case",
+                ))
+                continue
             args[fixed] = v
             if fixed != k:
                 repairs.append(ArgRepair(kind="key_style", source=k, target=fixed))

@@ -61,7 +61,7 @@ def check_composition_compatibility(
             if skill.input_roles and upstream.output_roles:
                 needed = set(skill.input_roles)
                 provided = set(upstream.output_roles)
-                if needed.isdisjoint(provided) and not needed <= provided:
+                if needed.isdisjoint(provided):
                     incompatible.append(
                         f"role_mismatch:{dep}->{member.skill_id}"
                     )

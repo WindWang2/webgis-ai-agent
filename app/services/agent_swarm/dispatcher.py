@@ -99,8 +99,10 @@ class SubagentDispatcherRuntime:
                 role=assignment.task.role,
                 status=SwarmReceiptStatus.SUCCEEDED,
                 produced_refs=[
-                    r for r in (getattr(result, "refs", None) or [])[:MAX_REFS_PER_RECEIPT]
-                ],
+                    r
+                    for r in (getattr(result, "refs", None) or [])
+                    if isinstance(r, str) and r.startswith("ref:")
+                ][:MAX_REFS_PER_RECEIPT],
                 summary=str(getattr(result, "summary", ""))[:MAX_SUMMARY_CHARS],
                 wall_time_s=time.time() - started,
                 finished_at=time.time(),

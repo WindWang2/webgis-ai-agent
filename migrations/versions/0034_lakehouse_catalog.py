@@ -13,8 +13,10 @@ guard 的可重入 DDL）：
 - 代理 PK（uuid）—— 同一 data_object 可发布进多个 owner 域
   （评审 R0-7）；唯一性在 (owner_type, owner_id, content_sha256)；
 - bbox 用 (minx,maxx)/(miny,maxy) 复合索引（范围谓词走索引）；
-- tags GIN **仅 PostgreSQL**（json 列无 GIN opclass —— R0-25；
-  JSONB variant；SQLite 方言跳过 —— 查询侧退化为有界行集内存过滤）。
+- tags GIN **仅 PostgreSQL**（json 列无 GIN opclass —— R0-25；JSONB
+  variant）；SQLite 等方言建同名 B-tree 占位索引（无 GIN 语义，仅满足
+  模型↔迁移漂移守卫的列元组比对 —— 查询侧 tags 过滤退化为有界行集
+  内存过滤）。
 
 downgrade 反序回滚（drop 索引 + drop 表）。
 """

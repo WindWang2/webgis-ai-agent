@@ -56,7 +56,11 @@ def buffer_smart(
             return GeoAnalysisResult(False, None, "Failed to project data for buffering")
 
         gdf, utm_crs, crs_note = res
-        original_crs = source_crs or getattr(gdf, "_original_crs", None) or (gdf.crs if gdf is not None and gdf.crs is not None else "EPSG:4326")
+        # Prefer the CRS recorded by to_utm_gdf_with_note: it normalizes
+        # offset aliases (gcj02/bd09) to EPSG:4326, so the caller's raw
+        # source_crs must not be used as the to_crs target below (pyproj
+        # cannot parse "gcj02" -> CRSError).
+        original_crs = getattr(gdf, "_original_crs", None) or source_crs or (gdf.crs if gdf is not None and gdf.crs is not None else "EPSG:4326")
 
         # GIS-P3-8: to_utm_gdf returns an already-projected input UNCHANGED —
         # if that CRS is not metre-based (state-plane feet etc.), the

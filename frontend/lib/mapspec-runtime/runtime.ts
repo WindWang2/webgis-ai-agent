@@ -42,6 +42,11 @@ import {
   recordRecompileFallback,
 } from "@/lib/utils/perf-counters";
 import { recordSymbolLawEvidence } from "@/lib/map-kit/symbol-law";
+// GOAL-20261126-04：地理锚定统计图符 live 渲染（custom layer 接线全在 integration）
+import {
+  attachDiagramSymbolLayer,
+  detachDiagramSymbolLayer,
+} from "@/lib/mapkit-diagram-symbols/integration";
 import { recordSceneEvidence, recordTileMiss, resetTileMiss } from "@/lib/mapspec-runtime/adapter";
 import { checkMapSpecVersion } from "@/lib/carto-ir/version";
 import { resolveLayerVisibility } from "@/lib/carto-ir/visibility";
@@ -186,6 +191,8 @@ export class MapSpecRuntime {
     offsets: Array<{ featureId: string; idKey: string | null; dx: number; dy: number }>;
   }>();
   private calloutMoveHooked = false;
+  /** moveend 处理器引用 —— dispose 时对称 off（与 zoomEndHandler 同款）。 */
+  private calloutMoveHandler: (() => void) | null = null;
 
   // ── 标注运行时状态（ac-05，ADR-0154；只服务 `${id}-label` 子层）──────
   /** 标注决策/降级 evidence 环形日志（cap 200；getLabelEvents() 消费）。 */
@@ -229,8 +236,10 @@ export class MapSpecRuntime {
       resetTileMiss(this.map);
       this.tileMissSession = sessionId;
       this.sessionScope = sessionId;
-      // 切会话清空派生源账本，避免旧会话的 URL 在新会话里复用。
-      this.numericRasterApplied.clear();
+      // 账本记录「哪个派生源挂着哪个 URL」，**不随切会话清空**：清空会让
+      // 下次 sync 既发现不了 URL 变化（旧会话瓦片继续上屏），也让不再需要
+      // 的派生源失去卸载线索。旧 URL 不会被复用 —— sync 每遍都按当前
+      // sessionScope 重新解析 wanted，账本从不参与挂载。
     }
   }
 
@@ -276,15 +285,27 @@ export class MapSpecRuntime {
       }
       wanted.set(numericRasterSourceId(layer.source, layer.id), resolved);
     }
-    for (const [id, url] of Array.from(this.numericRasterApplied.entries())) {
-      if (wanted.get(id) !== url) {
+    for (const id of Array.from(this.numericRasterApplied.keys())) {
+      // 只卸「本次不再需要」的派生源（依赖层的 remove op 已先入队，源此时
+      // 可卸）。URL 变化（切会话 / style_id 变更）走下方向量换 tiles ——
+      // 层还引用着源，MapLibre 会拒绝 removeSource。
+      if (!wanted.has(id)) {
         this.removeSourceSafe(id);
         this.numericRasterApplied.delete(id);
       }
     }
     for (const [id, url] of wanted.entries()) {
       if (this.numericRasterApplied.get(id) === url && this.map.getSource(id)) continue;
-      renderer.addRasterTileSource(this.map, id, url);
+      // 已在图上但 URL 不符（切会话 / style_id 变更）：addRasterTileSource
+      // 的同 id 快路径会空转 —— 旧 URL 瓦片继续上屏。原地换 tiles 才会
+      // 真正重载（MapLibre RasterTileSource.setTiles → load(force)）。
+      const mounted = this.map.getSource(id) as
+        { setTiles?: (tiles: string[]) => unknown } | undefined;
+      if (mounted && typeof mounted.setTiles === "function") {
+        mounted.setTiles([url]);
+      } else {
+        renderer.addRasterTileSource(this.map, id, url);
+      }
       this.numericRasterApplied.set(id, url);
     }
   }
@@ -1110,6 +1131,13 @@ export class MapSpecRuntime {
       this.zoomEndHandler = null;
       this.zoomHooked = false;
     }
+    if (this.calloutMoveHandler) {
+      try {
+        (this.map as any)?.off?.("moveend", this.calloutMoveHandler);
+      } catch { /* map 已半销毁时忽略 */ }
+      this.calloutMoveHandler = null;
+    }
+    this.calloutMoveHooked = false;
     this.labelRegistrations.clear();
     // ADR-0199：对称解绑场景地形错误监听（同 #1309 语义 —— 防滞留 handler）。
     if (this.terrainErrorHandler) {
@@ -1335,14 +1363,21 @@ export class MapSpecRuntime {
     const planMainMode = planEffective
       ? (rawWindowsOf(repPlan!)[0] ?? repPlan!.windows[0]).mode
       : null;
+    const featureCount = this.sourceFeatureCounts.get(layer.source);
+    const rewriteCircleAsHeatmap = planEffective
+      && planMainMode === "visual_heatmap"
+      && layer.type === "circle";
     const nativePaint = toMapLibrePaint(layer, {
-      featureCount: this.sourceFeatureCounts.get(layer.source),
+      featureCount,
+      // circle 主层默认不能带 heatmap-*；仅在确定改写为 heatmap 时透出，
+      // 与 headless compiler 的 heatmapNativePaint 收纳口径一致。
+      includeHeatmapKeys: rewriteCircleAsHeatmap,
     });
     let baseType: string = layer.type;
     let basePaint: Record<string, unknown> = nativePaint;
-    if (planEffective && planMainMode === "visual_heatmap" && layer.type === "circle") {
+    if (rewriteCircleAsHeatmap) {
       baseType = "heatmap";
-      basePaint = heatmapOnlyPaint(nativePaint, this.sourceFeatureCounts.get(layer.source));
+      basePaint = heatmapOnlyPaint(nativePaint, featureCount);
     }
     // G40：符号资产绑定投影（点符号 → symbol/icon-*；面纹理 →
     // fill-pattern）。资产缺席/注册失败 → 跳层 + evidence（不画默认圆）。
@@ -1514,6 +1549,50 @@ export class MapSpecRuntime {
       devOnly.warn(`[MapSpecRuntime] addLayer failed for ${layer.id}:`, err);
       this.lastError = `add_layer_failed:${layer.id}`;
     }
+
+    // GOAL-20261126-04：地理锚定统计图符（diagram_symbol 2.2 additive）。
+    // 块缺席 → 确保无残留 glyph 层；块存在 → base 层落定后 best-effort 挂
+    // custom layer；oracle/源要素失败只披露（recordSymbolLawEvidence），
+    // 永不抑制 base 层（图符是叠加表达，不是 base 的替代）。
+    this.attachDiagramSymbolIfBound(layer, spec);
+  }
+
+  /** GOAL-20261126-04：diagram_symbol 块 → 图符 custom layer（attach/detach）。 */
+  private attachDiagramSymbolIfBound(layer: MapSpecLayer, spec?: MapSpec): void {
+    const block = (layer as { diagram_symbol?: unknown }).diagram_symbol;
+    if (!block || typeof block !== "object") {
+      detachDiagramSymbolLayer(this.map, layer.id);
+      return;
+    }
+    try {
+      const sources = (spec?.sources ?? {}) as Record<string, { inlineData?: unknown }>;
+      const rawSource = sources[layer.source];
+      const sourceData = rawSource && typeof rawSource.inlineData === "object" && rawSource.inlineData !== null
+        ? (rawSource.inlineData as { features?: unknown[] })
+        : null;
+      const result = attachDiagramSymbolLayer(this.map, layer as never, sourceData);
+      if (result.ok) {
+        recordSymbolLawEvidence("diagram-symbol-attached", {
+          count: result.count,
+          placed: (result.evidence as { placed?: number }).placed,
+          omitted_collision: (result.evidence as { omitted_collision?: number }).omitted_collision,
+          omitted_budget: (result.evidence as { omitted_budget?: number }).omitted_budget,
+          blocked: (result.evidence as { blocked?: number }).blocked,
+        }, layer.id);
+      } else {
+        recordSymbolLawEvidence("diagram-symbol-unavailable", {
+          reason: result.code,
+          detail: result.message.slice(0, 160),
+        }, layer.id);
+      }
+    } catch (err) {
+      // oracle typed 拒绝（负值/非有限/零总量/极端跨度）→ 整层披露（与后端
+      // SVG twin 同语义），base 层照常已应用。
+      recordSymbolLawEvidence("diagram-symbol-unavailable", {
+        reason: "oracle_error",
+        detail: String(err instanceof Error ? err.message : err).slice(0, 160),
+      }, layer.id);
+    }
   }
 
   /**
@@ -1623,7 +1702,7 @@ export class MapSpecRuntime {
             maxzoom: wMax,
             layout: visibilityNone ? { visibility: "none" } : {},
             paint: heatmapOnlyPaint(
-              toMapLibrePaint(layer, { featureCount }),
+              toMapLibrePaint(layer, { featureCount, includeHeatmapKeys: true }),
               featureCount,
             ),
           } as never);
@@ -1674,6 +1753,8 @@ export class MapSpecRuntime {
 
   private removeLayerSafe(id: string): void {
     recordLayerRemove();
+    // GOAL-20261126-04：图符 custom layer 与主层同生命周期。
+    try { detachDiagramSymbolLayer(this.map, id); } catch { /* defensive */ }
     if (this.map.getLayer(id)) {
       try { this.map.removeLayer(id); } catch { /* already gone */ }
     }
@@ -2223,12 +2304,13 @@ export class MapSpecRuntime {
     const mapAny = this.map as any;
     if (typeof mapAny.on !== "function") return;
     this.calloutMoveHooked = true;
-    mapAny.on("moveend", () => {
+    this.calloutMoveHandler = () => {
       if (this.disposed) return;
       for (const labelId of Array.from(this.labelCalloutRegs.keys())) {
         this.refreshCalloutLayer(labelId);
       }
-    });
+    };
+    mapAny.on("moveend", this.calloutMoveHandler);
   }
 
   /** G16：卸载本层的 authoring 子层（label 移除/覆写清空时）—— pinned

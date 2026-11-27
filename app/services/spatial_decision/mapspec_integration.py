@@ -193,11 +193,11 @@ async def apply_v3_decision_to_mapspec(
 
     alt_features = [
         f for f in features
-        if f.get("properties", {}).get("layer_type") != "constraint_exclusion_zone"
+        if (f.get("properties") or {}).get("layer_type") != "constraint_exclusion_zone"
     ]
     constraint_features = [
         f for f in features
-        if f.get("properties", {}).get("layer_type") == "constraint_exclusion_zone"
+        if (f.get("properties") or {}).get("layer_type") == "constraint_exclusion_zone"
     ]
 
     target_features = alt_features if alt_features else features

@@ -222,8 +222,8 @@ def zone_rects(canvas: CanvasSpec, safe: SafeArea) -> Dict[str, Rect]:
     inner = safe.rect(canvas)
     top_h = min(inner.h, max(canvas.short_edge * _TOP_BAND_RATIO, 48.0))
     bottom_h = min(inner.h, max(canvas.short_edge * _BOTTOM_BAND_RATIO, 48.0))
-    inner.y + top_h
-    max(0.0, inner.h - top_h - bottom_h)
+    # 薄幅（安全区高 < 顶带 + 底带）时两带不得互相重叠：底带让位。
+    bottom_h = min(bottom_h, max(0.0, inner.h - top_h))
 
     def _columns(y: float, h: float) -> Dict[str, Rect]:
         col_w = inner.w * _SIDE_COLUMN_RATIO

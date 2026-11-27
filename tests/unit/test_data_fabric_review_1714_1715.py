@@ -287,6 +287,31 @@ def test_stats_api_http_error_stays_typed():
     assert "503" in str(ei.value)
 
 
+def test_bounded_get_closes_response_on_http_error():
+    """4xx/5xx：流式响应必须先 close 再抛（连接还池，评审 P2）。
+
+    stream=True 的失败响应体未读 —— 不 close 会让同 host 反复失败后新请求
+    卡在连接池上（Content-Length 分支早就 close，此处曾遗漏）。
+    """
+    from app.services.data_fabric.security import bounded_get
+
+    resp = _FakeStreamResponse(b"", status_code=503)
+    session = _FakeSession(resp)
+    with pytest.raises(requests.HTTPError):
+        bounded_get(session, "https://example.invalid/x")
+    assert resp.closed is True
+
+
+def test_bounded_get_success_path_keeps_body_readable():
+    """正常路径不得提前 close（回归护栏：修复不能把成功路径也关掉）。"""
+    from app.services.data_fabric.security import bounded_get
+
+    resp = _FakeStreamResponse(b'{"ok":true}', status_code=200)
+    session = _FakeSession(resp)
+    assert bounded_get(session, "https://example.invalid/x") == b'{"ok":true}'
+    assert resp.closed is True  # 读完后 finally 关闭（既有纪律）
+
+
 def test_stats_api_undeclared_quota_falls_back_to_default_cap():
     """未声明配额 → None = 走公共读取通道的默认硬界（绝非无上限）。"""
     adapter = _stats_adapter(dict(_DECL))

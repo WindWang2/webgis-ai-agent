@@ -89,9 +89,10 @@ function asPage<T>(data: Page<T> | T[] | undefined): Page<T> {
   if (Array.isArray(data)) {
     return { items: data, total: data.length, limit: data.length, offset: 0, has_more: false };
   }
-  return (
-    data ?? { items: [], total: 0, limit: 0, offset: 0, has_more: false }
-  );
+  if (!data || !Array.isArray(data.items)) {
+    return { items: [], total: 0, limit: 0, offset: 0, has_more: false };
+  }
+  return data;
 }
 
 export async function listMapProductVersions(

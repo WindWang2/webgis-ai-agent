@@ -96,9 +96,14 @@ export function FeatureProposalDrawer({ open, onClose }: { open: boolean; onClos
         getFeatureProposalDetail(proposalId),
         getFeatureProposalDiff(proposalId),
       ]);
+      // 旧选中回包丢弃：先点 A 再点 B 时，A 的慢响应不得覆盖 B 的详情。
+      if (getFeatureProposalsState().selectedId !== proposalId) return;
       setDetail(d);
       setDiff(df);
+      // 重载后的 conflict_id 可能已变化：清空旧裁决，避免计数比对失真。
+      setResolutions({});
     } catch {
+      if (getFeatureProposalsState().selectedId !== proposalId) return;
       setError(t('errorDetailFailed'));
     }
   }, [t]);
@@ -374,11 +379,21 @@ export function FeatureProposalDrawer({ open, onClose }: { open: boolean; onClos
                   type="button"
                   className="mt-1 text-micro underline"
                   onClick={() => {
-                    if (state.selectedId) {
-                      void getFeatureProposalDiff(state.selectedId, diff.page + 1).then((next) => {
-                        setDiff({ ...next, candidate_deltas: [...diff.candidate_deltas, ...next.candidate_deltas] });
-                      });
-                    }
+                    if (!state.selectedId) return;
+                    const proposalId = state.selectedId;
+                    void getFeatureProposalDiff(proposalId, diff.page + 1)
+                      .then((next) => {
+                        setDiff((prev) => {
+                          // 连点重入：同一页/旧提案的回包不重复拼接。
+                          if (!prev || prev.proposal_id !== next.proposal_id
+                            || next.page <= prev.page) return prev;
+                          return {
+                            ...next,
+                            candidate_deltas: [...prev.candidate_deltas, ...next.candidate_deltas],
+                          };
+                        });
+                      })
+                      .catch(() => setError(t('errorDetailFailed')));
                   }}
                 >
                   {t('loadMoreDeltas')}

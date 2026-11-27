@@ -191,9 +191,14 @@ class CollabBus:
                     json.dumps(envelope, ensure_ascii=False, default=str, allow_nan=False),
                 )
                 return True
-            except Exception as exc:  # noqa: BLE001 — 降级到本地直发
-                logger.debug("[collab-bus] publish failed, degrading local: %s", exc)
+            except Exception as exc:  # noqa: BLE001 — PUBLISH 可能已部分成功
+                logger.debug("[collab-bus] publish failed, not re-dispatching locally: %s", exc)
                 self._drop_client()
+                # PUBLISH 字节可能已到服务端并已 fan-out（读回执前连接被重置）：
+                # 本进程 listener 会经 psubscribe 再收到同一事件，本地直发即同进程
+                # 双发（op journal 双计）。无法判定是否已 fan-out → 宁可不发
+                # （事件可丢，正确性由 revision 对账兜底）。
+                return False
         # 降级本地直发：无本地 listener 也是成功的发布（事件本就可丢，
         # 正确性由 revision 对账兜底 —— 返回值只反映「走了哪条路径」）。
         self._dispatch_local(envelope)
@@ -279,6 +284,13 @@ class CollabBus:
                 await task
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
+        # 防御路径（listener 返回协程）遗留的在飞 task：取消并回收，否则事件
+        # 循环关闭时报 "Task was destroyed but it is pending!"。
+        pending_callbacks = [t for t in self._callback_tasks if not t.done()]
+        for cb in pending_callbacks:
+            cb.cancel()
+        if pending_callbacks:
+            await asyncio.gather(*pending_callbacks, return_exceptions=True)
         if self._client is not None:
             try:
                 await self._client.aclose()

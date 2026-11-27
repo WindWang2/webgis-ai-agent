@@ -85,6 +85,28 @@ def test_record_usage_uses_adjudged_floor_for_unknown():
     assert gpu["mean_ratio"] == pytest.approx(2.0)   # 2GiB / 1GiB 地板
 
 
+def test_record_usage_count_matches_samples_actually_stored():
+    """record_usage 的返回值必须等于真实入账样本数（满员/非法值不计数）。"""
+    est = ResourceEstimate(
+        subsystem=Subsystem.TOOL_DISPATCH,
+        dims={
+            Dimension.WALL_TIME_S: DimValue.known(2.0),
+            Dimension.MEMORY_BYTES: DimValue.known(1e8),
+        },
+    )
+    usage = ResourceUsage(
+        subsystem=Subsystem.TOOL_DISPATCH,
+        dims={
+            Dimension.WALL_TIME_S: 4.0,
+            Dimension.MEMORY_BYTES: -1.0,   # 负 actual 被 record 静默丢弃
+        },
+    )
+    s = CalibrationStore(max_keys=1)
+    s.record("existing", Dimension.WALL_TIME_S, 10.0, 10.0)
+    assert s.record_usage("brand-new", usage, est) == 0
+    assert s.stats("brand-new") == {}
+
+
 def test_snapshot_restore_roundtrip():
     s = _store()
     s.record("k", Dimension.WALL_TIME_S, 10.0, 30.0)

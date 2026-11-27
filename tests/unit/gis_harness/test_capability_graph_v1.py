@@ -191,6 +191,34 @@ class TestStructuralAudit:
             i.code == "artifact_no_consumer" and "art_out" in i.detail
             for i in issues)
 
+    def test_v2_consumes_edge_counts_as_consumer(self):
+        """v2 REL_CONSUMES 边（tool → artifact_type）必须计入消费者集合 —
+        — 只被 consumes 指向的 artifact_type 不是无消费者（此前漏计导致
+        artifact_no_consumer 误报）。"""
+        from app.services.gis_harness.capability_graph import (
+            CapabilityGraph,
+            GraphEdge,
+            GraphNode,
+        )
+
+        nodes = [
+            GraphNode("algo_x", "algorithm", "test"),
+            GraphNode("tool_consumer", "tool", "test"),
+            GraphNode("art_v2", "artifact_type", "test"),
+        ]
+        edges = [
+            GraphEdge("algorithm:algo_x", "produces", "artifact_type:art_v2"),
+            # 只被 consumes 指向（工具输入 ref 契约）—— 无 accepts/binds_to
+            GraphEdge("tool:tool_consumer", "consumes", "artifact_type:art_v2"),
+        ]
+        g = CapabilityGraph(
+            {n.key: n for n in nodes}, edges, source_fingerprint="test",
+            issues=[])
+        issues = validate_graph(g)
+        assert not any(
+            i.code == "artifact_no_consumer" and "art_v2" in i.detail
+            for i in issues), "consumes 边被漏计入消费者集合"
+
     def test_exposes_deprecated_tool_detected(self):
         issues = validate_graph(_mini_graph())
         hits = [i for i in issues if i.code == "exposes_deprecated_tool"]

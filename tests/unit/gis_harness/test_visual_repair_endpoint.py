@@ -577,3 +577,85 @@ async def test_screenshot_upload_rejects_non_png_and_oversize(
         files={"screenshot": ("map.png", oversized, "image/png")},
     )
     assert resp2.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_plan_merges_user_rejected_and_translation_skips(
+        client, session_id):
+    """拒绝记忆产生的 skipped 不得被翻译面结果覆盖（C13 披露完整性）。"""
+    revision = await _seed_session(session_id)
+    from app.services.gis_harness.visual_observation.repair_decisions import (
+        DECISION_REJECTED,
+        record_decision,
+    )
+
+    await record_decision(
+        session_id, decision=DECISION_REJECTED, proposal_id="vrepair-old",
+        recurrence_fingerprints=["fp-label-01"], origin="user",
+        revision=revision)
+    plan = await ensure_session_plan_slot(session_id)
+    crop = _visual_finding(code="visual_crop")
+    crop["finding_id"] = "visual:visual_crop:crop1"
+    crop["recurrence_fingerprint"] = "fp-crop-01"
+    crop["observed_revision"] = revision
+    plan.gis_chapter["map_product"]["visual_findings"].append(crop)
+    await save_session_plan(plan)
+
+    body = (await _plan(client, session_id)).json()
+    assert body["proposable"] is False
+    assert body["reason"] == "no_healable_defects"
+    reasons = {s["reason"] for s in body["skipped"]}
+    assert "user_rejected" in reasons
+    assert "unmapped_category" in reasons
+
+
+@pytest.mark.parametrize("endpoint", ["apply", "reject"])
+@pytest.mark.asyncio
+async def test_decision_lock_unavailable_is_503(
+        client, session_id, monkeypatch, endpoint):
+    """锁降级/丢失不得直穿 500：apply/reject 都回 503 语义。"""
+    import app.services.distributed_lock as dl
+
+    class _BrokenLock:
+        async def __aenter__(self):
+            raise dl.LockDegradedError("redis down")
+
+        async def __aexit__(self, *_exc):
+            return False
+
+    monkeypatch.setattr(dl, "session_lock", lambda *_a, **_k: _BrokenLock())
+    url = f"/api/v1/chat/sessions/{session_id}/visual-repairs/{endpoint}"
+    resp = await client.post(url, json={
+        "proposal_id": "vrepair-ghost-000001", "approved": True,
+        "expected_revision": 0})
+    assert resp.status_code == 503
+    assert _err(resp) == "session_lock_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_plan_loads_mapspec_and_findings_once(
+        client, session_id, monkeypatch):
+    """P3 perf：单次 plan 只加载一次 mapspec、只读一次 findings。"""
+    await _seed_session(session_id)
+    store = _mod._engine.store
+    orig_get_mapspec = store.get_mapspec
+    calls = {"mapspec": 0, "findings": 0}
+
+    async def _counting_get_mapspec(*args, **kwargs):
+        calls["mapspec"] += 1
+        return await orig_get_mapspec(*args, **kwargs)
+
+    monkeypatch.setattr(store, "get_mapspec", _counting_get_mapspec)
+    orig_findings = _mod._stored_visual_findings
+
+    async def _counting_findings(sid):
+        calls["findings"] += 1
+        return await orig_findings(sid)
+
+    monkeypatch.setattr(_mod, "_stored_visual_findings", _counting_findings)
+
+    body = (await _plan(
+        client, session_id,
+        finding_ids=["visual:visual_label_collision:fp01"])).json()
+    assert body["proposable"] is True
+    assert calls == {"mapspec": 1, "findings": 1}

@@ -34,10 +34,20 @@ describe('PreviewModal', () => {
     const handleClose = vi.fn();
     render(<PreviewModal result={mockQueryResult} onClose={handleClose} />);
 
-    const dialog = screen.getByRole('dialog', { name: '数据样例预览' });
+    const dialog = screen.getByRole('dialog', { name: '数据集: cd-schools-2026' });
     expect(dialog).toBeInTheDocument();
     expect(screen.getByText('数据集: cd-schools-2026')).toBeInTheDocument();
     expect(screen.getByText('共 2 要素')).toBeInTheDocument();
+  });
+
+  it('uses the visible custom title as the dialog accessible name', () => {
+    render(<PreviewModal result={mockQueryResult} title="成都学校分布" onClose={vi.fn()} />);
+
+    const title = screen.getByRole('heading', { name: '成都学校分布' });
+    expect(screen.getByRole('dialog', { name: '成都学校分布' })).toHaveAttribute(
+      'aria-labelledby',
+      title.id
+    );
   });
 
   it('supports switching between 属性表格 and 原始 JSON tabs', async () => {
@@ -98,6 +108,37 @@ describe('PreviewModal', () => {
     expect(copiedText).toContain('cd-schools-2026');
     expect(copiedText).toContain('成都市实验小学');
     expect(await screen.findByText('已复制')).toBeInTheDocument();
+  });
+
+  it('degrades gracefully when clipboard API is unavailable (non-secure context)', () => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: undefined,
+      writable: true,
+      configurable: true,
+    });
+
+    render(<PreviewModal result={mockQueryResult} onClose={vi.fn()} />);
+    const copyBtn = screen.getByRole('button', { name: '复制原始 JSON 数据' });
+
+    expect(() => fireEvent.click(copyBtn)).not.toThrow();
+    expect(screen.queryByText('已复制')).not.toBeInTheDocument();
+  });
+
+  it('does not surface an unhandled rejection when clipboard write is denied', async () => {
+    const writeTextSpy = vi.fn().mockRejectedValue(new DOMException('denied', 'NotAllowedError'));
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: writeTextSpy },
+      writable: true,
+      configurable: true,
+    });
+
+    render(<PreviewModal result={mockQueryResult} onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: '复制原始 JSON 数据' }));
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(writeTextSpy).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('已复制')).not.toBeInTheDocument();
   });
 
   it('calls onClose when close icon button is clicked or Escape is pressed', async () => {

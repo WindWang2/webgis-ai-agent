@@ -67,7 +67,9 @@ def emit(
 
 
 def recent_events(limit: int = 100) -> list[dict[str, Any]]:
-    """读取最近事件（诊断端点/测试断言用；有界）。"""
+    """读取最近事件（诊断端点/测试断言用；有界；limit≤0 → 空列表）。"""
+    if limit <= 0:
+        return []
     with _ring_lock:
         items = list(_ring)
-    return items[-max(0, min(limit, _RING_SIZE)):]
+    return items[-min(limit, _RING_SIZE):]

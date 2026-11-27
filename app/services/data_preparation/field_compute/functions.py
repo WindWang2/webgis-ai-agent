@@ -281,7 +281,10 @@ def static_type(node: ExprNode, field_types: Optional[Dict[str, str]] = None) ->
             return "any"
         if spec.result_type == "branch":
             if node.name == "if":
-                return static_type(node.args[1], types) if len(node.args) > 2 else "any"
+                # 与 case 同纪律：then/else 类型一致才确定，否则 any。
+                branch_types = [static_type(a, types) for a in node.args[1:]]
+                uniq = {t for t in branch_types if t != "null"}
+                return next(iter(uniq)) if len(uniq) == 1 else "any"
             return "any"
         if spec.result_type == "same_as_first":
             return static_type(node.args[0], types) if node.args else "any"

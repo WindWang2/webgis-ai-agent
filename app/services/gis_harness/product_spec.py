@@ -126,6 +126,38 @@ _EDIT_PAYLOAD_KEYS: Dict[str, Tuple[str, ...]] = {
     "set_delivery": ("delivery",),
 }
 _MAX_PAYLOAD_VALUE_STR = 200
+#: 嵌套载荷（add_view 的 payload.view）的深度/宽度上界 —— 与深度 1 消毒
+#: 同纪律，但 view 是嵌套结构（binding/evidence），只截断顶层字符串拦不住
+#: 深层超长值与未知键。
+_MAX_PAYLOAD_DEPTH = 3
+_MAX_PAYLOAD_KEYS = 16
+_MAX_PAYLOAD_LIST = 16
+
+
+def _bound_payload_value(value: Any, depth: int = 0) -> Any:
+    """深度有界的值消毒（str 截断；dict/list 保留结构但键数/条数有界）。
+
+    ``payload.view`` 原样进 override 账并随 ``storage_payload`` 落盘：
+    任意额外键与超长字符串会让 chapter 载荷无界（review 轴4 的漏网面）。
+    标量/布尔原样保留（pydantic 仍做 fail-closed 校验）。
+    """
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return value[:_MAX_PAYLOAD_VALUE_STR]
+    if depth >= _MAX_PAYLOAD_DEPTH:
+        return str(value)[:_MAX_PAYLOAD_VALUE_STR]
+    if isinstance(value, dict):
+        return {
+            str(k)[:80]: _bound_payload_value(v, depth + 1)
+            for k, v in list(value.items())[:_MAX_PAYLOAD_KEYS]
+        }
+    if isinstance(value, list):
+        return [
+            _bound_payload_value(x, depth + 1)
+            for x in value[:_MAX_PAYLOAD_LIST]
+        ]
+    return str(value)[:_MAX_PAYLOAD_VALUE_STR]
 
 
 def _sanitize_payload(op: str, payload: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
@@ -146,7 +178,10 @@ def _sanitize_payload(op: str, payload: Dict[str, Any]) -> Tuple[Dict[str, Any],
             errors.append(f"payload key {k!r} not allowed for op {op!r}")
             continue
         if k == "view" and isinstance(v, dict):
-            clean[k] = v  # add_view 的 view 交给 pydantic 校验（fail-closed）
+            # add_view 的 view 交给 pydantic 校验（fail-closed），但先做深度
+            # 有界消毒：override 账原样随 storage_payload 落盘，任意额外键/
+            # 超长字符串会把 chapter 载荷撑到无界。
+            clean[k] = _bound_payload_value(v)
         elif k == "filter" and isinstance(v, dict):
             clean[k] = {
                 str(fk)[:80]: (fv if isinstance(fv, (bool, int, float))
@@ -256,7 +291,13 @@ class MapProductSpec(BaseModel):
     views: List[ProductView] = Field(default_factory=list, max_length=MAX_VIEWS)
     relations: List[ProductRelation] = Field(default_factory=list, max_length=MAX_RELATIONS)
     delivery: ProductDeliveryIntent = Field(default_factory=ProductDeliveryIntent)
-    overrides: List[ProductOverride] = Field(default_factory=list, max_length=MAX_OVERRIDES)
+    #: 编辑账上限 = MAX_OVERRIDES（软账）+ MAX_VIEWS（结构性 remove_view 账，
+    #: 编辑存活的撤回证据，永不裁掉 —— 见 apply_product_edit 裁剪注释与
+    #: validate_product_spec 的同值软上限）。此前 max_length=MAX_OVERRIDES
+    #: 与账上限冲突：>16 次编辑后落盘 28 条，spec_from_storage 的
+    #: model_validate 失败返 None → 整个 spec 被静默丢弃。
+    overrides: List[ProductOverride] = Field(
+        default_factory=list, max_length=MAX_OVERRIDES + MAX_VIEWS)
     #: 引用面（类型库指针 —— 不内嵌模板本体）
     recipe_id: str = Field(default="", max_length=80)
     template_id: str = Field(default="", max_length=80)
@@ -470,11 +511,8 @@ def apply_product_edit(
         if v is not None and not isinstance(filt, dict):
             errors.append("set_view_filter requires payload.filter (dict)")
         elif v is not None:
-            if len(filt) > MAX_FILTER_KEYS:
-                errors.append(f"filter keys exceed {MAX_FILTER_KEYS}")
-            else:
-                v.binding.filter = dict(filt)
-                affected = [target]
+            v.binding.filter = dict(filt)
+            affected = [target]
     elif op == "toggle_view":
         v = _view_or_err(target)
         if v is not None:
@@ -490,10 +528,13 @@ def apply_product_edit(
             pass
         else:
             if payload.get("chart_kind"):
-                v.chart_kind = str(payload["chart_kind"])
+                # 与 set_caption 同纪律：赋值前截到字段上界 ——
+                # validate_assignment=True 下 >40 字会抛 ValidationError
+                # 逃逸 apply_product_edit（违反先验证后提交）。
+                v.chart_kind = str(payload["chart_kind"])[:40]
                 affected.append(target)
             if payload.get("component_hint"):
-                v.binding.component_hint = str(payload["component_hint"])
+                v.binding.component_hint = str(payload["component_hint"])[:120]
                 if target not in affected:
                     affected.append(target)
             if not affected:
@@ -541,8 +582,12 @@ def apply_product_edit(
     # Override 账裁剪：结构性账目（remove_view —— 编辑存活的撤回证据）豁免
     # 裁剪（天然有界 ≤ MAX_VIEWS）；软账目保留最近 MAX_OVERRIDES 条。
     # 否则 remove_view 账被裁后重组装会让已删视图复活（review 轴3）。
+    # target/reason 是调用方自由文本（toggle_component 的 target 从不校验），
+    # 不截到 ProductOverride 的字段上界就会抛 ValidationError 逃逸
+    # （target≤120 / reason≤200）——先消毒后落账。
     draft.overrides.append(ProductOverride(
-        op=op, target=target, payload=payload, reason=reason))
+        op=op, target=str(target)[:120], payload=payload,
+        reason=str(reason)[:_MAX_STR]))
     structural_by_target: Dict[str, ProductOverride] = {}
     soft: List[ProductOverride] = []
     for ov in draft.overrides:

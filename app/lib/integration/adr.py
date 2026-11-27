@@ -134,10 +134,26 @@ def dangling_links(repo_root: Optional[Path] = None) -> List[str]:
 
 
 def load_dangling_baseline(repo_root: Optional[Path] = None) -> List[str]:
+    """读取悬空链接棘轮基线；文件缺失 → []。
+
+    畸形 JSON / 缺 ``dangling`` 列表 → ``ValueError``（fail-loud，附可读
+    路径/原因）——与 findings 棘轮账本同纪律：损坏的基线必须显式中止，
+    不得以裸 KeyError/JSONDecodeError 崩溃或静默降级为空基线。
+    """
     path = (repo_root or REPO_ROOT) / DANGLING_BASELINE_PATH
     if not path.exists():
         return []
-    return list(json.loads(path.read_text(encoding="utf-8"))["dangling"])
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            f"{DANGLING_BASELINE_PATH} 不是合法 JSON（棘轮基线损坏）: {e}"
+        ) from e
+    dangling = payload.get("dangling") if isinstance(payload, dict) else None
+    if not isinstance(dangling, list):
+        raise ValueError(
+            f"{DANGLING_BASELINE_PATH} 缺少 dangling 列表（棘轮基线损坏）")
+    return list(dangling)
 
 
 def check_referenced_files(repo_root: Optional[Path] = None) -> List[str]:

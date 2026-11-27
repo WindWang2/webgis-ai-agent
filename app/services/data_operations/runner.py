@@ -467,7 +467,7 @@ def find_active_jobs(
     out: list[tuple[int, str]] = []
     with _sync_session() as db:
         rows = db.execute(
-            select(AnalysisTask).where(*clauses).order_by(AnalysisTask.id.desc()).limit(20)
+            select(AnalysisTask).where(*clauses).order_by(AnalysisTask.id.desc())
         ).scalars().all()
         for job in rows:
             params = job.parameters if isinstance(job.parameters, dict) else {}

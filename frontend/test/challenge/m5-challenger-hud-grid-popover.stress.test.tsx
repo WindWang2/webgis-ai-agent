@@ -120,13 +120,18 @@ describe('M5 Empirical Challenge Suite: MapToolbarHUD (R3)', () => {
 
   describe('2. Bearing & Pitch Boundary Conditions', () => {
     it('computes correct compass rotation for boundary angles: 0, 360, -360, 720, -180, NaN', () => {
-      const angles = [0, 90, 180, 270, 360, -90, -180, -360, 720];
+      const angles = [0, 90, 180, 270, 360, -90, -180, -360, 720, Number.NaN];
 
       for (const angle of angles) {
         const { container, unmount } = render(<MapToolbarHUD mapRef={mapRef} bearing={angle} pitch={0} />);
         const compass = container.querySelector('svg.lucide-compass');
         expect(compass).toBeInTheDocument();
-        expect(compass?.getAttribute('style')).toContain(`rotate(${-angle}deg)`);
+        if (Number.isNaN(angle)) {
+          // Degenerate bearing: no NaN may leak into the DOM transform.
+          expect(compass?.getAttribute('style') ?? '').not.toContain('NaN');
+        } else {
+          expect(compass?.getAttribute('style')).toContain(`rotate(${-angle}deg)`);
+        }
         unmount();
       }
     });

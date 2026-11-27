@@ -32,11 +32,9 @@ function readFileAsText(file: File): Promise<string> {
     reader.onload = () => {
       try {
         const bytes = reader.result as ArrayBuffer;
-        try {
-          resolve(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
-        } catch {
-          resolve(new TextDecoder('gb18030', { fatal: true }).decode(bytes));
-        }
+        // 仅接受严格 UTF-8：GB18030 等宽覆盖编码会把 Latin-1 / Shift-JIS /
+        // 无 BOM UTF-16 静默解成乱码并入索引，宁可显式失败。
+        resolve(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
       } catch (error) {
         reject(error);
       }
@@ -73,8 +71,16 @@ export function KnowledgeUpload({ onUploaded }: KnowledgeUploadProps) {
   useEffect(() => () => abortRef.current?.abort(), []);
 
   const readFile = useCallback(async (file: File) => {
+    // 新选择被拒时不能把上一文件残留在表单里（否则仍可提交旧文档）。
+    const clearStale = () => {
+      setTitle('');
+      setContent('');
+      setFileName(null);
+      setFileType('text');
+    };
     const type = knowledgeFileTypeForFileName(file.name);
     if (!type) {
+      clearStale();
       setState({
         status: 'error',
         message: tNow('knowledge.upload.unsupportedType', { name: file.name }),
@@ -82,6 +88,7 @@ export function KnowledgeUpload({ onUploaded }: KnowledgeUploadProps) {
       return;
     }
     if (file.size > KNOWLEDGE_MAX_CONTENT_BYTES) {
+      clearStale();
       setState({
         status: 'error',
         message: tNow('knowledge.upload.tooLarge', { mib: Math.floor(KNOWLEDGE_MAX_CONTENT_BYTES / (1024 * 1024)) }),
@@ -97,6 +104,7 @@ export function KnowledgeUpload({ onUploaded }: KnowledgeUploadProps) {
       setFileName(file.name);
       setState({ status: 'idle' });
     } catch {
+      clearStale();
       setState({ status: 'error', message: tNow('knowledge.upload.readFailed', { name: file.name }) });
     }
   }, []);

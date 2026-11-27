@@ -162,6 +162,8 @@ def decode_page_cursor(
     try:
         padded = token + "=" * (-len(token) % 4)
         payload = json.loads(base64.urlsafe_b64decode(padded.encode()).decode())
+        if not isinstance(payload, dict):
+            raise FeaturePageError("cursor payload must be a JSON object")
         version = payload.get("v")
         idx = payload["i"]
         if isinstance(idx, bool) or not isinstance(idx, int) or idx < 0:

@@ -156,6 +156,8 @@ export function useFieldContracts({
   /** cursor 游历栈（栈顶 = 当前页 cursor；null = 首页）。 */
   const cursorStackRef = useRef<(string | null)[]>([null]);
   const [cursorDepth, setCursorDepth] = useState(1);
+  /** 在飞 findings 请求序号：只有最新一次请求可写回（防旧响应覆盖新页）。 */
+  const findingsReqRef = useRef(0);
   const [activating, setActivating] = useState(false);
   const [retiring, setRetiring] = useState(false);
   const [batchRunning, setBatchRunning] = useState(false);
@@ -237,6 +239,7 @@ export function useFieldContracts({
   const loadFindingsPage = useCallback(async (cursor?: string | null, assessmentId?: string) => {
     const id = assessmentId ?? assessment?.id;
     if (!sessionId || !id) return;
+    const req = ++findingsReqRef.current;
     setFindingsLoading(true);
     try {
       const page = await findingsPage(
@@ -245,11 +248,13 @@ export function useFieldContracts({
         { cursor: cursor ?? null, limit: FINDINGS_PAGE_LIMIT, code: codeFilterRef.current || null },
         ownerToken,
       );
+      if (req !== findingsReqRef.current) return;
       setFindings(page);
     } catch (err) {
+      if (req !== findingsReqRef.current) return;
       setError(asFieldContractError(err));
     } finally {
-      setFindingsLoading(false);
+      if (req === findingsReqRef.current) setFindingsLoading(false);
     }
   }, [sessionId, assessment, ownerToken]);
 
@@ -445,6 +450,10 @@ export function useFieldContracts({
         }
         if (!page.nextCursor) break;
         cursor = page.nextCursor;
+      }
+      if (ids.length > MAX_BATCH_TARGETS) {
+        setError({ code: 'selection_too_large', message: String(ids.length) });
+        return null;
       }
       if (ids.length < total) {
         setError({ code: 'selection_incomplete', message: `${ids.length}/${total}` });

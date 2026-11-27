@@ -577,7 +577,8 @@ def resolve_asset_for(
                 raise CompositionAssetError("asset_draft", asset_id[:64])
             revision = int(asset.current_revision)
         else:
-            revision = int(asset.latest_revision or 1)
+            # 重放默认取已发布指针（current）；latest 可能是未发布 draft。
+            revision = int(asset.current_revision or asset.latest_revision or 1)
     version = _require_version(db, asset_id, revision)
     record = _record_of(asset, version)
     if mode == "for_apply":
@@ -641,7 +642,7 @@ def resolve_asset(db: Any, asset_id: str, revision: Optional[int] = None,
                   user_id: Optional[str] = None, org_id: Any = None,
                   role: Optional[str] = None) -> ResolvedAsset:
     """工具面便捷入口（身份默认取 ToolExecutionContext，可显式覆盖）。"""
-    if user_id is None:
+    if user_id is None and org_id is None:
         user_id, org_id = tool_caller_identity()
     project_ids = _caller_project_ids(db, user_id, org_id)
     return resolve_asset_for(
@@ -796,8 +797,6 @@ def derive_payload_from_spec(spec: Dict[str, Any]) -> TemplateAssetPayload:
         # 实例 id 走 INSTANCE_ID_BY_TYPE 约定如 legend→legend-main）。
         # 解析不到 → 用组件自身 slot 身份（组件 id/类型）承载。
         slot_id = _resolve_slot_id(comp, base, ctype, seen_slot_ids)
-        if slot_id in seen_slot_ids:
-            continue
         seen_slot_ids.add(slot_id)
         enabled = comp.get("enabled") is not False
         position = str(comp.get("position") or "")

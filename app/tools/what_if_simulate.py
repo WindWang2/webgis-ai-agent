@@ -8,7 +8,7 @@ from typing import Literal, Optional
 import numpy as np
 from pydantic import BaseModel, Field
 
-from app.tools.registry import ToolRegistry, tool
+from app.tools.registry import ToolRegistry, tool, _redact_error_text_for_llm
 from app.tools.what_if_rules import get_rule
 from app.services.spatial_decision.engine import DecisionEngine
 from app.services.spatial_decision.models import SpatialDecisionResult
@@ -325,7 +325,11 @@ async def what_if_simulate_async(
 
     except Exception as e:
         logger.error(f"[WhatIfSimulateV2] Failed: {e}", exc_info=True)
-        return _empty_result(scenario, target_area, uncertainty=f"错误: {str(e)}")
+        return _empty_result(
+            scenario,
+            target_area,
+            uncertainty=f"错误: {_redact_error_text_for_llm(str(e))}",
+        )
 
 
 def what_if_simulate(

@@ -542,9 +542,12 @@ def _settle_step(
             continue
         if step.status == "succeeded" and status == "succeeded":
             # 幂等：同一 tool_call_id 重复成功不 inflate attempts / evidence (#1407)。
-            latest = (step.evidence[-1] if getattr(step, "evidence", None) else None)
-            if latest is not None and tool_call_id and (
-                    getattr(latest, "tool_call_id", "") == tool_call_id):
+            # 扫描全部证据（FIFO 上界内），不能只看最后一条：中间可能夹着
+            # 其它 tool_call_id 的证据（同一能力被多个工具命中）。
+            if tool_call_id and any(
+                getattr(ev, "tool_call_id", "") == tool_call_id
+                for ev in (getattr(step, "evidence", None) or [])
+            ):
                 continue
             step.attempts += 1
             step.attach_evidence(
@@ -978,7 +981,17 @@ class GISSessionRuntime:
                 steps = _materialize_steps(plan)
                 _reconcile_invalidated(plan, steps)
                 if steps != plan.steps:
-                    plan.steps = steps[:MAX_STEPS]
+                    bounded = steps[:MAX_STEPS]
+                    # 产品里程碑步由 _materialize_steps 追加在末尾：章节能力数
+                    # 达到上界时它会落在截断区，直到下次 product 工具调用才
+                    # 重建 —— 用产品步替换最后一个能力步保住它。
+                    product = next(
+                        (s for s in steps[MAX_STEPS:] if s.id == PRODUCT_STEP_ID),
+                        None,
+                    )
+                    if product is not None:
+                        bounded = steps[: MAX_STEPS - 1] + [product]
+                    plan.steps = bounded
                     for s in plan.steps:
                         events.append(_step_event(plan, s))
                 kind = "plan_replaced" if plan.replaced else "plan_created"
@@ -1353,7 +1366,17 @@ class GISSessionRuntime:
             if str(status) == "pending":
                 clarification["question"] = str(question)[:200]
                 if isinstance(questions, list):
-                    clarification["questions"] = questions[:2]
+                    # 元素类型/长度必须有界：单个超长问题不得撑破 KB 级信封。
+                    bounded_questions = []
+                    for q in questions[:2]:
+                        if isinstance(q, dict):
+                            bounded_questions.append({
+                                str(k)[:64]: str(v)[:200]
+                                for k, v in list(q.items())[:4]
+                            })
+                        else:
+                            bounded_questions.append(str(q)[:200])
+                    clarification["questions"] = bounded_questions
                 clarification["status"] = "pending"
                 clarification["source"] = "requirement_ir"
                 if request_id:

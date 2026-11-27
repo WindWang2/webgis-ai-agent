@@ -56,4 +56,11 @@ describe('sizeForValue twin parity (Python fixture)', () => {
     expect(sizeForValue(NaN, ch)).toBeNull();
     expect(sizeForValue(Infinity, ch)).toBeNull();
   });
+
+  it('returns null for a degenerate value domain (min_value === max_value)', () => {
+    const linear = { min_value: 7, max_value: 7, min_size: 1, max_size: 5, scaling: 'linear' };
+    const area = { min_value: 7, max_value: 7, min_size: 1, max_size: 5, scaling: 'area_sqrt' };
+    expect(sizeForValue(7, linear)).toBeNull();
+    expect(sizeForValue(7, area)).toBeNull();
+  });
 });

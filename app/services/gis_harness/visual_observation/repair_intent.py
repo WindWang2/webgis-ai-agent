@@ -134,6 +134,12 @@ def intent_from_dict(raw: Any) -> Optional[VisualRepairIntent]:
         base_revision = int(raw.get("base_revision") or 0)
     except (TypeError, ValueError):
         return None
+    # schema_version 是契约的一部分：缺省（旧快照）取当前版本，但任何
+    # 已声明的外来/未来版本都必须诚实 None —— 不把未知形状静默强转成
+    # 当前语义（那会让调用方以为读懂了它没读懂的字段）。
+    schema_version = _clip(raw.get("schema_version"), 8) or SCHEMA_VERSION
+    if schema_version != SCHEMA_VERSION:
+        return None
     return VisualRepairIntent(
         proposal_id=_clip(raw.get("proposal_id"), 96),
         defect_fingerprint=_clip(raw.get("defect_fingerprint"), 96),
@@ -145,7 +151,7 @@ def intent_from_dict(raw: Any) -> Optional[VisualRepairIntent]:
         defects=tuple(norm),
         op_labels=tuple(
             _clip(x, 40) for x in tuple(raw.get("op_labels") or ())[:_MAX_OP_LABELS]),
-        schema_version=_clip(raw.get("schema_version"), 8) or SCHEMA_VERSION,
+        schema_version=schema_version,
         intent_kind=INTENT_KIND,
     )
 

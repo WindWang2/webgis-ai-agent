@@ -15,7 +15,7 @@
  *    自动发送续行消息让 agent 恢复执行（与 PlanProposalCard 同模式）。
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { HelpCircle, CheckCircle2, AlertTriangle, RefreshCw } from 'lucide-react';
 import { useLocale, useT } from '@/lib/i18n/useT';
 import type {
@@ -62,10 +62,9 @@ export function ClarificationCard({ state, onSubmit, onRefresh }: ClarificationC
 
   const disabled = status === 'submitting' || status === 'submitted' || status === 'stale';
 
-  const questions = useMemo(
-    () => envelope.questions.slice(0, 2),
-    [envelope.questions],
-  );
+  // 渲染并提交 envelope 的全部问题：静默丢弃第 3+ 题会让 allAnswered/
+  // handleSubmit 只覆盖前两题，用户提交缺失答案的载荷。
+  const questions = envelope.questions;
 
   const answerOf = (q: ClarificationQuestion): string | undefined => {
     if (waived[q.context_key]) return q.default_value;

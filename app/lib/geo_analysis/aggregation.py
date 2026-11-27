@@ -32,7 +32,14 @@ def generate_fishnet(bounds: tuple[float, float, float, float], cell_size: float
             error_type="ValueError",
         )
 
-    xmin, ymin, xmax, ymax = bounds
+    try:
+        xmin, ymin, xmax, ymax = bounds
+    except (TypeError, ValueError) as exc:
+        return GeoAnalysisResult(
+            False, None,
+            f"bounds must be a 4-element (minx, miny, maxx, maxy) sequence: {exc}",
+            error_type="ValueError",
+        )
 
     # Pick a metric CRS for the (WGS84) bounds: UTM, or polar stereographic.
     if float(ymax) > 84.0 or float(ymin) < -80.0:
@@ -196,7 +203,16 @@ def spatial_aggregate(
             
         summary = f"Successfully aggregated points to {len(polygons)} polygons."
         if value_field:
-            summary += f" Used field '{value_field}' for {', '.join([s for s in stats if s != 'count'])}."
+            if value_field in points.columns:
+                summary += f" Used field '{value_field}' for {', '.join([s for s in stats if s != 'count'])}."
+            else:
+                # G-9（#873）同类降级披露：value_field 缺失（拼错/投影丢失）时
+                # sum/mean/max/min 被静默跳过并降级为 count —— 必须在信封显式
+                # 披露，否则调用方以为拿到了 value_field 的统计量。
+                summary += (
+                    f" ⚠ value_field '{value_field}' not found in point attributes; "
+                    f"stats fell back to count."
+                )
 
         return GeoAnalysisResult(
             success=True,
@@ -452,13 +468,10 @@ def aggregate_with_denominator(
     joined = gpd.sjoin(feats, zones, how="inner", predicate="intersects")
 
     nan_numerator_excluded = 0
-    if numerator_field is None:
-        counts = joined.groupby("index_right").size()
-        numerator = zones.index.map(counts).fillna(0).astype("int64")
     support_counts = joined.groupby("index_right").size()
     has_support = zones.index.map(support_counts).fillna(0) > 0
     if numerator_field is None:
-        numerator = zones.index.map(counts).fillna(0).astype("int64")
+        numerator = zones.index.map(support_counts).fillna(0).astype("int64")
     else:
         values = pd.to_numeric(joined[numerator_field], errors="coerce")
         # ADR-0284 B2（数值极值修复）：非有限值（±inf）与 NaN 同为无效观测
@@ -503,7 +516,13 @@ def aggregate_with_denominator(
     den_list = [float(v) if pd.notna(v) else None for v in denom]
     for i in range(len(zones)):
         if bool(valid.iloc[i]):
-            rates.append(float(num_list[i]) / float(denom.iloc[i]))
+            _num = num_list[i]
+            # M2 契约：分子全 NaN 的区（fabricated mask 置 NaN）→ rate=None，
+            # 绝不让 float(nan)/denom 产出 NaN 值污染 JSON 输出。
+            if _num is None or not np.isfinite(_num):
+                rates.append(None)
+            else:
+                rates.append(float(_num) / float(denom.iloc[i]))
         else:
             rates.append(None)
 

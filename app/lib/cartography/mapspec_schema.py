@@ -85,8 +85,10 @@ Number = Union[StrictInt, StrictFloat]
 #: 产品，存量 spec 行为不变。G15 FrameProductContract.v1）。
 #: 2.1 = G16 要素级标注 authoring（layer.label.authoring +
 #: layout.labels.obstaclePolicy/forbiddenZones，纯 additive optional）。
-KNOWN_VERSIONS: Tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10", "2.0", "2.1")
-LATEST_VERSION = "2.1"
+#: 2.2 = GOAL-20261126-04 地理锚定统计图符（layer.diagram_symbol 可选；
+#: 缺失 = 层走既有表达路径，存量 spec 行为不变）。
+KNOWN_VERSIONS: Tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10", "2.0", "2.1", "2.2")
+LATEST_VERSION = "2.2"
 
 #: 版本缺省口径：lifecycle_engine 既有写入恒带 "1.0"；缺失视为 1.0 并披露。
 DEFAULT_VERSION = "1.0"
@@ -693,7 +695,9 @@ class MapSpecRepresentationWindow(_SpecModel):
     min_zoom: Number
     max_zoom: Number
     mode: Literal[REPRESENTATION_MODES]  # type: ignore[valid-type]
-    reason_codes: List[StrictStr] = Field(default_factory=list)
+    #: 有界（≤8）：与 quality/disclosures/eligibility 同款纪律，防病理
+    #: 文档塞任意长度证据列表（docstring 承诺即强制）。
+    reason_codes: List[StrictStr] = Field(default_factory=list, max_length=8)
     #: v1.9 additive（GOAL 04）：窗口级源覆盖。artifact 模式窗
     #: （generalized/aggregate_grid）携带时，该窗的渲染副本/导出裁决从
     #: 此 source id 取数据（spec.sources 内的派生工件源）；缺失 = 主层
@@ -717,7 +721,8 @@ class MapSpecLayerRepresentation(_SpecModel):
 
     model_config = ConfigDict(extra="allow")
 
-    windows: List[MapSpecRepresentationWindow] = Field(default_factory=list)
+    windows: List[MapSpecRepresentationWindow] = Field(
+        default_factory=list, max_length=MAX_REPRESENTATION_WINDOWS)
 
 
 class MapSpecLayerFlow(_SpecModel):
@@ -750,7 +755,7 @@ class MapSpecLayerSymbolAssetCategoryRule(_SpecModel):
 
     key: Union[StrictStr, StrictInt, StrictFloat, StrictBool]
     asset_id: StrictStr
-    revision: int = Field(ge=1)
+    revision: StrictInt = Field(ge=1)
     content_digest: StrictStr = Field(max_length=96)
     params: Optional[Dict[str, Any]] = None
 
@@ -771,7 +776,7 @@ class MapSpecLayerSymbolAssetCategoryBinding(_SpecModel):
     other_asset: Optional[StrictStr] = None
     #: fallback 资产的钉版本三元组与实例参数（F4 评审：写链面既有字段，
     #: schema 此前漏声明导致 extra_forbidden 拒绝整文档）。
-    other_revision: Optional[int] = Field(default=None, ge=1)
+    other_revision: Optional[StrictInt] = Field(default=None, ge=1)
     other_content_digest: Optional[StrictStr] = Field(default=None, max_length=96)
     other_params: Optional[Dict[str, Any]] = None
 
@@ -801,6 +806,55 @@ class MapSpecLayerSymbolAsset(_SpecModel):
     applied_by: Optional[Dict[str, Any]] = None
     #: 解绑恢复快照（本域应用前的 paint/layout 键有界快照；undo/unbind 用）
     prev_paint_snapshot: Optional[Dict[str, Any]] = None
+
+
+class MapSpecDiagramSizePolicy(_SpecModel):
+    """图符尺寸政策（``diagram_symbol.v1``；权威语义 = app/lib/cartography/
+    diagram_symbols/contracts.normalize_size_policy —— 本 schema 只承载，
+    缺省值/上限/互斥校验在归一化器，不在本层重复）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    r_max_px: Optional[float] = None
+    r_min_px: Optional[float] = None
+    inner_radius_ratio: Optional[float] = None
+    total_area_encoding: Optional[bool] = None
+    h_max_px: Optional[float] = None
+    bar_w_px: Optional[float] = None
+    bar_gap_px: Optional[float] = None
+
+
+class MapSpecLayerDiagramSymbol(_SpecModel):
+    """地理锚定统计图符块（``diagram_symbol.v1``，2.2 additive）。
+
+    以地理要素为锚的复合统计图符（组成饼/环形、同量纲多序列条形、
+    等角分段比例符号），与浮动 ``chart_panel`` 组件（屏幕空间 chrome）
+    和 G47 Dorling（示意坐标纸面图）正交。权威形状 =
+    ``app/lib/cartography/diagram_symbols``（contracts 几何 oracle +
+    qualification 资格 + legend 图例同源）；本块只承载（与 symbol_asset
+    同纪律）：缺失 = 层走既有 paint 路径，行为不变。
+
+    wide 数据形状：``fields[i]`` ↔ ``categories[i]`` 一一对应（一个类别
+    一个数值字段）；long 形状由 authoring 服务聚合转 wide 后落块。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["diagram_symbol.v1"] = "diagram_symbol.v1"
+    kind: Literal[
+        "composition_pie",
+        "composition_donut",
+        "series_bars",
+        "segmented_proportional",
+    ]
+    layout: Optional[Literal["stacked", "grouped"]] = None
+    categories: List[StrictStr] = Field(min_length=2, max_length=64)
+    fields: List[StrictStr] = Field(min_length=2, max_length=64)
+    unit: Optional[StrictStr] = None
+    missing_policy: Literal["omit", "block"] = "omit"
+    size_policy: Optional[MapSpecDiagramSizePolicy] = None
+    palette_id: Optional[StrictStr] = None
+    id_field: Optional[StrictStr] = None
 
 
 class MapSpecLayer(_SpecModel):
@@ -865,6 +919,10 @@ class MapSpecLayer(_SpecModel):
     #: 缺席 = 层表达走既有 paint 路径，行为不变（schema 只承载，权威形状 =
     #: app/lib/cartography/symbol_asset.py 的规范形 + 归一化器）。
     symbol_asset: Optional[MapSpecLayerSymbolAsset] = None
+    #: 2.2 additive（GOAL-20261126-04）：地理锚定统计图符绑定。缺席 = 层
+    #: 走既有表达路径，行为不变（schema 只承载，权威形状 =
+    #: app/lib/cartography/diagram_symbols 的规范形 + 几何 oracle）。
+    diagram_symbol: Optional[MapSpecLayerDiagramSymbol] = None
 
 
 class MapThresholds(_SpecModel):
@@ -1477,12 +1535,6 @@ class FrameProductConfig(_SpecModel):
 
     @model_validator(mode="after")
     def _validate_product_invariants(self) -> "FrameProductConfig":
-        # 产品启用需 ≥2 画幅（单幅是普通地图，不是小倍数产品 —— 诚实拒绝）。
-        if self.enabled and len(self.frames) < 2:
-            raise ValueError(
-                "frame_product.enabled=True requires >=2 frames "
-                "(single-frame maps are not small multiples products)"
-            )
         ids = [f.frame_id for f in self.frames]
         if len(ids) != len(set(ids)):
             raise ValueError("frame_product.frames frame_id must be unique")
@@ -1556,6 +1608,8 @@ SCHEMA_EXPORT_MODELS: Tuple[Tuple[str, type], ...] = (
     ("MapSpecLayerSymbolAssetCategoryRule", MapSpecLayerSymbolAssetCategoryRule),
     ("MapSpecLayerSymbolAssetCategoryBinding", MapSpecLayerSymbolAssetCategoryBinding),
     ("MapSpecLayerSymbolAsset", MapSpecLayerSymbolAsset),
+    ("MapSpecDiagramSizePolicy", MapSpecDiagramSizePolicy),
+    ("MapSpecLayerDiagramSymbol", MapSpecLayerDiagramSymbol),
     ("MapSpecRepresentationWindow", MapSpecRepresentationWindow),
     ("MapSpecLayerRepresentation", MapSpecLayerRepresentation),
     ("MapSpecLayerLabel", MapSpecLayerLabel),
@@ -1701,6 +1755,10 @@ _UPGRADERS: Dict[Tuple[str, str], Callable[[Dict[str, Any]], Dict[str, Any]]] = 
     # .authoring + layout.labels.obstaclePolicy/forbiddenZones；缺失 =
     # 既有自动标注语义，存量 spec 行为逐字节不变）。
     ("2.0", "2.1"): lambda doc: doc,
+    # 2.2 相对 2.1 纯 additive（GOAL-20261126-04 地理锚定统计图符：
+    # layer.diagram_symbol 可选；缺失 = 层走既有表达路径，存量 spec
+    # 行为逐字节不变）。
+    ("2.1", "2.2"): lambda doc: doc,
 }
 
 
@@ -1727,6 +1785,8 @@ def _find_upgrade_path(fr: str, to: str) -> Optional[List[Tuple[str, str]]]:
 
 def _walk_schema_tree(annotation: Any, payload: Any, path: str, out: List[FieldDisclosure]) -> None:
     """沿 schema 已知形状收集 unknown 键（extra="allow" 值保留在文档中）。"""
+    if len(out) > MAX_DISCLOSURES_PER_KIND:
+        return
     origin = _annotation_origin(annotation)
     if origin is dict:
         # Dict[str, X]：值节点按 X 递归；未知键合法（开放 dict 面）。
@@ -1770,8 +1830,13 @@ def _walk_schema_tree(annotation: Any, payload: Any, path: str, out: List[FieldD
 
 
 def _walk_model(model: type, payload: Dict[str, Any], path: str, out: List[FieldDisclosure]) -> None:
+    # 峰值内存有界：只收集到封顶值 +1（+1 供 truncated 判定），不物化全量。
+    if len(out) > MAX_DISCLOSURES_PER_KIND:
+        return
     known = set(model.model_fields)
     for k, v in payload.items():
+        if len(out) > MAX_DISCLOSURES_PER_KIND:
+            return
         child_path = f"{path}.{k}" if path else k
         if k not in known:
             out.append(FieldDisclosure(path=child_path, kind="unknown", got=""))
@@ -1826,14 +1891,17 @@ def _collect_invalid(payload: Any) -> List[FieldDisclosure]:
                 continue
             seen.add(loc)
             out.append(FieldDisclosure(path=loc, kind="invalid", got=err.get("type", "")))
+            if len(out) > MAX_DISCLOSURES_PER_KIND:
+                break
         return out
 
 
 def parse_mapspec(payload: Any, *, target_version: str = LATEST_VERSION) -> MapSpecParseResult:
     """冷路径解析：canonical 保序拷贝 + 严格校验披露 + 显式迁移。
 
-    - 永不抛异常（结构化结果）；``forward_version`` 由调用方决定拒绝
-      （publication 链用 :class:`MapSpecSchemaError` 显式拒绝）。
+    - 非对象输入抛 :class:`MapSpecSchemaError`（``mapspec_not_an_object``）；
+      其余解析失败（forward version 等）不抛，``forward_version`` 由调用方
+      决定拒绝（publication 链用 :class:`MapSpecSchemaError` 显式拒绝）。
     - document 恒为深拷贝；调用方改写不影响输入。
     """
     if not isinstance(payload, dict):

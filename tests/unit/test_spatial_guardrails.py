@@ -238,6 +238,29 @@ def test_t3_name_resolution_and_fuzzy_suggestion():
     assert r.suggestion is not None and "440300" in r.suggestion
 
 
+def test_t3_cross_province_duplicate_prefecture_name_not_resolved():
+    """「省直辖县级」鲁/豫/鄂三省共用（3790/4190/4290）→ 归属不可唯一判定。
+
+    首码即中（3790=山东）曾让 resolve_name 返回 "379000"，把 claimed_parent
+    归一成山东段，与「仅解析无歧义名称」的契约矛盾；现应解析失败。
+    """
+    from app.services.spatial_guardrails.data import get_prefecture_short_names
+
+    pref = get_prefecture_short_names()
+    assert "省直辖县级" not in pref
+    # 唯一键不受影响（表值为 4 位地级段码）
+    assert pref["菏泽"] == "3717"
+    assert pref["重庆市郊县"] == "5002"  # 同名简称但同一地级码，非重名
+    assert resolve_name("省直辖县级") is None
+
+
+def test_t3_duplicate_prefecture_parent_not_forced_to_first_province():
+    """claimed_parent 为三省重名时不得纠偏成首码省份（山东）。"""
+    r = verify_code("419000", claimed_parent="省直辖县级")
+    assert r.ok and r.known and r.name == "省直辖县级"
+    assert r.issue_code is None  # 未修复时误判 ADMIN_PARENT_MISMATCH（37 != 41）
+
+
 # ---------------------------------------------------------------------------
 # T4 红线围栏 / 面积预算 / 拓扑
 # ---------------------------------------------------------------------------
@@ -245,6 +268,12 @@ def test_t4_bbox_area_budget_blocks_mega_requests():
     with pytest.raises(GeofenceRedlineViolationError):
         check_area_budget([-10.0, -10.0, 10.0, 10.0])
     check_area_budget([-0.1, -0.1, 0.1, 0.1])
+
+
+def test_t4_bbox_area_budget_negative_cos_latitude_not_bypassable():
+    """平均纬度越界（>90°）时 cos 为负不得让面积预算失效。"""
+    with pytest.raises(GeofenceRedlineViolationError):
+        check_area_budget([0.0, 100.0, 50.0, 200.0])
 
 
 def test_t4_redline_zone_json_enforcement(tmp_path):

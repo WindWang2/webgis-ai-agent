@@ -132,14 +132,15 @@ def local_join_count_narrated(
     # LJC_i = I(y_i=1)·Σ_j w_ij·I(y_j=1)（y_i=0 → 恒 0）
     ljc = b * np.asarray(wm.matrix @ b).ravel()
 
-    # 条件置换（Anselin 1995 条件随机化；V3 review B1 修正）：焦点 i 的
-    # 条件零假设 = 保持 y_i=1，其余 n−1 个位置带 n₁−1 个 1 均匀重排。
-    # 共享置换流逐 draw 生成全标签随机排列 pb（计数守恒）；对焦点 i 只
-    # 取 pb_i=0 的 draw——由可交换性，该条件下的邻居和 Σ_j w_ij·pb_j
-    # （权重无 w_ii 自环）恰为条件零假设分布的精确采样。p_i=(k+1)/(D+1)，
-    # D_i=pb_i=0 的有效 draw 数（随 i 不同，meta 披露）；D_i=0 → p=1
-    # （保守）。此前对全标签置换不区分 pb_i，p 被压低约 n₁/n 倍——已修复
-    # 并由独立复算锁定。固定种子 42 + 固定分块 → 确定性。
+    # 条件置换（Anselin 1995 条件随机化）：焦点 i 的条件零假设 = **保持
+    # y_i=1**，其余 n−1 个位置带 n₁−1 个 1 均匀重排（1 的总数守恒，焦点
+    # 固定占掉一个）。共享置换流逐 draw 生成全标签随机排列 pb；对焦点 i 只
+    # 取 pb_i=1 的 draw —— 此时其余 n−1 个位置恰好含 n₁−1 个 1，且由可交换性
+    # 邻居和 Σ_j w_ij·pb_j（权重无 w_ii 自环）恰为条件零分布的精确采样。
+    # 取 pb_i=0 的 draw 是**另一个**零假设（焦点为 0、其余带 n₁ 个 1）：
+    # 邻居期望被抬高 ≈ n₁/n₁₋₁ 倍，p 系统性偏大、共位簇被漏报。
+    # p_i=(k+1)/(D+1)，D_i=pb_i=1 的有效 draw 数（= 置换数 × n₁/n，随 n₁
+    # 变小而变粗）；D_i=0 → p=1（保守）。固定种子 42 + 固定分块 → 确定性。
     rng = np.random.default_rng(_PERMUTATION_SEED)
     ones_mask = b == 1.0
     focal = np.where(ones_mask)[0]
@@ -155,9 +156,9 @@ def local_join_count_narrated(
         for r in range(m):
             P[r] = rng.permutation(b)
         S = P @ w_t                      # S[r, i] = Σ_j w_ij·P[r, j]
-        Pv0 = P[:, focal] == 0.0         # 合法条件 draw：焦点处抽到 0
-        extreme[focal] += np.sum(Pv0 & (S[:, focal] >= obs_sum[focal]), axis=0)
-        valid[focal] += Pv0.sum(axis=0)
+        Pv1 = P[:, focal] == 1.0         # 合法条件 draw：焦点固定为 1
+        extreme[focal] += np.sum(Pv1 & (S[:, focal] >= obs_sum[focal]), axis=0)
+        valid[focal] += Pv1.sum(axis=0)
         drawn += m
     denom = np.where(valid > 0, valid, 1)
     p_vals = np.where(ones_mask, (extreme + 1) / (denom + 1), 1.0)
@@ -172,7 +173,7 @@ def local_join_count_narrated(
     counts = {"co_location_cluster": int(np.sum(significant)),
               "neutral": int(n - int(np.sum(significant)))}
     sig_count = int(np.sum(significant))
-    expected_fp = round(0.05 * n, 1)
+    expected_fp = round(0.05 * int(np.sum(ones_mask)), 1)
 
     gdf_wgs84 = gdf.to_crs("EPSG:4326")
     features = _assemble_features(

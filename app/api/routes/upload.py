@@ -302,8 +302,9 @@ async def upload_files(
         else:
             response_meta_upload = None
 
-        # 保存元信息
-        save_meta(upload_dir, meta)
+        # 保存元信息（同步写盘 → worker 线程；与上方写盘/解析同一计算隔离
+        # 不变式，慢盘/NFS 上不阻塞事件循环上的并发 SSE/WS）。
+        await asyncio.to_thread(save_meta, upload_dir, meta)
 
         # 写入数据库
         try:
@@ -392,24 +393,46 @@ async def upload_files(
             # 记录的存储路径补跑会复用/补注册，best-effort 纪律不变。
             dedup_terrain: Optional[Dict[str, object]] = None
             dedup_session_ref: Optional[str] = None
+            dedup_profile_summary: Optional[Dict[str, Any]] = None
+            dedup_quality: Optional[Dict[str, Any]] = None
             dedup_lane_error: Optional[str] = None
-            if (register_ref or x_session_id is not None) and dup.get("file_type") == "raster":
-                lane_out = await _run_raster_ingest_lane(
-                    session_id=session_id,
-                    meta={"file_type": "raster", "output_path": dup.get("filename")},
-                    filename=str(dup.get("original_name") or filename),
-                    declared_vertical_datum=vertical_datum,
-                    declared_vertical_unit=vertical_unit,
-                    content_sha256=content_sha256,
-                    owner_token=owner_token,
-                )
-                dedup_session_ref = lane_out["session_ref"]
-                dedup_terrain = lane_out["terrain"]
-                dedup_lane_error = lane_out["error"]
-                if lane_out.get("duplicate") and lane_out.get("session_ref"):
-                    warnings.append(
-                        f"会话中已存在相同内容的 DEM 引用，复用 {lane_out['session_ref']}"
+            if register_ref or x_session_id is not None:
+                if dup.get("file_type") == "raster":
+                    lane_out = await _run_raster_ingest_lane(
+                        session_id=session_id,
+                        meta={"file_type": "raster", "output_path": dup.get("filename")},
+                        filename=str(dup.get("original_name") or filename),
+                        declared_vertical_datum=vertical_datum,
+                        declared_vertical_unit=vertical_unit,
+                        content_sha256=content_sha256,
+                        owner_token=owner_token,
                     )
+                    dedup_session_ref = lane_out["session_ref"]
+                    dedup_terrain = lane_out["terrain"]
+                    dedup_lane_error = lane_out["error"]
+                    if lane_out.get("duplicate") and lane_out.get("session_ref"):
+                        warnings.append(
+                            f"会话中已存在相同内容的 DEM 引用，复用 {lane_out['session_ref']}"
+                        )
+                else:
+                    # 矢量同内容再传：车道按 sha256 幂等，对既有记录的存储
+                    # 路径补跑（复用/补注册），best-effort 纪律不变。
+                    lane_out = await _run_ingest_lane(
+                        session_id=session_id,
+                        meta={"file_type": "vector", "output_path": dup.get("filename")},
+                        filename=str(dup.get("original_name") or filename),
+                        declared_crs=crs,
+                        license=license,
+                        attribution=attribution,
+                    )
+                    dedup_session_ref = lane_out["session_ref"]
+                    dedup_profile_summary = lane_out["profile_summary"]
+                    dedup_quality = lane_out["quality"]
+                    dedup_lane_error = lane_out["error"]
+                    if lane_out.get("duplicate") and dedup_session_ref:
+                        warnings.append(
+                            f"会话中已存在相同内容的数据引用，复用 {dedup_session_ref}"
+                        )
             return UploadResponse(
                 id=dup["id"],
                 original_name=dup["original_name"],
@@ -425,6 +448,8 @@ async def upload_files(
                 warnings=warnings,
                 message="上传成功（幂等导入：复用既有上传）",
                 session_ref=dedup_session_ref,
+                profile_summary=dedup_profile_summary,
+                quality=dedup_quality,
                 ref_registration_error=dedup_lane_error,
                 terrain=dedup_terrain,
             )

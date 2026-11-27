@@ -407,3 +407,71 @@ async def test_functional_wrapper_resolve_baseline_metrics():
         session_store=mock_store
     )
     assert metrics["housing_price"].baseline == 50000.0
+
+
+@pytest.mark.asyncio
+async def test_explicit_metrics_win_over_spatial_feature_aggregation():
+    """P3: an explicit metrics map must not be overwritten by aggregated features."""
+    mock_store = AsyncMock()
+    mock_store.get.return_value = {
+        "type": "FeatureCollection",
+        "metrics": {"price": 123.0},
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [116.30, 40.0]},
+                "properties": {"price": 999.0},
+            }
+        ],
+    }
+
+    target_area = TargetAreaSpec(
+        query="Area",
+        geometry_type="Polygon",
+        geometry={
+            "type": "Polygon",
+            "coordinates": [[[116.2, 39.9], [116.4, 39.9], [116.4, 40.1], [116.2, 40.1], [116.2, 39.9]]]
+        },
+        resolved_name="Area",
+        source="bbox",
+        confidence=1.0,
+    )
+
+    metrics = await BaselineResolver(session_store=mock_store).resolve_baseline(
+        baseline_data_ref="ref:mixed",
+        target_area=target_area,
+        session_id="s1",
+        metrics_needed=["price"],
+    )
+
+    assert metrics["price"].baseline == 123.0
+
+
+@pytest.mark.asyncio
+async def test_missing_metric_reported_unsimulated_not_as_zero_change():
+    """P3: missing baseline evidence must be None, not a fake zero-valued delta."""
+    mock_store = AsyncMock()
+    mock_store.get.return_value = None
+
+    target_area = TargetAreaSpec(
+        query="Area",
+        geometry_type="Unknown",
+        resolved_name="Area",
+        source="unresolved",
+        confidence=0.0,
+    )
+
+    metrics = await BaselineResolver(session_store=mock_store).resolve_baseline(
+        baseline_data_ref="ref:none",
+        target_area=target_area,
+        session_id="s1",
+        metrics_needed=["housing_price"],
+    )
+
+    metric = metrics["housing_price"]
+    assert metric.missing_baseline is True
+    assert metric.baseline is None
+    assert metric.simulated is None
+    assert metric.delta_abs is None
+    assert metric.delta_pct is None
+    assert metric.evidence_gap_note

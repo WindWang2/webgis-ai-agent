@@ -24,11 +24,6 @@ down_revision: Union[str, Sequence[str], None] = "0106_lifecycle_policy_org_uniq
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-_TABLES = (
-    "data_join_runs",
-    "data_join_plans",
-)
-
 
 def _table_exists(table: str) -> bool:
     return table in set(sa.inspect(op.get_bind()).get_table_names())

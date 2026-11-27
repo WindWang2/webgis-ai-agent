@@ -87,6 +87,19 @@ def test_recovery_write_failure_returns_unavailable_not_fresh_retry_count(tmp_pa
     assert metrics.snapshot()["counters"]["recovery_ledger_persist_failed"] == before + 2
 
 
+def test_recovery_copy_reports_zero_when_target_ledger_unavailable(tmp_path, monkeypatch):
+    """P3：目标账本不可用（未拷贝）时不得返回非零拷贝计数。"""
+    from app.services.gis_harness import recovery_ledger
+    monkeypatch.setenv("GIS_RECOVERY_LEDGER", "1")
+    monkeypatch.setattr(
+        recovery_ledger, "_ledger_path",
+        lambda sid: tmp_path / "ledger.json" if sid == "old" else None,
+    )
+    ledger = recovery_ledger.RecoveryLedger()
+    assert ledger.record_failure("old", "read", "timeout") == 1
+    assert ledger.copy_between_sessions("old", "new") == 0
+
+
 def test_statistic_metadata_cannot_positively_prove_itself():
     from app.services.gis_harness.evidence_claim.census import project_artifact_record
     from app.services.gis_harness.evidence_claim.verify import _value_compatible
@@ -301,3 +314,41 @@ async def test_plan_history_and_data_have_independent_capacity(backend):
     assert await store.get("capacity-review", newer_data) == {"user": "new"}
     assert await load_session_plan("capacity-review", store=store) is not None
     assert await store.resolve_alias("capacity-review", CURRENT_ALIAS) != CURRENT_ALIAS
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ["memory", "redis"])
+async def test_plan_history_trim_uses_creation_time_not_recency_order(monkeypatch, backend):
+    if backend == "memory":
+        store = MemorySessionStore()
+    else:
+        import fakeredis.aioredis
+        from app.services.session_data_redis import RedisSessionStore
+        store = RedisSessionStore("redis://fake-review/0")
+        store._r = fakeredis.aioredis.FakeRedis()
+        async def connected():
+            return store._r
+        store._ensure_connected = connected
+    from app.services import session_control_refs
+    from app.services.session_plan import _history_alias
+
+    session_id = f"trim-review-{backend}"
+    archived = []
+    for index in range(1, 6):
+        ref = await store.store(
+            session_id,
+            {"envelope_id": f"sp-{index}", "created_at": float(index)},
+            prefix="sessionplan",
+        )
+        assert await store.set_alias_if_absent(session_id, ref, _history_alias(f"sp-{index}"))
+        archived.append(ref)
+    # Reads move the two oldest archives to the recency tail (LRU / zset score).
+    assert await store.get(session_id, archived[0]) is not None
+    assert await store.get(session_id, archived[1]) is not None
+    monkeypatch.setattr(session_control_refs, "MAX_PLAN_HISTORY", 3)
+    await session_control_refs.trim_plan_history(store, session_id)
+    refs = await store.list_refs(session_id)
+    remaining = {
+        ref for ref, alias in refs.items() if str(alias or "").startswith("session-plan-id:")
+    }
+    assert remaining == set(archived[2:])

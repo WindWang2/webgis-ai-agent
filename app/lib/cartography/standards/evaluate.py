@@ -13,6 +13,7 @@ e.g. legend obligations on a map with no thematic layer).
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Dict, FrozenSet, List, Optional, Sequence, Tuple
 
@@ -60,6 +61,11 @@ _COUNT_TOKENS = (
     "count", "total", "num_", "_num", "quantity", "population", "cases", "sum_",
 )
 _TEMPORAL_TOKENS = ("date", "time", "year", "month", "day", "timestamp", "period", "decade")
+# 词素边界匹配（避免 date 命中 update/validate/candidate 等子串）。
+_TEMPORAL_TOKEN_RE = re.compile(
+    r"(?:^|[^a-z0-9])(" + "|".join(re.escape(t) for t in _TEMPORAL_TOKENS)
+    + r")(?:[^a-z0-9]|$)"
+)
 _UNCERTAINTY_TOKENS = (
     "uncertain", "confidence", "moe", "margin", "error", "stddev", "std_dev",
     "variance", "_ci", "ci_",
@@ -175,7 +181,7 @@ class StandardsContext:
                     semantics.add("density")
                 if any(tok in name for tok in _COUNT_TOKENS):
                     semantics.add("count")
-                if any(tok in name for tok in _TEMPORAL_TOKENS):
+                if _TEMPORAL_TOKEN_RE.search(name):
                     semantics.add("temporal")
                 if any(tok in name for tok in _UNCERTAINTY_TOKENS):
                     semantics.add("uncertainty")

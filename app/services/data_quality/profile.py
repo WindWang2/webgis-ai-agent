@@ -39,6 +39,8 @@ GATE_BLOCKED = "blocked"
 
 _MAX_PROPOSALS = 8
 _MAX_ROLE_ENTRIES = 64
+#: 值样本的字段（键）数上限 —— 高基数属性名不得让 samples 无界增长。
+_MAX_SAMPLE_FIELDS = 256
 
 
 def _canonical(value: Any) -> str:
@@ -112,7 +114,7 @@ def _compute_digest(
                 "severity": str(i.severity)[:16],
                 "field": str(i.field or "")[:64],
             })
-            for i in issues[:32]
+            for i in issues
         ),
         "checks_run": sorted(str(c)[:32] for c in checks_run[:24]),
         "checks_not_run": sorted(str(c)[:32] for c in checks_not_run[:24]),
@@ -254,7 +256,8 @@ def build_data_quality_profile(
         if i.code in seen_codes:
             continue
         seen_codes.add(i.code)
-    proposals = propose_repairs_for_codes(sorted(c.value for c in seen_codes))
+    proposals = propose_repairs_for_codes(
+        sorted(str(getattr(c, "value", c)) for c in seen_codes))
     for p in proposals[:_MAX_PROPOSALS]:
         proposal_dicts.append(p.to_bounded_dict())
 
@@ -314,8 +317,9 @@ def propose_repairs_for_codes(codes: List[str]):
 
 def _bounded_value_samples(
     features: List[Any], *, per_field_cap: int = 200, max_features: int = 400,
+    max_fields: int = _MAX_SAMPLE_FIELDS,
 ) -> Dict[str, List[Any]]:
-    """有界值样本（field → 非空值 ≤cap；与 semantic_profile 同量级纪律）。"""
+    """有界值样本（field → 非空值 ≤cap；字段数 ≤max_fields）。"""
     samples: Dict[str, List[Any]] = {}
     for feat in features[:max_features]:
         if not isinstance(feat, dict):
@@ -326,7 +330,10 @@ def _bounded_value_samples(
         for k, v in props.items():
             if v is None or v == "":
                 continue
-            bucket = samples.setdefault(str(k)[:128], [])
+            key = str(k)[:128]
+            if key not in samples and len(samples) >= max_fields:
+                continue
+            bucket = samples.setdefault(key, [])
             if len(bucket) < per_field_cap:
                 bucket.append(v)
     return samples

@@ -568,7 +568,7 @@ def _dup_exists(v6_dir: Path, sid: str, manifest: TraceManifest,
     if legacy is None:
         path = _chains_path(sid)
         legacy = [_dedup_key(record) for _, _, record in _parse_lines(path)] if path is not None and path.exists() else []
-        manifest["legacy_dedup_keys"] = legacy[-MAX_RECORDS_PER_SESSION:]
+        manifest["legacy_dedup_keys"] = legacy
     return found or key in legacy
 
 

@@ -285,7 +285,11 @@ def register_raster_expression_tools(registry: ToolRegistry) -> None:
                 }
                 for p in result["points"]
             ],
-            "truncated": result.get("truncated") or len(points) > _MAX_TOOL_POINTS,
+            "truncated": (
+                bool(result.get("truncated"))
+                or len(points) > _MAX_TOOL_POINTS
+                or bool(bands and len(bands) > _MAX_TOOL_BANDS)
+            ),
         }
 
     @tool(

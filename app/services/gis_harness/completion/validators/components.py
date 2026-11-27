@@ -44,9 +44,11 @@ def validate_components(
     可修复（修复取族的第一个类型）。
     """
     findings: List[MapCompletionFinding] = []
+    layout = mapspec.get("layout")
     components = [
         c
-        for c in ((mapspec.get("layout") or {}).get("components") or [])
+        for c in ((layout if isinstance(layout, dict) else {}).get(
+            "components") or [])
         if isinstance(c, dict)
     ]
     enabled_types = {
@@ -102,7 +104,9 @@ def validate_components(
     for c in components:
         if c.get("enabled") is False:
             continue
-        lid = str((c.get("options") or {}).get("layerId") or "")
+        options = c.get("options")
+        lid = str(
+            (options if isinstance(options, dict) else {}).get("layerId") or "")
         if lid and known and lid not in known:
             findings.append(
                 MapCompletionFinding(

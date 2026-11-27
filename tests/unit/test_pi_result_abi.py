@@ -94,6 +94,30 @@ def test_budget_shrinks_warnings_before_status_refs():
     assert env["status"] == "ok"  # status 永不因预算丢失
 
 
+def test_repeated_dedup_warning_survives_extra_warning_cap():
+    """extra_warnings 达上限时，repeated 去重提示不得被截掉。"""
+    env = build_result_envelope(
+        _Result(status="repeated"),
+        extra_warnings=[f"w{i}" for i in range(10)],
+    )
+    assert len(env["warnings"]) == 6
+    assert any("deduplicated" in w for w in env["warnings"])
+
+
+def test_long_ids_are_per_item_bounded():
+    """单条 action/job id 必须有长度上限，否则 ≤4KB 承诺失效。"""
+    long_id = "x" * 500
+    env = build_result_envelope(_Result(
+        map_actions=[{"action_id": long_id} for _ in range(16)],
+        background_job_ids=[long_id] * 16,
+    ))
+    assert all(len(v) <= 64 for v in env["map_action_ids"])
+    assert all(len(v) <= 64 for v in env["background_job_ids"])
+    blob = json.dumps(env, ensure_ascii=False).encode("utf-8")
+    assert len(blob) <= 4096
+
+
+
 def test_attach_is_additive_and_wraps_nondict():
     result = _Result(status="ok", geojson_ref="ref://geo/z")
     details = {"existing": "kept", "summary": "s"}

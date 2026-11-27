@@ -158,3 +158,41 @@ async def test_lock_snapshot_reader_covers_component_locks(session):
     assert snapshot.component_ids == ["comp-title"]
     doc = spec_doc_of(await session_data_manager.get_map_state(session))
     assert isinstance(doc, dict)
+
+
+@pytest.mark.cartography
+@pytest.mark.asyncio
+async def test_finalize_corrupted_receipt_expectations_fails_cleanly(session):
+    """回执 display_expectations 损坏（类型不符 / 非 mapping）时 finalize 按
+    契约回执（success=False + error），不把 pydantic ValidationError /
+    TypeError 穿出工具面（review P3 error-handling）。"""
+    from app.services.map_plan_compiler.receipt import PLAN_RECEIPTS_KEY
+
+    broken = {"receipt_id": "mpr-broken", "status": "applied",
+              "display_expectations": {"layers": ["not-a-mapping-of-bools"],
+                                       "components": "not-a-list"}}
+    assert await session_data_manager.set_map_state(
+        session, PLAN_RECEIPTS_KEY, [broken])
+
+    fn = _tool_fn()
+    out = await fn(query="test", session_id=session, operation="finalize")
+    assert out["success"] is False
+    assert "期望面损坏" in out["error"]
+
+
+@pytest.mark.cartography
+@pytest.mark.asyncio
+async def test_compile_chain_exception_returns_structured_error(session, monkeypatch):
+    """编译链中途抛错（声明的 lock_conflict / stale_plan 等失败面）按契约
+    回执，不穿出工具面（review P3 error-handling）。"""
+    from app.services.map_plan_compiler.service import map_plan_compiler_service
+
+    async def _boom(_sid):
+        raise RuntimeError("engine unavailable")
+
+    monkeypatch.setattr(map_plan_compiler_service, "lock_snapshot_for", _boom)
+
+    fn = _tool_fn()
+    out = await fn(query="制作湖北省人口密度分级设色图", session_id=session)
+    assert out["success"] is False
+    assert "编译链失败" in out["error"]

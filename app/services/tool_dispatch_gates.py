@@ -28,6 +28,11 @@ logger = logging.getLogger(__name__)
 MAP_ACTION_ID_PREFIX = "ma-"
 REQUESTED_SNAPSHOT_MAX_BYTES = 2048
 
+#: data-URL PNG 解码的 base64 载荷上限（对齐 G36 窄投影
+#: ``_RESULT_IMAGE_MAX_B64``）：超限拒绝解码，避免超大 data URL 把内存
+#: 按 4/3 放大（resource-leak）；拒绝后调用方回退 ref:/无地址图像路径。
+DATA_URL_PNG_MAX_B64_CHARS = 2 * 1024 * 1024
+
 
 def _mint_map_action_id() -> str:
     """铸一个唯一的地图动作 id。"""
@@ -62,6 +67,8 @@ def _decode_data_url_png(image: str) -> Optional[bytes]:
         return None
     _, _, encoded = image.partition(",")
     if not encoded:
+        return None
+    if len(encoded) > DATA_URL_PNG_MAX_B64_CHARS:
         return None
     try:
         return base64.b64decode(encoded, validate=False)

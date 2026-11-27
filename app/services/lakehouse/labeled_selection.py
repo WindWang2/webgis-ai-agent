@@ -57,6 +57,10 @@ def _resolve_labels(
                 "coordinate axis exactly (no nearest-neighbour guessing)"
             )
         positions.append(index[key])
+    if not positions:
+        raise CubeSchemaError(
+            f"empty {dim} label selection — at least one label is required"
+        )
     lo, hi = min(positions), max(positions)
     if len(positions) > 1 and len(positions) != hi - lo + 1:
         # 非连续选择静默扩展为包络区间 = 返回超集数据（评审 R1-18）

@@ -8,6 +8,7 @@ from __future__ import annotations
 import math
 import hashlib
 import json
+import sys
 from typing import Any, Dict, List, Optional, Tuple
 from collections import OrderedDict
 
@@ -85,6 +86,36 @@ def linestring_length_m(coords: List[Tuple[float, float]]) -> float:
 
 import threading
 
+# Resident-memory budget for the graph LRU cache (see
+# _estimate_cached_graph_bytes). Module-level so tests can tighten it.
+_CACHE_BUDGET_BYTES = 128 * 1024 * 1024
+
+
+def _estimate_cached_graph_bytes(graph: nx.DiGraph) -> int:
+    """Approximate resident bytes of one cached graph.
+
+    The 512 B/node + 1 KB/edge baseline alone ignores the per-edge payload:
+    the GeoJSON ``geometry`` coordinates and the ``properties`` dict are the
+    dominant cost of a real road network (two directed edges per two-way
+    feature), so the old accounting undershot the budget several-fold.
+    """
+    total = graph.number_of_nodes() * 512
+    for _, _, attrs in graph.edges(data=True):
+        total += 1024
+        geom = attrs.get("geometry")
+        coords = geom.get("coordinates") if isinstance(geom, dict) else None
+        if isinstance(coords, (list, tuple)):
+            # A vertex is a tuple of two Python floats (~104 B) plus its
+            # list slot; 120 B is a deliberately conservative estimate.
+            total += len(coords) * 120 + 256
+        props = attrs.get("properties")
+        if isinstance(props, dict):
+            total += sys.getsizeof(props) + sum(
+                sys.getsizeof(key) + sys.getsizeof(value)
+                for key, value in props.items()
+            )
+    return total
+
 
 class NetworkGraphBuilder:
     """
@@ -99,7 +130,7 @@ class NetworkGraphBuilder:
         # not the keyed input, so without this pin a freed input's address
         # could be reused by a later dataset and silently return the wrong
         # cached graph (review N-F05-regression).
-        self._cache: OrderedDict[str, Tuple[nx.DiGraph, NetworkDataset, Any]] = OrderedDict()
+        self._cache: OrderedDict[str, Tuple[nx.DiGraph, NetworkDataset, Any, int]] = OrderedDict()
         self._cache_lock = threading.Lock()
 
     def clear_cache(self) -> None:
@@ -173,7 +204,7 @@ class NetworkGraphBuilder:
             with self._cache_lock:
                 if fp in self._cache:
                     self._cache.move_to_end(fp)
-                    graph, dataset, _pin = self._cache[fp]
+                    graph, dataset, _pin, _entry_bytes = self._cache[fp]
                     return graph, dataset
 
         # Extract features and raw line geometries
@@ -313,13 +344,15 @@ class NetworkGraphBuilder:
                 # Pin the input NetworkDataset so its id() (in the fingerprint)
                 # cannot be reused while this entry is live.
                 pin = data if isinstance(data, NetworkDataset) else None
-                self._cache[fp] = (graph, dataset, pin)
+                self._cache[fp] = (
+                    graph, dataset, pin, _estimate_cached_graph_bytes(graph)
+                )
                 if len(self._cache) > self.max_cache_size:
                     self._cache.popitem(last=False)
                 while self._cache and sum(
-                    len(cached_graph) * 512 + cached_graph.number_of_edges() * 1024
-                    for cached_graph, _dataset, _pin in self._cache.values()
-                ) > 128 * 1024 * 1024:
+                    entry_bytes
+                    for _graph, _dataset, _pin, entry_bytes in self._cache.values()
+                ) > _CACHE_BUDGET_BYTES:
                     self._cache.popitem(last=False)
 
         return graph, dataset
@@ -349,7 +382,13 @@ class NetworkGraphBuilder:
             elif data.get("type") == "Feature":
                 features = [data]
             else:
-                features = data.get("features", [])
+                # A dict without a FeatureCollection/Feature type is an
+                # unrecognized input shape; treating it as an empty feature
+                # list returned a 0-node graph as if the network were empty.
+                raise ValueError(
+                    f"Unrecognized network input dict type {data.get('type')!r}: "
+                    "expected a GeoJSON FeatureCollection or Feature"
+                )
         elif isinstance(data, list):
             features = data
         else:

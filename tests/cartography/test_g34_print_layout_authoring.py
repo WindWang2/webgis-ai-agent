@@ -711,3 +711,250 @@ def test_t26_plan_publication_pages_consumes_plan_and_paper():
     ir2 = plan_publication_pages(doc2)
     assert ir2.pages[0].paper.width_mm == 420.0
     assert ir2.pages[0].paper.height_mm == 297.0
+
+
+# ── T27：超 MAX_LINES 的换行丢弃必须被披露（不静默少行）──────────────────
+
+def test_t27_text_over_max_lines_truncation_is_disclosed_not_silent():
+    """P1 回归：``wrap_text`` 超 MAX_LINES 丢弃的行必须进回执与诊断。
+
+    触发条件：``wrap_mode="none"`` 的 MAX_LINES+8 行文字 → ``wrap_text``
+    截到 64 行；此前 ``build_draw_plan`` 丢掉 ``truncated`` 标志、诊断只看
+    ``status == "blocked"``，于是 ``serializable_receipt`` 与导出 PDF/PNG
+    都看不见这 8 行内容损失（``submit_export`` 不跑 validate_authoring）。
+    """
+    from app.services.print_layout_authoring.compile import (
+        build_draw_plan, serializable_receipt,
+    )
+    from app.services.print_layout_authoring.fonts import MAX_LINES
+
+    doc = _mapspec()
+    plan = doc["layout"]["print_layout"]
+    source_lines = MAX_LINES + 8
+    plan["components"].append({
+        "id": "notes", "kind": "text_block",
+        "frame": {"x": 15.0, "y": 150.0, "width": 120.0, "height": 40.0},
+        "typography": {"size_pt": 6.0, "line_height": 1.0, "wrap_mode": "none",
+                       "overflow_policy": "expand"},
+        "text": {"mode": "literal",
+                 "value": "\n".join(f"第{i:03d}行 说明文字"
+                                   for i in range(source_lines))},
+    })
+    draw = build_draw_plan(doc, plan, target_dpi=300,
+                           geo_bounds=[104.0, 30.0, 106.0, 31.0], page_id="main")
+    notes = next(c for c in draw["components"] if c["id"] == "notes")
+    # 内容损失如实保留在绘制计划里（不是「看起来 ok」）
+    assert notes["text"]["truncated"] is True
+    assert notes["text"]["truncated_lines"] == source_lines - MAX_LINES
+    assert len(notes["text"]["lines"]) == MAX_LINES
+    assert {"code": "TEXT_TRUNCATED", "component_id": "notes"} in draw["diagnostics"]
+    # 序列化回执（UI / Pi / 导出 manifest 消费面）同样可见
+    receipt = serializable_receipt(draw)
+    row = next(t for t in receipt["text"] if t["component_id"] == "notes")
+    assert row["truncated"] is True
+    assert row["truncated_lines"] == source_lines - MAX_LINES
+    assert any(d.get("code") == "TEXT_TRUNCATED"
+               and d.get("component_id") == "notes"
+               for d in receipt["diagnostics"])
+    # 真实导出链：SVG 只画 MAX_LINES 行 → 回执必须说明少了 8 行
+    comp = _compile(doc, dpi=300)
+    assert int(_g34_attrs(comp.svg, "notes")["data-g34-lines"]) == MAX_LINES
+    group = re.search(r'<g class="chrome-print-text" data-g34-id="notes".*?</g>',
+                      comp.svg, re.S)
+    assert group is not None
+    assert len(re.findall(r'data-g34-line="\d+"', group.group(0))) == MAX_LINES
+    exported = next(t for t in comp.print_layout_receipt["text"]
+                    if t["component_id"] == "notes")
+    assert exported["truncated"] is True
+    assert exported["truncated_lines"] == source_lines - MAX_LINES
+    assert any(d.get("code") == "TEXT_TRUNCATED"
+               for d in comp.print_layout_receipt["diagnostics"])
+
+
+def test_t38_authored_chrome_discloses_unsupported_draw_kinds():
+    """作者绘制计划里的未知 kind 必须进 omitted/诊断，不能静默消失。"""
+    from app.services.mapspec_to_svg import _render_authored_chrome
+
+    kinds = ("panel", "colorbar", "annotation", "inset_map")
+    draw_plan = {
+        "version": "print_layout.v1",
+        "map_rect": {"x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0},
+        "scale": {},
+        "components": [
+            {"id": kind, "kind": kind, "visible": True} for kind in kinds
+        ] + [
+            {"id": "map", "kind": "map_slot", "visible": True},
+            {"id": "group", "kind": "group", "visible": True},
+        ],
+    }
+    _fragment, coverage = _render_authored_chrome(
+        {}, draw_plan, [0.0, 0.0, 1.0, 1.0], 100.0, 100.0,
+        lambda _coord: (0.0, 0.0),
+    )
+    assert coverage["rendered"] == []
+    assert coverage["omitted"] == [
+        {"component_id": kind, "type": kind,
+         "code": "publication_component_omitted"}
+        for kind in kinds
+    ]
+    assert coverage["diagnostics"] == [
+        ("publication_component_omitted", "authoring kind unsupported", kind)
+        for kind in kinds
+    ]
+
+
+# ── T34–T37：P2 回归（字体回退披露 / 模板 typed 回执 / PNG 失败 typed / 页级覆写校验）
+
+def test_t34_font_fallback_does_not_claim_unapplied_weight_style(monkeypatch):
+    """请求字体整体不可用 → 回退备用字体：未应用的 weight/style 必须如实披露。
+
+    旧实现用 ``resolve_variant(alt, "normal", "normal")`` 命中 exact=True，
+    ``weight_applied/style_applied`` 冒充满意值且没有
+    ``FONT_WEIGHT_UNAVAILABLE`` / ``FONT_STYLE_UNAVAILABLE``。
+    """
+    from app.services.print_layout_authoring import fonts
+
+    missing = str(Path("/nonexistent/g34-missing-font.ttf"))
+    monkeypatch.setattr(fonts, "FONT_RESOURCES", {
+        "req-font": {
+            "family": "Req Font", "embedded": False,
+            "variants": {("normal", "normal"): [(missing, None)],
+                         ("bold", "normal"): [(missing, None)]},
+        },
+        "alt-font": {
+            "family": "Alt Font", "embedded": True,
+            "variants": {("normal", "normal"): [(str(fonts._VENDORED_TTF), None)]},
+        },
+    })
+    monkeypatch.setattr(fonts, "FONT_IDS", ("req-font", "alt-font"))
+    res = fonts.resolve_font("req-font", "bold", "italic")
+    assert res["applied_font_id"] == "alt-font"
+    assert "FONT_RESOURCE_UNAVAILABLE" in res["issues"]
+    assert "FONT_WEIGHT_UNAVAILABLE" in res["issues"]
+    assert "FONT_STYLE_UNAVAILABLE" in res["issues"]
+    assert res["weight_applied"] == "normal"
+    assert res["style_applied"] == "normal"
+    assert res["applied"] is False
+
+
+def test_t35_template_errors_return_typed_receipts():
+    """模板操作抛 PrintTemplateError 时不得逃逸成 500；必须回 typed code。"""
+    plan = empty_print_layout()
+    cases = [
+        ([{"op": "apply_template", "template_id": "tpl:missing"}],
+         "TEMPLATE_NOT_FOUND"),
+        ([{"op": "save_template", "template_id": "bad", "name": "x"}],
+         "INVALID_TEMPLATE_ID"),
+        ([{"op": "reset_overrides", "page_id": "nope"}], "PAGE_NOT_FOUND"),
+    ]
+    for ops, code in cases:
+        res = operations.apply_operations(plan, ops)
+        assert res["ok"] is False, res
+        assert res["issues"][0]["code"] == code, res
+        assert res["plan"] == plan, "failed operation must be zero-write"
+
+
+def test_t36_png_rasterizer_failures_are_typed(monkeypatch):
+    """rsvg-convert 超时 / 启动 OSError 必须转成 PrintLayoutServiceError。"""
+    import subprocess
+
+    from app.services.print_layout_authoring import service
+
+    monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/rsvg-convert")
+    svg = "<svg xmlns='http://www.w3.org/2000/svg'/>"
+
+    def _timeout(*_a, **_k):
+        raise subprocess.TimeoutExpired(cmd="rsvg-convert", timeout=60)
+
+    monkeypatch.setattr(service.subprocess, "run", _timeout)
+    with pytest.raises(service.PrintLayoutServiceError) as timed_out:
+        service._svg_to_png(svg, 297.0, 210.0, 300)
+    assert timed_out.value.code == "PNG_RENDER_TIMEOUT"
+
+    def _oserror(*_a, **_k):
+        raise OSError("spawn failed")
+
+    monkeypatch.setattr(service.subprocess, "run", _oserror)
+    with pytest.raises(service.PrintLayoutServiceError) as failed:
+        service._svg_to_png(svg, 297.0, 210.0, 300)
+    assert failed.value.code == "PNG_RENDER_FAILED"
+
+
+def test_t37_validate_authoring_applies_page_overrides():
+    """带 page_id 校验必须用页级生效组件；收窄后的溢出不能放行。"""
+    doc = _mapspec()
+    plan = doc["layout"]["print_layout"]
+    title = next(c for c in plan["components"] if c["id"] == "title")
+    plan["atlas"] = {"pages": [{
+        "page_id": "main", "enabled": True, "order": 0,
+        "overrides": [{
+            "component_id": "title",
+            "frame": {"x": 15.0, "y": 10.0, "width": 12.0, "height": 4.0},
+            "typography": {**title["typography"], "overflow_policy": "block"},
+        }],
+    }]}
+    assert validate_authoring(doc, plan, dpi=300)["ok"] is True
+    report = validate_authoring(doc, plan, dpi=300, page_id="main")
+    assert report["ok"] is False, report
+    assert any(e["code"] == "TEXT_OVERFLOW_BLOCKED" and e["component_id"] == "title"
+               for e in report["errors"]), report
+
+
+# ── P3 回归（非法页册 typed 回执 / 删页不误伤锁覆写）──────────────────────
+
+@pytest.mark.parametrize(("atlas", "code"), [
+    (None, "INVALID_ATLAS"),
+    ({"pages": {}}, "INVALID_PAGE_SET"),
+    ({"pages": [None]}, "INVALID_PAGE_SET"),
+    ({"pages": [{"page_id": "main", "overrides": {"component_id": "title"}}]},
+     "INVALID_PAGE_SET"),
+])
+def test_set_pages_after_invalid_replace_plan_returns_typed_error(atlas, code):
+    plan = empty_print_layout()
+    candidate = copy.deepcopy(plan)
+    candidate["atlas"] = atlas
+    res = operations.apply_operations(plan, [
+        {"op": "replace_plan", "plan": candidate},
+        {"op": "set_pages", "pages": [{"page_id": "main"}]},
+    ], locks=["title"])
+    assert res["ok"] is False
+    assert res["issues"][0]["code"] == code
+    assert res["plan"] == plan
+
+
+def test_set_pages_rejects_malformed_overrides_without_lock_check_crash():
+    plan = empty_print_layout()
+    plan["atlas"]["pages"] = [{"page_id": "main"}]
+    res = operations.apply_operations(plan, [{
+        "op": "set_pages", "pages": [{
+            "page_id": "main", "overrides": {"component_id": "title"},
+        }],
+    }], locks=["title"])
+    assert res["ok"] is False
+    assert res["issues"][0]["code"] == "INVALID_PAGE_SET"
+    assert res["plan"] == plan
+
+
+def test_replace_plan_may_delete_page_with_locked_override():
+    plan = empty_print_layout()
+    title = next(c for c in plan["components"] if c["id"] == "title")
+    plan["atlas"]["pages"] = [
+        {"page_id": "p1", "overrides": [{"component_id": "title", "visible": False}]},
+        {"page_id": "p2", "overrides": [{
+            "component_id": "title", "frame": {**title["frame"], "x": 20.0},
+        }]},
+    ]
+    candidate = copy.deepcopy(plan)
+    candidate["atlas"]["pages"].pop()
+    res = operations.apply_operations(
+        plan, [{"op": "replace_plan", "plan": candidate}], locks=["title"])
+    assert res["ok"], res["issues"]
+
+    injected = copy.deepcopy(plan)
+    injected["atlas"]["pages"].append({
+        "page_id": "p3", "overrides": [{"component_id": "title", "visible": False}],
+    })
+    rejected = operations.apply_operations(
+        plan, [{"op": "replace_plan", "plan": injected}], locks=["title"])
+    assert rejected["ok"] is False
+    assert rejected["issues"][0]["code"] == "PRINT_LAYOUT_LOCKED_COMPONENT"

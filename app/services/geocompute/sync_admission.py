@@ -118,4 +118,10 @@ def execute_reserved(
         watcher.join(timeout=2)
         # Runs inside the compute thread, even when its HTTP waiter disconnects.
         # If DB persistence fails the slot stays occupied (conservative retry).
-        _finish(reservation, status)
+        # 终态写失败绝不能掩盖 operation 的结果/原始异常（调用方会丢失
+        # 已成功的 ExecutionRun 或被换成 RuntimeError）。
+        try:
+            _finish(reservation, status)
+        except Exception:  # noqa: BLE001 - 槽位保守占用，结果/异常原样穿透
+            logger.warning('synchronous reservation finish unavailable',
+                           exc_info=True)

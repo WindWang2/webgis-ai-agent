@@ -100,7 +100,10 @@ def upgrade() -> None:
     bind = op.get_bind()
     for table, col, sql_type, pg_type in _NEW_COLUMNS:
         if _is_sqlite():
-            bind.execute(sa.text(f"ALTER TABLE {table} ADD COLUMN {col} {sql_type}"))
+            # create_all  coexistence guard（与 downgrade 的 inspect 守卫同款）：
+            # create_all 新库/中断重跑的库已含该列，无守卫即 duplicate column name。
+            if col not in {c["name"] for c in sa.inspect(bind).get_columns(table)}:
+                bind.execute(sa.text(f"ALTER TABLE {table} ADD COLUMN {col} {sql_type}"))
         else:
             bind.execute(
                 sa.text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {pg_type}")

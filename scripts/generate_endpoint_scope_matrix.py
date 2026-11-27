@@ -79,6 +79,9 @@ OVERRIDES: dict[tuple[str, str], str] = {
     ("/cockpit/health", "GET"): "public:read",
     # spatial-events liveness 探针：匿名可读（与 /health 同语义，无 org 数据）
     ("/spatial-events/health", "GET"): "public:read",
+    # Both POSTs can create a session-scoped selection handle.
+    ("/linked-exploration/plan-preview", "POST"): "gis:write",
+    ("/linked-exploration/drill", "POST"): "gis:write",
 }
 
 #: 域路径规则：版本归一化路径首段 → (read, write) 或固定 scope。
@@ -96,6 +99,8 @@ DOMAIN_RULES: dict[str, tuple[str, str] | str] = {
     # 数据准备域（inspect/plan/execute/bindings）：会话内数据面读写，
     # 与 data-quality 同族语义（上传同款 optional auth + 会话所有权检查）
     "data-preparation": ("gis:read", "gis:write"),
+    "task-data-supply": ("gis:read", "gis:write"),
+    "diagram-symbols": ("gis:read", "gis:write"),
     # G19 类型化字段计算：与准备域同族（会话内数据面读写 + 会话所有权检查）
     "field-compute": ("gis:read", "gis:write"),
     "explorer": ("gis:read", "gis:write"),
@@ -193,18 +198,6 @@ def _load_app():
     from app.main import app  # noqa: E402 - 脚本入口，延迟导入
 
     return app
-
-
-def _direct_dep_names(route) -> list[str]:
-    """端点直接依赖的 qualname（route 级 dependencies 已并入 dependant）。"""
-    names = []
-    for dep in route.dependant.dependencies:
-        call = dep.call
-        qualname = getattr(call, "__qualname__", None)
-        if qualname is None:  # 可调用对象（非函数）—— 本生成器不识别
-            qualname = repr(call)
-        names.append(qualname)
-    return names
 
 
 def _explicit_scope(call) -> str | None:

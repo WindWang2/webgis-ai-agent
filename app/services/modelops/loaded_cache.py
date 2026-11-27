@@ -88,6 +88,8 @@ class LoadedModelCache:
         # #1219（B-14）：invalidate 竞态窗口返回的孤儿句柄（release 卸载）。
         self._orphans: Dict[str, List[tuple]] = {}  # #1396: multi-handle per key
         self._key_locks: Dict[str, threading.Lock] = {}
+        #: per-key 锁的在用者计数 —— 锁对象只在最后一个使用者退出时移除。
+        self._key_lock_users: Dict[str, int] = {}
         self._stats = {"hits": 0, "misses": 0, "evictions": 0, "negative_hits": 0}
 
     # ── public ──────────────────────────────────────────────────────
@@ -119,72 +121,89 @@ class LoadedModelCache:
                 del self._negative[key]
             self._stats["misses"] += 1
             key_lock = self._key_locks.setdefault(key, threading.Lock())
+            self._key_lock_users[key] = self._key_lock_users.get(key, 0) + 1
         # 锁外 load（不持全局锁做慢操作），per-key 串行。
         started = time.perf_counter()
-        with key_lock:
-            with self._lock:
-                entry = self._entries.get(key)
-                if entry is not None and not entry.poisoned:
-                    entry.refcount += 1
-                    self._stats["hits"] += 1
-                    return entry.model, 0.0
-            try:
-                model = load_fn()
-            except _TRANSIENT_ERRORS:
-                # transient：不进负缓存（驱逐/降批后可重试）。
+        try:
+            with key_lock:
                 with self._lock:
-                    self._key_locks.pop(key, None)  # m-5：失败键锁不驻留
-                raise
-            except _PERMANENT_ERRORS as exc:
+                    entry = self._entries.get(key)
+                    if entry is not None and not entry.poisoned:
+                        entry.refcount += 1
+                        self._stats["hits"] += 1
+                        return entry.model, 0.0
+                try:
+                    model = load_fn()
+                except _TRANSIENT_ERRORS:
+                    # transient：不进负缓存（驱逐/降批后可重试）。
+                    # 失败键锁不驻留 —— 但只能由**最后一个使用者**移除：
+                    # 等待者仍持旧锁对象时 pop，后续 acquire 的 setdefault 会
+                    # 新建锁 → 同 key 并发 load_fn（single-flight 破裂）。
+                    raise
+                except _PERMANENT_ERRORS as exc:
+                    with self._lock:
+                        self._negative[key] = _Negative(
+                            error=exc, expires_at=self._clock() + NEGATIVE_CACHE_TTL_S
+                        )
+                    raise
+                latency = time.perf_counter() - started
                 with self._lock:
-                    self._negative[key] = _Negative(
-                        error=exc, expires_at=self._clock() + NEGATIVE_CACHE_TTL_S
-                    )
-                    self._key_locks.pop(key, None)  # m-5：失败键锁不驻留
-                raise
-            latency = time.perf_counter() - started
-            with self._lock:
-                # R2 m-6：load 期间若发生 invalidate（poisoned 回插）或负缓存
-                # 写入，则本次 load 结果不回插（与失效语义同一临界区裁决）。
-                if key in self._negative or (
-                    key in self._entries and self._entries[key].poisoned
-                ):
-                    self._key_locks.pop(key, None)
-                    # #1219（B-14）：不回插即无条目 → 调用方 release() 此前是
-                    # no-op，load 分配的资源（模拟 VRAM/句柄）无人释放。登记
-                    # 孤儿句柄：调用方仍要用 model（不能在此卸载），release()
-                    # 命中孤儿表即卸载。
-                    bucket = self._orphans.setdefault(key, [])
-                    bucket.append((model, unload_fn))  # #1396: never overwrite
-                    # 等待者按 miss 处理（统计口径：真正触发 load 的进程计数）
-                    return model, latency
-                self._entries[key] = _Entry(model=model, refcount=1, unload_cb=unload_fn)
-                self._key_locks.pop(key, None)
-                self._evict_locked(keep=key)
-            return model, latency
+                    # R2 m-6：load 期间若发生 invalidate（poisoned 回插）或负缓存
+                    # 写入，则本次 load 结果不回插（与失效语义同一临界区裁决）。
+                    if key in self._negative or (
+                        key in self._entries and self._entries[key].poisoned
+                    ):
+                        # #1219（B-14）：不回插即无条目 → 调用方 release() 此前是
+                        # no-op，load 分配的资源（模拟 VRAM/句柄）无人释放。登记
+                        # 孤儿句柄：调用方仍要用 model（不能在此卸载），release()
+                        # 命中孤儿表即卸载。
+                        bucket = self._orphans.setdefault(key, [])
+                        bucket.append((model, unload_fn))  # #1396: never overwrite
+                        # 等待者按 miss 处理（统计口径：真正触发 load 的进程计数）
+                        return model, latency
+                    self._entries[key] = _Entry(model=model, refcount=1, unload_cb=unload_fn)
+                    self._evict_locked(keep=key)
+                return model, latency
+        finally:
+            self._release_key_lock(key)
+
+    def _release_key_lock(self, key: str) -> None:
+        """归还 per-key 锁引用；最后一个使用者退出时才移除锁对象。"""
+        with self._lock:
+            remaining = self._key_lock_users.get(key, 1) - 1
+            if remaining > 0:
+                self._key_lock_users[key] = remaining
+                return
+            self._key_lock_users.pop(key, None)
+            self._key_locks.pop(key, None)
 
     def release(self, key: str) -> None:
-        orphan = None
-        with self._lock:
-            bucket = self._orphans.get(key)
-            if bucket:
-                orphan = bucket.pop()
-                if not bucket:
-                    self._orphans.pop(key, None)
-        if orphan is not None:
-            model, unload_fn = orphan
-            try:
-                unload_fn(model)
-            except Exception:  # noqa: BLE001 — best-effort
-                pass
-            return
+        # 先归还有持有者的 live 条目，再走孤儿兜底。反序时：同 key 并存孤儿
+        # 句柄与 live 条目，条目持有者的 release 会卸载他人仍在用的孤儿
+        # model 且不递减条目 refcount → refcount 永置 1、TTL/LRU 驱逐永久
+        # 阻塞（invalidate 撞在载入中 + 同 key 再次加载成功 + 条目持有者先
+        # release 即触发）。
         with self._lock:
             entry = self._entries.get(key)
-            if entry is None:
+            if entry is not None and entry.refcount > 0:
+                entry.refcount -= 1
+                entry.last_used = self._clock()  # last-use 在 release 触点更新
+                self._evict_locked()
                 return
-            entry.refcount = max(0, entry.refcount - 1)
-            entry.last_used = self._clock()  # last-use 在 release 触点更新
-            self._evict_locked()
+        # 无 live 条目，或条目已无持有者（本次 release 属于孤儿句柄归还有人）
+        # → 孤儿句柄兜底卸载。
+        with self._lock:
+            bucket = self._orphans.get(key)
+            if not bucket:
+                return
+            orphan = bucket.pop()
+            if not bucket:
+                self._orphans.pop(key, None)
+        model, unload_fn = orphan
+        try:
+            unload_fn(model)
+        except Exception:  # noqa: BLE001 — best-effort
+            pass
 
     def invalidate(self, key: str) -> None:
         """显式失效（版本/provider 变化；poisoned 清理）。"""

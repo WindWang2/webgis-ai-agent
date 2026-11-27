@@ -84,11 +84,19 @@ export class FrameFetchCache<V> {
       }
     }
     temporalMetrics.fetches += 1;
-    const inFlight = loader().then((value) => {
-      const slot = this.map.get(key);
-      if (slot) slot.value = value;
-      return value;
-    });
+    const inFlight: Promise<V> = loader().then(
+      (value) => {
+        const slot = this.map.get(key);
+        if (slot) slot.value = value;
+        return value;
+      },
+      (error: unknown) => {
+        // 失败不得固化在缓存：移除本次失败槽位，同 key 下次 fetch 重新取数
+        // （会话内一次瞬时失败不应变成永久失败）。
+        if (this.map.get(key)?.inFlight === inFlight) this.map.delete(key);
+        throw error;
+      },
+    );
     this.map.set(key, { value: undefined as V, inFlight });
     this.evict();
     return inFlight;

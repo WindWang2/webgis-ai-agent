@@ -8,7 +8,7 @@ import type {
   CollabParticipant,
   CollabLeaseInfo,
 } from './protocol';
-import { parseParticipant, COLLAB_MAX_REMOTE_OPS } from './protocol';
+import { parseParticipant, COLLAB_MAX_PARTICIPANTS, COLLAB_MAX_REMOTE_OPS } from './protocol';
 
 export type CollabStatus = 'offline' | 'connecting' | 'online' | 'degraded';
 
@@ -92,7 +92,7 @@ export function collabSetSessionIdentity(clientId: string | null, degraded: bool
 }
 
 export function collabSetParticipants(participants: CollabParticipant[]): void {
-  patch({ participants: participants.slice(0, 32) });
+  patch({ participants: participants.slice(0, COLLAB_MAX_PARTICIPANTS) });
 }
 
 export function collabApplyPresenceAction(action: string, raw: unknown): void {
@@ -110,7 +110,7 @@ export function collabApplyPresenceAction(action: string, raw: unknown): void {
   // 参与者列表含本端（hello 快照语义一致）；UI 用 clientId 标注「你」。
   const others = store.participants.filter((p) => p.clientId !== participant.clientId);
   if (action === 'join' || action === 'update') {
-    patch({ participants: [...others, participant].slice(0, 32) });
+    patch({ participants: [...others, participant].slice(0, COLLAB_MAX_PARTICIPANTS) });
   }
 }
 

@@ -26,6 +26,14 @@ DEM_OBLIGATIONS = [
         desc="坡度/汇算需要投影（米制）CRS；角度坐标必须先变换。",
         action="degrade_with_disclosure"),
 ]
+#: 坡度单位披露义务（与 slope_analysis_workflow 的 required_disclosures
+#: 码 TERRAIN_SLOPE_UNITS 对齐 —— 此前披露码悬空，按码取文本静默缺失）。
+SLOPE_OBLIGATIONS = DEM_OBLIGATIONS + [
+    obl("terrain_slope_units", "disclosure",
+        code="TERRAIN_SLOPE_UNITS",
+        desc="坡度单位（度/百分比）必须随结果与图面显式披露。",
+        action="warn"),
+]
 #: recipe 级回退表（reason_code 匹配 DisabledElement）
 DEM_FALLBACKS = [
     RecipeFallback(when="CRS not metric", reason_code="TERRAIN_METRIC_CRS_REQUIRED", use="dem_view"),
@@ -62,7 +70,7 @@ _RECIPES: List[CartographyRecipe] = [
             zh=["坡度", "坡度分析", "陡坡"],
             en=["slope analysis", "steepness"],
             roles=[elevation_role()],
-            obligations=DEM_OBLIGATIONS,
+            obligations=SLOPE_OBLIGATIONS,
             fallbacks=DEM_WF_POLICIES,
             completion=standard_completion(uncertainty=True),
             disclosures=["TERRAIN_SLOPE_UNITS"],

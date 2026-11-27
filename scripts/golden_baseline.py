@@ -245,83 +245,102 @@ def cmd_verify(args: argparse.Namespace) -> int:
     missing_golden: List[str] = []
     for scenario in scenarios:
         gdir = _golden_dir(scenario)
-        golden_png_path = gdir / "map.png"
-        golden_meta_path = gdir / "golden.json"
-        if not golden_png_path.exists() or not golden_meta_path.exists():
-            missing_golden.append(scenario)
-            warnings.append(f"{scenario}: 无 golden（先 generate）—— 跳过")
-            continue
-        status: Dict[str, Any] = {}
-        status_path = gdir / "status.json"
-        if status_path.exists():
-            status = json.loads(status_path.read_text(encoding="utf-8"))
-        promotion = status.get("promotion", "nightly-only")
-        print(f"== verify golden: {scenario}（{promotion}）", flush=True)
-        result = _run_scenario(scenario)
-        png = result.pop("png_bytes", None)
-        if png is None or not _browser_contract_ok(result, scenario):
-            detail = json.dumps(result, ensure_ascii=False)[:300]
-            message = f"{scenario}: 浏览器契约不成立 {detail}"
-            (gdir / "last_failure.json").write_text(
-                json.dumps(result, ensure_ascii=False, indent=2, default=str),
-                encoding="utf-8",
+        promotion = "nightly-only"
+        try:
+            golden_png_path = gdir / "map.png"
+            golden_meta_path = gdir / "golden.json"
+            if not golden_png_path.exists() or not golden_meta_path.exists():
+                missing_golden.append(scenario)
+                warnings.append(f"{scenario}: 无 golden（先 generate）—— 跳过")
+                continue
+            status: Dict[str, Any] = {}
+            status_path = gdir / "status.json"
+            if status_path.exists():
+                status = json.loads(status_path.read_text(encoding="utf-8"))
+            promotion = status.get("promotion", "nightly-only")
+            print(f"== verify golden: {scenario}（{promotion}）", flush=True)
+            result = _run_scenario(scenario)
+            png = result.pop("png_bytes", None)
+            if png is None or not _browser_contract_ok(result, scenario):
+                detail = json.dumps(result, ensure_ascii=False)[:300]
+                message = f"{scenario}: 浏览器契约不成立 {detail}"
+                (gdir / "last_failure.json").write_text(
+                    json.dumps(result, ensure_ascii=False, indent=2, default=str),
+                    encoding="utf-8",
+                )
+                if _is_blocking(promotion):
+                    blocking_failures.append(message)
+                else:
+                    warnings.append(message + "（失败样本已存 last_failure.json）")
+                continue
+            baseline_png = golden_png_path.read_bytes()
+            diff = image_diff(baseline_png, png)
+            # 墨量带校验：小要素整块消失不会跌破像素通过线（98% 预算 > 稀疏场景
+            # ~0.4% 墨量），用墨量骤降/暴增补位。带内判定：|Δ| ≤ max(0.001, 0.4×ink)。
+            # 本机渲染已实证逐像素确定（same-env 下 0.001 ≈ 1280px 容差足够抗
+            # 抖动；跨环境漂移走 nightly-only 分档 + 显式 generate 刷新流程）。
+            golden_meta = json.loads(golden_meta_path.read_text(encoding="utf-8"))
+            ink_golden = float(golden_meta.get("ink_ratio") or 0.0)
+            ink_now = ink_ratio(png)
+            ink_ok = (
+                abs(ink_now - ink_golden) <= max(0.001, 0.4 * abs(ink_golden))
+                if ink_golden > 0
+                else True
             )
-            if _is_blocking(promotion):
-                blocking_failures.append(message)
-            else:
-                warnings.append(message + "（失败样本已存 last_failure.json）")
-            continue
-        baseline_png = golden_png_path.read_bytes()
-        diff = image_diff(baseline_png, png)
-        # 墨量带校验：小要素整块消失不会跌破像素通过线（98% 预算 > 稀疏场景
-        # ~0.4% 墨量），用墨量骤降/暴增补位。带内判定：|Δ| ≤ max(0.001, 0.4×ink)。
-        # 本机渲染已实证逐像素确定（same-env 下 0.001 ≈ 1280px 容差足够抗
-        # 抖动；跨环境漂移走 nightly-only 分档 + 显式 generate 刷新流程）。
-        golden_meta = json.loads(golden_meta_path.read_text(encoding="utf-8"))
-        ink_golden = float(golden_meta.get("ink_ratio") or 0.0)
-        ink_now = ink_ratio(png)
-        ink_ok = (
-            abs(ink_now - ink_golden) <= max(0.001, 0.4 * abs(ink_golden))
-            if ink_golden > 0
-            else True
-        )
-        verdict = {
-            "seconds": result.get("seconds"),
-            "pixel_diff": diff,
-            "ink_golden": ink_golden,
-            "ink_now": ink_now,
-            "ink_ok": ink_ok,
-        }
-        print(f"   within_ratio={diff.get('within_ratio')} "
-              f"max_channel_diff={diff.get('max_channel_diff')} "
-              f"ink={ink_now:.4f}(golden {ink_golden:.4f}) "
-              f"pass={diff.get('pass') and ink_ok} ({result.get('seconds')}s)", flush=True)
-        (gdir / "last_verify.json").write_text(
-            json.dumps(verdict, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        passed = bool(diff["pass"]) and ink_ok
-        if not passed:
-            if ink_ok:
-                message = (f"{scenario}: golden diff 失败 "
-                           f"within_ratio={diff['within_ratio']} < {diff['pass_ratio_required']}")
-            else:
-                message = (f"{scenario}: 墨量带校验失败（要素消失/暴增）"
-                           f" ink golden={ink_golden:.4f} now={ink_now:.4f}")
+            verdict = {
+                "seconds": result.get("seconds"),
+                "pixel_diff": diff,
+                "ink_golden": ink_golden,
+                "ink_now": ink_now,
+                "ink_ok": ink_ok,
+            }
+            print(f"   within_ratio={diff.get('within_ratio')} "
+                  f"max_channel_diff={diff.get('max_channel_diff')} "
+                  f"ink={ink_now:.4f}(golden {ink_golden:.4f}) "
+                  f"pass={diff.get('pass') and ink_ok} ({result.get('seconds')}s)", flush=True)
+            (gdir / "last_verify.json").write_text(
+                json.dumps(verdict, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            passed = bool(diff["pass"]) and ink_ok
+            if not passed:
+                if ink_ok:
+                    message = (f"{scenario}: golden diff 失败 "
+                               f"within_ratio={diff['within_ratio']} < {diff['pass_ratio_required']}")
+                else:
+                    message = (f"{scenario}: 墨量带校验失败（要素消失/暴增）"
+                               f" ink golden={ink_golden:.4f} now={ink_now:.4f}")
+                if _is_blocking(promotion):
+                    blocking_failures.append(message)
+                else:
+                    warnings.append(message)
+            try:
+                record_quality_run_sync(
+                    lane="golden", source="golden_verify",
+                    scene_id=scenario, passed=passed,
+                    summary={"promotion": promotion,
+                             "within_ratio": diff.get("within_ratio"),
+                             "ink_ok": ink_ok,
+                             "seconds": result.get("seconds")},
+                )
+            except Exception:  # noqa: BLE001
+                pass
+        except Exception as exc:  # noqa: BLE001 — 单场景 validator/probes/IO 抛错不得中断整轮 verify
+            # 崩溃按契约不成立同路径记账：pr-blocking 计入阻断（退出码 1），
+            # 其余分档只告警；失败样本落 last_failure.json 供 quarantine 复盘。
+            message = f"{scenario}: 场景执行异常 {type(exc).__name__}: {exc}"[:300]
+            try:
+                (gdir / "last_failure.json").write_text(
+                    json.dumps({"scenario": scenario, "error": message},
+                               ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+            except Exception:  # noqa: BLE001 — 落失败样本失败不影响其余场景
+                pass
             if _is_blocking(promotion):
                 blocking_failures.append(message)
             else:
                 warnings.append(message)
-        try:
-            record_quality_run_sync(
-                lane="golden", source="golden_verify",
-                scene_id=scenario, passed=passed,
-                summary={"promotion": promotion,
-                         "within_ratio": diff.get("within_ratio"),
-                         "ink_ok": ink_ok,
-                         "seconds": result.get("seconds")},
-            )
-        except Exception:  # noqa: BLE001
-            pass
+            continue
     for warning in warnings:
         print(f"⚠️  {warning}", flush=True)
     if missing_golden:

@@ -236,8 +236,10 @@ def register_data_join_authoring_tools(registry: ToolRegistry) -> None:
             await asyncio.sleep(0.5)
             try:
                 cur = await service.inspect_run(session_id, run_id)
-            except DataJoinError:
-                break
+            except DataJoinError as exc:
+                # run 行已随 execute 落库：inspect 失败是真实错误而非瞬态，
+                # 上报 typed 错误，不拿 execute 初始 view 冒充非终态结果
+                return _fail(exc)
             if cur["status"] in ("completed", "failed", "cancelled"):
                 return _bounded_run(cur)
         view.pop("receipt", None)

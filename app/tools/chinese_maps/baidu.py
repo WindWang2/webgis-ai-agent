@@ -194,9 +194,15 @@ class BaiduProvider:
         data = await self._get("/reverse_geocoding/v3/", params)
         if "error" in data:
             return data
-        r = data.get("result", {})
-        addr = r.get("addressComponent", {})
-        pois = r.get("pois", [])[:5]
+        r = data.get("result") or {}
+        # #P3：Baidu 对境外/低详区坐标会返回 result/addressComponent 为 null；
+        # 键存在时 .get 默认值不生效，先归一化再解引用（对齐 amap 守卫）。
+        if not isinstance(r, dict):
+            r = {}
+        addr = r.get("addressComponent") or {}
+        if not isinstance(addr, dict):
+            addr = {}
+        pois = (r.get("pois") or [])[:5]
         return {
             "formatted_address": r.get("formatted_address", ""),
             "province": addr.get("province", ""),
@@ -221,7 +227,9 @@ class BaiduProvider:
         data = await self._get(f"/directionlite/v1/{endpoint}", params)
         if "error" in data:
             return data
-        route = data.get("result", {}).get("routes", [])
+        result = data.get("result") or {}
+        # #P3：result 为 null 时旧实现 .get 抛 AttributeError。
+        route = result.get("routes", []) if isinstance(result, dict) else []
         if not route:
             return {"error": "未找到路线"}
         return self._shape_route(route[0])
@@ -262,7 +270,10 @@ class BaiduProvider:
         # Baidu administrative returns point centers only (no polygon field).
         raw_features = []
         for d in districts:
-            loc = d.get("location", {})
+            loc = d.get("location") or {}
+            # #P3：location 为 null 时旧实现 .get 抛 AttributeError。
+            if not isinstance(loc, dict):
+                loc = {}
             # center kept in BD-09 (source CRS); one transform pass normalizes.
             bd_lng, bd_lat = loc.get("lng", 0), loc.get("lat", 0)
             raw_features.append({

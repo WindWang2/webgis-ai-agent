@@ -47,6 +47,19 @@ def test_repeated_planning_signature():
     assert t.record_planning("plan-sig-2") == []
 
 
+def test_repeated_planning_count_refresh_survives_eviction():
+    """已存在签名更新计数时刷新 LRU 位置，不得被随后淘汰删掉。"""
+    from app.services.chat.no_progress import _PLANNING_HISTORY_MAX
+
+    t = GisProgressTracker(planning_repeat_threshold=3)
+    for i in range(_PLANNING_HISTORY_MAX):
+        t.record_planning(f"sig-{i}")
+    assert t.record_planning("sig-0") == []  # count=2, 且应移到 LRU 尾部
+    for i in range(_PLANNING_HISTORY_MAX, _PLANNING_HISTORY_MAX + 4):
+        t.record_planning(f"sig-{i}")  # 触发淘汰
+    assert t.record_planning("sig-0") == ["repeated_planning:3"]
+
+
 def test_exact_repeat_failure_still_works():
     t = GisProgressTracker()
     t.record_call("buffer", {"d": 1}, "error")

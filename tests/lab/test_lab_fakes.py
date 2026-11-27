@@ -11,6 +11,7 @@ import asyncio
 import pytest
 
 from app.lib.harness.lab.fakes import (
+    DispatchOutcome,
     FaultInjector,
     LabClock,
     ScriptedToolProvider,
@@ -155,6 +156,28 @@ class TestFaultMatrix:
         ], provider=provider)
         out = _run(injector.dispatch("lab.echo", {"q": 1}, call_id="c1"))
         assert not out.is_error and out.faults_applied == []
+
+
+class _ProtocolOnlyProvider:
+    """只实现 _Provider 协议（metadata/dispatch），不暴露 calls。"""
+
+    def metadata(self, name: str) -> dict:
+        return {}
+
+    async def dispatch(self, tool_name, tool_args_raw,
+                       session_id=None, call_id="") -> DispatchOutcome:
+        return DispatchOutcome(result={"echo": 1})
+
+
+class TestFaultInjectorProtocolProvider:
+    def test_target_turn_fault_works_without_calls_attribute(self):
+        """provider 无 calls 时 target_turn 故障不得 AttributeError。"""
+        injector = FaultInjector(
+            [FaultStep(type="timeout", target_turn=0)],
+            provider=_ProtocolOnlyProvider(),
+        )
+        out = _run(injector.dispatch("lab.echo", {"q": 1}, call_id="c1"))
+        assert out.is_error and out.error_code == "TOOL_TIMEOUT"
 
 
 class TestLabClock:

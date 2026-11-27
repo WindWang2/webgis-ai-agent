@@ -89,10 +89,14 @@ def format_error_response(
     error_message = str(exc)[:200]
 
     # 审计 M5：按 HTTP 状态码映射 code —— 之前永远是 SERVER_ERROR，前端无法
-    # 区分 404 vs 401 vs 403。HTTPException 自带 status_code；其他异常保持
-    # SERVER_ERROR 兜底（global_exception_handler 默认 500）。
+    # 区分 404 vs 401 vs 403。HTTPException 自带 status_code；PlatformError
+    # 用类目裁决的 http_status（其暴露的是 http_status，不是 status_code）。
     code = "SERVER_ERROR"
-    if hasattr(exc, "status_code"):
+    if isinstance(exc, PlatformError):
+        code = _STATUS_CODE_TO_CODE.get(
+            classify_exception(exc).http_status, "SERVER_ERROR"
+        )
+    elif hasattr(exc, "status_code"):
         code = _STATUS_CODE_TO_CODE.get(getattr(exc, "status_code"), "SERVER_ERROR")
 
     response_data = {
@@ -313,7 +317,16 @@ async def unified_validation_exception_handler(
         }
         for e in list(exc.errors())[:20]
     ]
-    envelope = unified_error_envelope(422, "请求参数校验失败", request=request)
+    # 分类学信封：422 属于 validation；带 category 才能被
+    # AcceptLanguageMiddleware 按 Accept-Language 本地化 message。
+    _validation_exc = StarletteHTTPException(status_code=422)
+    _validation_cls = classify_exception(_validation_exc)
+    envelope = unified_error_envelope(
+        422,
+        localized_user_message(_validation_cls),
+        request=request,
+        exc=_validation_exc,
+    )
     if settings.DEBUG:
         envelope["errors"] = errors
     return JSONResponse(status_code=422, content=envelope)

@@ -215,9 +215,8 @@ def apply_resolutions_to_ops(
                         # 足迹产生）时整 op 移除。
                         # merge 父集 = plan 级目标，无法部分剥离；该 wfid 的
                         # retire 在 delete 剥离后只能来自 merge —— 整 op 移除。
-                        if any(o.get("op") == "merge_features" for o in new_ops):
-                            structural_removed = True
-                            continue
+                        structural_removed = True
+                        continue
                     pruned.append(op)
                 new_ops = pruned
                 effect = f"kept current modification; dropped delete of {wfid}"
@@ -267,9 +266,29 @@ def apply_resolutions_to_ops(
                 })
         elif kind == "dependency_changed":
             if action == "keep_current":
-                applied.append({"conflict_id": cid, "action": action,
-                                "effect": "drop the dependency-consuming op (snap) — re-preview on the new reference if needed"})
-                new_ops = [op for op in new_ops if not (op.get("op") == "snap_to_ref")]
+                ref_id = (conflict.get("detail") or {}).get("ref_id")
+                if not isinstance(ref_id, str) or not ref_id:
+                    rejected.append({
+                        "conflict_id": cid,
+                        "reason": "dependency_changed conflict is missing its ref_id — reload conflicts",
+                    })
+                    continue
+                kept = [
+                    op for op in new_ops
+                    if not (
+                        op.get("op") == "snap_to_ref"
+                        and op.get("ref_id") == ref_id
+                    )
+                ]
+                dropped = len(new_ops) - len(kept)
+                new_ops = kept
+                applied.append({
+                    "conflict_id": cid, "action": action,
+                    "effect": (
+                        f"dropped {dropped} snap_to_ref op(s) for {ref_id} — "
+                        "re-preview on the new reference if needed"
+                    ),
+                })
             else:
                 rejected.append({
                     "conflict_id": cid,

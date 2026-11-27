@@ -335,7 +335,7 @@ def surface_retrieval_report(
             if int(out.get("bytes_used") or 0) > byte_budget:
                 budget_violations += 1
 
-    n = len(recalls[ks[0]]) if ks else 0
+    n = len(precisions)
     return SurfaceRetrievalReport(
         cases=n,
         skipped=skipped,

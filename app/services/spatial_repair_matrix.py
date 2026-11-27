@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from typing import Any, Dict, List, Optional
 
 from app.services.spatial_repair_pipeline import (
@@ -147,12 +148,15 @@ def _changed_count(before: Dict[str, Any], after: Dict[str, Any]) -> int:
     af = after.get("features") or []
     bsig = [_feature_signature(f) for f in bf]
     asig = [_feature_signature(f) for f in af]
-    # 数量变化（删/并）或逐位签名不同都算变更
-    changed = abs(len(bsig) - len(asig))
-    for b, a in zip(bsig, asig):
-        if b != a:
-            changed += 1
-    return changed
+    if len(bsig) == len(asig):
+        # 等长：逐位签名不同即变更（op 的常规修改路径）
+        return sum(1 for b, a in zip(bsig, asig) if b != a)
+    # 长度不同（删/并）：按多重集差计删除/新增要素数。不可叠加 zip 逐位
+    # 比较 —— 删除中间要素会使后续签名整体错位，未变更的后继要素被重复
+    # 计入，changed_features 虚高。
+    removed = Counter(bsig) - Counter(asig)
+    added = Counter(asig) - Counter(bsig)
+    return sum(removed.values()) + sum(added.values())
 
 
 def _run_single_op(fixture: Dict[str, Any], op: str) -> Dict[str, Any]:

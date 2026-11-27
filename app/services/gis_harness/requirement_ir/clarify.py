@@ -11,7 +11,8 @@
    answered/waived 终结（F02 DoD #2）。
 
 本模块纯函数零 IO；歧义入档（:func:`record_ambiguities`）是 lifecycle
-记账（不动 revision/语义 journal），语义修订走 patch 协议。
+记账（不动 revision/语义 journal），service 将差异接为 ``record_ambiguity``
+patch 后持久化；语义修订走 patch 协议。
 """
 from __future__ import annotations
 

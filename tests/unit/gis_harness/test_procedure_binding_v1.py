@@ -258,6 +258,37 @@ class TestDecisionBinding:
 # ── C3: plan-time enforcement ───────────────────────────────────────────────
 
 
+def test_conditional_on_not_truncated_before_fifth_decision():
+    from app.services.gis_harness.skills.procedure_ir import (
+        DecisionNode,
+        DecisionOption,
+    )
+
+    decisions = [
+        DecisionNode(
+            node_id=f"d{i}", question="q", default_option_id="default",
+            options=[
+                DecisionOption(option_id="default", condition="c"),
+                DecisionOption(option_id="alt", condition="c",
+                               then_step_ids=["s1"]),
+            ])
+        for i in range(5)
+    ]
+    skill = SkillContract(
+        id="t", name="t", when_to_use="t",
+        capability_requirements=[
+            CapabilityRequirement(capability_id="cap1", purpose="p")],
+        procedure=SkillProcedure(
+            steps=[ProcedureStep(step_id="s1", title="t", kind="inspect",
+                                 capability_refs=["cap1"])],
+            decisions=decisions),
+    )
+    plan = {"analysis_steps": [{"capability": "cap1"}]}
+    binding = bind_procedure_to_plan(skill, _decision(skill_id="t"), plan)
+    step = next(s for s in binding.steps if s.step_id == "s1")
+    assert step.conditional_on == ["d0", "d1", "d2", "d3", "d4"]
+
+
 class TestEnforcement:
     def test_ok_when_fully_planned(self, library):
         skill = library.get("spatial_autocorrelation_analysis")

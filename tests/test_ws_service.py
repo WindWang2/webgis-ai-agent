@@ -3,7 +3,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from app.services.ws_service import (
     ConnectionManager, handle_viewport_change, handle_layer_toggled,
-    handle_state_snapshot, handle_layers_changed,
+    handle_state_snapshot, handle_layers_changed, handle_layers_reordered,
 )
 
 
@@ -108,3 +108,40 @@ async def test_layers_changed_wholesale_write_rejected_811():
     with patch("app.services.ws_service.session_data_manager", mock_manager):
         await handle_layers_changed("sess-1", {"layers": [{"id": "a"}, {"id": "b"}]})
     mock_manager.set_map_state.assert_not_called()
+
+
+# ── P2 security: layers_reordered 只接受有界的图层 id 列表 ────────────────
+
+@pytest.mark.asyncio
+async def test_layers_reordered_valid_order_written():
+    mock_manager = MagicMock()
+    mock_manager.set_map_state = AsyncMock()
+    mock_manager.append_event = AsyncMock()
+    with patch("app.services.ws_service.session_data_manager", mock_manager):
+        await handle_layers_reordered("sess-1", {"order": ["layer-b", "layer-a"]})
+    mock_manager.set_map_state.assert_awaited_once_with(
+        "sess-1", "layer_order", ["layer-b", "layer-a"]
+    )
+    mock_manager.append_event.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("order", [
+    {},                      # dict 而非列表
+    "layer-a,layer-b",       # 字符串
+    42,                      # 标量
+    [],                      # 空列表（原 truthiness 语义也拒绝）
+    ["ok", 3],               # 非字符串元素
+    [""],                    # 空 id
+    ["x" * 201],             # 超长 id
+    ["x"] * 501,             # 超出条目上限
+])
+async def test_layers_reordered_rejects_malformed_order(order):
+    """畸形/无界 order 不得写入 map_state 或事件日志。"""
+    mock_manager = MagicMock()
+    mock_manager.set_map_state = AsyncMock()
+    mock_manager.append_event = AsyncMock()
+    with patch("app.services.ws_service.session_data_manager", mock_manager):
+        await handle_layers_reordered("sess-1", {"order": order})
+    mock_manager.set_map_state.assert_not_called()
+    mock_manager.append_event.assert_not_called()

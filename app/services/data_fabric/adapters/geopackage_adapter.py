@@ -42,6 +42,16 @@ _PREVIEW_LIMIT = 10
 _MAX_QUERY_FEATURES = 50_000
 
 
+def _as_features(frame) -> List[Dict[str, Any]]:
+    """Serialize spatial or aspatial pyogrio results under the feature contract."""
+    import geopandas as gpd
+
+    if not hasattr(frame, "to_geo_dict"):
+        # pyogrio returns a plain DataFrame for attribute-only GPKG layers.
+        frame = gpd.GeoDataFrame(frame, geometry=[None] * len(frame))
+    return frame.to_geo_dict()["features"]
+
+
 def _resolve_gpkg_path(endpoint: str, options: Dict[str, Any]) -> Path:
     """endpoint/base_dir option → a concrete .gpkg path (safe, declared only)."""
     raw = (endpoint or "").strip() or str(options.get("base_dir") or "").strip()
@@ -178,7 +188,7 @@ class GeoPackageAdapter(GeospatialDataSourceAdapter):
         return {
             "dataset_id": dataset_id,
             "columns": list(gdf.columns),
-            "features": gdf.to_geo_dict()["features"],
+            "features": _as_features(gdf),
             "is_demo": False,
         }
 
@@ -193,6 +203,12 @@ class GeoPackageAdapter(GeospatialDataSourceAdapter):
         offset = max(0, int(query_spec.offset or 0))
         if offset >= _MAX_QUERY_FEATURES:
             raise QueryBudgetExceededError("GeoPackage offset exceeds bounded scan budget")
+        if limit and offset + limit > _MAX_QUERY_FEATURES:
+            # 窗口被 50k 扫描预算截断会让 has_more/truncated 谎报 False
+            # （静默少取）—— 明确 typed 拒绝超出预算的页窗口。
+            raise QueryBudgetExceededError(
+                "GeoPackage page window exceeds bounded scan budget"
+            )
         columns = list(query_spec.columns or []) or None
         bbox = query_spec.bbox
         try:
@@ -213,7 +229,7 @@ class GeoPackageAdapter(GeospatialDataSourceAdapter):
                     str(path), layer=layer, bbox=bbox, columns=columns,
                     skip_features=offset, max_features=fetch_limit,
                 )
-                if gdf.crs is not None:
+                if hasattr(gdf, "crs") and gdf.crs is not None:
                     gdf = gdf.to_crs("EPSG:4326")
                 page = gdf.iloc[:limit]
                 has_more = len(gdf) > limit
@@ -224,7 +240,7 @@ class GeoPackageAdapter(GeospatialDataSourceAdapter):
                 return QueryResult(
                     dataset_id=dataset_id,
                     query_spec=query_spec,
-                    features=page.to_geo_dict()["features"],
+                    features=_as_features(page),
                     returned_count=len(page), total_count=total_hint, total_matching=matched,
                     has_more=has_more, truncated=has_more,
                     metadata={
@@ -234,14 +250,16 @@ class GeoPackageAdapter(GeospatialDataSourceAdapter):
                         "count": int(len(page)),
                         "total_matched": matched,
                         "total_matched_exact": matched is not None,
-                        "delivered_crs": "EPSG:4326" if gdf.crs is not None else None,
+                        "delivered_crs": (
+                            "EPSG:4326" if hasattr(gdf, "crs") and gdf.crs is not None else None
+                        ),
                     },
                 )
             gdf = pyogrio.read_dataframe(
                 str(path), layer=layer, bbox=bbox, columns=columns,
                 max_features=_MAX_QUERY_FEATURES + 1,
             )
-            if gdf.crs is not None:
+            if hasattr(gdf, "crs") and gdf.crs is not None:
                 gdf = gdf.to_crs("EPSG:4326")
         except InvalidQueryError:
             raise
@@ -254,7 +272,7 @@ class GeoPackageAdapter(GeospatialDataSourceAdapter):
         return QueryResult(
             dataset_id=dataset_id,
             query_spec=query_spec,
-            features=page.to_geo_dict()["features"],
+            features=_as_features(page),
             returned_count=len(page), total_count=len(gdf), total_matching=len(gdf),
             has_more=has_more, truncated=has_more,
             metadata={
@@ -263,7 +281,9 @@ class GeoPackageAdapter(GeospatialDataSourceAdapter):
                 "is_demo": False,
                 "count": int(len(page)),
                 "total_matched": int(len(gdf)),
-                "delivered_crs": "EPSG:4326" if gdf.crs is not None else None,
+                "delivered_crs": (
+                    "EPSG:4326" if hasattr(gdf, "crs") and gdf.crs is not None else None
+                ),
             },
         )
 

@@ -1,10 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { layerCommands } from './layerCommands';
 import type { MapCommandContext } from './types';
 import * as renderer from '@/lib/map-kit/renderer';
 import { makeMockMaplibreMap } from '@/test/__mocks__/maplibre-map';
 import { resolveLayerTargetsByRef } from './layerCommands';
 import { commitMapSpecDocument, getPendingPresentation, resetLiveState } from '@/lib/mapspec/session-cursor';
+import { useHudStore } from '@/lib/store/useHudStore';
 
 // #462: keep the real layer-id registry exports (matchMapLayers reads them);
 // only the style-mutating helpers are stubbed for call assertions.
@@ -115,6 +116,44 @@ describe('cartographic runtime repair command', () => {
     const result = layerCommands.cartographic_runtime_repair.run(ctx);
 
     expect(result).toEqual({ status: 'failed', error: 'superseded_by_user' });
+    expect(renderer.updateLayerStyle).not.toHaveBeenCalled();
+    expect(updateLayer).not.toHaveBeenCalled();
+  });
+
+  it('validates every runtime target before mutating (a later missing layer must not leave a half-applied batch)', () => {
+    const updateLayer = vi.fn();
+    const hud = {
+      layers: [
+        { id: 'lay-a', visible: false, _mapspecFingerprint: 'carto-sha256:current' },
+        { id: 'lay-b', visible: false, _mapspecFingerprint: 'carto-sha256:current' },
+      ],
+      updateLayer,
+    };
+    const map = makeMockMaplibreMap();
+    map.addLayer({ id: 'lay-a__point', type: 'circle' });
+    // lay-b 只存在于 HUD，运行时图层缺失（异步 reconcile 未落图）
+    const ctx = {
+      map,
+      popAction: () => {},
+      setDeferredPop: () => {},
+      safePop: () => {},
+      getHudState: () => hud,
+      setSelectedBaseLayer: () => {},
+      command: 'cartographic_runtime_repair',
+      actionId: 'ma-carto-2',
+      params: {
+        mapspec_fingerprint: 'carto-sha256:current',
+        observation_sequence: 5,
+        repair_patches: [
+          { layer_id: 'lay-a', before: { visible: false }, desired: { visible: true } },
+          { layer_id: 'lay-b', before: { visible: false }, desired: { visible: true } },
+        ],
+      },
+    } as unknown as MapCommandContext;
+
+    const result = layerCommands.cartographic_runtime_repair.run(ctx);
+
+    expect(result).toEqual({ status: 'failed', error: 'target_not_found' });
     expect(renderer.updateLayerStyle).not.toHaveBeenCalled();
     expect(updateLayer).not.toHaveBeenCalled();
   });
@@ -469,6 +508,25 @@ describe('reorder_layer (issue #393: MapSpec `${id}__` layers reorder durably)',
         'custom-target',
         'custom-target-outline',
         'custom-top',
+      ]);
+    });
+
+    it('bottom when the group already spans the whole custom stack keeps it in place (no top yank)', () => {
+      const { map, ctx } = customStack([
+        'custom-target',
+        'custom-target-outline',
+      ]);
+      ctx.command = 'reorder_layer';
+      ctx.params = { layer_id: 'target', position: 'bottom' };
+
+      const result = layerCommands.reorder_layer.run(ctx);
+
+      expect(result).toEqual({ status: 'succeeded', result: { confirmed: true } });
+      // 组已在 custom 栈底部：终态成立，绝不能把省略锚点的 moveLayer 当置顶
+      expect(map.moveLayer).not.toHaveBeenCalled();
+      expect(orderOf(map)).toEqual([
+        'custom-target',
+        'custom-target-outline',
       ]);
     });
   });
@@ -884,6 +942,23 @@ describe('finalize_display（最终展示集收口）', () => {
     const empty = ctxWith([]);
     expect(layerCommands.finalize_display.run(empty.ctx)).toEqual({ status: 'failed', error: 'invalid_params' });
   });
+
+  it('P3: 无法解析的 show id 进入 unresolved_layer_ids（不静默丢弃）', () => {
+    commitMapSpecDocument({
+      version: '1.0',
+      sources: { src1: { type: 'geojson', ref_id: 'ref:geojson-choro' } },
+      layers: [{ id: 'choropleth-1', source: 'src1', type: 'fill' }],
+    } as any);
+    const { ctx } = ctxWith(['ref:geojson-choro', 'ghost-show']);
+
+    const result = layerCommands.finalize_display.run(ctx) as any;
+
+    expect(result.status).toBe('succeeded');
+    expect(result.result.shown).toBe(1);
+    // 解析为空的 id 不得消失：ack 必须让 agent 看到展示集不完整
+    expect(result.result.unresolved_layer_ids).toEqual(['ghost-show']);
+    expect(result.result.confirmed).toBe(false);
+  });
 });
 
 describe('finalize_display 边界层豁免（context_role=boundary 常显）', () => {
@@ -923,5 +998,80 @@ describe('finalize_display 边界层豁免（context_role=boundary 常显）', (
     expect(result.status).toBe('succeeded');
     const hidden = updateLayer.mock.calls.filter((c: any[]) => c[1]?.visible === false).map((c: any[]) => c[0]);
     expect(hidden).toEqual(['poi']); // boundary-1 被豁免
+  });
+});
+
+// ─── P3: add_* 后置验证 / finalize 混合失败归因 ───
+
+describe('P3 regression: add_layer layer 验证 / add_raster_layer bbox / finalize 混合失败', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetLiveState();
+  });
+
+  afterEach(() => {
+    useHudStore.setState({ lockedLayerIds: [] });
+  });
+
+  function ctxFor(
+    map: any,
+    params: Record<string, unknown>,
+    layers: any[] = [],
+  ): MapCommandContext {
+    return {
+      map, popAction: () => {}, setDeferredPop: () => {}, safePop: () => {},
+      getHudState: () => ({ layers, updateLayer: vi.fn() }),
+      setSelectedBaseLayer: () => {},
+      command: 'x',
+      params,
+    } as unknown as MapCommandContext;
+  }
+
+  it('add_layer fails mutation_failed when only the source lands (layer swallowed)', () => {
+    const map = makeMockMaplibreMap();
+    // source 挂上、layer add 被吞（如 style swap 中）——旧实现只查 source。
+    map.addLayer.mockImplementation(() => {});
+
+    const result = layerCommands.add_layer.run(ctxFor(map, {
+      layerId: 'ghost-layer',
+      type: 'fill',
+      geojson: { type: 'FeatureCollection', features: [] },
+    }));
+
+    expect(result).toEqual({ status: 'failed', error: 'mutation_failed' });
+  });
+
+  it('add_raster_layer rejects a malformed bbox as invalid_params (no undefined coordinates)', () => {
+    const map = makeMockMaplibreMap();
+    const base = { id: 'raster-bad', image: 'https://example.com/img.png' };
+
+    expect(layerCommands.add_raster_layer.run(ctxFor(map, { ...base, bbox: [116, 39] })))
+      .toEqual({ status: 'failed', error: 'invalid_params' });
+    expect(layerCommands.add_raster_layer.run(ctxFor(map, { ...base, bbox: [116, 39, 117, 'x'] })))
+      .toEqual({ status: 'failed', error: 'invalid_params' });
+    expect(map._calls.addSource).toHaveLength(0);
+  });
+
+  it('finalize_display mixed lock conflict + target miss → layer_locked (not target_not_found)', () => {
+    useHudStore.setState({ lockedLayerIds: ['locked-1'] });
+    const map = makeMockMaplibreMap();
+    // 已注册到 style 但 getLayer 读不到 —— 事务按 mutation_failed 归入 unresolved。
+    map.addLayer({ id: 'custom-miss-1', type: 'fill' });
+    const realGetLayer = map.getLayer;
+    map.getLayer = vi.fn((id: string) => (id === 'custom-miss-1' ? null : realGetLayer(id)));
+
+    const ctx = ctxFor(map, { show_layer_ids: ['locked-1', 'miss-1'] }, [
+      { id: 'locked-1', visible: true, group: 'analysis' },
+      { id: 'miss-1', visible: true, group: 'analysis' },
+    ]);
+    ctx.command = 'finalize_display';
+
+    const result = layerCommands.finalize_display.run(ctx) as any;
+
+    expect(result.status).toBe('failed');
+    // R1-m4：锁冲突不得被报成 target_not_found（混合失败同样不得）
+    expect(result.error).toBe('layer_locked');
+    expect(result.result.locked_layer_ids).toEqual(['locked-1']);
+    expect(result.result.unresolved_layer_ids).toEqual(['miss-1']);
   });
 });

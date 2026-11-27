@@ -14,10 +14,17 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Union
 
 WhereAst = Dict[str, Any]
+
+#: date_string 数据字面形状（与 frames._detect_representation 同模式）——
+#: 边界精度按字面形状判定，不按 granularity（见 _date_string_precision）。
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_YEAR_MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
+_YEAR_RE = re.compile(r"^\d{4}$")
 
 
 def _parse_iso(instant: str) -> datetime:
@@ -64,6 +71,25 @@ def render_iso_like(dt: "datetime", format_hint: str) -> str:
     return base + offset
 
 
+def _date_string_precision(format_hint: str) -> str:
+    """数据字面形状 → 日期串精度（year/month/day；不可判 → ""）。
+
+    ``format_hint`` = 探测期样例值（frames._detect_representation 的
+    date_string 形态）。边界串必须与数据字面**同精度**：显式 granularity
+    细于列精度（"YYYY-MM" 列传 day/week）时按 granularity 渲染会把 lo 排到
+    所有数据字面之后（"2023-07-01" > "2023-07"）→ 每帧 where/MapLibre
+    过滤命中 0 条。
+    """
+    hint = (format_hint or "").strip()
+    if _YEAR_RE.match(hint):
+        return "year"
+    if _YEAR_MONTH_RE.match(hint):
+        return "month"
+    if _DATE_RE.match(hint):
+        return "day"
+    return ""
+
+
 def normalize_boundary_value(
     instant: str, representation: str, granularity: str, tz_name: str = "UTC",
     format_hint: str = "",
@@ -91,9 +117,12 @@ def normalize_boundary_value(
         return int(dt.timestamp() * 1000)
     if representation == "date_string":
         local = dt.astimezone(ZoneInfo(tz_name))
-        if granularity == "year":
+        # 精度取**数据字面**（hint）优先，granularity 只作 hint 缺席时的
+        # 兜底 —— 桶粒度可细于列精度，边界串细于数据字面即全窗脱靶。
+        precision = _date_string_precision(format_hint) or granularity
+        if precision == "year":
             return f"{local.year:04d}"
-        if granularity == "month" or granularity == "quarter":
+        if precision == "month" or precision == "quarter":
             return f"{local.year:04d}-{local.month:02d}"
         return f"{local.year:04d}-{local.month:02d}-{local.day:02d}"
     # iso_string：按数据形状渲染（R2-N1：naive/偏移/小数秒同构）。
@@ -263,6 +292,13 @@ def apply_time_window_to_doc(
                 target_sid = layer.get("source")
                 break
     if not isinstance(target_sid, str) or target_sid not in sources:
+        if layer_id:
+            # 指定层不存在：不得静默返回全期文档（调用方无法区分
+            # 「无此层」与「已过滤」）——写入可判别的披露标记。
+            _temporal = doc.get("temporal")
+            _new_temporal = dict(_temporal) if isinstance(_temporal, dict) else {}
+            _new_temporal["time_filter_skipped"] = layer_id[:64]
+            return {**doc, "temporal": _new_temporal}
         return doc
     src = sources[target_sid]
     if not isinstance(src, dict):
@@ -270,6 +306,9 @@ def apply_time_window_to_doc(
     payload = src.get("inlineData") or src.get("data")
     if not isinstance(payload, dict) or not isinstance(payload.get("features"), list):
         return doc
+    # review P2-6：回写键 = 实际承载 payload 的键。源同时含 falsy inlineData
+    # 与真 data 时写 inlineData，会让渲染读取的 data 保持全量 —— 时间窗静默失效。
+    payload_key = "inlineData" if src.get("inlineData") else "data"
 
     kept = [
         f for f in payload["features"]
@@ -279,17 +318,12 @@ def apply_time_window_to_doc(
 
     new_payload = {**payload, "features": kept}
     new_src = {**src}
-    if "inlineData" in new_src:
-        new_src["inlineData"] = new_payload
-    else:
-        new_src["data"] = new_payload
+    new_src[payload_key] = new_payload
     new_sources = {**sources, target_sid: new_src}
 
     # temporal cursor 盖章（本页帧）—— SVG 时间注记/导出证据随页正确。
     temporal = doc.get("temporal")
     new_temporal = dict(temporal) if isinstance(temporal, dict) else {}
     new_temporal["cursor_frame"] = time_window.get("frame_id")
-    if new_temporal.get("enabled"):
-        new_temporal["enabled"] = True
 
     return {**doc, "sources": new_sources, "temporal": new_temporal}

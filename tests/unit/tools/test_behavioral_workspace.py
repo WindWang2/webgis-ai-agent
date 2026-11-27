@@ -104,11 +104,24 @@ async def test_save_workspace_snapshot_behavioral(registry, data_dir, session_ba
 
 @pytest.mark.asyncio
 async def test_list_workspace_snapshots_behavioral(registry, data_dir, session_base):
-    # validation/空语义：缺会话 → 诚实空清单（success=True + 提示信息）
+    # validation：会话解析失败（无 runtime context）→ 诚实错误，
+    # 绝不静默 success=True 空清单冒充「没有快照」（违反模块 docstring 不变量）
     empty = await registry.dispatch("list_workspace_snapshots", {})
-    assert empty.get("success") is True, empty
-    assert empty.get("count") == 0 and empty.get("snapshots") == []
-    assert (empty.get("message") or "").strip()
+    assert isinstance(empty, dict) and empty.get("success") is False, empty
+    assert empty.get("code") == "NO_SESSION"
+    assert (empty.get("error") or "").strip()
+
+    # 会话所有权校验：已 bind 的会话与 LLM 提供的 session_id 不符 →
+    # fail closed 拒绝，同样不得返回空清单冒充没有快照
+    from app.lib.runtime.context import bind_runtime_context
+
+    with bind_runtime_context(session_id="bdws-list-real"):
+        mismatch = await registry.dispatch(
+            "list_workspace_snapshots", {}, session_id="bdws-list-attacker"
+        )
+    assert isinstance(mismatch, dict) and mismatch.get("success") is False, mismatch
+    assert mismatch.get("code") == "NO_SESSION"
+    assert not (mismatch.get("snapshots") or [])
 
     sid = "bdws-list"
     # error path（空会话语义）：无快照会话 → count 0

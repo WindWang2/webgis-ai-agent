@@ -318,7 +318,8 @@ def _check_min_numeric_samples(n_min: int, profile: Dict[str, Any]) -> Precondit
             facts_used={"sampleCount": count})
     return PreconditionResult(
         rid, "INSUFFICIENT_DATA",
-        f"有效样本 {count} < 方法学下限 {n_min}",
+        f"有效样本 {count} < 最低可评估样本 {max(2, int(n_min * 0.5))}"
+        f"（方法学下限 {n_min}）",
         facts_used={"sampleCount": count})
 
 

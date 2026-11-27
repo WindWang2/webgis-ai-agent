@@ -68,4 +68,20 @@ describe('nav rail tab activation (UI V3)', () => {
     // 还原默认状态，避免影响其它测试文件共享的 store
     s.setActiveLeftTab('chat');
   });
+
+  it('out-of-mode tabs are not remembered in modeActiveTab (R1 invariant)', () => {
+    const s = useHudStore.getState();
+    s.setWorkbenchMode('explore');
+    // 'analysis' 不在 MODE_TABS.explore —— 当前 tab 可以切过去，但不得记进
+    // explore 的记忆槽，否则切回 explore 会把 activeLeftTab 恢复成界外 tab。
+    s.setActiveLeftTab('analysis');
+    expect(useHudStore.getState().modeActiveTab.explore).toBe('chat');
+
+    s.setWorkbenchMode('analyze');
+    s.setWorkbenchMode('explore');
+    expect(useHudStore.getState().activeLeftTab).toBe('chat');
+
+    // 还原默认状态
+    s.setActiveLeftTab('chat');
+  });
 });

@@ -473,6 +473,162 @@ class TestDurableReuseIndex:
         assert second.evidence["df"].status == "reused"
         assert second.evidence["df"].checkpoint_verified is True
 
+    # ------------------------------------- 无输入源节点的计划域隔离（P1）
+
+    def _src_node(self, node_id: str = "src") -> ExecutionNode:
+        """无输入 durable 源节点（QUERY/SOURCE_SCAN 形状）：载荷来自外部
+        源，语义指纹不含外部内容漂移（plan.py 指纹口径）。"""
+        return ExecutionNode(
+            node_id=node_id,
+            category=NodeCategory.SOURCE_SCAN,
+            policy=ExecutionPolicyKind.DURABLE_JOB,
+            parameters={"features": _fc(2)},
+        )
+
+    def _df_node(self) -> ExecutionNode:
+        return ExecutionNode(
+            node_id="df",
+            category=NodeCategory.FILTER,
+            policy=ExecutionPolicyKind.DURABLE_JOB,
+            inputs=["src"],
+            parameters={
+                "predicate": {"op": "eq", "field": "kind", "value": "a"},
+                "features": _fc(6),
+            },
+        )
+
+    def _drifting_scan_stub(self, monkeypatch, state: dict):
+        """外部源桩：产出行数由 ``state["rows"]`` 驱动 —— 模拟源数据漂移，
+        而节点参数/语义指纹不变（漂移不在指纹内，无可校验上游指纹）。"""
+
+        def _scan(ctx, node, payloads):
+            feats = _fc(state["rows"])
+            return {"features": feats, "metadata": {"rows": len(feats)}}
+
+        monkeypatch.setitem(ops.REGISTRY, NodeCategory.SOURCE_SCAN, _scan)
+
+    def _counting_dispatch(self, monkeypatch) -> list:
+        import app.services.geocompute.durable as durable_mod
+
+        dispatched: list = []
+        original = durable_mod.dispatch_node
+
+        def counting(node, **kw):
+            dispatched.append(node.node_id)
+            return original(node, **kw)
+
+        monkeypatch.setattr(durable_mod, "dispatch_node", counting)
+        return dispatched
+
+    def test_no_input_source_node_not_reused_across_plans(self, v5_env,
+                                                          monkeypatch):
+        """P1 data-integrity：无输入 durable 源节点跨计划不复用（进程内）。
+
+        修复前 durable 分支对无输入节点一律用跨计划 checkpoint 键
+        （``owner:node_fp``）—— 同 owner 的第二个计划直接命中第一个计划
+        写下的条目；外部源数据漂移后仍静默返回陈旧数据。in_process 路径
+        （executor.py:1099-1102）对无输入外部源节点刻意保留计划域键，
+        durable 路径漏了同一纪律。
+        """
+        state = {"rows": 2}
+        self._drifting_scan_stub(monkeypatch, state)
+        dispatched = self._counting_dispatch(monkeypatch)
+        src = self._src_node()
+        plan_a = ExecutionPlan(plan_id="v5-xplan-a", nodes=[src])
+        plan_b = ExecutionPlan(plan_id="v5-xplan-b", nodes=[src, self._df_node()])
+
+        eng = GeoExecutionEngine(max_workers=1)
+        first = eng.execute_plan(plan_a, session_id="v5-xplan-sess")
+        assert first.status is ExecutionRunStatus.COMPLETED, first.summary_lines()
+        assert first.evidence["src"].status == "completed"
+        assert first.evidence["src"].rows_emitted == 2
+
+        # 外部源内容漂移（节点语义指纹不变 —— 内容不在指纹内）。
+        state["rows"] = 5
+        second = eng.execute_plan(plan_b, session_id="v5-xplan-sess")
+        assert second.status is ExecutionRunStatus.COMPLETED, second.summary_lines()
+        ev = second.evidence["src"]
+        assert ev.status == "completed", "跨计划必须诚实重算，不得复用陈旧结果"
+        assert ev.rows_emitted == 5
+        assert dispatched.count("src") == 2, "第二个计划必须重新派发源节点"
+        # 陈旧复用会连坐下游：df 过滤的是新内容（5 行里 kind=a 共 3 行；
+        # 陈旧复用只会给它 2 行 → 1 行）。
+        assert second.evidence["df"].rows_emitted == 3
+
+    def test_cross_process_index_not_reused_across_plans(self, v5_env,
+                                                         monkeypatch):
+        """P1 data-integrity：DB 复用索引对无输入源节点同样计划域隔离。
+
+        与进程内路径同病：索引按 (owner, node_fp) 寻址，无输入节点没有
+        上游输出指纹可校验（changed 恒空）→ 修复前跨计划命中即静默复用
+        陈旧结果。条目现带计划域标记，命中前校验（缺标记 = 修复前旧
+        条目，fail-open）。
+        """
+        from app.services.geocompute import reuse_index
+
+        state = {"rows": 2}
+        self._drifting_scan_stub(monkeypatch, state)
+        dispatched = self._counting_dispatch(monkeypatch)
+        src = self._src_node()
+        plan_a = ExecutionPlan(plan_id="v5-xplan2-a", nodes=[src])
+        plan_b = ExecutionPlan(plan_id="v5-xplan2-b",
+                               nodes=[src, self._df_node()])
+        owner = owner_scope_for(None, "v5-xplan2-sess")
+
+        first = GeoExecutionEngine(max_workers=1).execute_plan(
+            plan_a, session_id="v5-xplan2-sess")
+        assert first.status is ExecutionRunStatus.COMPLETED, first.summary_lines()
+        assert first.evidence["src"].rows_emitted == 2
+        # 寻址不变：条目仍按 (owner, node_fp) 落库（现有索引契约）。
+        entry = reuse_index.find_result(owner, src.semantic_fingerprint())
+        assert entry is not None
+
+        # 外部源内容漂移 + 全新引擎（= 另一进程/重启）：进程内 store 为空，
+        # 唯一复用通道是 DB 索引 —— 必须被计划域校验拒绝。
+        state["rows"] = 5
+        second = GeoExecutionEngine(max_workers=1).execute_plan(
+            plan_b, session_id="v5-xplan2-sess")
+        assert second.status is ExecutionRunStatus.COMPLETED, second.summary_lines()
+        ev = second.evidence["src"]
+        assert ev.status == "completed", "跨计划索引命中必须被计划域校验拒绝"
+        assert ev.rows_emitted == 5
+        assert ev.reuse_skipped_reason == "plan_domain_mismatch"
+        assert dispatched.count("src") == 2, "第二个计划必须重新派发源节点"
+
+    def test_input_node_still_reused_across_plans(self, v5_env, scan_stub):
+        """守卫：有上游输入的节点跨计划复用不受影响 —— 计划域隔离只对
+        无输入源节点生效（上游输出指纹一致即命中，ADR-0101 D4 原语义）。"""
+        scan = _node("scan", NodeCategory.SOURCE_SCAN, parameters={"features": _fc(6)})
+        dfilter = ExecutionNode(
+            node_id="df",
+            category=NodeCategory.FILTER,
+            policy=ExecutionPolicyKind.DURABLE_JOB,
+            inputs=["scan"],
+            parameters={
+                "predicate": {"op": "eq", "field": "kind", "value": "a"},
+                "features": _fc(6),
+            },
+        )
+        agg = ExecutionNode(
+            node_id="agg",
+            category=NodeCategory.AGGREGATE,
+            inputs=["df"],
+            parameters={"aggregates": [{"func": "count", "field": "v"}]},
+        )
+        plan_a = ExecutionPlan(plan_id="v5-guard-a", nodes=[scan, dfilter])
+        plan_b = ExecutionPlan(plan_id="v5-guard-b", nodes=[scan, dfilter, agg])
+
+        first = GeoExecutionEngine(max_workers=1).execute_plan(
+            plan_a, session_id="v5-guard-sess")
+        assert first.evidence["df"].status == "completed"
+
+        second = GeoExecutionEngine(max_workers=1).execute_plan(
+            plan_b, session_id="v5-guard-sess")
+        ev = second.evidence["df"]
+        assert ev.status == "reused", "有输入节点的跨计划复用必须保持"
+        assert ev.reuse_source == "cross_process_index"
+        assert ev.checkpoint_verified is True
+
     def test_stale_upstream_fingerprint_blocks_reuse(self, v5_env, scan_stub,
                                                      monkeypatch):
         import app.services.geocompute.durable as durable_mod
@@ -729,6 +885,28 @@ class TestRunEvidenceSnapshot:
             ))
         replay = run_evidence.load_snapshot("gexec-small", owner_scope="u:rt")
         assert replay is not None and replay.evidence["n1"].rows_emitted == 3
+
+    def test_long_owner_scope_reads_use_write_side_truncation(self, v5_env):
+        """写侧按列宽存 ``owner_scope[:40]``；读侧（list/load/extras）必须
+        同一投影，否则长 owner 域的快照读静默永不命中。"""
+        from app.services.geocompute import run_evidence
+
+        owner = "u:" + "x" * 60
+        run = ExecutionRun(
+            run_id="gexec-long-owner", plan_id="p", plan_fingerprint="fp",
+            status=ExecutionRunStatus.COMPLETED,
+            evidence={"n1": NodeEvidence(status="completed", rows_emitted=1)},
+        )
+        assert run_evidence.save_snapshot(
+            run, owner,
+            extras={"reproducibility": {"classification": "reproducible"}},
+        ) is True
+        assert run_evidence.load_snapshot(
+            run.run_id, owner_scope=owner) is not None
+        listed = run_evidence.list_snapshots(owner)
+        assert any(r["run_id"] == run.run_id for r in listed)
+        extras = run_evidence.load_snapshot_extras(run.run_id, owner_scope=owner)
+        assert extras["reproducibility"]["classification"] == "reproducible"
 
 
 # ------------------------------------------------------ 5. eager 诚实披露

@@ -175,7 +175,6 @@ def make_worker_provider_class(
 
         def __init__(self, connection_profile: Any):
             super().__init__(connection_profile)
-            self._serial = serial
             dump = getattr(connection_profile, "model_dump", None)
             self._profile_payload = (
                 dump(mode="json") if callable(dump) else None
@@ -255,12 +254,23 @@ def make_worker_provider_class(
             if "tiles" not in mixins:
                 raise NotImplementedError
             from app.extensions_platform.sdk.provider import TilePayload
+            from app.services.data_fabric.errors import SourceBadResponseError
 
             payload = self._rpc("get_tile", z=z, x=x, y=y, **params)
+            if not isinstance(payload, dict):
+                # worker 侧 provider 返回 None → RPC 载荷为 null：裸
+                # payload.get 会抛 AttributeError 逃逸 M-7 映射表
+                # （data_fabric 消费端只见 DataFabricError 子类）。
+                raise SourceBadResponseError(
+                    f"extension provider {source_type!r} get_tile returned no "
+                    "tile payload (worker RPC result was null)"
+                )
+            extent = payload.get("extent")
             return TilePayload(
                 data=bytes.fromhex(payload.get("data_hex", "")),
                 content_type=str(payload.get("content_type", "image/png")),
-                extent=payload.get("extent"),
+                # JSON 帧把 tuple 运成 list：归一回声明的 tuple 形状。
+                extent=tuple(extent) if isinstance(extent, (list, tuple)) else None,
                 metadata=payload.get("metadata"),
             )
 

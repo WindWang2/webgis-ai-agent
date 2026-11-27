@@ -190,7 +190,9 @@ export function FrameProductGrid({
       try {
         await run;
       } finally {
-        liveSwitchingRef.current = null;
+        // 仅注销自己登记的 run：链上后一个调用的 promise 可能已写入 ref，
+        // 先完成者无条件置空会清掉它 → 后续调用不再串行（A22 护栏失效）。
+        if (liveSwitchingRef.current === run) liveSwitchingRef.current = null;
       }
     },
     [],
@@ -364,7 +366,7 @@ export function FrameProductGrid({
   }, [gridState.syncPan, gridState.syncZoom, gridState.linkMain]);
 
   useEffect(() => {
-    hubRef.current?.setActiveFrame(liveFrameId === gridState.activeFrameId ? liveFrameId : gridState.activeFrameId);
+    hubRef.current?.setActiveFrame(gridState.activeFrameId);
   }, [liveFrameId, gridState.activeFrameId]);
 
   // 主图 attach（mapLoaded 门 —— ComparisonView 同款）。

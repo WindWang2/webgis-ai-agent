@@ -17,8 +17,11 @@
 
 import {
   CategoryBinding,
+  PointParams,
   SymbolAssetBinding,
   SymbolAssetDocument,
+  SymbolAssetParamError,
+  TextureParams,
   normalizePointParams,
   normalizeTextureParams,
   pointImageId,
@@ -96,7 +99,14 @@ export function resolveBindingForFeature(
   return mainDoc ? { doc: mainDoc, params: mainParams } : null;
 }
 
-/** 类别映射 → icon-image match 表达式（点符号；typed 字面量）。 */
+/**
+ * 类别映射 → icon-image match 表达式（点符号；typed 字面量）。
+ *
+ * params 必须是归一化形（normalizePointParams 输出）：imageId 与
+ * ensureRegistered 的注册名同源（register.ts:103 亦以归一化 params 算
+ * id）。喂原始 params 时，省略 params / 键序不同 → stableKey 分歧 →
+ * 表达式指向未注册图像，类别图标静默不渲染。
+ */
 export function categoryIconExpression(
   cb: CategoryBinding,
   binding: SymbolAssetBinding,
@@ -140,8 +150,14 @@ export function projectSymbolAssetLayer(
   const failures: RegistrationFailure[] = [];
   const disclosures: string[] = [];
   if (binding.kind === 'point_symbol') {
-    const params = normalizePointParams(
-      (binding.params ?? {}) as Record<string, unknown>, doc);
+    let params: PointParams;
+    try {
+      params = normalizePointParams(
+        (binding.params ?? {}) as Record<string, unknown>, doc);
+    } catch (err) {
+      if (!(err instanceof SymbolAssetParamError)) throw err;
+      return { failure: { code: err.code, message: err.message } };
+    }
     const main = ensureRegistered(map, doc, params as unknown as Record<string, unknown>, binding.content_digest);
     if ('code' in main) {
       return {
@@ -179,7 +195,35 @@ export function projectSymbolAssetLayer(
           if ('code' in r) failures.push(r);
         }
       }
-      iconImage = categoryIconExpression(cb, binding);
+      // 表达式侧与注册侧同源：ensureRegistered（register.ts:103）以归一化
+      // params 算 imageId；若把原始 params 喂给 categoryIconExpression，
+      // 类别规则省略 params 或键序不同 → stableKey 分歧 → 表达式指向未注册
+      // 图像，类别图标静默不渲染。归一化幂等且键序规范化，预归一化后再交
+      // 表达式（归一化失败 = 注册亦失败已披露，保留原 params）。
+      const exprParams = (
+        raw: Record<string, unknown> | undefined,
+        digest: string | undefined,
+      ): Record<string, unknown> => {
+        const d = digest ? docs.get(digest) : undefined;
+        if (!d) return (raw ?? {}) as Record<string, unknown>;
+        try {
+          return normalizePointParams(
+            raw ?? {}, d) as unknown as Record<string, unknown>;
+        } catch {
+          return (raw ?? {}) as Record<string, unknown>;
+        }
+      };
+      iconImage = categoryIconExpression(
+        {
+          ...cb,
+          map: cb.map.map((rule) => ({
+            ...rule,
+            params: exprParams(rule.params, rule.content_digest),
+          })),
+          other_params: exprParams(cb.other_params, cb.other_content_digest),
+        },
+        { ...binding, params: params as unknown as Record<string, unknown> },
+      );
     }
     return {
       patch: {
@@ -204,8 +248,14 @@ export function projectSymbolAssetLayer(
     };
   }
   // area_texture
-  const params = normalizeTextureParams(
-    (binding.params ?? {}) as Record<string, unknown>, doc);
+  let params: TextureParams;
+  try {
+    params = normalizeTextureParams(
+      (binding.params ?? {}) as Record<string, unknown>, doc);
+  } catch (err) {
+    if (!(err instanceof SymbolAssetParamError)) throw err;
+    return { failure: { code: err.code, message: err.message } };
+  }
   const main = ensureRegistered(map, doc, params as unknown as Record<string, unknown>, binding.content_digest);
   if ('code' in main) {
     return {

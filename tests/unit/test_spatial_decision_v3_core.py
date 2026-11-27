@@ -339,3 +339,61 @@ def test_detect_expired_rule():
     conflicts = detect_rule_conflicts([r_expired], reference_date="2026-09-03")
     assert len(conflicts) >= 1
     assert conflicts[0]["type"] == "temporal_expired"
+
+
+# --- 9. P3 review regressions ---
+
+def test_numeric_constraint_falls_back_when_attribute_value_is_none():
+    """A present-but-None attribute is missing evidence; use metric_values instead."""
+    alt = Alternative(id="a", name="a", attributes={"cost": None})
+    constraint = Constraint(
+        id="c_budget",
+        name="Budget <= 500",
+        constraint_type=ConstraintType.HARD,
+        category=ConstraintCategory.NUMERIC,
+        metric_key="cost",
+        operator="<=",
+        threshold=500.0,
+    )
+    is_feasible, hard_violations, _ = evaluate_alternative_constraints(
+        alt, [constraint], {"cost": 400.0}
+    )
+    assert is_feasible is True
+    assert hard_violations == []
+
+
+def test_unparseable_reference_date_reported_once_instead_of_per_rule():
+    """An invalid reference_date must not be misreported as each rule's validity date."""
+    r1 = DomainRule(
+        id="r1",
+        domain="urban_planning",
+        name="Rule 1",
+        statement="Expired rule",
+        parameters={"valid_until": "2020-01-01"},
+    )
+    r2 = DomainRule(
+        id="r2",
+        domain="urban_planning",
+        name="Rule 2",
+        statement="Rule without validity",
+        parameters={},
+    )
+
+    conflicts = detect_rule_conflicts([r1, r2], reference_date="not-a-date")
+
+    assert len(conflicts) == 1
+    assert conflicts[0]["type"] == "temporal_invalid"
+    assert conflicts[0]["rule_id"] is None
+    assert "Reference date" in conflicts[0]["message"]
+
+
+def test_fixed_distribution_without_value_raises_instead_of_zero():
+    """A FIXED uncertainty parameter must declare value/expected, never default to 0."""
+    param = UncertainParameter(
+        param_id="fixed_missing",
+        name="Fixed Missing",
+        distribution=DistributionType.FIXED,
+        params={},
+    )
+    with pytest.raises(ValueError):
+        sample_parameter_distribution(param, 10, np.random.default_rng(0))

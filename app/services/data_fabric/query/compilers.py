@@ -63,6 +63,12 @@ def _fmt_coord(v: float) -> str:
 
 def geojson_to_wkt(geom: Dict[str, Any]) -> str:
     """GeoJSON geometry → WKT（用于 PostGIS ST_GeomFromText 参数）。"""
+    return _geojson_to_wkt(geom, 0)
+
+
+def _geojson_to_wkt(geom: Dict[str, Any], _depth: int) -> str:
+    if _depth > _WKT_MAX_DEPTH:
+        raise PredicateError("geometry nesting too deep")
     if not isinstance(geom, dict) or "type" not in geom:
         raise PredicateError("geometry must be a GeoJSON object")
     gtype = str(geom["type"])
@@ -74,7 +80,9 @@ def geojson_to_wkt(geom: Dict[str, Any]) -> str:
     if gtype == "Point":
         return f"POINT {_ring_line(coords)}"
     if gtype == "MultiPoint":
-        return "MULTIPOINT (" + ", ".join(_ring_line([c if isinstance(c, list) and not isinstance(c[0], list) else c]) for c in coords) + ")"
+        # c 为空 list（如 [[]]）时 c[0] 会抛 IndexError（非 typed）；加非空守卫
+        # 后交由 _coords_to_wkt 抛 PredicateError（与其余几何路径一致的 typed 拒绝）。
+        return "MULTIPOINT (" + ", ".join(_ring_line([c if isinstance(c, list) and c and not isinstance(c[0], list) else c]) for c in coords) + ")"
     if gtype == "LineString":
         return f"LINESTRING {_ring_line(coords)}"
     if gtype == "MultiLineString":
@@ -87,7 +95,7 @@ def geojson_to_wkt(geom: Dict[str, Any]) -> str:
             polys.append("(" + ", ".join(_ring_line(r) for r in poly) + ")")
         return "MULTIPOLYGON (" + ", ".join(polys) + ")"
     if gtype == "GeometryCollection" and isinstance(geom.get("geometries"), list):
-        parts = ", ".join(geojson_to_wkt(g) for g in geom["geometries"])
+        parts = ", ".join(_geojson_to_wkt(g, _depth + 1) for g in geom["geometries"])
         return f"GEOMETRYCOLLECTION ({parts})"
     raise PredicateError(f"unsupported GeoJSON type for WKT: {gtype}")
 
@@ -339,7 +347,9 @@ def compile_predicate_cql2(node: Any) -> str:
 
 
 def compile_bbox_cql2(bbox: Sequence[float], *, geometry_property: str = "geometry") -> str:
-    minx, miny, maxx, maxy = bbox
+    from app.services.data_fabric.query.predicates import _check_bbox
+
+    minx, miny, maxx, maxy = _check_bbox(bbox)
     property_name = '"' + geometry_property.replace('"', '""') + '"'
     return (
         f'S_INTERSECTS({property_name}, BBOX({_cql2_number(minx)}, {_cql2_number(miny)}, '

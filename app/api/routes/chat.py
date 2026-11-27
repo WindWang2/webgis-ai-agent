@@ -1114,6 +1114,10 @@ async def chat_completions(
                         )
                     except Exception:  # noqa: BLE001 — guard wiring is additive
                         pass
+            # C-F2 parity：守卫与能力写完后 request 级连接即可归还 ——
+            # 后续 turn（LLM+工具，秒~分钟）与持久化各用短生命周期会话。
+            if db is not None:
+                await db.close()
             try:
                 try:
                     await _record_frontend_cartographic_observation(_affinity_sid, req.map_state)
@@ -1996,6 +2000,15 @@ async def push_session_map_state(
     SEC-08：匿名会话需匹配 owner_token。
     """
     from app.services.session_data import session_data_manager
+    # #643: client layers are not Desired MapSpec. Viewport hints and
+    # observation envelopes stay; wholesale layer replacement is rejected.
+    # 静默丢弃 + 204 会让推送图层的客户端误以为写入成功 —— 在任何写入
+    # 之前显式拒绝，避免留下半写状态。
+    if req.layers:
+        raise HTTPException(
+            status_code=422,
+            detail="layers are not accepted here; client layers are not Desired MapSpec",
+        )
     if req.viewport:
         applied = await session_data_manager.set_map_state(
             session_id, "viewport", req.viewport, seq=req.seq
@@ -2011,6 +2024,7 @@ async def push_session_map_state(
             )
     # #643: client layers are not Desired MapSpec. Viewport hints and
     # observation envelopes stay; wholesale layer replacement is rejected.
+    # 静默丢弃 + 204 会让推送图层的客户端误以为写入成功 —— 显式拒绝。
     if req.base_layer:
         applied = await session_data_manager.set_map_state(
             session_id, "base_layer", req.base_layer
@@ -2720,6 +2734,9 @@ async def execute_tool_direct(
         db, session_id=req.session_id, user=_user, owner_token=owner_token,
         tool_name=tool_name, tier=tier,
     )
+    # 工具执行可能很久；鉴权/审计完成后归还池连接，别让请求级 Session
+    # 在 dispatch 期间空占连接。
+    await db.close()
 
     try:
         # SEC-F1: grant the chokepoint tier-3 rights only for the confirmed

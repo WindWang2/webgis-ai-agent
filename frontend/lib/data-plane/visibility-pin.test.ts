@@ -20,6 +20,7 @@ import {
   syncVisibilityPins,
   visibilityPinSignature,
 } from '@/lib/data-plane/visibility-pin';
+import { useHudStore } from '@/lib/store/useHudStore';
 
 describe('refCacheKey', () => {
   it('backward compatible without revision', () => {
@@ -253,5 +254,34 @@ describe('visibility-pin module', () => {
     expect(() => syncVisibilityPins()).not.toThrow();
     expect(() => syncVisibilityPins()).not.toThrow();
     _resetVisibilityPinForTests();
+  });
+
+  it('unrelated store updates do not recompute the pin signature (layers-only trigger)', () => {
+    // 订阅只应在 layers 引用变化时跑全量签名：tab/面板/hover 的 setState
+    // 不触碰 layer 字段（用 getter 计数把「是否读 layers」变成可观测行为）。
+    _resetVisibilityPinForTests();
+    let layerReads = 0;
+    const layers = [
+      {
+        id: 'l1',
+        _refId: 'ref:a',
+        get visible() {
+          layerReads += 1;
+          return true;
+        },
+      },
+    ];
+    const previousLayers = useHudStore.getState().layers;
+    const previousPanelOpen = useHudStore.getState().leftPanelOpen;
+    try {
+      useHudStore.setState({ layers: layers as never });
+      layerReads = 0;
+      // 无关字段更新：layers 引用不变 → 不得读 layer 字段（不算签名）。
+      useHudStore.setState({ leftPanelOpen: !previousPanelOpen });
+      expect(layerReads).toBe(0);
+    } finally {
+      useHudStore.setState({ layers: previousLayers, leftPanelOpen: previousPanelOpen });
+      _resetVisibilityPinForTests();
+    }
   });
 });

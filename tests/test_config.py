@@ -1,4 +1,6 @@
 """配置模块测试"""
+import pytest
+
 from app.core.config import Settings
 
 
@@ -84,6 +86,25 @@ def test_database_url():
     assert parsed.scheme in {"sqlite", "postgresql", "postgres"}, (
         f"unsupported DATABASE_URL scheme: {parsed.scheme!r}"
     )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "postgresql+psycopg2://user:pass@localhost/db",
+        "postgresql+asyncpg://user:pass@localhost/db",
+    ],
+)
+def test_production_accepts_explicit_postgres_driver(url):
+    """生产 DATABASE_URL 允许显式驱动后缀（_to_sync_url/_to_async_url 支持）。"""
+    s = Settings(
+        _env_file=None,
+        ENV="production",
+        JWT_SECRET_KEY="x" * 32,
+        LLM_API_KEY="sk-test-key-for-db-driver-test",
+        DATABASE_URL=url,
+    )
+    assert s.DATABASE_URL == url
 
 
 def test_production_rejects_auth_disabled():

@@ -92,19 +92,28 @@ class RetrievalService:
             return None
 
     def _ensure_index(self) -> Tuple[List[DatasetCard], BM25Index]:
+        # 签名探测（registry 热重载的 glob/stat/解析）与卡片构建都在锁外：
+        # 热重载文件 I/O 绝不阻塞并发检索。
+        sig = self._registry_signature()
         with self._lock:
-            sig = self._registry_signature()
-            if self._index is None or sig != self._snapshot_mtimes:
-                self._cards = build_cards()
-                triples = []
-                for c in self._cards:
-                    triples.append((
-                        c.card_id,
-                        c.searchable_text(),
-                        list(c.keywords) + [c.source_name],
-                    ))
-                self._index = BM25Index(triples)
-                self._snapshot_mtimes = sig
+            if self._index is not None and sig == self._snapshot_mtimes:
+                return self._cards, self._index
+        cards = build_cards()
+        triples = []
+        for c in cards:
+            triples.append((
+                c.card_id,
+                c.searchable_text(),
+                list(c.keywords) + [c.source_name],
+            ))
+        index = BM25Index(triples)
+        with self._lock:
+            # 并发构建：另一线程已用同一签名发布 → 复用（避免覆盖/重复）。
+            if self._index is not None and sig == self._snapshot_mtimes:
+                return self._cards, self._index
+            self._cards = cards
+            self._index = index
+            self._snapshot_mtimes = sig
             return self._cards, self._index
 
     # -- retrieval --------------------------------------------------------------

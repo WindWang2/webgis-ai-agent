@@ -115,6 +115,30 @@ def test_scores_visual_judge_penalises_collisions_and_flat_canvas():
   assert scores["total_score_100_max"] == 87.0
 
 
+@pytest.mark.parametrize(
+    "field", ["luminanceStdDev", "dominantRatio", "transparentRatio"]
+)
+@pytest.mark.parametrize("value", [None, "not-a-number", []])
+def test_scores_invalid_canvas_metrics_fall_back_to_defaults(field, value):
+  canvas = {
+      "luminanceStdDev": 25.0,
+      "dominantRatio": 0.50,
+      "transparentRatio": 0.10,
+      "blank": False,
+  }
+  report = {"canvas": canvas, "controls": {"overflow": [], "collisions": []}}
+  mapspec = {"sources": {"s1": {}}, "layers": [{"id": "l1"}]}
+  expected_canvas = dict(canvas)
+  expected_canvas.pop(field)
+  expected = compute_eval_scores(
+      {"canvas": expected_canvas, "controls": {"overflow": [], "collisions": []}},
+      mapspec,
+  )
+
+  canvas[field] = value
+  assert compute_eval_scores(report, mapspec) == expected
+
+
 def test_scores_penalise_browser_failures():
   # console errors and a missing screenshot should drop browser + traceability.
   report = {

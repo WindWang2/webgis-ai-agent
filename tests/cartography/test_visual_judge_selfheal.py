@@ -1193,3 +1193,49 @@ async def test_authorized_semantic_incomplete_recipe_is_suggestion_only(
         current["layers"][0]["legend_spec"]["palette_colors"] == _SEPARABLE
     )
     bridge._harnesses.pop(judge_session, None)
+
+
+def test_no_dead_end_action_ids_registered():
+    """P2：无执行器分支的 AUTO_SAFE 注册项 = 死端（触发词命中后白跑一轮）。
+
+    ``resample`` 标注 auto_safe + runtime，但 build_runtime_patch 无对应
+    分支（恒返 None）—— 与 relayout_* 同族缺陷，撤销注册面。
+    """
+    ids = {spec.action_id for spec in SELFHEAL_ACTIONS}
+    assert "resample" not in ids
+    assert "relayout_change_anchor" not in ids
+    # runtime 面注册项必须逐条有 build_runtime_patch 执行分支
+    # （分支缺席 = 死端：触发词命中后白跑一轮，AUTO_SAFE 标注误导）。
+    runtime_ids = {spec.action_id for spec in SELFHEAL_ACTIONS
+                   if spec.surface == "runtime"}
+    assert runtime_ids == {
+        "restore_visibility", "reapply_opacity", "refresh_legend",
+        "restore_style_projection"}
+
+
+def test_palette_rotation_survives_paint_stop_count_mismatch():
+    """P2：paint stop/case 数与色带色数不等时 zip(strict=True) 抛 ValueError，
+    异常不得逃出 build_presentation_commit 打断自愈编排。"""
+    spec = actions_by_id()["rotate_palette"]
+    layer = {
+        "id": "result",
+        "legend_spec": {
+            "palette": "viridis",
+            "colors": ["#111111", "#222222", "#333333", "#444444"],
+            "categories": [
+                {"key": "a", "color": "#111111"},
+                {"key": "b", "color": "#222222"},
+            ],
+        },
+        "paint": {
+            "fill-color": {
+                "property": "v", "type": "categorical",
+                "method": "match",
+                "cases": [["a", "#111111"], ["b", "#222222"]],
+            },
+        },
+    }
+    commit = build_presentation_commit(spec, layer=layer)
+    assert commit is not None
+    assert commit["operation"] == "rotate_palette"
+    assert len(commit["after_colors"]) == 4

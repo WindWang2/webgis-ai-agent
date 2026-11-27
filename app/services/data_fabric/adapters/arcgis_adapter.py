@@ -504,6 +504,10 @@ class ArcGISAdapter(GeospatialDataSourceAdapter):
             features = []
         if local_slice is not None:
             features = features[local_slice[0]: local_slice[0] + local_slice[1]]
+        # 页窗口以**远端行数**为准（本地余项过滤前）—— 拆分过滤下满页远端行
+        # 被本地谓词滤到 <limit 时，truncated/has_more 仍必须如实为 True，
+        # 否则联邦执行器停止翻页、后续匹配行静默丢失。
+        page_rows = len(features)
 
         # V5：拆分计划的本地余项在页窗口切片后精确求值（页窗口以远端行数为准）。
         if local_filter is not None:
@@ -516,7 +520,7 @@ class ArcGISAdapter(GeospatialDataSourceAdapter):
         # 诚实截断语义（审计 M-2）：exceededTransferLimit 说明还有数据
         exceeded = bool(data.get("exceededTransferLimit")) if isinstance(data, dict) else False
         returned = len(features)
-        truncated = exceeded or returned >= limit
+        truncated = exceeded or page_rows >= limit
         # 偏移累计（本页起点 + 本页大小）
         if supports_pagination:
             has_more = truncated

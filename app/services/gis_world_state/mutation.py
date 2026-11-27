@@ -171,7 +171,15 @@ def _should_match_layer_family(layer_id: Any, target_id: str) -> bool:
         return False
     if layer_id == target_id:
         return True
-    return layer_id.startswith(f"{target_id}-") or layer_id.startswith(f"{target_id}__")
+    # 双向族匹配（与 reconciliation._layer_family_members 一致）：spec 侧的
+    # 父 id（foo）同样命中 intent 目标的后缀变体（foo-label），否则
+    # user-wins 守卫对父层的用户决策漏判。
+    return (
+        layer_id.startswith(f"{target_id}-")
+        or layer_id.startswith(f"{target_id}__")
+        or target_id.startswith(f"{layer_id}-")
+        or target_id.startswith(f"{layer_id}__")
+    )
 
 
 async def _check_user_presentation_guard_ring(
@@ -648,6 +656,13 @@ async def apply_gis_mutation_batch(
             o.layer_id for o in result.outcomes
             if o.status == "applied" and o.visible is False
         )
+        # P3：shown/hidden 只收显隐决策（o.visible is True/False）；纯 opacity
+        # patch（visible=None）落盘后缺逐层证据 —— applied 全量留痕，避免
+        # 批条目对该层"无记录"。
+        applied = sorted(
+            o.layer_id for o in result.outcomes
+            if o.status == "applied"
+        )
         # B/Q4：逐 intent 记录 override（批摘要的单 kind 只保留兼容，
         # per-intent 条目为准 —— 回答"该层以何种 override 落盘"）。
         intent_overrides = []
@@ -672,7 +687,7 @@ async def apply_gis_mutation_batch(
                     f"batch applied={result.applied_count} "
                     f"refused={result.refused_count} not_found={result.not_found_count}"
                 ),
-                detail={"shown": shown, "hidden": hidden,
+                detail={"shown": shown, "hidden": hidden, "applied": applied,
                         # W15：override 分类 + 来源记录（batch 均为呈现类；
                         # 批级单 kind 仅兼容保留，逐条见 intent_overrides）。
                         "override_kind": (

@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 
 from app.lib.cartography.symbol_asset import (
     BUILTIN_ASSET_PREFIX,
@@ -185,6 +185,28 @@ def _content_store():
     return get_filesystem_blob_store()
 
 
+def _validate_document_for_write(
+    document: SymbolAssetDocument, *, expected_kind: Optional[str] = None,
+) -> str:
+    """写入前校验（kind/字节预算/digest）；返回规范形 payload。
+
+    BlobStore 落盘不可回收：必须先过校验再 ``_put_document_blob``，否则
+    被拒文档留下无引用孤儿 blob（重复尝试只增不减）。
+    """
+    if expected_kind is not None and document.kind != expected_kind:
+        raise CartographicAssetError(
+            "asset_kind_mismatch", f"{document.kind} != {expected_kind}")
+    payload = document.model_dump_json()
+    if len(payload.encode("utf-8")) > MAX_ASSET_JSON_BYTES:
+        raise CartographicAssetError(
+            "asset_document_error", "规范形超字节预算")
+    from app.lib.cartography.symbol_asset import validate_digest as _vd
+    if not _vd(document):
+        raise CartographicAssetError(
+            "asset_document_error", "content_digest 与内容不符（写入拒绝）")
+    return payload
+
+
 def _put_document_blob(doc: SymbolAssetDocument) -> Tuple[str, str]:
     """规范形 canonical JSON → BlobStore CAS。返回 (blob_key, digest)。"""
     from app.services.durable_blob_store import sha256_of_bytes
@@ -245,6 +267,7 @@ def create_asset(
         raise CartographicAssetForbiddenError("anonymous cannot create assets")
 
     asset_id = f"{DB_ASSET_PREFIX}{uuid.uuid4().hex}"
+    _validate_document_for_write(document)
     blob_key, digest = _put_document_blob(document)
     asset = CartographicSymbolAsset(
         id=asset_id, org_id=org_id, creator_id=creator_id,
@@ -252,11 +275,13 @@ def create_asset(
         name=(document.name or asset_id[-8:])[:255],
         description=description[:2000], kind=document.kind,
         status="draft", latest_revision=0, current_revision=0)
-    db.add(asset)
     try:
-        db.flush()
+        # db.rollback() 会连带丢弃调用方会话里未提交的先行写入；
+        # 只回滚本资产插入（savepoint），与 _insert_version 同纪律。
+        with db.begin_nested():
+            db.add(asset)
+            db.flush()
     except Exception as exc:
-        db.rollback()
         raise CartographicAssetError("asset_conflict", str(exc)[:160]) from exc
     version = _insert_version(
         db, asset, document=document, blob_key=blob_key, digest=digest,
@@ -279,17 +304,7 @@ def _insert_version(
     blob_key: str, digest: str, created_by: Optional[str],
 ) -> CartographicSymbolAssetVersion:
     """追加不可变版本（max+1 重试；kind 与资产一致）。"""
-    if document.kind != asset.kind:
-        raise CartographicAssetError(
-            "asset_kind_mismatch", f"{document.kind} != {asset.kind}")
-    payload = document.model_dump_json()
-    if len(payload.encode("utf-8")) > MAX_ASSET_JSON_BYTES:
-        raise CartographicAssetError(
-            "asset_document_error", "规范形超字节预算")
-    from app.lib.cartography.symbol_asset import validate_digest as _vd
-    if not _vd(document):
-        raise CartographicAssetError(
-            "asset_document_error", "content_digest 与内容不符（写入拒绝）")
+    payload = _validate_document_for_write(document, expected_kind=asset.kind)
     for attempt in range(_MAX_REVISION_CREATE_ATTEMPTS):
         try:
             # 14b：版本号并发冲突只许回滚本版本插入（savepoint），
@@ -334,6 +349,7 @@ def new_version(
     if asset.status == "retired":
         raise CartographicAssetError(
             "asset_retired", "retired 资产需先 restore 再加版本")
+    _validate_document_for_write(document, expected_kind=asset.kind)
     blob_key, digest = _put_document_blob(document)
     version = _insert_version(
         db, asset, document=document, blob_key=blob_key, digest=digest,
@@ -506,20 +522,24 @@ def list_assets(
         (CartographicSymbolAssetVersion.asset_id == CartographicSymbolAsset.id)
         & (CartographicSymbolAssetVersion.revision
            == CartographicSymbolAsset.latest_revision))
+    filters = []
     if scope is not None:
-        stmt = stmt.where(scope)
+        filters.append(scope)
     if not include_retired:
-        stmt = stmt.where(CartographicSymbolAsset.status != "retired")
+        filters.append(CartographicSymbolAsset.status != "retired")
     if kind:
-        stmt = stmt.where(CartographicSymbolAsset.kind == kind)
+        filters.append(CartographicSymbolAsset.kind == kind)
+    stmt = stmt.where(*filters)
+    total = int(db.execute(
+        select(func.count()).select_from(CartographicSymbolAsset)
+        .where(*filters)).scalar() or 0)
+    page_limit = max(1, min(int(limit), MAX_LIST_ASSETS))
     rows = db.execute(stmt.order_by(
         CartographicSymbolAsset.updated_at.desc(),
-        CartographicSymbolAsset.id)).all()
-    total = len(rows)
-    page_limit = max(1, min(int(limit), MAX_LIST_ASSETS))
-    page = rows[max(0, int(offset)):max(0, int(offset)) + page_limit]
+        CartographicSymbolAsset.id
+    ).limit(page_limit).offset(max(0, int(offset)))).all()
     out: List[Dict[str, Any]] = []
-    for asset, version in page:
+    for asset, version in rows:
         out.append({
             "asset_id": asset.id,
             "name": asset.name,
@@ -618,7 +638,10 @@ def find_asset_references(asset_id: str, revision: Optional[int] = None,
                 data = json.loads(spec_path.read_text("utf-8"))
             except Exception:
                 continue
-            for layer in (data or {}).get("layers") or []:
+            if not isinstance(data, dict):
+                # 合法 JSON 但非对象：与解析失败同面（不可读即跳过）。
+                continue
+            for layer in data.get("layers") or []:
                 if not isinstance(layer, dict):
                     continue
                 binding = layer.get("symbol_asset")

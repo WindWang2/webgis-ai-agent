@@ -105,6 +105,10 @@ describe('filenameFromUrl', () => {
     expect(filenameFromUrl(`${exportUrl('a%20b.png')}?session_id=x`)).toBe('a b.png');
   });
 
+  it('strips URL fragments so they never leak into a.download', () => {
+    expect(filenameFromUrl(`${exportUrl('report.pdf')}#page=2`)).toBe('report.pdf');
+  });
+
   it('malformed percent-encoding does not throw', () => {
     expect(() => filenameFromUrl(exportUrl('%'))).not.toThrow();
     expect(filenameFromUrl(exportUrl('%E0%A4%A'))).toBe('%E0%A4%A');

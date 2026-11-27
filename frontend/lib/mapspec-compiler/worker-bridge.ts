@@ -392,10 +392,19 @@ export function disposeWorker(): void {
     clearTimeout(idleTimer);
     idleTimer = null;
   }
-  if (sharedWorker) {
-    try { sharedWorker.terminate(); } catch { /* already gone */ }
+  const worker = sharedWorker;
+  if (worker) {
+    // P2（review）：terminate 不会触发 message/error —— 在飞请求必须以失败
+    // 空 patch 结算，否则 promise 悬挂到 30s 超时，且 activeRequestsCount
+    // 滞留会让新 worker 的空闲终止永久失效。
     sharedWorker = null;
+    try { worker.terminate(); } catch { /* already gone */ }
+    const failures = workerFailureHandlers.get(worker);
+    if (failures) {
+      for (const fail of Array.from(failures)) fail();
+    }
   }
+  activeRequestsCount = 0;
 }
 
 /**
@@ -521,12 +530,19 @@ export function diffSpecsAsync(prev: MapSpec | null, next: MapSpec): Promise<Spe
 
     // FE-02: post a stripped copy (inline GeoJSON → identity token). Keep the
     // full `prev`/`next` references for rehydrating the response patch.
-    const strippedNext = stripInlineForTransfer(next) as MapSpec;
-    const request: DiffRequest = {
-      id,
-      prev: stripInlineForTransfer(prev),
-      next: strippedNext,
-    };
-    worker.postMessage(request);
+    try {
+      const strippedNext = stripInlineForTransfer(next) as MapSpec;
+      const request: DiffRequest = {
+        id,
+        prev: stripInlineForTransfer(prev),
+        next: strippedNext,
+      };
+      worker.postMessage(request);
+    } catch {
+      // P2（review）：stripInlineForTransfer 的深相等递归可同步栈溢出 ——
+      // 必须走 finish 结算（空 patch），否则 activeRequestsCount 永不归零
+      // 且 promise 以 reject 结算。
+      finish(EMPTY_PATCH);
+    }
   });
 }

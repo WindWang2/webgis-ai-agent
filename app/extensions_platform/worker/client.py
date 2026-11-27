@@ -119,7 +119,7 @@ def _worker_pythonpath() -> str:
             return str(_REPO_ROOT)
         _PYTHONPATH_STAGE = stage
         return str(stage)
-_BROKER_ENV_DENY = object()
+
 
 BrokerHandler = Callable[[str, dict[str, Any]], tuple[bool, Any]]
 
@@ -182,6 +182,10 @@ class WorkerProcess:
         self._reader: Optional[threading.Thread] = None
         self._stderr_capture: Optional[StderrCapture] = None
         self._lock = threading.RLock()
+        # 握手等待期门禁：start() 的等待不持 _lock（见 start），但协议要求
+        # 握手帧先行——等待期 call/health/stream 的准入被本标志拒绝（typed），
+        # 绝不与握手帧交错写坏 RPC 通道。
+        self._starting = False
         self.in_flight = False
         self.tools: list[dict[str, Any]] = []
         # V3（ADR-0119）：握手申报的 worker 化投影声明。
@@ -207,10 +211,8 @@ class WorkerProcess:
             budget.release_one()
 
     def _reject_reader_frame(self, frames: Any, proc: Any, message: str) -> None:
-        try:
-            frames.put({"type": "__protocol_error__", "message": message}, timeout=0.25)
-        except queue.Full:
-            pass
+        # _frames 是无界队列（预算由 _FrameByteBudget 承担），put 永不阻塞/失败。
+        frames.put({"type": "__protocol_error__", "message": message})
         with self._lock:
             if self._proc is proc:
                 self.kill()
@@ -300,43 +302,55 @@ class WorkerProcess:
                         stream_window=self._stream_window,
                     ),
                 )
-                while True:
-                    frame = self._next_frame(deadline, DiagnosticCode.WORKER_STARTUP_TIMEOUT)
-                    ftype = frame.get("type")
-                    if ftype == "handshake_ok":
-                        if frame.get("protocol") != WORKER_PROTOCOL_VERSION:
-                            raise _diagnostic(
-                                DiagnosticCode.WORKER_PROTOCOL_MISMATCH.value,
-                                "worker replied with unknown protocol version",
-                                self._extension_id,
-                            )
-                        self.tools = list(frame.get("tools") or [])
-                        self.algorithms = list(frame.get("algorithms") or [])
-                        self.data_providers = list(frame.get("data_providers") or [])
-                        self.cartography_items = list(frame.get("cartography_items") or [])
-                        self.workflow_packs = list(frame.get("workflow_packs") or [])
-                        self.protocol_version = str(frame.get("protocol"))
-                        limits = frame.get("resource_limits") or {}
-                        self.resource_warnings = [
-                            str(w) for w in (limits.get("warnings") or [])
-                        ]
-                        return
-                    if ftype == "handshake_failed":
-                        err = frame.get("error") or {}
-                        raise _diagnostic(
-                            err.get("code", DiagnosticCode.ENTRY_POINT_FAILED.value),
-                            f"worker handshake failed: {err.get('message', 'unknown')}",
-                            self._extension_id,
-                        )
-                    # 握手期的其它帧一律违规。
-                    raise _diagnostic(
-                        DiagnosticCode.WORKER_PROTOCOL_MISMATCH.value,
-                        f"unexpected frame during handshake: {ftype!r}",
-                        self._extension_id,
-                    )
             except Exception:
                 self.kill()
                 raise
+            # review #2145 同型修正：握手**等待**不持锁——整个 startup_timeout_s
+            # 持锁会把并发 shutdown()/call()/health() 全堵在锁外（吊销/停用
+            # 被拖死）。等待期以 _starting 门禁 call 类准入（协议要求握手帧
+            # 先行），shutdown 不被阻塞。锁只覆盖 spawn + 握手帧写入。
+            self._starting = True
+        try:
+            while True:
+                frame = self._next_frame(deadline, DiagnosticCode.WORKER_STARTUP_TIMEOUT)
+                ftype = frame.get("type")
+                if ftype == "handshake_ok":
+                    if frame.get("protocol") != WORKER_PROTOCOL_VERSION:
+                        raise _diagnostic(
+                            DiagnosticCode.WORKER_PROTOCOL_MISMATCH.value,
+                            "worker replied with unknown protocol version",
+                            self._extension_id,
+                        )
+                    self.tools = list(frame.get("tools") or [])
+                    self.algorithms = list(frame.get("algorithms") or [])
+                    self.data_providers = list(frame.get("data_providers") or [])
+                    self.cartography_items = list(frame.get("cartography_items") or [])
+                    self.workflow_packs = list(frame.get("workflow_packs") or [])
+                    self.protocol_version = str(frame.get("protocol"))
+                    limits = frame.get("resource_limits") or {}
+                    self.resource_warnings = [
+                        str(w) for w in (limits.get("warnings") or [])
+                    ]
+                    return
+                if ftype == "handshake_failed":
+                    err = frame.get("error") or {}
+                    raise _diagnostic(
+                        err.get("code", DiagnosticCode.ENTRY_POINT_FAILED.value),
+                        f"worker handshake failed: {err.get('message', 'unknown')}",
+                        self._extension_id,
+                    )
+                # 握手期的其它帧一律违规。
+                raise _diagnostic(
+                    DiagnosticCode.WORKER_PROTOCOL_MISMATCH.value,
+                    f"unexpected frame during handshake: {ftype!r}",
+                    self._extension_id,
+                )
+        except Exception:
+            self.kill()
+            raise
+        finally:
+            with self._lock:
+                self._starting = False
 
     def _child_env(self) -> dict[str, str]:
         # Round-2 审查 C-1：标记位令 worker 侧 Settings 跳过 ``.env`` 解析
@@ -365,13 +379,9 @@ class WorkerProcess:
         max_bytes = getattr(self, "_max_frame_bytes", None) or FRAME_MAX_BYTES
 
         def deliver(frame: dict[str, Any]) -> bool:
-            while True:
-                try:
-                    frames.put(frame, timeout=0.25)
-                    return True
-                except queue.Full:
-                    if proc is not None and (self._proc is not proc or proc.poll() is not None):
-                        return False
+            # 无界队列 + 字节预算：put 恒定成功，await 循环会阻塞的只有消费者。
+            frames.put(frame)
+            return True
 
         try:
             for line in iter_frames_bounded(stdout, max_bytes=max_bytes):
@@ -542,6 +552,13 @@ class WorkerProcess:
                     "another call is in flight (worker calls are serial)",
                     self._extension_id,
                 )
+            if self._starting:
+                raise _diagnostic(
+                    DiagnosticCode.WORKER_STARTUP_TIMEOUT.value,
+                    "worker is still completing its startup handshake; retry "
+                    "after activation finishes",
+                    self._extension_id,
+                )
             self.in_flight = True
         stream_id = f"s{time.monotonic_ns()}"
         cancelled_sent = False
@@ -574,11 +591,15 @@ class WorkerProcess:
                     # 信用成批补还（减 RTT；结构性上界仍 = window 帧）。
                     if credits_to_replenish >= max(1, window // 2):
                         try:
-                            write_frame(
-                                self._proc.stdin,
-                                {"type": "stream_credit", "id": stream_id,
-                                 "n": credits_to_replenish},
-                            )
+                            # 信用帧与其余 stdin 写（_request/shutdown/
+                            # broker_response）必须持同一把锁串行化：并发写
+                            # 会让帧字节交错，损坏 RPC 通道。
+                            with self._lock:
+                                write_frame(
+                                    self._proc.stdin,
+                                    {"type": "stream_credit", "id": stream_id,
+                                     "n": credits_to_replenish},
+                                )
                         except (ProtocolError, BrokenPipeError, OSError) as exc:
                             raise self._crashed(
                                 f"credit replenish failed: {exc}"
@@ -653,10 +674,12 @@ class WorkerProcess:
                 # 消费方提前关闭：协作取消 + 有界 drain。
                 cancelled_sent = True
                 try:
-                    write_frame(
-                        self._proc.stdin,
-                        {"type": "stream_cancel", "id": stream_id},
-                    )
+                    # 取消帧与其余 stdin 写持同一把锁串行化（防帧交错）。
+                    with self._lock:
+                        write_frame(
+                            self._proc.stdin,
+                            {"type": "stream_cancel", "id": stream_id},
+                        )
                     grace_deadline = time.monotonic() + 2.0
                     while time.monotonic() < grace_deadline:
                         frame = self._next_stream_frame(
@@ -678,10 +701,11 @@ class WorkerProcess:
                 and self._proc.poll() is None
             ):
                 try:
-                    write_frame(
-                        self._proc.stdin,
-                        {"type": "stream_cancel", "id": stream_id},
-                    )
+                    with self._lock:
+                        write_frame(
+                            self._proc.stdin,
+                            {"type": "stream_cancel", "id": stream_id},
+                        )
                 except (ProtocolError, BrokenPipeError, OSError):
                     pass
             self.in_flight = False
@@ -731,6 +755,13 @@ class WorkerProcess:
                 raise _diagnostic(
                     DiagnosticCode.OPERATION_IN_FLIGHT.value,
                     "another call is in flight (worker calls are serial)",
+                    self._extension_id,
+                )
+            if self._starting:
+                raise _diagnostic(
+                    DiagnosticCode.WORKER_STARTUP_TIMEOUT.value,
+                    "worker is still completing its startup handshake; retry "
+                    "after activation finishes",
                     self._extension_id,
                 )
             self.in_flight = True
@@ -797,7 +828,13 @@ class WorkerProcess:
                 DiagnosticCode.BROKER_DENIED.value, str(value)
             )
         try:
-            write_frame(self._proc.stdin, response)
+            # broker_response 与其余 stdin 写（_request/shutdown/stream_*）
+            # 持同一把锁串行化：_request 的等待已移出锁外（#2145），不持锁
+            # 的 broker 应答会与 shutdown/credit/cancel 帧字节交错，损坏
+            # RPC 通道（触发：调用中收到 broker_request 同时另一线程
+            # shutdown/deactivate）。
+            with self._lock:
+                write_frame(self._proc.stdin, response)
         except (ProtocolError, BrokenPipeError, OSError) as exc:
             # worker 在等待 broker 应答期间死亡 → 归一为 typed 崩溃
             # （Round-2 m-4：此前 BrokenPipe 逃逸崩溃计数/回滚路径）。
@@ -819,9 +856,17 @@ class WorkerProcess:
             return
         try:
             with self._lock:
-                if proc.stdin is not None:
-                    write_frame(proc.stdin, {"type": "shutdown"})
-        except (ProtocolError, BrokenPipeError, OSError):
+                # 竞态防护：proc 在锁外捕获，持锁期间并发 kill（读线程的
+                # 空闲违规/预算熔断）可能已 _release 换掉它并关掉 stdin——
+                # 对陈旧 proc 写帧会抛 ValueError（write to closed file）。
+                # 持锁后确认 proc 仍是当前进程且 stdin 可写。
+                if self._proc is not proc or proc.stdin is None or getattr(
+                    proc.stdin, "closed", False
+                ):
+                    self._release()
+                    return
+                write_frame(proc.stdin, {"type": "shutdown"})
+        except (ProtocolError, BrokenPipeError, OSError, ValueError):
             self.kill()
             return
         deadline = time.monotonic() + grace_s

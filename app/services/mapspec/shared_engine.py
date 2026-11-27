@@ -11,22 +11,30 @@ ops-signature 重放三重硬停）是**实例状态** —— user 批准路径
 """
 from __future__ import annotations
 
+import threading
+
 from app.services.mapspec.lifecycle_engine import MapSpecLifecycleEngine
 
 _SHARED: MapSpecLifecycleEngine | None = None
+#: 惰性单例的 check-and-set 必须串行：两个线程首次并发调用各建一个实例
+#: 会把 visual-heal 收敛账本拆成两份（同一缺陷可被无限重复尝试）。
+_SHARED_LOCK = threading.Lock()
 
 
 def get_shared_lifecycle_engine() -> MapSpecLifecycleEngine:
     global _SHARED
     if _SHARED is None:
-        _SHARED = MapSpecLifecycleEngine()
+        with _SHARED_LOCK:
+            if _SHARED is None:
+                _SHARED = MapSpecLifecycleEngine()
     return _SHARED
 
 
 def reset_shared_lifecycle_engine() -> None:
     """测试隔离面（替换共享实例；生产不调用）。"""
     global _SHARED
-    _SHARED = None
+    with _SHARED_LOCK:
+        _SHARED = None
 
 
 __all__ = [

@@ -142,7 +142,12 @@ export function gridToRgba(
   opts: RenderGridOptions = {},
 ): { pixels: Uint8ClampedArray; width: number; height: number } {
   const height = grid.length;
-  const width = height > 0 ? grid[0].length : 0;
+  // ragged 网格：以最长行为宽（短行缺位由 isNoData 掩膜为 nodata），
+  // 避免静默丢弃更长行的有效像元。
+  let width = 0;
+  for (const row of grid) {
+    if (row.length > width) width = row.length;
+  }
   const pixels = new Uint8ClampedArray(width * height * 4);
   const domain = opts.domain ?? bandStats(grid, opts.nodata);
   const span = domain.max - domain.min || 1;

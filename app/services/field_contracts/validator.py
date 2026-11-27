@@ -265,9 +265,19 @@ def normalize_document(raw: Dict[str, Any]) -> NormalizedContract:
             errors.append(f"field {name}: min/max only apply to number/integer")
         if ftype != "string" and (rf.get("min_length") is not None or rf.get("max_length") is not None):
             errors.append(f"field {name}: min_length/max_length only apply to string")
+        for len_name, len_bound in (("min_length", rf.get("min_length")),
+                                    ("max_length", rf.get("max_length"))):
+            if len_bound is not None and (
+                isinstance(len_bound, bool) or not isinstance(len_bound, int) or len_bound < 0
+            ):
+                errors.append(f"field {name}: {len_name} must be a non-negative integer")
         es = rf.get("empty_string", "reject")
         if es not in EMPTY_STRING_POLICIES:
             errors.append(f"field {name}: empty_string must be one of {sorted(EMPTY_STRING_POLICIES)}")
+        # R1-P3：布尔开关只接受 bool —— bool("false") 是真值，会静默反转作者意图
+        for flag in ("required", "nullable", "exclusive_min", "exclusive_max"):
+            if flag in rf and not isinstance(rf[flag], bool):
+                errors.append(f"field {name}: {flag} must be a boolean")
         default = rf.get("default")
         if default is not None and _json_type(default) in ("unsupported",):
             errors.append(f"field {name}: default must be a scalar or null")
@@ -621,10 +631,27 @@ def check_feature(
                     else:
                         satisfied = wop == "ne"  # eq 跨类型恒假；ne 跨类型恒真
                 elif wop in ("in", "not_in"):
-                    member = any(
-                        trig == v and _json_type(trig) == _json_type(v) for v in wvalues
-                    )
-                    satisfied = member if wop == "in" else not member
+                    if trig_type == "datetime" and isinstance(trig, str):
+                        # R1-P3：datetime 的 in/not_in 同 eq/ne 按规范 UTC 瞬时比较
+                        # （不同 offset 表示同一瞬时视为成员）。
+                        t_utc, t_err = _parse_datetime_strict(trig)
+                        member = False
+                        if not t_err:
+                            for v in wvalues:
+                                if not isinstance(v, str):
+                                    continue
+                                v_utc, v_err = _parse_datetime_strict(v)
+                                if not v_err and v_utc == t_utc:
+                                    member = True
+                                    break
+                        satisfied = (
+                            (member if wop == "in" else not member) if not t_err else False
+                        )
+                    else:
+                        member = any(
+                            trig == v and _json_type(trig) == _json_type(v) for v in wvalues
+                        )
+                        satisfied = member if wop == "in" else not member
             if satisfied:
                 for rf_ in cr.require:
                     if rf_ not in props:
@@ -858,6 +885,16 @@ def validate_candidate_state(
         cr.rule_id: {} for cr in unique_rules
     }
     findings: List[Dict[str, Any]] = []
+    findings_total = 0
+
+    # R1-P3：增量封顶（同 assess_feature_collection）—— 中间列表不随
+    # features×rules 增长，溢出只计数并在尾部披露。
+    def _record(finding: Dict[str, Any]) -> None:
+        nonlocal findings_total
+        findings_total += 1
+        if len(findings) < MAX_MATERIALIZED_FINDINGS:
+            findings.append(finding)
+
     full_scan = schema_changed or changed_wfids is None
     for row_index, feature in enumerate(features):
         if not isinstance(feature, dict):
@@ -910,7 +947,8 @@ def validate_candidate_state(
             )
         # 字段规则
         if full_scan or (wfid is not None and wfid in (changed_wfids or set())):
-            findings.extend(check_feature(props, nc, wfid=wfid, row=row_index))
+            for v in check_feature(props, nc, wfid=wfid, row=row_index):
+                _record(v)
     for cr in unique_rules:
         for kt, locs in groups[cr.rule_id].items():
             if len(locs) < 2:
@@ -922,18 +960,18 @@ def validate_candidate_state(
                     else (str(comp[1])[:FINDING_VALUE_PROJECTION] if len(comp) == 2 else str(comp[-1])[:FINDING_VALUE_PROJECTION])
                 )
             for loc in locs:
-                findings.append(_violation(
+                _record(_violation(
                     "unique_conflict", rule_id=cr.rule_id, wfid=loc.get("wfid"),
                     row=loc.get("row"), fields=list(cr.fields),
                     group_size=len(locs), key=key_repr,
                 ))
-    if len(findings) > MAX_MATERIALIZED_FINDINGS:
+    if findings_total > MAX_MATERIALIZED_FINDINGS:
         head = findings[:MAX_MATERIALIZED_FINDINGS]
         head.append({
             "code": "rule_not_evaluable",
             "detail": {
                 "reason": "candidate violations exceed materialization limit",
-                "violations_total": len(findings),
+                "violations_total": findings_total,
                 "materialized": MAX_MATERIALIZED_FINDINGS,
             },
         })

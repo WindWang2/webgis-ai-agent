@@ -130,7 +130,9 @@ def _format_tool_event(evt: dict) -> str:
     even if a future field is added without its own escaping.
     """
     data = evt.get("data") or {}
-    tool = data.get("tool", "?")
+    tool = data.get("tool") or "?"
+    if not isinstance(tool, str):
+        tool = str(tool)
     parts = [tool]
     if data.get("is_error"):
         err = data.get("error_msg") or ""

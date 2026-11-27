@@ -2,6 +2,7 @@
 import contextlib
 import json
 import logging
+import math
 import os
 import shutil
 import tempfile
@@ -170,6 +171,25 @@ def _atomic_write_json(path: Path, payload: Any) -> None:
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp_name, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+        raise
+
+
+def _atomic_copy_file(src: Path, dst: Path) -> None:
+    """文件原子复制（#1634 范式）：同目录 tmp + os.replace。
+
+    非原子 copy2 在磁盘满/进程被杀时会在 dst 留下残缺文件；下游按
+    output_path 直读，会把半截结果当成完整文件服务。
+    """
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{dst.name}.", suffix=".tmp", dir=str(dst.parent),
+    )
+    os.close(fd)
+    try:
+        shutil.copy2(src, tmp_name)
+        os.replace(tmp_name, dst)
     except BaseException:
         with contextlib.suppress(OSError):
             os.unlink(tmp_name)
@@ -371,14 +391,22 @@ def parse_vector(
             "或请在上传前为数据指定 CRS。"
         )
 
-    # 获取几何类型
+    # 获取几何类型。全部 feature 几何为 null 时 unique() == [None] —— 原样写进
+    # meta.json 是 JSON null，进 uploads.geometry_type（String(50)，NOT NULL）
+    # 还会 IntegrityError。如实落字符串 "None"，保持严格 JSON 与 DB 可写。
     geom_types = gdf.geometry.type.unique()
-    geometry_type = geom_types[0] if len(geom_types) == 1 else "Mixed"
+    geometry_type = (geom_types[0] or "None") if len(geom_types) == 1 else "Mixed"
     feature_count = len(gdf)
 
-    # 计算边界
+    # 计算边界。全部几何为 null（或空几何）时 total_bounds 返回 NaN —— NaN 不是
+    # 合法 JSON：写进 meta.json 即非严格 JSON，进 uploads.bbox（JSON 列）直接坏。
+    # 没有可用几何 ⇒ bbox = None（诚实"无"），绝不写 NaN。
     bounds = gdf.total_bounds.tolist()  # [minx, miny, maxx, maxy]
-    bbox = [bounds[0], bounds[1], bounds[2], bounds[3]]
+    bbox = (
+        [bounds[0], bounds[1], bounds[2], bounds[3]]
+        if all(math.isfinite(b) for b in bounds)
+        else None
+    )
 
     # 保存为 GeoJSON（原子发布：#1634）
     output_path = upload_dir / "original.geojson"
@@ -580,10 +608,10 @@ def parse_raster(
     except Exception as e:
         raise ParseError(f"栅格文件读取失败: {e}")
 
-    # 复制原始文件到上传目录（避免同名 SameFileError）
+    # 复制原始文件到上传目录（避免同名 SameFileError；原子发布，见 #1634）
     output_path = upload_dir / "original.tif"
     if file_path.resolve() != output_path.resolve():
-        shutil.copy2(file_path, output_path)
+        _atomic_copy_file(file_path, output_path)
 
     return {
         "file_type": "raster",

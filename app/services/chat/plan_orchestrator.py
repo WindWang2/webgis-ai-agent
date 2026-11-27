@@ -489,6 +489,7 @@ class AgentPlanOrchestrator:
         make_plan（LLM 规划）与 _synth_plan_from_harness（确定性合成）共用。
         """
         prev = self._canonical.get(session_id)
+        store_read_failed = False
         if prev is None:
             # P1-B(3)：进程 _canonical 缓存未命中（evicted / 重启后的新 worker）
             # 时，supersede 判定必须回落到 store 的当前计划——否则一个刚
@@ -499,8 +500,18 @@ class AgentPlanOrchestrator:
             except Exception as e:  # noqa: BLE001 store 读失败不阻断规划
                 logger.warning(f"[plan_orchestrator] 读取 store 当前计划失败: {e}")
                 prev = None
+                store_read_failed = True
         canon = self._canonical_from_projection(plan, session_id)
-        if (
+        if store_read_failed:
+            # P2（data-integrity）：读失败 ≠ 无旧计划 —— 放弃本次持久化
+            # （降级无计划），绝不 save 静默覆盖仍活跃的旧计划、丢 supersede
+            # 审计；本进程内存态照常更新以支撑本 turn。
+            logger.warning(
+                "[plan_orchestrator] store 读失败，放弃持久化新计划 "
+                "session=%s plan_id=%s",
+                session_id, canon.plan_id,
+            )
+        elif (
             prev is not None
             and prev.status not in TERMINAL_STATUSES
             and prev.plan_id != canon.plan_id
@@ -511,7 +522,8 @@ class AgentPlanOrchestrator:
             await plan_store.save(canon)
         self._plans[session_id] = plan
         self._canonical[session_id] = canon
-        plan_store.cache_put(canon)
+        if not store_read_failed:
+            plan_store.cache_put(canon)
 
     def _minimal_chat_gate(
         self, message: str, followup_kind: Optional[FollowUpKind]

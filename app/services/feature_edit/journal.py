@@ -49,14 +49,20 @@ def new_journal() -> EditJournal:
     return {"entries": [], "head_seq": 0, "dropped": 0}
 
 
-def journal_bytes(journal: EditJournal) -> int:
-    """有界预算用字节估计（canonical JSON 长度；估算失败按 0 计）。"""
+def _json_size(value: Any) -> Optional[int]:
+    """canonical JSON 字节长度；不可序列化时 None（预算判定按 0 计）。"""
     import json
 
     try:
-        return len(json.dumps(journal, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
+        return len(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
     except (TypeError, ValueError):
-        return 0
+        return None
+
+
+def journal_bytes(journal: EditJournal) -> int:
+    """有界预算用字节估计（canonical JSON 长度；估算失败按 0 计）。"""
+    size = _json_size(journal)
+    return size if size is not None else 0
 
 
 def append_entry(journal: EditJournal, entry: JournalEntry) -> EditJournal:
@@ -75,10 +81,26 @@ def append_entry(journal: EditJournal, entry: JournalEntry) -> EditJournal:
     out["entries"].append({**entry, "seq": seq})
     out["head_seq"] = seq
     # FIFO 条目数 + 字节预算（双闸；丢弃只针对非 head 侧的最旧条目）
+    # 增量计量：每条 entry 的 canonical JSON 只序列化一次，避免每次 pop
+    # 全量 dumps 整个 journal（会话编辑锁内 O(k·n) 重复序列化）。总长 =
+    # 外层固定片段 + 各 entry 长度 + 条目间逗号（与 journal_bytes 等价）。
+    entry_sizes: List[Optional[int]] = [_json_size(e) for e in out["entries"]]
+
+    def total_bytes() -> int:
+        sizes = [size for size in entry_sizes if size is not None]
+        if len(sizes) != len(entry_sizes):
+            return 0
+        return (
+            len('{"dropped":') + len(str(out["dropped"]))
+            + len(',"entries":[') + sum(sizes) + max(len(sizes) - 1, 0)
+            + len('],"head_seq":') + len(str(out["head_seq"])) + len("}")
+        )
+
     while len(out["entries"]) > MAX_UNDO_HISTORY or (
-        len(out["entries"]) > 1 and journal_bytes(out) > JOURNAL_BYTE_BUDGET
+        len(out["entries"]) > 1 and total_bytes() > JOURNAL_BYTE_BUDGET
     ):
         out["entries"].pop(0)
+        entry_sizes.pop(0)
         out["dropped"] += 1
     return out
 
@@ -267,7 +289,7 @@ def apply_schema_ops_to_features(
             props = feature.get("properties") if isinstance(feature, dict) else None
             if isinstance(props, dict) and src in props:
                 nf = copy.deepcopy(feature)
-                nf["properties"] = {dst: props[src], **{k: v for k, v in props.items() if k != src}}
+                nf["properties"] = {dst: props[src], **{k: v for k, v in props.items() if k not in (src, dst)}}
                 new_out.append(nf)
                 changed = True
             else:

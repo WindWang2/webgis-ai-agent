@@ -452,7 +452,11 @@ def vh_ratio(
     vh = np.asarray(vh_arr, dtype=float)
     finite = np.isfinite(vv) & np.isfinite(vh)
     if nodata is not None:
-        finite &= ~np.equal(nodata, True)
+        # nodata 语义与 raster_change.ratio_change 一致：布尔无效掩膜
+        # （真值 = 无效）。旧写法 np.equal(nodata, True) 对哨兵标量
+        # （如 -9999）恒为 False → 负值守卫不排除 nodata 像元，dB 定标缺口的
+        # 数据集被误报 UnsupportedMethod；对标量 1 又恒真 → 守卫整体失效。
+        finite &= ~np.asarray(nodata, dtype=bool)
     if finite.any() and ((vv[finite] < 0) | (vh[finite] < 0)).any():
         from app.lib.gis.scientific_errors import UnsupportedMethod
 

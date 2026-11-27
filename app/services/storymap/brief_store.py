@@ -69,13 +69,13 @@ async def create_brief(
         conversation_id=conv.id,
         title=(spec.metadata.title or "地图简报")[:255],
         spec=text, revision=1)
-    db.add(row)
     try:
-        await db.flush()
+        # 并发双创建窗口（uq_mb_conversation）：SAVEPOINT 只回滚本帧
+        # （不牵连同事务其他挂起变更），绝不留半行。
+        async with db.begin_nested():
+            db.add(row)
+            await db.flush()
     except IntegrityError:
-        # 并发双创建窗口（uq_mb_conversation）：回滚本帧后按冲突语义
-        # 返回，绝不留半行。
-        await db.rollback()
         raise RevisionConflict(
             "brief already exists for this session; use PATCH to edit")
     return {"brief_id": row.id, "revision": 1, "title": row.title}
@@ -348,10 +348,25 @@ def compute_stale(
         if fact.origin != "auto":
             continue
         ref = fact.basis.artifact_ref
-        record = current_records.get(ref) if ref else None
-        if ref and record is None:
+        if not ref:
+            continue
+        record = current_records.get(ref)
+        if record is None:
             stale.append({"fact_id": fact.fact_id,
                           "reason": "artifact_missing"})
+            continue
+        import hashlib as _h
+
+        # 与写入方同口径（brief_compiler._canonical_sha256：compact
+        # separators）—— basis.artifact_sha256 由该口径产出，默认分隔符
+        # 的 digest 永不相等（会把未变产物误判为更新）。
+        digest = _h.sha256(json.dumps(
+            record, ensure_ascii=False, sort_keys=True,
+            separators=(",", ":"), default=str,
+        ).encode("utf-8")).hexdigest()
+        if fact.basis.artifact_sha256 and digest != fact.basis.artifact_sha256:
+            stale.append({"fact_id": fact.fact_id,
+                          "reason": "artifact_updated"})
     return stale
 
 

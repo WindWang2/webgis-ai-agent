@@ -531,11 +531,6 @@ class RasterExpressionSpec(BaseModel):
                     "(repeating a band index is allowed for a grey composite)."
                 ),
             )
-        if len(self.bands) > MAX_EXPRESSION_BANDS:
-            raise RasterExpressionError(
-                "BAND_COUNT_UNSUPPORTED", "at most 3 bands can be rendered",
-                field="bands",
-            )
         for b in self.bands:
             if b < 1:
                 raise RasterExpressionError(

@@ -31,6 +31,7 @@ from tests.topology_workbench.fixtures_g31 import (
     aoi_source,
     fc,
     feat,
+    rect,
 )
 
 
@@ -228,3 +229,42 @@ def test_repair_candidates_no_deterministic_op(client: TestClient):
     kinds = {c["kind"] for c in cands["candidates"]}
     assert kinds == {"resolve_overlap"}
     assert cands["candidates"][0]["ownership_choice_required"] is True
+
+
+# ─── P2 回归：trim 身份解析按 kind 限定 + 空值拒绝 ─────────────────────
+
+
+def test_p2_trim_identity_kind_limited_and_empty_rejected():
+    """P2-回归：natural_id 不得命中他人 _wfid；空身份不得匹配无 id 要素。"""
+    from app.services.topology_workbench.repair import (
+        WorkbenchError,
+        _compute_trim_geometry,
+    )
+
+    decoy = rect(10.0, 10.0, 100, 100)  # 远处干扰面（_wfid 与目标 natural_id 同值）
+    payload = fc(
+        feat("decoy", decoy, extra={"_wfid": "shared-id"}),
+        feat("shared-id", PARCEL_E_RECT, extra={"_wfid": "real-wfid"}),
+    )
+    ref = _store("rb-kind", payload)
+    target_ref = _store("rb-kind-tgt", fc(feat("tgt", PARCEL_E_RECT)))
+
+    geom = asyncio.get_event_loop().run_until_complete(_compute_trim_geometry(
+        "twb-sess",
+        {"role": "checked", "ref": ref,
+         "identity": {"kind": "natural_id", "value": "shared-id"}},
+        [{"role": "target", "ref": target_ref}],
+    ))
+    assert geom["type"] in ("Polygon", "MultiPolygon")
+
+    # 空 value：旧实现把首个无 id 要素当目标（静默编辑错对象）→ 必须 typed 拒绝
+    empty_ref = _store("rb-empty", fc(
+        {"type": "Feature", "properties": {}, "geometry": PARCEL_E_RECT}))
+    with pytest.raises(WorkbenchError) as exc:
+        asyncio.get_event_loop().run_until_complete(_compute_trim_geometry(
+            "twb-sess",
+            {"role": "checked", "ref": empty_ref,
+             "identity": {"kind": "natural_id", "value": ""}},
+            [{"role": "target", "ref": target_ref}],
+        ))
+    assert exc.value.code == "invalid_locator"

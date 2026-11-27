@@ -73,10 +73,10 @@ export function PlanConsole({
         return { plan: null };
       }
       return { plan };
-    } catch (err) {
-      return { plan: null, error: err instanceof Error ? err.message : t('jsonParseFailed') } as { plan: null };
+    } catch {
+      return { plan: null };
     }
-  }, [text, t]);
+  }, [text]);
 
   const onTextChange = (next: string) => {
     setText(next);

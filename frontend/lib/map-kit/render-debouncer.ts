@@ -51,9 +51,13 @@ export class RenderDebouncer {
    * Enqueue a render operation. Coalesces with existing operation of same `id`.
    */
   public enqueue(op: RenderOperation): void {
-    if (this.isDisposed) return;
+    // map 缺席时 op 永远无法执行：拒绝入队，避免队列无界增长。
+    if (this.isDisposed || !this.map) return;
 
     const queue = op.priority === 'high' ? this.highPriorityQueue : this.normalPriorityQueue;
+    // 同一 id 改优先级时必须从另一队列移除（否则 flush 两次执行、计数重复）。
+    const other = op.priority === 'high' ? this.normalPriorityQueue : this.highPriorityQueue;
+    other.delete(op.id);
     queue.set(op.id, op);
 
     this.scheduleFrame();

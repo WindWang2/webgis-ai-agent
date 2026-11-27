@@ -378,6 +378,69 @@ async def test_s6_legacy_host_reads_writes_same_contract(registry, sid):
     plan_store.clear_cache()
 
 
+@pytest.mark.asyncio
+async def test_s6b_legacy_projection_events_match_truncated_envelope(registry, sid):
+    """> MAX_STEPS 时只对已持久化步骤发事件（不得披露被截断的步骤）。"""
+    from app.services.chat.plan_orchestrator import Plan, PlanStep as OrchStep
+    from app.services.harness_kernel import legacy_adapter
+    from app.services.harness_kernel.models import MAX_STEPS
+
+    await legacy_adapter.begin_turn(sid, "turn-leg-trunc", message=QUERY)
+    orch_plan = Plan(
+        intent=QUERY,
+        domains=["poi"],
+        steps=[
+            OrchStep(n=i, goal=f"步骤 {i}", tool_family="poi")
+            for i in range(1, MAX_STEPS + 2)
+        ],
+    )
+    events = await legacy_adapter.project_orchestrator_plan(
+        sid, orch_plan, turn_id="turn-leg-trunc"
+    )
+    plan = await load_session_plan(sid)
+    persisted = {s.id for s in plan.steps}
+    event_ids = {e.data["step_id"] for e in events}
+    assert len(persisted) == MAX_STEPS
+    assert event_ids <= persisted
+    assert f"l{MAX_STEPS + 1}" not in event_ids
+
+    await legacy_adapter.end_turn(sid, "turn-leg-trunc", status="completed")
+
+
+@pytest.mark.asyncio
+async def test_s6c_legacy_projection_skips_non_numeric_step_n(sid):
+    """畸形 legacy 行的 ``n`` 非数值不得抛错（入口 exception-safe 承诺）。"""
+    from types import SimpleNamespace
+
+    from app.services.harness_kernel import legacy_adapter
+
+    orch_plan = SimpleNamespace(
+        intent="malformed",
+        steps=[
+            SimpleNamespace(n="bad", goal="坏行", tool=""),
+            SimpleNamespace(n=1, goal="好行", tool=""),
+        ],
+    )
+    events = await legacy_adapter.project_orchestrator_plan(
+        sid, orch_plan, turn_id="turn-leg-bad"
+    )
+    plan = await load_session_plan(sid)
+    assert {s.id for s in plan.steps} == {"l1"}
+    assert any(e.data["step_id"] == "l1" for e in events)
+
+    canonical = SimpleNamespace(
+        steps=[
+            SimpleNamespace(n="bad", goal="坏行", tool="", status="completed"),
+            SimpleNamespace(n=1, goal="好行一", tool="", status="completed"),
+            SimpleNamespace(n=2, goal="好行二", tool="", status="completed"),
+        ],
+    )
+    await legacy_adapter.project_canonical_flush(sid, canonical)
+    plan = await load_session_plan(sid)
+    assert {s.id for s in plan.steps} == {"l1", "l2"}
+    assert all(s.status == "succeeded" for s in plan.steps)
+
+
 # ── Scenario 7 ──────────────────────────────────────────────────────────────
 
 

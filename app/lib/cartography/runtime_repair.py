@@ -69,7 +69,9 @@ def repair_patch_fingerprint(patches: List[Dict[str, Any]]) -> str:
         canonical.append(item)
     payload = json.dumps(
         canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
-        allow_nan=False,
+        # 观测面可能携带 NaN（Python json 接受）；指纹只需确定性，不得因
+        # 非有限数直接抛 ValueError 逃出 plan_runtime_repairs。
+        allow_nan=True,
     ).encode("utf-8")
     return "repair-sha256:" + hashlib.sha256(payload).hexdigest()
 
@@ -129,9 +131,13 @@ def plan_runtime_repairs(
         desired: Dict[str, Any] = {}
         before: Dict[str, Any] = {"_intentGeneration": intent_generation}
         if "RUNTIME_RESULT_VISIBILITY" in rules:
+            layout = layer.get("layout")
+            layout_visibility = (
+                layout.get("visibility") if isinstance(layout, dict) else None
+            )
             desired["visible"] = (
                 layer.get("visible") is not False
-                and (layer.get("layout") or {}).get("visibility") != "none"
+                and layout_visibility != "none"
             )
             before["visible"] = observed.get("visible")
         if "RUNTIME_OPACITY_CONVERGENCE" in rules:

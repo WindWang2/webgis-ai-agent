@@ -449,6 +449,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     extensions: list[dict[str, Any]] = []
     roots: list[str] = []
     host_api_version: str | None = None
+    host: Any | None = None
 
     # 1) 设置摘要（lazy；settings 加载失败本身即 doctor 的发现之一）。
     try:
@@ -504,7 +505,9 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     # V4（ADR-0201）：gate 开启时的认证报告体检（read-only；不激活）。
     if settings_raw and settings_raw.get("EXTENSIONS_REQUIRE_CERTIFIED") == "True":
         try:
-            host_for_gate, _ = _build_host(args.root)
+            # 复用步骤 3 已构造的 host（同 roots、同一 discover 结果）；
+            # 仅在步骤 3 失败时重试一次，避免完整重扫 + 每包重新指纹。
+            host_for_gate = host if host is not None else _build_host(args.root)[0]
             from .pack_catalog import certification_status_for
 
             gate_mode = settings_raw.get("EXTENSIONS_CERTIFICATION_TRUST") or "evidence"

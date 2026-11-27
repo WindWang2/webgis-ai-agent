@@ -135,13 +135,38 @@ class TestRenderWorkProjectionContract:
                 "img": {"type": "raster", "imageRef": "ref:i",
                         "bounds": [0, 0, 1, 1], "imageSize": [800, 600]},
                 "dem": {"type": "raster-dem", "url": "https://x"},
-            }
+            },
+            layers=[
+                {"id": "l-img", "source": "img", "type": "raster"},
+                {"id": "l-dem", "source": "dem", "type": "raster"},
+            ],
         )
         proj = project_render_work(spec)
         assert proj.work_input.raster_layer_count == 2
         # raster 源有 imageSize → 精确像素；无 → 画布保守面积
         expected = 800 * 600 + DEFAULT_CANVAS_WIDTH * DEFAULT_CANVAS_HEIGHT
         assert proj.work_input.raster_pixels == expected
+
+    def test_raster_sources_require_visible_layer_binding(self):
+        """未绑定或只被隐藏层引用的栅格源不计入渲染工作量。"""
+        spec = _spec(
+            sources={
+                "src-a": {"type": "geojson",
+                          "profile": {"featureCount": 10}},
+                "visible-raster": {"type": "raster", "imageSize": [100, 50]},
+                "hidden-raster": {"type": "raster", "imageSize": [200, 50]},
+                "unbound-raster": {"type": "raster", "imageSize": [300, 50]},
+            },
+            layers=[
+                {"id": "l1", "source": "src-a", "type": "fill"},
+                {"id": "l2", "source": "visible-raster", "type": "raster"},
+                {"id": "l3", "source": "hidden-raster", "type": "raster",
+                 "visible": False},
+            ],
+        )
+        proj = project_render_work(spec)
+        assert proj.work_input.raster_layer_count == 1
+        assert proj.work_input.raster_pixels == 100 * 50
 
     def test_components_chart_and_floating(self):
         spec = _spec(

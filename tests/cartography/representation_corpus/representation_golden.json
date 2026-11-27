@@ -776,7 +776,7 @@
      "street_detail_minzoom": 14.0
     }
    },
-   "aggregation_present": true,
+   "aggregation_present": false,
    "mode_at_reference": "hidden",
    "tier_at_reference": "city",
    "zoom_samples": [

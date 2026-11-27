@@ -423,6 +423,11 @@ class InstanceStore:
                 return TransitionResult(
                     False, illegal.split(":")[0], state=row.state,
                     detail=illegal)
+            if row.state == C.NodeState.STALE and row.cancel_requested \
+                    and to_state in (C.NodeState.READY, C.NodeState.SUCCEEDED):
+                return TransitionResult(
+                    False, "CANCEL_REQUESTED", state=row.state,
+                    detail="stale node has a pending cancellation")
             if expected_from is not None and row.state != expected_from:
                 return TransitionResult(
                     False, "CAS_CONFLICT", state=row.state,
@@ -550,10 +555,10 @@ class InstanceStore:
                     return None
                 db.commit()
             return self.get_instance(instance_id, owner_scope)
-        except OperationalError:
+        except OperationalError as exc:
             logger.warning("[WorkflowRuntime] update_instance db busy",
                            exc_info=True)
-            return None
+            raise StoreUnavailable("database locked") from exc
 
     def acquire_run_lease(
         self, instance_id: str, *, owner_scope: str, token: str,

@@ -39,6 +39,41 @@ describe('RenderDebouncer', () => {
     expect(op2.execute).toHaveBeenCalledWith(mockMap);
   });
 
+  it('re-enqueue with a different priority migrates the op instead of duplicating it', () => {
+    const debouncer = new RenderDebouncer(mockMap);
+    const normalOp: RenderOperation = {
+      id: 'same:id',
+      type: 'SET_PAINT',
+      priority: 'normal',
+      execute: vi.fn(),
+    };
+    const highOp: RenderOperation = {
+      id: 'same:id',
+      type: 'SET_PAINT',
+      priority: 'high',
+      execute: vi.fn(),
+    };
+
+    debouncer.enqueue(normalOp);
+    debouncer.enqueue(highOp);
+    expect(debouncer.pendingCount()).toBe(1);
+
+    debouncer.flush();
+    expect(normalOp.execute).not.toHaveBeenCalled();
+    expect(highOp.execute).toHaveBeenCalledTimes(1);
+    expect(highOp.execute).toHaveBeenCalledWith(mockMap);
+  });
+
+  it('does not accept operations when constructed with a null map', () => {
+    const debouncer = new RenderDebouncer(null);
+    const execute = vi.fn();
+    debouncer.enqueue({ id: 'op1', type: 'SET_PAINT', execute });
+
+    expect(debouncer.pendingCount()).toBe(0);
+    debouncer.flush();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it('executes high priority operations before normal priority operations', () => {
     const executionOrder: string[] = [];
     const debouncer = new RenderDebouncer(mockMap);

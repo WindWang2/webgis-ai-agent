@@ -88,8 +88,11 @@ def _segment_admits(seg: str, version: str) -> bool | None:
 def admits(spec: str, version: str) -> bool:
     """约束串（逗号分隔，AND 语义）是否放行 version。
 
+    空串 = 无版本约束，放行任意版本（裸声明不得从击穿检查中消失）。
     任一段无法解析 → 按不放行处理（宁可误报也不漏报）。
     """
+    if not spec.strip():
+        return True
     for seg in spec.split(","):
         r = _segment_admits(seg, version)
         if r is None or r is False:
@@ -108,7 +111,10 @@ def _clean_line(line: str) -> str:
 
 
 def parse_requirements(path: Path, _seen: set[Path] | None = None) -> dict[str, str]:
-    """解析 requirements 文件 → {name: spec}。支持 -r 递归、extras/markers 剥离、续行拼接。"""
+    """解析 requirements 文件 → {name: spec}。支持 -r 递归、extras/markers 剥离、续行拼接。
+
+    无版本约束的裸声明保留为空串 spec（否则会从击穿检查中整体消失）。
+    """
     seen = _seen if _seen is not None else set()
     seen.add(path.resolve())
     specs: dict[str, str] = {}
@@ -136,8 +142,7 @@ def parse_requirements(path: Path, _seen: set[Path] | None = None) -> dict[str, 
             continue
         name, _, rest = m.groups()
         spec = rest.split(";", 1)[0].strip()
-        if spec:
-            specs[name] = spec
+        specs[name] = spec
     return specs
 
 
@@ -161,6 +166,7 @@ def parse_pyproject_dependencies(path: Path) -> dict[str, str]:
     丢失 <2.1 上界都藏在里面绕过本门禁。它与 requirements.txt 是两份声明面
     （PLT-10：安装面单一事实源是后者），约束必须同宽严，故各自独立参与击穿检查。
     ``[project.optional-dependencies]`` 不在扫面内（extra 本就可选装）。
+    无版本约束的裸声明保留为空串 spec（与 requirements 同语义）。
     """
     data = tomllib.loads(path.read_text(encoding="utf-8"))
     specs: dict[str, str] = {}
@@ -170,8 +176,7 @@ def parse_pyproject_dependencies(path: Path) -> dict[str, str]:
             continue
         name, _, rest = m.groups()
         spec = rest.split(";", 1)[0].strip()
-        if spec:
-            specs[name] = spec
+        specs[name] = spec
     return specs
 
 

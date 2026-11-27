@@ -152,8 +152,17 @@ def collect_stale_steps(
                 role = source.removeprefix("role:")
                 ident = (current_identities.get(role) or {}).get(param)
                 if ident is None:
-                    binding = contract.data_contracts.get(role)
-                    ident = ref_identity(binding.ref) if binding else ""
+                    # 未观察到 current identity 时，以该步骤回执里执行时
+                    # 实际使用的身份为基线（ref@revision），否则回退到裸
+                    # ref 会与 executor 的 ref@rev 指纹假不匹配 → 假 stale。
+                    receipt = state.receipts.get(step_id) or {}
+                    prior = ((receipt.get("input_fingerprints") or {})
+                             .get(param) if isinstance(receipt, dict) else None)
+                    if isinstance(prior, str) and prior:
+                        ident = prior
+                    else:
+                        binding = contract.data_contracts.get(role)
+                        ident = ref_identity(binding.ref) if binding else ""
                 identities[param] = ident
             else:
                 upstream = source.removeprefix("step:")

@@ -34,3 +34,12 @@ def test_buffer_schema_rejects_invalid_unit():
     # allowed values pass
     BufferAnalysisArgs(geojson={}, distance=100, unit="km")
     BufferAnalysisArgs(geojson={}, distance=100, unit="m")
+
+
+@pytest.mark.parametrize("chinese", ["gcj02", "bd09"])
+def test_buffer_smart_accepts_explicit_chinese_source_crs(chinese):
+    """Regression: source_crs="gcj02"/"bd09" was used as the to_crs target on
+    the way back, which pyproj cannot parse -> CRSError and no buffer."""
+    res = buffer_smart(_pt(), distance=100, unit="m", source_crs=chinese)
+    assert res.success, res.summary
+    assert res.data and res.data.get("features")

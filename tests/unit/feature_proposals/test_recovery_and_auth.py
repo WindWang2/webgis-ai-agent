@@ -384,3 +384,82 @@ async def test_p17b_two_store_instances_cas_and_restart(client, _isolated, tmp_p
     # 实例 B 重读看到 revision 2（「重启」后真相一致）。
     rec_b2 = await store_b.get_proposal(s, pid)
     assert rec_b2.revision == 2
+
+
+# ── P2：G14 提交前预留 merge_start / merge_done 两个决策槽 ─────────────────
+
+
+async def test_merge_with_exactly_two_decision_slots_finishes(client, _isolated):
+    from app.schemas.feature_proposal_schema import ProposalDecision
+
+    s = sid()
+    ref = await _seed(s)
+    pid = await _create_submitted(client, s, ref, [
+        {"op": "set_fields", "wfids": ["s1"], "fields": {"capacity": 888}},
+    ])
+    await _approve(client, s, pid)
+
+    def _fill(p):
+        p.decisions.extend(
+            ProposalDecision(action="submit", actor_kind="user", actor_id="u1", at=1.0)
+            for _ in range(62 - len(p.decisions))
+        )
+        return p
+
+    await _isolated.mutate_proposal(s, pid, _fill)
+    resp = await client.post(f"/api/v1/chat/sessions/{s}/feature-proposals/{pid}/merge")
+    assert resp.status_code == 200, resp.text
+    rec = await _isolated.get_proposal(s, pid)
+    assert rec.status == "merged"
+    assert len(rec.decisions) == 64
+    assert [d.action for d in rec.decisions[-2:]] == ["merge_start", "merge_done"]
+
+
+async def test_merge_with_one_decision_slot_blocks_before_g14_commit(
+    client, _isolated, monkeypatch,
+):
+    from app.schemas.feature_proposal_schema import ProposalDecision
+    from app.services.feature_proposals import service as fps
+
+    s = sid()
+    ref = await _seed(s)
+    pid = await _create_submitted(client, s, ref, [
+        {"op": "set_fields", "wfids": ["s1"], "fields": {"capacity": 888}},
+    ])
+    await _approve(client, s, pid)
+
+    def _fill(p):
+        p.decisions.extend(
+            ProposalDecision(action="submit", actor_kind="user", actor_id="u1", at=1.0)
+            for _ in range(63 - len(p.decisions))
+        )
+        return p
+
+    await _isolated.mutate_proposal(s, pid, _fill)
+    commit_calls = 0
+
+    async def _must_not_commit(*args, **kwargs):
+        nonlocal commit_calls
+        commit_calls += 1
+        raise AssertionError("G14 commit must not run without two decision slots")
+
+    monkeypatch.setattr(fps.bridge, "merge_proposal", _must_not_commit)
+    resp = await client.post(f"/api/v1/chat/sessions/{s}/feature-proposals/{pid}/merge")
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["code"] == "decision_history_full"
+    assert commit_calls == 0
+    rec = await _isolated.get_proposal(s, pid)
+    assert rec.status == "approved"
+    assert rec.merge_attempts == 0
+    assert len(rec.decisions) == 63
+
+
+# ── P2：内容变更/恢复迁移必须由 TRANSITIONS 闭包显式承认 ────────────────────
+
+
+def test_content_and_recovery_transitions_are_in_closure():
+    from app.services.feature_proposals.contracts import can_transition
+
+    assert can_transition("approved", "submitted") is True
+    assert can_transition("merging", "approved") is True
+    assert can_transition("recovery_required", "merged") is True

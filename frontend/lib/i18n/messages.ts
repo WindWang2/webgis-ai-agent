@@ -54,8 +54,10 @@ import zhDataFusion from '@/messages/zh-CN/dataFusion.json'
 import zhLinkedExploration from '@/messages/zh-CN/linkedExploration.json'
 import zhCoordinateOperations from '@/messages/zh-CN/coordinateOperations.json'
 import zhMethodExperiment from '@/messages/zh-CN/methodExperiment.json'
+import zhTaskSupply from '@/messages/zh-CN/taskSupply.json'
 import enCoordinateOperations from '@/messages/en-US/coordinateOperations.json'
 import enMethodExperiment from '@/messages/en-US/methodExperiment.json'
+import enTaskSupply from '@/messages/en-US/taskSupply.json'
 import zhFieldContracts from '@/messages/zh-CN/fieldContracts.json'
 import zhCartogram from '@/messages/zh-CN/cartogram.json'
 import zhModelBuilder from '@/messages/zh-CN/modelBuilder.json'
@@ -151,6 +153,7 @@ export interface AppMessages {
   linkedExploration: typeof zhLinkedExploration
   coordinateOperations: typeof zhCoordinateOperations
   methodExperiment: typeof zhMethodExperiment
+  taskSupply: typeof zhTaskSupply
   fieldContracts: typeof zhFieldContracts
   dataImport: typeof zhDataImport
   fieldCompute: typeof zhFieldCompute
@@ -184,6 +187,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     linkedExploration: zhLinkedExploration,
     coordinateOperations: zhCoordinateOperations,
     methodExperiment: zhMethodExperiment,
+    taskSupply: zhTaskSupply,
     fieldContracts: zhFieldContracts,
     cartogram: zhCartogram,
     designSeries: zhDesignSeries,
@@ -237,6 +241,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     linkedExploration: enLinkedExploration as unknown as AppMessages['linkedExploration'],
     coordinateOperations: enCoordinateOperations as unknown as AppMessages['coordinateOperations'],
     methodExperiment: enMethodExperiment as unknown as AppMessages['methodExperiment'],
+    taskSupply: enTaskSupply as unknown as AppMessages['taskSupply'],
     fieldContracts: enFieldContracts as unknown as AppMessages['fieldContracts'],
     cartogram: enCartogram as unknown as AppMessages['cartogram'],
     designSeries: enDesignSeries as unknown as AppMessages['designSeries'],

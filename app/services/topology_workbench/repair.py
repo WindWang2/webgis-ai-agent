@@ -269,12 +269,29 @@ async def _compute_trim_geometry(
 
         from app.services.feature_pages import FEATURE_ID_KEYS
 
-        # 身份链解析目标要素（与三侧同源链）
+        # 身份链解析目标要素（与三侧同源链）：按 identity.kind 限定键集合，
+        # 空值绝不参与比较（否则匹配首个无 id 要素，编辑错对象）。
         target_feature = None
         id_value = str(identity.get("value") or "")
+        if not id_value:
+            raise WorkbenchError(
+                "invalid_locator",
+                "目标要素身份值为空 —— 请先物化 _wfid 或重新运行检查",
+                status=409,
+            )
+        if identity.get("kind") == "wfid":
+            id_keys = ("_wfid",)
+        elif identity.get("kind") == "natural_id":
+            id_keys = tuple(k for k in FEATURE_ID_KEYS if k != "_wfid")
+        else:
+            raise WorkbenchError(
+                "invalid_locator",
+                "目标要素没有稳定身份（快照内 index 定位不能跨版本编辑）—— "
+                "请先物化 _wfid（对该数据集执行一次编辑即自动物化）",
+            )
         for f in features:
             props = (f or {}).get("properties") or {}
-            for key in FEATURE_ID_KEYS:
+            for key in id_keys:
                 if str(props.get(key) or "") == id_value:
                     target_feature = f
                     break

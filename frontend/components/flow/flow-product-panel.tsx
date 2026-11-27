@@ -231,7 +231,11 @@ export function FlowProductPanel() {
       }
       const { sessionId, ownerToken } = getMapSpecSessionCursor();
       if (sessionId) {
-        await refreshMapSpecAfterExternalMutation(sessionId, data?.mutation_revision);
+        try {
+          await refreshMapSpecAfterExternalMutation(sessionId, data?.mutation_revision);
+        } catch (err) {
+          devOnly.warn('[FlowProductPanel] map spec refresh after apply failed', err);
+        }
       }
       if (getMapSpecSessionCursor().sessionId !== sessionId || getMapSpecSessionCursor().ownerToken !== ownerToken) return;
       setEditing(false);
@@ -337,11 +341,13 @@ export function FlowProductPanel() {
                   <div key={key}>
                     <label htmlFor={`flow-field-${key}`} className={labelCls}>
                       {t(FIELD_LABEL_KEYS[key])}
-                      {key !== 'weight_field' && <span className="text-ink-disabled"> ({t('flow.fieldRequired')})</span>}
+                      <span className="text-ink-disabled"> ({t('flow.fieldRequired')})</span>
                     </label>
                     <select
                       id={`flow-field-${key}`}
                       className={inputCls}
+                      aria-label={t(FIELD_LABEL_KEYS[key])}
+                      aria-required
                       value={config[key]}
                       disabled={inspectFields.length === 0}
                       onChange={(e) => patchConfig({ [key]: e.target.value } as Partial<FlowProductConfig>)}
@@ -723,7 +729,7 @@ export function FlowProductPanel() {
                 <button
                   type="button"
                   onClick={() => void runPreview()}
-                  disabled={!sessionId || !config.od_table_ref || !config.origin_id_field || !config.destination_id_field || !config.weight_field || preview.status === 'running'}
+                  disabled={!sessionId || !config.od_table_ref || !config.origin_id_field || !config.origin_lng_field || !config.origin_lat_field || !config.destination_id_field || !config.destination_lng_field || !config.destination_lat_field || !config.weight_field || preview.status === 'running'}
                   className="flex-1 rounded-md border border-edge-subtle bg-surface-overlay py-1.5 text-body font-semibold text-ink transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {preview.status === 'running' ? t('flow.previewRunning') : t('flow.previewButton')}
@@ -817,7 +823,7 @@ export function FlowProductPanel() {
           <button
             type="button"
             onClick={() => void runApply()}
-            disabled={applying || preview.status !== 'done' || preview.stale || previewData.can_apply === false}
+            disabled={applying || preview.status !== 'done' || preview.stale || !previewData.can_apply || !previewData.product_ref || !previewData.family_id}
             className="w-full rounded-md py-1.5 text-body font-semibold text-ink-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
             style={{
               background: 'linear-gradient(135deg, var(--agent-accent), color-mix(in srgb, var(--agent-accent) 87%, transparent))',
@@ -850,6 +856,7 @@ function FlowFocusCard({ productRef }: { productRef: string | null }) {
   const [nodeData, setNodeData] = useState<FlowQueryNodeResponse | null>(null);
   const [edgeData, setEdgeData] = useState<FlowQueryEdgeResponse | null>(null);
   const [extraItems, setExtraItems] = useState<Record<string, unknown>[]>([]);
+  const [nextOffset, setNextOffset] = useState<number | null>(null);
   const [status, setStatus] = useState<'idle' | 'loading' | 'error' | 'missing' | 'stale'>('idle');
   const [message, setMessage] = useState('');
   const beginRequest = useGuardedRequest();
@@ -859,6 +866,7 @@ function FlowFocusCard({ productRef }: { productRef: string | null }) {
 
   useEffect(() => {
     setExtraItems([]);
+    setNextOffset(null);
     setNodeData(null);
     setEdgeData(null);
     if (!matched || !objectId) {
@@ -878,6 +886,7 @@ function FlowFocusCard({ productRef }: { productRef: string | null }) {
         if (!guard.isCurrent()) return;
         if (data.kind === 'node') setNodeData(data);
         else setEdgeData(data);
+        setNextOffset((data.kind === 'node' ? data.edges : data.members).next_offset);
         setStatus('idle');
       })
       .catch((err) => {
@@ -897,7 +906,7 @@ function FlowFocusCard({ productRef }: { productRef: string | null }) {
 
   const loadMore = async () => {
     const page = nodeData?.edges ?? edgeData?.members;
-    if (!page?.next_offset || !productRef) return;
+    if (!page || nextOffset == null || !productRef) return;
     const { sessionId, ownerToken } = getMapSpecSessionCursor();
     if (!sessionId) return;
     const guard = beginRequest();
@@ -905,14 +914,13 @@ function FlowFocusCard({ productRef }: { productRef: string | null }) {
     try {
       const data = await queryFlowProduct(
         sessionId,
-        { product_ref: productRef, kind: kind as 'node' | 'edge', object_id: objectId, direction, offset: page.next_offset, limit: page.limit },
+        { product_ref: productRef, kind: kind as 'node' | 'edge', object_id: objectId, direction, offset: nextOffset, limit: page.limit },
         { ownerToken, signal: guard.signal },
       );
       if (!guard.isCurrent()) return;
       const items = (data.kind === 'node' ? data.edges : data.members).items;
       setExtraItems((prev) => [...prev, ...items]);
-      if (data.kind === 'node') setNodeData(data);
-      else setEdgeData(data);
+      setNextOffset((data.kind === 'node' ? data.edges : data.members).next_offset);
       setStatus('idle');
     } catch (err) {
       if (!guard.isCurrent()) return;
@@ -998,7 +1006,7 @@ function FlowFocusCard({ productRef }: { productRef: string | null }) {
               </li>
             ))}
           </ul>
-          {page?.next_offset != null && (
+          {nextOffset != null && (
             <button
               type="button"
               onClick={() => void loadMore()}

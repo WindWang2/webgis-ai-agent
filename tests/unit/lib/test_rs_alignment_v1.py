@@ -70,7 +70,7 @@ class TestHappyPath:
         opt_assets = [a for a in aligned.assets if a.role == "optical"]
         assert opt_assets[0].gap_code == "cloud"
         # 声明为缺口的观测不参与有效配对率（诚实口径）
-        assert plan.coverage["valid_optical_assets"] == 0
+        assert plan.coverage["n_valid_optical_times"] == 0
 
 
 class TestTypedRefusals:

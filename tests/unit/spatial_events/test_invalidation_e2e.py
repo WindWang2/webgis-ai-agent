@@ -108,8 +108,8 @@ def wf_env():
     return factory, store, svc, inst
 
 
-def _event(ref="ref:dataset-1"):
-    return {
+def _event(ref="ref:dataset-1", **over):
+    ev = {
         "kind": "dataset.version_changed",
         "org_id": "1",
         "subject_type": "dataset",
@@ -118,6 +118,8 @@ def _event(ref="ref:dataset-1"):
         "session_id": "s1",
         "payload": {"revision": "v2", "ref": ref},
     }
+    ev.update(over)
+    return ev
 
 
 class TestInvalidationEndToEnd:
@@ -188,3 +190,71 @@ class TestInvalidationEndToEnd:
         states = store.get_node_states(inst["instance_id"])
         assert states["data:subject"] == NodeState.STALE
         assert states["output:zone"] == NodeState.STALE
+
+    def test_all_consuming_nodes_stale_beyond_apply_cap(self, wf_env):
+        """回归：>16 个节点消费同一 ref 时不得截断（旧 [:8] / 单批超限）。"""
+        from app.models.db_model import WorkflowPackageRow
+
+        factory, store, svc, _inst = wf_env
+        n = 18
+        dag = {
+            "nodes": [
+                {"node_id": f"data:n{i:02d}", "kind": "data_input",
+                 "role": "subject", "optional": False,
+                 "outputs": [{"name": "data", "artifact_type": ""}]}
+                for i in range(n)
+            ],
+            "edges": [],
+            "primary_output": "data:n00",
+        }
+        with factory() as db:
+            db.add(WorkflowPackageRow(
+                package_id="pkg-many",
+                version="1.0.0",
+                schema_version="1",
+                compiler_version="t",
+                methodology_family="t",
+                recipe_fingerprint="r" * 32,
+                methodology_fingerprint="m" * 32,
+                environment_fingerprint="e" * 32,
+                compiled_form={"typed_dag": dag},
+                fingerprint="f" * 32,
+                status="published",
+                owner_scope="u:a",
+                org_id="1",
+                created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            ))
+            db.commit()
+        inst = store.create_instance(
+            package_id="pkg-many", package_version="1.0.0",
+            package_fingerprint="f" * 32, owner_scope="u:a", org_id="1",
+            session_id="s-many", project_id="proj-many",
+            node_specs=[{"node_id": nd["node_id"], "optional": False}
+                        for nd in dag["nodes"]],
+        )
+        for nd in dag["nodes"]:
+            nid = nd["node_id"]
+            store.transition_node(
+                inst["instance_id"], nid, NodeState.READY,
+                expected_from=NodeState.PENDING, reason="T",
+                patch={"bound_ref": "ref:shared"},
+            )
+            store.transition_node(
+                inst["instance_id"], nid, NodeState.RUNNING,
+                expected_from=NodeState.READY, reason="T",
+                claim=True, claimed_by="rt-x",
+            )
+            store.transition_node(
+                inst["instance_id"], nid, NodeState.SUCCEEDED,
+                expected_from=NodeState.RUNNING, reason="T",
+                claimed_by="rt-x",
+            )
+        bridge = InvalidationBridge(workflow_service=svc, factory=factory)
+        results = asyncio.run(bridge.apply_to_workflow(
+            _event(ref="ref:shared", project_id="proj-many",
+                   session_id="s-many")))
+        assert len(results) == 1
+        assert results[0]["ok"] is True
+        assert len(results[0]["seeded_nodes"]) == n
+        states = store.get_node_states(inst["instance_id"])
+        assert all(s == NodeState.STALE for s in states.values())

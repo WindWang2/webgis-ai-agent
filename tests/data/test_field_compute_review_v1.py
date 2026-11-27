@@ -9,6 +9,7 @@ P2-11 ring/manifest 不截断、P2-13 弱引用锁。
 from __future__ import annotations
 
 import asyncio
+import builtins
 import json
 import threading
 import time
@@ -18,13 +19,15 @@ import pytest
 from app.services.data_preparation.field_compute import receipt as rc
 from app.services.data_preparation.field_compute import service
 from app.services.data_preparation.field_compute.contracts import (
-    ComputeReceipt, ExecError,
+    MAX_STRING_INPUT, CompileError, ComputeReceipt, ExecError,
 )
 from app.services.data_preparation.field_compute.interpreter import (
     EvalConfig, evaluate_rows,
 )
+from app.services.data_preparation.field_compute.geometry import measure_geometry
+from app.services.data_preparation.field_compute.functions import static_type
 from app.services.data_preparation.field_compute.parser import (
-    CompileContext, compile_columns,
+    CompileContext, compile_columns, compile_expression,
 )
 from app.services.dataset_semantics import reset_dataset_semantic_store
 from app.services.session_data import session_data_manager as sdm
@@ -570,3 +573,282 @@ class TestStableKeys:
                 sid, f"ref:fc-x-{i}", "proj-many", plan)
         items = await service.list_project_results(sid, "proj-many")
         assert len(items) == 130
+
+
+# ── P2 波次（data_preparation）：行级数值界 / 编译健壮性 / ring 与清单并发 ──
+
+class TestRoundDecimalOverflow:
+    """round() 经 Decimal.quantize：|x|≳1e28 / to_integer 大整数 /
+    非有限值抛 InvalidOperation —— 必须是行级 NUMERIC_OVERFLOW，不得逃逸成
+    整次 execute 崩溃。"""
+
+    def test_huge_float_and_bigint_are_row_errors(self):
+        cols, _order = compile_columns(
+            [{"name": "r", "expression": "round({v})"}],
+            CompileContext(available_fields=("v",), field_types={"v": "number"}))
+        batch = evaluate_rows(
+            [({"v": 1e28}, None), ({"v": int("1" * 30)}, None)],
+            cols, None, EvalConfig())
+        assert batch.stats["r"].errors == 2
+        assert [r["r"] for r in batch.rows] == [None, None]
+        assert {s["code"] for s in batch.stats["r"].samples} == {"NUMERIC_OVERFLOW"}
+
+    def test_round_over_to_integer_bigint_is_row_error(self):
+        cols, _order = compile_columns(
+            [{"name": "r", "expression": "round(to_integer({s}))"}],
+            CompileContext(available_fields=("s",),
+                           field_types={"s": "string"}))
+        batch = evaluate_rows([({"s": "1" * 30}, None)], cols, None, EvalConfig())
+        assert batch.stats["r"].errors == 1
+        assert batch.rows[0]["r"] is None
+        assert batch.stats["r"].samples[0]["code"] == "NUMERIC_OVERFLOW"
+
+    def test_non_finite_round_is_row_error(self):
+        """非有限值在取值边界就被拒（NON_FINITE），同样不得逃逸成整次崩溃。"""
+        cols, _order = compile_columns(
+            [{"name": "r", "expression": "round({v})"}],
+            CompileContext(available_fields=("v",), field_types={"v": "number"}))
+        batch = evaluate_rows([({"v": float("inf")}, None)], cols, None,
+                              EvalConfig())
+        assert batch.stats["r"].errors == 1
+        assert batch.stats["r"].samples[0]["code"] == "NON_FINITE"
+
+
+class TestCompileColumnsNonDictElement:
+    def test_non_dict_later_column_is_compile_error(self):
+        """后续 raw_column 是非 dict 时：按缺 name 拒收（CompileError），
+        不得让 .get 抛 AttributeError 逃逸成 500。"""
+        with pytest.raises(CompileError) as ei:
+            compile_columns(
+                [{"name": "a", "expression": "1 + 1"}, "not-a-dict"],
+                CompileContext(available_fields=("v",)))
+        assert ei.value.code == "RESERVED_FIELD"
+
+
+class TestReceiptRingSerialized:
+    async def test_concurrent_appends_do_not_lose_records(self, monkeypatch):
+        """ring read-modify-write 必须串行：并发 append 不得互相覆盖。"""
+        sid = "sess-fc-rev-ringlock"
+        in_flight = 0
+        peak = 0
+        guard = threading.Lock()
+        real_append = rc._append_sync
+
+        def _probe(path, records):
+            nonlocal in_flight, peak
+            with guard:
+                in_flight += 1
+                peak = max(peak, in_flight)
+            time.sleep(0.05)
+            try:
+                return real_append(path, records)
+            finally:
+                with guard:
+                    in_flight -= 1
+
+        monkeypatch.setattr(rc, "_append_sync", _probe)
+        receipts = [
+            ComputeReceipt(
+                plan_id=f"plan-{i}", compute_fingerprint=f"fp-{i}",
+                input_ref="ref:in", output_ref=f"ref:out-{i}",
+                input_content_hash=f"h{i}")
+            for i in range(4)]
+        results = await asyncio.gather(
+            *[rc.append_receipt(sid, r) for r in receipts])
+        assert results == [True] * 4
+        assert peak == 1                      # read-modify-write 未并发
+        assert len(await rc.list_receipts(sid, limit=64)) == 4
+
+    async def test_ring_read_failure_does_not_wipe_history(self, monkeypatch):
+        """读失败不得按空处理：否则 append 会把 ring 全量覆写、静默销毁
+        收据历史且调用方只看到成功。"""
+        sid = "sess-fc-rev-ringread"
+        first = ComputeReceipt(
+            plan_id="plan-a", compute_fingerprint="fp-a", input_ref="ref:in",
+            output_ref="ref:out-a", input_content_hash="ha")
+        assert await rc.append_receipt(sid, first)
+        path = rc._storage_path(sid, rc._RECEIPTS_FILE)
+        before = path.read_text(encoding="utf-8")
+
+        real_open = builtins.open
+
+        def _deny(file, *a, **kw):
+            if str(file) == str(path):
+                raise PermissionError("denied")
+            return real_open(file, *a, **kw)
+
+        monkeypatch.setattr(builtins, "open", _deny)
+        second = ComputeReceipt(
+            plan_id="plan-b", compute_fingerprint="fp-b", input_ref="ref:in",
+            output_ref="ref:out-b", input_content_hash="hb")
+        try:
+            assert await rc.append_receipt(sid, second) is False
+        finally:
+            monkeypatch.undo()
+        assert path.read_text(encoding="utf-8") == before
+
+
+class TestManifestRobustness:
+    async def test_single_bad_manifest_line_does_not_hide_history(self):
+        """一行坏 JSON 只丢该行：不得被 except 吞成「全部项目历史消失」。"""
+        sid = "sess-fc-rev-manifest-badline"
+        ref = await _seed(sid)
+        plan = await _plan(sid, ref,
+                           [{"name": "密度", "expression": "{人口} / 1"}])
+        assert await service.save_to_project(
+            sid, "ref:fc-ok", "proj-bad", plan)
+        path = service._manifest_path(sid, "proj-bad")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("{not json\n")
+        items = await service.list_project_results(sid, "proj-bad")
+        assert len(items) == 1 and items[0]["output_ref"] == "ref:fc-ok"
+
+    async def test_concurrent_project_saves_do_not_lose_entries(self, monkeypatch):
+        """项目清单 read-modify-write 必须串行：并发 save_to_project（不同
+        指纹计划 / 复用路径）不得互相覆盖。"""
+        sid = "sess-fc-rev-manifestlock"
+        ref = await _seed(sid)
+        plan = await _plan(sid, ref,
+                           [{"name": "密度", "expression": "{人口} / 1"}])
+        in_flight = 0
+        peak = 0
+        guard = threading.Lock()
+        real_append = service._append_manifest_sync
+
+        def _probe(path, record):
+            nonlocal in_flight, peak
+            with guard:
+                in_flight += 1
+                peak = max(peak, in_flight)
+            time.sleep(0.05)
+            try:
+                return real_append(path, record)
+            finally:
+                with guard:
+                    in_flight -= 1
+
+        monkeypatch.setattr(service, "_append_manifest_sync", _probe)
+        results = await asyncio.gather(*[
+            service.save_to_project(sid, f"ref:fc-lock-{i}", "proj-lock", plan)
+            for i in range(4)])
+        assert results == [True] * 4
+        assert peak == 1                       # read-modify-write 未并发
+        items = await service.list_project_results(sid, "proj-lock")
+        assert len(items) == 4
+
+
+class TestDescribeBoundedSamples:
+    async def test_long_text_samples_are_truncated(self):
+        """describe 自称「无数据本体」：样本值必须有界，长文本不得原样回传。"""
+        sid = "sess-fc-rev-describe-bound"
+        long_text = "备" * 5000
+        payload = _payload()
+        payload["geojson"]["features"][0]["properties"]["备注"] = long_text
+        ref = await _seed(sid, payload)
+        d = await service.describe_source(sid, ref)
+        field = next(f for f in d["fields"] if f["name"] == "备注")
+        assert field["sample"] == [long_text[:MAX_STRING_INPUT]]
+        assert d["sample_rows"][0]["备注"] == long_text[:MAX_STRING_INPUT]
+
+
+class TestProvenanceOutputFingerprint:
+    async def test_transformation_uses_minted_output_fingerprint(self):
+        """溯源链的 output_fingerprint 必须是刚 minted 的输出 descriptor
+        指纹，不得误用输入锚指纹。"""
+        from app.services.dataset_semantics import get_dataset_semantic_store
+        from app.services.dataset_semantics.provenance import (
+            list_transformations,
+        )
+        sid = "sess-fc-rev-prov"
+        ref = await _seed(sid)
+        plan = await _plan(sid, ref,
+                           [{"name": "密度", "expression": "{人口} / 1"}])
+        receipt = await service.execute(plan.plan_id, sid)
+        rec = await get_dataset_semantic_store().get(sid, receipt.output_ref)
+        assert rec.ok
+        out_fp = rec.descriptor.descriptor_fingerprint
+        assert out_fp and out_fp != plan.anchor.descriptor_fingerprint
+        mine = [r for r in await list_transformations(sid)
+                if r.output_ref == receipt.output_ref]
+        assert len(mine) == 1
+        assert mine[0].output_fingerprint == out_fp
+        assert mine[0].inputs[0]["descriptor_fingerprint"] == \
+            plan.anchor.descriptor_fingerprint
+
+
+# ── P3 波次：静态类型 / 几何证据 / round / pad_left / 进度 ────────────────
+
+class TestStaticTypeIfBranch:
+    def test_if_branch_type_mismatch_is_any(self):
+        """if 两个分支类型不一致时静态类型必须是 any（与 case 同纪律），
+        不得只看 then 分支放行。"""
+        ctx = CompileContext(available_fields=("人口",))
+        mismatched = compile_expression("if({人口} > 100, 1, 'x')", ctx)
+        assert static_type(mismatched) == "any"
+
+    def test_if_same_branch_types_stay_determined(self):
+        ctx = CompileContext(available_fields=("人口",))
+        same = compile_expression("if({人口} > 100, 1, 2)", ctx)
+        assert static_type(same) == "number"
+
+
+class TestGeometryPartsEvidence:
+    @staticmethod
+    def _ring(x):
+        return [[x, 30.0], [x + 1.0, 30.0], [x + 1.0, 31.0], [x, 31.0], [x, 30.0]]
+
+    def test_parts_counts_actual_components(self):
+        """MultiPolygon 的 parts 必须等于实际部件数，不得恒为 2。"""
+        one = {"type": "MultiPolygon", "coordinates": [[self._ring(104.0)]]}
+        three = {"type": "MultiPolygon", "coordinates": [
+            [self._ring(104.0)], [self._ring(106.0)], [self._ring(108.0)]]}
+        _v1, ev1 = measure_geometry(one, "area_km2", "geodesic", "", "EPSG:4326")
+        _v3, ev3 = measure_geometry(three, "area_km2", "geodesic", "",
+                                    "EPSG:4326")
+        assert ev1["parts"] == 1
+        assert ev3["parts"] == 3
+
+
+class TestRoundDigitsHugeInteger:
+    def test_huge_integer_digits_is_row_error_not_crash(self):
+        """digits 为超大整数时 float(d) 不得抛 OverflowError 逃出 evaluate_rows。"""
+        cols, _ = compile_columns(
+            [{"name": "r", "expression": "round({v}, {d})"}],
+            CompileContext(available_fields=("v", "d")))
+        batch = evaluate_rows([({"v": 1.5, "d": 10 ** 400}, None)],
+                              cols, None, EvalConfig())
+        assert batch.stats["r"].errors == 1
+        assert batch.rows[0]["r"] is None
+        assert batch.stats["r"].samples[0]["code"] == "CONVERSION_FAILED"
+
+
+class TestPadLeftWidth:
+    def _batch(self, expression):
+        cols, _ = compile_columns([{"name": "p", "expression": expression}],
+                                  CompileContext(available_fields=("代码",)))
+        return evaluate_rows([({"代码": "7"}, None)], cols, None, EvalConfig())
+
+    def test_null_width_returns_null(self):
+        batch = self._batch("pad_left({代码}, null)")
+        assert batch.rows[0]["p"] is None
+        assert batch.stats["p"].errors == 0
+
+    def test_fractional_width_is_row_error(self):
+        batch = self._batch("pad_left({代码}, 3.5)")
+        assert batch.rows[0]["p"] is None
+        assert batch.stats["p"].samples[0]["code"] == "CONVERSION_FAILED"
+
+
+class TestProgressReportsProcessedRows:
+    async def test_all_null_plan_progress_reaches_total(self):
+        """进度必须按已处理行数上报；computed_rows=0（全 null 结果）也不能
+        把进度卡在 0。"""
+        sid = "sess-fc-rev-progress"
+        ref = await _seed(sid)
+        plan = await _plan(sid, ref,
+                           [{"name": "空列", "expression": "coalesce(null, null)"}])
+        seen = []
+        await service._execute_locked(
+            plan, sid, project_id="",
+            progress=lambda done, total: seen.append((done, total)))
+        assert seen == [(4, 4)]

@@ -8,7 +8,8 @@ semantic retrieval 可在其上复用，本模块接口不变）。
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Tuple
+import weakref
+from typing import Any, Dict, List, Tuple
 
 from app.services.gis_harness.skills.contract import SkillContract
 
@@ -82,9 +83,22 @@ class SkillRetriever:
         return ranked[:limit]
 
 
+#: 门面级检索器缓存：同一 SkillLibrary 只做一次全库分词/IDF。
+_RETRIEVERS: "weakref.WeakKeyDictionary[Any, SkillRetriever]" = (
+    weakref.WeakKeyDictionary())
+
+
 def retrieve_skills(library, query: str, **filters) -> List[Tuple[str, float]]:
-    """门面函数：SkillLibrary → 检索结果。"""
-    return SkillRetriever(list(library.skills)).retrieve(query, **filters)
+    """门面函数：SkillLibrary → 检索结果（按 library 单例复用索引）。"""
+    try:
+        retriever = _RETRIEVERS.get(library)
+        if retriever is None:
+            retriever = SkillRetriever(list(library.skills))
+            _RETRIEVERS[library] = retriever
+        return retriever.retrieve(query, **filters)
+    except TypeError:
+        # 不可弱引用/不可哈希的 library 形状：退化为一次性构建。
+        return SkillRetriever(list(library.skills)).retrieve(query, **filters)
 
 
 __all__ = [

@@ -8,6 +8,11 @@ from app.services.session_data import session_data_manager
 
 logger = logging.getLogger(__name__)
 
+# inventory_layers 声明 result_size_policy="bounded"：单会话 ref 可累积到
+# session store 容量（200），无上限输出会撑爆工具结果预算。保留最近
+# （dict 尾部 = 最近写入）的 N 条并显式标记 truncated/total。
+_INVENTORY_MAX_ITEMS = 64
+
 class AliasLayerArgs(BaseModel):
     ref_id: str = Field(..., description="数据的引用 ID，例如 'ref:data-xxxx'")
     alias: str = Field(..., description="想要赋予的易读名称或别名，例如 '核心保护区'")
@@ -263,6 +268,14 @@ def register_layer_management_tools(registry: ToolRegistry):
                 f"收口未落盘：全部 {len(user_guard_refusals)} 个目标层的显隐由用户手动设定"
                 "（user-wins），已保留用户决策。"
             )
+        elif not batch.committed and not unresolved_ids:
+            # P3：无 refused / not_found 的未提交批（如空批 / superseded）
+            # 不得谎报"层在 MapSpec 中不存在"。
+            message = (
+                "收口未落盘：本批未产生任何可应用的变更"
+                + (f"（{batch.error_msg}）" if batch.error_msg else "")
+                + "，当前显示状态保持不变。"
+            )
         elif not batch.committed:
             message = (
                 f"收口未落盘：展示集 {len(unresolved_ids)} 个层在 MapSpec 中"
@@ -358,10 +371,17 @@ def register_layer_management_tools(registry: ToolRegistry):
                 "alias": alias or "(无别名)"
             })
             
+        total = len(inventory)
+        truncated = total > _INVENTORY_MAX_ITEMS
+        if truncated:
+            inventory = inventory[-_INVENTORY_MAX_ITEMS:]
+
         return {
             "success": True,
             "layers": inventory,
-            "count": len(inventory)
+            "count": len(inventory),
+            "total": total,
+            "truncated": truncated,
         }
 
     @tool(registry, name="switch_base_layer",
@@ -384,10 +404,16 @@ def register_layer_management_tools(registry: ToolRegistry):
             return {"error": "Missing session_id context"}
         
         # 汉化/规范化名称映射，确保 AI 即使说“卫星”或“satellite”，我们也存入标准的“ESRI 影像”
-        from app.core.base_layers import get_base_layer_names
+        from app.core.base_layers import BASE_LAYER_CATALOG, get_base_layer_names
         CANONICAL_NAMES = get_base_layer_names()
         
         search_name = str(name).lower()
+        # P3: 空串会让 `search_name in c_low` 恒真 → 静默切到首个规范名。
+        if not search_name:
+            return {
+                "error": "底图名称不能为空",
+                "available": list(CANONICAL_NAMES),
+            }
         resolved_name = name # Default to original if no match
         
         # 1. 精确匹配
@@ -411,10 +437,30 @@ def register_layer_management_tools(registry: ToolRegistry):
         if not matched:
             if any(k in search_name for k in ["卫星", "影像", "satellite"]):
                 resolved_name = "ESRI 影像"
+                matched = True
             elif any(k in search_name for k in ["深色", "dark"]):
                 resolved_name = "Carto 深色"
+                matched = True
             elif any(k in search_name for k in ["地图", "osm", "street"]):
                 resolved_name = "OSM 地图"
+                matched = True
+
+        # 4. 目录关键字兜底（与前端 TILE_PROVIDERS 同源画像词表；仅在前三步
+        # 未命中时生效，不改变既有命中优先级）——避免误拒前端本可解析的名称。
+        if not matched:
+            for info in BASE_LAYER_CATALOG:
+                if any(str(k).lower() in search_name for k in info["keywords"]):
+                    resolved_name = info["name"]
+                    matched = True
+                    break
+
+        # P3: 未识别名称此前原样写入 map_state 并回 success（前端只会
+        # target_not_found）—— 显式失败并给出可用名称。
+        if not matched:
+            return {
+                "error": f"无法识别的底图名称：{name!r}",
+                "available": list(CANONICAL_NAMES),
+            }
 
         await session_data_manager.set_map_state(session_id, "base_layer", resolved_name)
         return {
@@ -684,12 +730,16 @@ def register_layer_management_tools(registry: ToolRegistry):
            required_context=("map_state",),
            map_mutations=("style_layer",),
            failure_modes=("invalid_args",))
-    def display_layer(ref_id: str, name: str, color: Optional[str] = None, session_id: Optional[str] = None) -> dict:
+    async def display_layer(ref_id: str, name: str, color: Optional[str] = None, session_id: Optional[str] = None) -> dict:
         """显示隐藏的结果图层"""
         if not session_id:
             return {"error": "Missing session_id context"}
 
-        params: dict = {"layer_id": ref_id, "visible": True, "name": name}
+        layer_id, err = await resolve_layer_ref(session_id, ref_id)
+        if err:
+            return err
+
+        params: dict = {"layer_id": layer_id, "visible": True, "name": name}
         if color is not None:
             params["color"] = color
 

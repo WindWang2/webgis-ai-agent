@@ -202,7 +202,9 @@ const t = useT();
   const crsUnknown = output?.crs == null;
   const crsLabel = crsUnknown ? t('sidebar.results.unknown') : (output?.crs as string);
   const featureCountLabel =
-    output?.featureCount !== undefined ? output.featureCount.toLocaleString() : t('sidebar.results.notReported');
+    // 评审 P2：`!== undefined` 放行 null → .toLocaleString() 抛 TypeError 白屏
+    // （同段 crs/bbox/estimatedBytes 都用 == null / 真值判断）。
+    output?.featureCount != null ? output.featureCount.toLocaleString() : t('sidebar.results.notReported');
   const geomLabel = output?.geometryTypes?.length
     ? output.geometryTypes.join(t('sidebar.results.geomSeparator'))
     : t('sidebar.results.notReported');

@@ -149,6 +149,32 @@ def test_model_cannot_inject_owner_or_approval_fields():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("tool_name", [
+    "webgis_check_project_source_updates",
+    "webgis_explain_stale_map_product",
+    "webgis_preview_project_data_refresh",
+    "webgis_execute_project_data_refresh",
+    "webgis_adopt_project_data_refresh",
+    "webgis_discard_project_data_refresh",
+    "webgis_rollback_project_data_refresh",
+    "webgis_project_refresh_status",
+])
+async def test_refresh_tools_report_missing_session_before_authorization(tool_name):
+    result = await _setup.registry.dispatch(
+        tool_name,
+        {"project_id": PID, "proposal_id": "g10p-missing-session"},
+        session_id="",
+    )
+
+    assert result["success"] is False
+    assert result["error"] == "missing_session"
+    assert result["tool_execution"] == "failed"
+    assert result["task_execution"] == "not_run"
+    assert result["map_observation"] == "unverified"
+    assert result["version_adoption"] == "unchanged"
+
+
+@pytest.mark.asyncio
 async def test_pi_bridge_entry_reaches_real_refresh_tool():
     """PiTools HTTP 回调适配器入口可达：真实 PiToolRequest → dispatch_tool
     → ToolDispatchService → 刷新工具（不是 mock 的执行器）。"""
@@ -235,3 +261,32 @@ async def test_o11_failed_tool_call_discloses_failure_not_fake_success():
     assert r.get("tool_execution") == "failed"
     assert r.get("version_adoption") == "unchanged"
     assert r.get("map_observation") == "unverified"
+
+
+@pytest.mark.asyncio
+async def test_execute_without_task_receipt_preserves_successful_candidate_result(
+        monkeypatch):
+    svc: ProjectDataRefreshService = _setup.svc
+    await _call("webgis_check_project_source_updates", {"project_id": PID})
+    feats = F1[:-1] + [_feature("s4", 400)]
+    svc.payload_provider = StaticPayloadProvider({REF: _payload(2, feats)})
+    await _call("webgis_check_project_source_updates", {"project_id": PID})
+    preview = await _call("webgis_preview_project_data_refresh", {"project_id": PID})
+    assert preview.get("success") is True, preview
+
+    original_execute = svc.execute
+
+    async def execute_without_task_receipt(*args, **kwargs):
+        result = await original_execute(*args, **kwargs)
+        result["receipt"].pop("task_execution")
+        return result
+
+    monkeypatch.setattr(svc, "execute", execute_without_task_receipt)
+    result = await _call("webgis_execute_project_data_refresh",
+                         {"project_id": PID, "proposal_id": preview["proposal_id"]})
+
+    assert result.get("success") is True, result
+    assert result.get("candidate_status") == "succeeded"
+    assert result.get("task_execution") == "ok"
+    assert result.get("version_adoption") == "unchanged"
+    assert result.get("map_observation") == "unverified"

@@ -1,5 +1,6 @@
 /** G20 API 客户端（UI 与 Pi 共用后端领域服务；URL 不含 owner token）。 */
 import { apiFetch } from '@/lib/api/transport';
+import { newMutationId } from '@/lib/mapspec/user-mutation';
 import type {
   RasterDescriptor,
   RasterErrorPayload,
@@ -89,7 +90,9 @@ export function commitExpression(
         layer_id: layerId,
         expression: buildExpressionRequest(draft),
         expected_revision: expectedRevision,
-        client_mutation_id: `raster-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+        // 与其他用户 mutation 同款：crypto UUID v4 幂等键。毫秒时间戳 +
+        // Math.random 后缀位宽不足，同毫秒碰撞会被服务端 c:<id> 判重静默丢弃。
+        client_mutation_id: newMutationId(),
       },
     },
   );

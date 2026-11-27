@@ -26,7 +26,7 @@ export const CHART_STATES: readonly ChartState[] = [
 const CHART_STATE_TRANSITIONS: ReadonlySet<string> = new Set([
   'hidden>visible',
   'visible>collapsed', 'visible>expanded',
-  'visible>floating', 'visible>docked', 'visible>anchored',
+  'visible>floating', 'visible>docked', 'visible>anchored', 'visible>hidden',
   'collapsed>expanded', 'collapsed>hidden',
   'expanded>collapsed', 'expanded>hidden',
   'floating>collapsed', 'floating>hidden',

@@ -39,6 +39,23 @@ async def test_query_overpass_success_parses_dict():
 
 
 @pytest.mark.asyncio
+async def test_query_overpass_does_not_serialize_response_for_logging():
+    """成功日志不得为计算大小而序列化整份响应。"""
+    payload = {"elements": [{"type": "node", "lat": 1.0, "lon": 2.0, "tags": {"name": "测试点"}}]}
+    with patch(
+        "app.tools.osm.tracked_provider_get",
+        new=AsyncMock(return_value=payload),
+    ), patch(
+        "app.tools.osm.json.dumps",
+        side_effect=AssertionError("不得为日志序列化 Overpass 响应"),
+    ):
+        res = await _query_overpass("node(1);")
+    assert res["type"] == "FeatureCollection"
+    assert len(res["features"]) == 1
+    assert res["features"][0]["properties"]["name"] == "测试点"
+
+
+@pytest.mark.asyncio
 async def test_geocode_bbox_degraded_returns_none():
     with patch("app.tools.osm.tracked_provider_get", new=AsyncMock(return_value={"error": "x"})):
         assert await _geocode_bbox("Beijing") is None

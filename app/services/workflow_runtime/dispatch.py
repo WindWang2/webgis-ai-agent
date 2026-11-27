@@ -146,7 +146,7 @@ def profile_capacity(worker_rows: list[WorkerRecord], *,
             return 0, 0
         try:
             slots += int((caps.get("profiles") or {}).get(profile, 0) or 0)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, AttributeError):
             return 0, 0
         try:
             val = int(load.get("in_flight", 0) or 0)

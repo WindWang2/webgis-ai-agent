@@ -100,7 +100,8 @@ def strip_surrogates(value: object) -> object:
     if isinstance(value, str):
         return value.encode("utf-8", "ignore").decode("utf-8")
     if isinstance(value, dict):
-        return {k: strip_surrogates(v) for k, v in value.items()}
+        return {strip_surrogates(k): strip_surrogates(v)
+                for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [strip_surrogates(v) for v in value]
     return value

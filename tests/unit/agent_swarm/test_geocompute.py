@@ -336,6 +336,19 @@ class TestBuildResultRefBudget:
         assert 0 < len(ref.metadata) < 5
         assert len(ref.to_json_bytes()) < SERIALIZATION_BUDGET_BYTES
 
+    def test_exactly_at_budget_is_not_truncated(self, monkeypatch):
+        """硬闸是 ≤8KB：恰等预算不得触发无谓 metadata 截断。"""
+        from app.services.agent_swarm.contracts import SpatialProfileRef
+
+        monkeypatch.setattr(
+            SpatialProfileRef,
+            "to_json_bytes",
+            lambda self: b"x" * SERIALIZATION_BUDGET_BYTES,
+        )
+        ref = self._ref(metadata={"keep": "ok"})
+        assert ref.truncated is False
+        assert ref.metadata == {"keep": "ok"}
+
     def test_oversized_untrimmable_field_raises_typed(self):
         """ref_id 等调用方字段不受内部截断保护：metadata 耗尽仍超限 →
         typed 诚实失败（绝不静默裁剪载荷字段）。"""

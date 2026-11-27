@@ -92,6 +92,11 @@ class TestCompileFallbacks:
         assert len(spec.chapters) == 1
         assert spec.chapters[0].arc_role == "introduction"
 
+    def test_non_mapping_message_raises_value_error(self):
+        # 契约失败必须是 ValueError（路由映射 422），不是 AttributeError 500。
+        with pytest.raises(ValueError, match="mapping"):
+            compile_story_map(messages=["not-a-mapping"])
+
     def test_trace_takes_precedence_over_messages(self):
         trace = {"stages": [{"stage": 4, "summary": "宏观态势"}]}
         spec = compile_story_map(
@@ -175,6 +180,19 @@ class TestWidgetHarvest:
         assert widgets[0].data == {"type": "bar", "data": [1]}
         assert widgets[1].data == {"type": "kpi"}
         assert widgets[1].title == "无 ref 图"
+
+    def test_widget_ids_unique_across_arc_buckets(self):
+        # 同一 ref 跨弧桶去重；无 ref 图表跨桶的自动 id 全 spec 连续唯一。
+        stages = [
+            {"stage": 9, "ref": "ref:chart-x", "chart": {"type": "bar"}},
+            {"stage": 10, "chart": {"type": "kpi"}},
+            {"stage": 13, "ref": "ref:chart-x", "chart": {"type": "line"}},
+            {"stage": 14, "chart": {"type": "pie"}},
+        ]
+        spec = compile_story_map(trace={"stages": stages})
+        ids = [w.id for w in spec.linked_widgets]
+        assert ids == ["ref:chart-x", "widget-chart-2", "widget-chart-3"]
+        assert len(ids) == len(set(ids))
 
     def test_stat_bullets_capped_at_six(self):
         stats = {f"k{i}": i for i in range(8)}

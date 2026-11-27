@@ -409,17 +409,19 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         # 此前 result["summary"] 对 GeoAnalysisResult 下标访问必抛
         # TypeError —— master 上该工具 dispatch 实际全坏（G03 执行面
         # 审计发现,静态对账看不见的实现层缺陷）。
-        payload = {"success": True, "summary": result.summary, "data": result.data}
-        _attach_scientific_evidence(
-            payload, "point_pattern.ripley_k", tool="ripley_k_analysis",
-            parameters_applied={
-                "n_steps": int(params["n_steps"]),
-                "max_distance_ratio": float(params["max_distance_ratio"]),
-                "envelopes": int(params["envelopes"]),
-            },
-            feature_count=result.data.get("n"),
-            crs=extract_declared_crs(data) or "EPSG:4326",
-        )
+        payload = {"success": bool(result.success), "summary": result.summary,
+                   "data": result.data}
+        if result.success:
+            _attach_scientific_evidence(
+                payload, "point_pattern.ripley_k", tool="ripley_k_analysis",
+                parameters_applied={
+                    "n_steps": int(params["n_steps"]),
+                    "max_distance_ratio": float(params["max_distance_ratio"]),
+                    "envelopes": int(params["envelopes"]),
+                },
+                feature_count=result.data.get("n"),
+                crs=extract_declared_crs(data) or "EPSG:4326",
+            )
         return payload
 
     @tool(registry, name="quadrat_analysis",
@@ -457,22 +459,24 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         )
         # spatial_operator 统一包装成 GeoAnalysisResult：数据体在 .data、
         # 摘要在 .summary（与同文件 moran/geary/general_g 的消费惯例一致）。
-        payload = {"success": True, "summary": result.summary, "data": result.data}
-        _attach_scientific_evidence(
-            payload, "point_pattern.quadrat_test", tool="quadrat_analysis",
-            parameters_applied={
-                "grid_rows": int(params["grid_rows"]),
-                "grid_cols": int(params["grid_cols"]),
-            },
-            feature_count=result.data.get("n"),
-            crs=extract_declared_crs(data) or "EPSG:4326",
-            uncertainty=[StatisticalSignificance(
-                target="quadrat_chi2",
-                statistic_name=f"quadrat chi2 (df={result.data.get('df')})",
-                statistic_value=result.data.get("chi2"),
-                p_value=result.data.get("p_value"),
-            )],
-        )
+        payload = {"success": bool(result.success), "summary": result.summary,
+                   "data": result.data}
+        if result.success:
+            _attach_scientific_evidence(
+                payload, "point_pattern.quadrat_test", tool="quadrat_analysis",
+                parameters_applied={
+                    "grid_rows": int(params["grid_rows"]),
+                    "grid_cols": int(params["grid_cols"]),
+                },
+                feature_count=result.data.get("n"),
+                crs=extract_declared_crs(data) or "EPSG:4326",
+                uncertainty=[StatisticalSignificance(
+                    target="quadrat_chi2",
+                    statistic_name=f"quadrat chi2 (df={result.data.get('df')})",
+                    statistic_value=result.data.get("chi2"),
+                    p_value=result.data.get("p_value"),
+                )],
+            )
         return payload
 
     @tool(registry, name="hotspot_analysis",
@@ -528,7 +532,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                         "permutations": int(params["permutations"]),
                     },
                     feature_count=len(res.data.get("features") or []) or None,
-                    crs=extract_declared_crs(geojson) or "EPSG:4326",
+                    crs=extract_declared_crs(data) or "EPSG:4326",
                     uncertainty=_coerce_uncertainty_blocks(res.data),
                     seed=42,
                 )
@@ -548,7 +552,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                     "significance_method": "normal",
                 },
                 feature_count=len(data.get("features") or []) or None,
-                crs=extract_declared_crs(geojson) or "EPSG:4326",
+                crs=extract_declared_crs(safe_parse_geojson(geojson)) or "EPSG:4326",
                 uncertainty=_coerce_uncertainty_blocks(data),
             )
         return payload

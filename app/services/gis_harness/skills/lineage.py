@@ -5,6 +5,7 @@ skill v1 → observed failures → candidate v2；保留 parent、原因、证�
 """
 from __future__ import annotations
 
+import threading
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
@@ -49,6 +50,9 @@ class SkillLineageStore:
         self._nodes: Dict[str, List[SkillLineageNode]] = {}
         self._capacity = capacity
         self._total = 0
+        # 同进程并发 register 的幂等检查 + append 必须原子（否则同版本
+        # 可双双通过检查并追加重复节点）。
+        self._lock = threading.RLock()
 
     def register(
         self,
@@ -63,30 +67,31 @@ class SkillLineageStore:
         performance_comparison: Optional[Dict[str, float]] = None,
     ) -> SkillLineageNode:
         series = self._nodes.setdefault(skill_id, [])
-        # 同版本幂等：返回已有节点，不覆盖证据
-        for node in series:
-            if node.version == version:
-                return node
-        if parent_version:
+        with self._lock:
+            # 同版本幂等：返回已有节点，不覆盖证据
             for node in series:
-                if node.version == parent_version and node.active:
-                    node.active = False
-                    node.superseded_by = version
-        new = SkillLineageNode(
-            skill_id=skill_id,
-            version=version,
-            parent_version=parent_version,
-            trust_tier=trust_tier,
-            evolution_reason=evolution_reason,
-            evidence_refs=list(evidence_refs or [])[:12],
-            counterexamples=list(counterexamples or [])[:8],
-            performance_comparison=dict(performance_comparison or {}),
-            active=True,
-        )
-        series.append(new)
-        self._total += 1
-        self._evict_if_needed()
-        return new
+                if node.version == version:
+                    return node
+            if parent_version:
+                for node in series:
+                    if node.version == parent_version and node.active:
+                        node.active = False
+                        node.superseded_by = version
+            new = SkillLineageNode(
+                skill_id=skill_id,
+                version=version,
+                parent_version=parent_version,
+                trust_tier=trust_tier,
+                evolution_reason=evolution_reason,
+                evidence_refs=list(evidence_refs or [])[:12],
+                counterexamples=list(counterexamples or [])[:8],
+                performance_comparison=dict(performance_comparison or {}),
+                active=True,
+            )
+            series.append(new)
+            self._total += 1
+            self._evict_if_needed()
+            return new
 
     def history(self, skill_id: str) -> List[SkillLineageNode]:
         return list(self._nodes.get(skill_id, []))
@@ -111,6 +116,13 @@ class SkillLineageStore:
             node.active = node is target
             if node is target:
                 node.superseded_by = ""
+        # 回滚后 superseded_by 只能指向仍 active 的版本；否则保留「已被
+        # inactive 版本取代」的悬空链接（如 v2.superseded_by=v3 但二者均已
+        # inactive）会与 active 谱系矛盾。
+        active_versions = {n.version for n in series if n.active}
+        for node in series:
+            if node.superseded_by and node.superseded_by not in active_versions:
+                node.superseded_by = ""
         return target
 
     def _evict_if_needed(self) -> None:
@@ -126,9 +138,17 @@ class SkillLineageStore:
                 self._total -= 1
             if not series:
                 del self._nodes[skill_id]
-        while self._total > self._capacity and self._nodes:
-            oldest = next(iter(self._nodes))
-            self._total -= len(self._nodes.pop(oldest))
+        # review P2-3：容量超限且无 inactive 节点可驱逐时，绝不整条 pop 仍含
+        # active 节点的 series（那会让 active_version() 静默变 None）——
+        # 只驱逐「全 inactive」的 series；没有可驱逐对象时容许软性超限。
+        while self._total > self._capacity:
+            victim_id = next(
+                (sid for sid, series in self._nodes.items()
+                 if not any(node.active for node in series)),
+                None)
+            if victim_id is None:
+                break
+            self._total -= len(self._nodes.pop(victim_id))
 
     def clear(self) -> None:
         self._nodes.clear()

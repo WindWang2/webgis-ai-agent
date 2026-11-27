@@ -170,6 +170,15 @@ def safe_extract_package(blob: bytes, target_dir: Path) -> None:
         raise _dist_error(
             DiagnosticCode.PACKAGE_UNSAFE_ENTRY, f"package is not a readable tar.gz: {exc}"
         )
+    except OSError as exc:
+        # 同名成员冲突（文件 x 后跟 x/y，或文件 x 后跟目录 x）会让
+        # mkdir/open 抛裸 FileExistsError / IsADirectoryError；publish 只
+        # 转换 ExtensionPlatformError，故这里统一收敛为 typed 拒绝。
+        raise _dist_error(
+            DiagnosticCode.PACKAGE_UNSAFE_ENTRY,
+            f"package entries cannot be extracted (duplicate or conflicting "
+            f"paths): {exc}",
+        ) from exc
     if entries == 0 or not (target_dir / MANIFEST_FILENAME).is_file():
         raise _dist_error(
             DiagnosticCode.PACKAGE_UNSAFE_ENTRY,
@@ -331,7 +340,8 @@ class ExtensionInstaller:
         raise _dist_error(
             DiagnosticCode.REGISTRY_INVALID,
             "remote registry access requires a RegistryStore-backed source "
-            "(EXTENSION_REGISTRY_DIR); remote HTTP fetch is download-only",
+            "(EXTENSION_REGISTRY_DIR); remote HTTP fetch is download-only "
+            f"(got {type(self._raw_registry).__name__})",
         )
 
     def get_state(self) -> RegistryState:

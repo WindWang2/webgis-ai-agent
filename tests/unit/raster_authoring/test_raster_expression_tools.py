@@ -72,6 +72,24 @@ async def test_registered_tools_cover_describe_apply_probe_export(
 
 
 @pytest.mark.asyncio
+async def test_probe_reports_truncation_when_band_cap_applied(
+    registry, owner_root, session_id
+):
+    ref = await register_raster_ref(
+        session_id, write_tif(owner_root / "eight.tif", bands=8)
+    )
+    probed = await registry.dispatch(
+        "webgis_raster_expression_probe",
+        {"ref_id": ref, "points": [[10.005, 19.995]],
+         "bands": [1, 2, 3, 4, 5, 6, 7, 8]},
+        session_id=session_id,
+    )
+    assert probed["success"] is True, probed
+    assert len(probed["statuses"][0]["values"]) == 6
+    assert probed["truncated"] is True
+
+
+@pytest.mark.asyncio
 async def test_tool_and_ui_share_the_same_error_code(registry, owner_root, session_id):
     ref = await register_raster_ref(session_id, write_tif(owner_root / "four.tif", bands=4))
     bad = await registry.dispatch(

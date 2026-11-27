@@ -1401,8 +1401,9 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
             budget.add_feature(feature)
             kept.append(feature)
 
-        if v2.spatial is not None:
-            kept = _filter_features_by_bbox(kept, v2.spatial.bbox)
+        query_bbox = self._require_bbox(v2)
+        if query_bbox is not None:
+            kept = _filter_features_by_bbox(kept, query_bbox)
 
         rows = [f["properties"] for f in kept]
 

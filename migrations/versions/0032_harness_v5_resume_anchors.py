@@ -13,6 +13,11 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # create_all  coexistence guard（repo convention；0022/0080 同款）：init_db()
+    # 的 create_all 已按模型建出本表及其索引，无守卫的 upgrade 会在其上
+    # duplicate table/index 崩溃。
+    if sa.inspect(op.get_bind()).has_table("workflow_resume_anchors"):
+        return
     op.create_table(
         "workflow_resume_anchors",
         sa.Column("id", sa.String(length=64), primary_key=True),

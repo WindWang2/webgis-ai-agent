@@ -258,6 +258,12 @@ class LabScenario:
                 raise SpecError(
                     f"{self.spec_id}: unknown fixture builder "
                     f"{binding.builder!r} (choose from {FIXTURE_ALIASES})")
+        aliases = [b.alias for b in self.data]
+        duplicates = sorted({a for a in aliases if aliases.count(a) > 1})
+        if duplicates:
+            # 重复 alias 会让 fixture 哨兵静默解析到非意图 builder。
+            raise SpecError(
+                f"{self.spec_id}: duplicate data aliases {duplicates}")
         known_faults = set(LAB_FAULT_TYPES) | set(self._replay_fault_types())
         for fault in self.fault_plan:
             if fault.type not in known_faults:
@@ -298,6 +304,13 @@ class LabScenario:
                 f"{self.spec_id}: benchmark spec requires benchmark_case")
         if self.kind == "replay" and not self.turns:
             raise SpecError(f"{self.spec_id}: replay spec requires turns")
+        # visual_judge 在 replay 只经 turn cartography fixture 下沉；无任何
+        # dict fixture 时编译静默无操作 = 声明的裁判被忽略。
+        if self.kind == "replay" and self.visual_judge and not any(
+                isinstance(t.cartography, dict) for t in self.turns):
+            raise SpecError(
+                f"{self.spec_id}: visual_judge requires at least one turn "
+                "with a cartography fixture")
         # 组件存在性期望只有 CartographyAdapter（cartography_checks=true）
         # 真实裁决 —— 声明了组件却不开检查 = 静默 not_evaluated。
         if self.expectations.mapspec_components and not self.cartography_checks:

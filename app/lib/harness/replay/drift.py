@@ -309,7 +309,8 @@ def _budgets_digest() -> str:
     try:
         from pathlib import Path
 
-        path = Path("config/governor_budgets.json")
+        path = (Path(__file__).resolve().parents[4]
+                / "config" / "governor_budgets.json")
         if not path.is_file():
             _BUDGETS_MEMO.pop("mtime", None)
             _BUDGETS_MEMO.pop("digest", None)

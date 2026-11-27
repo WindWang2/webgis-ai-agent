@@ -170,6 +170,7 @@ export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
                   setSelectedBaseLayer(idx);
                   setBaseLayer(provider.name);
                   setOpen(false);
+                  setActiveIdx(-1);
                 }}
                 style={{
                   display: 'block',

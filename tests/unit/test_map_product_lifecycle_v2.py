@@ -184,6 +184,40 @@ def test_merge_identical_versions_refused(lifecycle_project):
             MapProductService.merge_dimensions(s, project_id, v3, v4)
 
 
+def test_merge_accepts_style_move_from_version_without_mapspec_fingerprint(lifecycle_project):
+    """来源版本无 MapSpec 指纹（restore/fork/无 MapSpec 的 auto-record 降级
+    行）时样式移动仍须被识别：不能误报 "nothing to merge" 拒绝合并。"""
+    project_id, _ = lifecycle_project
+    manifest = {
+        "steps": [
+            {"step_id": "s1", "tool_name": "poi_query", "algorithm": "poi.query",
+             "args": {"q": "小学"}},
+            {"step_id": "s2", "tool_name": "admin_aggregate", "algorithm": "admin.aggregate",
+             "args": {"by": "district"}},
+        ],
+        "artifacts": [{"id": "a1", "content_fingerprint": "out1"}],
+    }
+    with SessionLocal() as s:
+        no_style = MapProductService.record_version(
+            s, project_id, mapspec_fingerprint=None,
+            input_dataset_fingerprints={"ds1": "fpA"}, run_manifest=manifest,
+        )
+        style_moved = MapProductService.record_version(
+            s, project_id, mapspec_fingerprint="carto-v4",
+            input_dataset_fingerprints={"ds1": "fpA"}, run_manifest=manifest,
+        )
+        diff = MapProductService.diff_versions_pairwise(
+            s, project_id, no_style.version_no, style_moved.version_no)
+        assert diff["style_changed"] is True
+        assert diff["analysis_recomputation_expected"] is False
+        merged = MapProductService.merge_dimensions(
+            s, project_id, no_style.version_no, style_moved.version_no)
+        assert merged.lineage_kind == "merge"
+        assert merged.mapspec_fingerprint == "carto-v4"
+        # 计算身份来自分析侧（无样式指纹的来源版本）
+        assert merged.parent_version_no == no_style.version_no
+
+
 # ── auto-record idempotency ─────────────────────────────────────────────────
 
 
@@ -240,6 +274,100 @@ def test_auto_record_skips_incomplete_runs(lifecycle_project):
         run.status = "failed"
         db_run = s.merge(run)
         assert MapProductService.maybe_auto_record_version(s, db_run) is None
+
+
+def test_auto_record_retry_reuses_concurrent_winner(lifecycle_project, monkeypatch):
+    """auto-record 落败方重试时必须复用 (run, fingerprint) 既有行。
+
+    用一次伪造的 IntegrityError 模拟“SELECT-max 后对手先 commit”的竞态；
+    未修复时代码会在重试里用新 version_no 再落一条同 run+指纹的重复行。
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    project_id, _ = lifecycle_project
+    with SessionLocal() as winner_session:
+        run = _real_run(winner_session, project_id)
+        winner_session.commit()
+        winner = MapProductService.record_version(
+            winner_session,
+            project_id,
+            workflow_run_id=run.id,
+            mapspec_fingerprint="carto-auto",
+            input_dataset_fingerprints=run.input_dataset_fingerprints,
+            actor="system:auto-record",
+            lineage_kind="auto",
+        )
+        winner_id, run_id = winner.id, run.id
+
+    with SessionLocal() as loser:
+        real_commit = loser.commit
+        calls = {"n": 0}
+
+        def flaky_commit():
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise IntegrityError(
+                    "INSERT INTO map_product_versions", {},
+                    Exception("uq_map_product_version"))
+            return real_commit()
+
+        monkeypatch.setattr(loser, "commit", flaky_commit)
+        again = MapProductService.record_version(
+            loser,
+            project_id,
+            workflow_run_id=run_id,
+            mapspec_fingerprint="carto-auto",
+            input_dataset_fingerprints={"ds1": "fpA"},
+            actor="system:auto-record",
+            lineage_kind="auto",
+        )
+        assert again.id == winner_id
+        rows, _ = MapProductService.list_versions_paginated(loser, project_id)
+        autos = [
+            r for r in rows
+            if r.workflow_run_id == run_id and r.lineage_kind == "auto"
+        ]
+        assert len(autos) == 1
+
+
+def test_output_fingerprints_truncated_diff_stays_consistent(lifecycle_project):
+    """>128 个产物指纹时，排序/截断相同的集合不得报 output_changed。
+
+    落盘列截断到 128，diff 必须拿同一截断投影比对；未修复时当前侧用未
+    截断列表，相同集合也会被误报为输出变更。
+    """
+    project_id, _ = lifecycle_project
+    artifacts = [
+        {"id": f"a{i}", "content_fingerprint": f"fp_{i:03d}"}
+        for i in range(130)
+    ]
+    with SessionLocal() as s:
+        v1 = MapProductService.record_version(
+            s, project_id, run_manifest={"steps": [], "artifacts": artifacts})
+        assert len(v1.output_fingerprints) == 128
+        v2 = MapProductService.record_version(
+            s, project_id,
+            run_manifest={"steps": [], "artifacts": list(reversed(artifacts))})
+        assert v2.output_fingerprints == v1.output_fingerprints
+        assert v2.diff_summary["output_changed"] is False
+
+
+def test_record_version_reraises_last_integrity_error(lifecycle_project, monkeypatch):
+    """重试耗尽后保留并抛出真实的约束错误，而不是通用 RuntimeError。"""
+    from sqlalchemy.exc import IntegrityError
+
+    project_id, _ = lifecycle_project
+    with SessionLocal() as s:
+        def always_conflict():
+            raise IntegrityError(
+                "INSERT INTO map_product_versions", {},
+                Exception("uq_map_product_version"))
+
+        monkeypatch.setattr(s, "commit", always_conflict)
+        with pytest.raises(IntegrityError) as excinfo:
+            MapProductService.record_version(
+                s, project_id, run_manifest={"steps": [], "artifacts": []})
+        assert "uq_map_product_version" in str(excinfo.value)
 
 
 # ── style-only restore（会话引擎走真实 lifecycle engine）────────────────────
@@ -370,3 +498,163 @@ def test_rest_rerun_requires_bound_run(lifecycle_project, _client):
     r = _client.post(
         f"/api/v1/projects/{project_id}/map-products/{v1}/rerun", headers=_auth())
     assert r.status_code == 409  # 无绑定 run → 诚实拒绝
+
+
+async def test_rest_rerun_records_from_owned_session_not_detached_run(monkeypatch):
+    """P2 data-integrity：引擎返回的 run 是 worker 线程内已关闭 SessionLocal 的
+    detached 实例（SessionLocal 未设 expire_on_commit=False）—— rerun 的记账
+    必须像 restore 的 _record_full 那样用 owned 会话按 run.id 重取。直接消费
+    该实例的属性会抛 DetachedInstanceError，且不在本路由任何 try 内 → 500。"""
+    from sqlalchemy.orm.exc import DetachedInstanceError
+
+    from app.api.routes import project as project_mod
+    from app.models.db_model import User
+    from app.models.project import Project, Workflow, WorkflowRun
+
+    project_id = f"proj_{uuid.uuid4().hex[:8]}"
+    workflow_id = f"wf_{uuid.uuid4().hex[:8]}"
+    run_id = f"run_{uuid.uuid4().hex[:8]}"
+    with SessionLocal() as s:
+        s.merge(User(id="u_lc", username="lc", email="lc@example.com",
+                     password_hash="x", role="viewer", is_active=True))
+        s.add(Project(id=project_id, name="rerun-detach", owner_id="u_lc"))
+        s.add(Workflow(id=workflow_id, project_id=project_id, name="w", graph_spec={}))
+        s.add(WorkflowRun(
+            id=run_id, project_id=project_id, workflow_id=workflow_id,
+            status="completed", input_bindings={},
+            input_dataset_fingerprints={"ds1": "fpA"},
+            run_manifest={"steps": [], "artifacts": [
+                {"id": "a1", "content_fingerprint": "out-run"}]},
+        ))
+        s.commit()
+        # V1 的账本指纹与 run 的证据不同 → maybe_auto_record_version 记 V2
+        v1 = MapProductService.record_version(
+            s, project_id, workflow_run_id=run_id, label="base",
+            run_manifest={"steps": [], "artifacts": []})
+
+    class _DetachedRun:
+        """引擎 worker Session 关闭后的 detached run：status/id 已加载可读，
+        其余属性按 SQLAlchemy 语义抛 DetachedInstanceError。"""
+
+        id = run_id
+        status = "completed"
+
+        def __getattr__(self, name):
+            raise DetachedInstanceError(
+                f"Instance <WorkflowRun at 0x> is not bound to a Session; "
+                f"attribute {name!r} requires a session")
+
+    async def _fake_engine(*args, **kwargs):
+        return _DetachedRun()
+
+    monkeypatch.setattr(project_mod, "_run_workflow_engine", _fake_engine)
+    monkeypatch.setattr(project_mod, "get_tool_registry", lambda: object())
+    resp = await project_mod.rerun_map_product_version(
+        project_id, int(v1.version_no), SessionLocal(), {"user_id": "u_lc"})
+    assert resp["run_id"] == run_id
+    assert resp["recorded_version_no"] == int(v1.version_no) + 1
+
+
+async def test_rerun_route_never_consumes_request_level_db(monkeypatch):
+    """P2 concurrency：请求级 Session 绝不进 worker 线程（本文件 63-64 行
+    纪律；db=db 关键字不含 db. 属性访问，恰好绕过 #565 AST 守卫）—— 用
+    「一被 ORM 使用即炸」的 db 替身驱动 rerun 路由：所有同步 DB 工作只能在
+    工作线程里开自己的 SessionLocal。"""
+    from app.api.routes import project as project_mod
+    from app.models.db_model import User
+    from app.models.project import Project, Workflow, WorkflowRun
+
+    project_id = f"proj_{uuid.uuid4().hex[:8]}"
+    workflow_id = f"wf_{uuid.uuid4().hex[:8]}"
+    run_id = f"run_{uuid.uuid4().hex[:8]}"
+    with SessionLocal() as s:
+        s.merge(User(id="u_lc", username="lc", email="lc@example.com",
+                     password_hash="x", role="viewer", is_active=True))
+        s.add(Project(id=project_id, name="rerun-nodb", owner_id="u_lc"))
+        s.add(Workflow(id=workflow_id, project_id=project_id, name="w", graph_spec={}))
+        s.add(WorkflowRun(
+            id=run_id, project_id=project_id, workflow_id=workflow_id,
+            status="completed", input_bindings={},
+            run_manifest={"steps": [], "artifacts": []},
+        ))
+        s.commit()
+        v1 = MapProductService.record_version(
+            s, project_id, workflow_run_id=run_id, label="base",
+            run_manifest={"steps": [], "artifacts": []})
+
+    class _ExplodingDb:
+        """请求级 Session 替身：任何 ORM 使用都意味着它被跨线程消费了。"""
+
+        def _boom(self, *args, **kwargs):
+            raise AssertionError(
+                "request-level db consumed by the route (cross-thread Session)")
+
+        execute = query = get = add = delete = commit = rollback = flush = refresh = _boom
+
+        def close(self):
+            pass
+
+    class _CompletedRun:
+        id = run_id
+        status = "completed"
+
+        def __getattr__(self, name):
+            raise AttributeError(name)
+
+    async def _fake_engine(*args, **kwargs):
+        return _CompletedRun()
+
+    monkeypatch.setattr(project_mod, "_run_workflow_engine", _fake_engine)
+    monkeypatch.setattr(project_mod, "get_tool_registry", lambda: object())
+    resp = await project_mod.rerun_map_product_version(
+        project_id, int(v1.version_no), _ExplodingDb(), {"user_id": "u_lc"})
+    assert resp["run_id"] == run_id
+    assert resp["recorded_version_no"] == int(v1.version_no)
+
+
+async def test_workspace_snapshot_route_never_consumes_request_level_db(monkeypatch):
+    """P2 concurrency：workspace 快照面同样不得把请求级 Session 送进 worker
+    线程（db=db 关键字绕过 #565 AST 守卫）—— 以「一被 ORM 使用即炸」的
+    替身驱动 save 路由，鉴权查询只能在工作线程自建 SessionLocal。"""
+    from types import SimpleNamespace
+
+    from app.api.routes import project as project_mod
+    from app.models.db_model import User
+    from app.models.project import Project
+
+    project_id = f"proj_{uuid.uuid4().hex[:8]}"
+    with SessionLocal() as s:
+        s.merge(User(id="u_lc", username="lc", email="lc@example.com",
+                     password_hash="x", role="viewer", is_active=True))
+        s.add(Project(id=project_id, name="ws-nodb", owner_id="u_lc"))
+        s.commit()
+
+    class _ExplodingDb:
+        def _boom(self, *args, **kwargs):
+            raise AssertionError(
+                "request-level db consumed by the route (cross-thread Session)")
+
+        execute = query = get = add = delete = commit = rollback = flush = refresh = _boom
+
+        def close(self):
+            pass
+
+    async def _ok_session(*args, **kwargs):
+        return None
+
+    class _Svc:
+        async def save_snapshot(self, *args, **kwargs):
+            return SimpleNamespace(
+                project_id=project_id, snapshot_id="snap-1", label="l",
+                durable_pointers=[], materialize_skipped=[],
+                model_dump=lambda mode="json": {})
+
+    monkeypatch.setattr(project_mod, "_verify_session_access", _ok_session)
+    monkeypatch.setattr(
+        "app.services.workspace.snapshot.get_workspace_snapshot_service",
+        lambda: _Svc(),
+    )
+    req = project_mod.WorkspaceSnapshotSaveRequest(session_id="sess", label="l")
+    resp = await project_mod.save_workspace_snapshot(
+        project_id, req, _ExplodingDb(), {"user_id": "u_lc"}, None)
+    assert resp.snapshot_id == "snap-1"

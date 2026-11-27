@@ -50,6 +50,18 @@ def gpkg_path(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def aspatial_gpkg_path(tmp_path: Path) -> Path:
+    """A real attribute-only GeoPackage layer; pyogrio returns a DataFrame."""
+    import geopandas as gpd
+
+    path = tmp_path / "attributes.gpkg"
+    gpd.GeoDataFrame({"name": ["a", "b"], "value": [1, 2]}).to_file(
+        path, driver="GPKG", layer="rows"
+    )
+    return path
+
+
+@pytest.fixture
 def geojson_path(tmp_path: Path) -> Path:
     path = tmp_path / "export.geojson"
     path.write_text(json.dumps({
@@ -135,6 +147,37 @@ def test_geopackage_refuses_ignored_predicate_and_discloses_pagination(gpkg_path
     result = adapter.query("pois", QuerySpec(limit=1))
     assert result.has_more and result.truncated
     assert result.total_matching == 2
+
+
+@pytest.mark.parametrize("limit", [1, 0])
+def test_geopackage_aspatial_query_returns_null_geometry_features(aspatial_gpkg_path, limit):
+    import pandas as pd
+    import pyogrio
+
+    frame = pyogrio.read_dataframe(str(aspatial_gpkg_path), layer="rows")
+    assert isinstance(frame, pd.DataFrame)
+    assert not hasattr(frame, "crs")  # regression guard: real pyogrio boundary
+    adapter = GeoPackageAdapter(_profile("geopackage", endpoint=str(aspatial_gpkg_path)))
+    result = adapter.query("rows", QuerySpec(limit=limit))
+    assert result.returned_count == (1 if limit else 2)
+    assert result.total_count == 2
+    assert result.total_matching == 2
+    assert result.metadata["delivered_crs"] is None
+    assert len(result.features) == result.returned_count
+    assert result.features[0]["properties"] == {"name": "a", "value": 1}
+    assert result.features[0]["geometry"] is None
+
+
+def test_geopackage_aspatial_preview_and_describe_remain_compatible(aspatial_gpkg_path):
+    adapter = GeoPackageAdapter(_profile("geopackage", endpoint=str(aspatial_gpkg_path)))
+    desc = adapter.describe("rows")
+    assert desc.feature_count == 2
+    assert desc.geometry_type == "Unknown"
+    assert desc.crs is None
+    preview = adapter.preview("rows")
+    assert preview["columns"] == ["name", "value"]
+    assert preview["features"][0]["geometry"] is None
+    assert preview["features"][0]["properties"] == {"name": "a", "value": 1}
 
 
 def test_geopackage_missing_is_typed_unreachable(tmp_path):

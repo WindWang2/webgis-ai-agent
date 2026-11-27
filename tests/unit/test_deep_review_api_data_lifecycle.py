@@ -193,3 +193,27 @@ def test_assess_requires_admin_and_gc_plan_scoped_to_owner(tmp_path, monkeypatch
         for c in admin_body["summary"]["kinds"]["cog_output"]["candidates"]
     }
     assert admin_ids == set(), "admin has no authority over either session"
+
+
+def test_upsert_policy_truncated_name_reuses_same_row():
+    """P2 data-integrity：>64 字符策略名存储截断后，二次 PUT 必须命中同一行。
+
+    此前查询用完整 name、插入用 name[:64] → 第二次 PUT 查不到既有行，
+    重复插入同一截断名，list_policies 按 name 折叠时生效行不确定。
+    """
+    from app.models.data_lifecycle import LifecyclePolicy
+
+    long_name = "p" * 80
+    body = lifecycle_routes.PolicyUpsertRequest(
+        kind="artifact_cache", action="observe", enabled=True,
+    )
+    first = lifecycle_routes.upsert_policy(
+        long_name, body, _admin={"org_id": 1})
+    second = lifecycle_routes.upsert_policy(
+        long_name, body, _admin={"org_id": 1})
+
+    assert first["name"] == second["name"] == "p" * 64
+    with SessionLocal() as db:
+        rows = db.query(LifecyclePolicy).filter_by(
+            name="p" * 64, org_id=1).all()
+    assert len(rows) == 1

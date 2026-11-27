@@ -54,6 +54,7 @@ logger = logging.getLogger(__name__)
 
 # ─── 预算与配额 ─────────────────────────────────────────────────────────────
 SELECTION_TTL_SECONDS = 600          # 空闲 TTL：超时未消费 → 410 expired
+GLOBAL_SWEEP_INTERVAL_SECONDS = 60   # 全局惰性清扫的最小间隔（回收已删会话的 bucket）
 MAX_HANDLES_PER_SESSION = 64         # 单会话并存 handle 配额（LRU 逐出最旧）
 MAX_SCOPE_IDS = 200                  # ids scope 显式 id 数上限（封闭有界）
 MAX_MATERIALIZE_FEATURES = 10_000    # 物化成 ref 的要素数上限（typed 超限拒绝）
@@ -146,11 +147,13 @@ def scope_summary(scope: Dict[str, Any]) -> Dict[str, Any]:
 
 class _HandleEntry:
     __slots__ = ("handle", "session_id", "ref_id", "revision", "scope",
-                 "count", "count_exact", "created_at", "last_used", "missing_ids")
+                 "count", "count_exact", "created_at", "last_used", "missing_ids",
+                 "resolved_ids")
 
     def __init__(self, handle: str, session_id: str, ref_id: str, revision: Optional[int],
                  scope: Dict[str, Any], count: Optional[int], count_exact: bool,
-                 missing_ids: Optional[List[str]]):
+                 missing_ids: Optional[List[str]],
+                 resolved_ids: Optional[List[int]] = None):
         self.handle = handle
         self.session_id = session_id
         self.ref_id = ref_id
@@ -159,6 +162,8 @@ class _HandleEntry:
         self.count = count
         self.count_exact = count_exact
         self.missing_ids = missing_ids
+        # ids scope：创建时解析出的自然索引（分页直接复用，不逐页全量重扫）
+        self.resolved_ids = resolved_ids
         now = time.time()
         self.created_at = now
         self.last_used = now
@@ -170,6 +175,7 @@ class SelectionHandleStore:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._by_session: Dict[str, "OrderedDict[str, _HandleEntry]"] = {}
+        self._last_global_sweep = 0.0
 
     def _sweep_locked(self, session_id: str, now: float) -> None:
         bucket = self._by_session.get(session_id)
@@ -181,18 +187,37 @@ class SelectionHandleStore:
         if not bucket:
             self._by_session.pop(session_id, None)
 
+    def _sweep_all_locked(self, now: float) -> None:
+        """全局惰性清扫：回收所有会话中空闲超 TTL 的 bucket。
+
+        否则 bucket 只在「该会话再次 create/get」时被清理——已删除会话的
+        bucket 会一直滞留到进程重启。按 GLOBAL_SWEEP_INTERVAL_SECONDS 节流。
+        """
+        if now - self._last_global_sweep < GLOBAL_SWEEP_INTERVAL_SECONDS:
+            return
+        self._last_global_sweep = now
+        for session_id in list(self._by_session):
+            self._sweep_locked(session_id, now)
+
+    def purge_session(self, session_id: str) -> None:
+        """会话删除清理入口：立即回收该会话的全部 handle（幂等）。"""
+        with self._lock:
+            self._by_session.pop(session_id, None)
+
     def create(self, session_id: str, ref_id: str, revision: Optional[int],
                scope: Dict[str, Any], count: Optional[int], count_exact: bool,
-               missing_ids: Optional[List[str]] = None) -> _HandleEntry:
+               missing_ids: Optional[List[str]] = None,
+               resolved_ids: Optional[List[int]] = None) -> _HandleEntry:
         now = time.time()
         with self._lock:
+            self._sweep_all_locked(now)
             self._sweep_locked(session_id, now)
             bucket = self._by_session.setdefault(session_id, OrderedDict())
             while len(bucket) >= MAX_HANDLES_PER_SESSION:
                 bucket.popitem(last=False)  # LRU 逐出最旧（配额纪律，非静默数据丢失）
             entry = _HandleEntry(
                 secrets.token_urlsafe(24), session_id, ref_id, revision,
-                scope, count, count_exact, missing_ids)
+                scope, count, count_exact, missing_ids, resolved_ids)
             bucket[entry.handle] = entry
             return entry
 
@@ -328,7 +353,8 @@ async def create_selection(
     if scope["kind"] == "ids":
         resolved, missing = await asyncio.to_thread(_resolve_ids, features, scope["ids"])
         return handle_store.create(
-            session_id, ref_id, revision, scope, len(resolved), True, missing)
+            session_id, ref_id, revision, scope, len(resolved), True, missing,
+            resolved_ids=resolved)
     # bbox / where：count 用既有精确计数（≤ TOTAL_EXACT_LIMIT 可证）
     if scope["kind"] == "bbox":
         boxes = scope["boxes"]
@@ -354,15 +380,17 @@ async def create_selection(
 def _page_generic(
     features: List[Any], scope: Dict[str, Any], *,
     limit: int, cursor: Optional[str], fields: Optional[Sequence[str]],
+    resolved: Optional[List[int]] = None,
 ) -> Dict[str, Any]:
     """自然序分页（bbox 多箱 / ids 通用路径；order 不支持 → 调用方披露）。"""
     start = decode_page_cursor(cursor, None) if cursor else 0
     n = len(features)
     ids_mode = scope["kind"] == "ids"
-    resolved: Optional[List[int]] = None
     total = n
     if ids_mode:
-        resolved, _ = _resolve_ids(features, scope["ids"])
+        # 创建 handle 时已解析的索引直接复用；索引失效（载荷变化）才重扫
+        if resolved is None or (resolved and resolved[-1] >= n):
+            resolved, _ = _resolve_ids(features, scope["ids"])
         total = len(resolved)
         start = min(start, total)
     if start >= total:
@@ -416,8 +444,11 @@ async def selection_features_page(
     if scope["kind"] == "ids":
         if order is not None:
             reason.append("order_unsupported_ids_scope")
+        # 创建期解析的索引复用（revision 未知时不做，避免载荷变化后索引陈旧）
+        cached_resolved = entry.resolved_ids if entry.revision is not None else None
         page = await asyncio.to_thread(
-            _page_generic, features, scope, limit=limit, cursor=cursor, fields=fields)
+            _page_generic, features, scope, limit=limit, cursor=cursor, fields=fields,
+            resolved=cached_resolved)
         page["reason_codes"] = reason
         return page
     if scope["kind"] == "bbox" and len(scope["boxes"]) > 1:

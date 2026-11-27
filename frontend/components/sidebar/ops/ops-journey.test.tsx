@@ -154,6 +154,37 @@ describe('验收旅程 B：校验 plan → 提交执行 → 进度瀑布', () =>
 });
 
 /**
+ * 回归（ops-routes 事件页）：旧实现对任意 after_id≠0 均返回第二页
+ * （after_id 恒为 19），导致第三页终态 run_completed 永不可达、跟随游标的
+ * 客户端反复重收 6–19 号事件。这里直接走 stub 路由验证游标分页语义。
+ */
+describe('ops-routes 事件游标分页', () => {
+  it('跟随 after_id 游标可走到 run_completed，且每页只含未见事件', async () => {
+    installOkRoutes();
+    const origin = window.location.origin;
+    const seenIds: number[] = [];
+    const requestedAfterIds: number[] = [];
+    let afterId = 0;
+    let terminalSeen = false;
+    for (let i = 0; i < 8 && !terminalSeen; i += 1) {
+      requestedAfterIds.push(afterId);
+      const res = await fetch(`${origin}/api/v1/geocompute/runs/run-cluster-400/events?after_id=${afterId}&limit=200`);
+      const page = (await res.json()) as { events: { id: number; event: string }[]; after_id: number; count: number };
+      // 只发 > 游标的未见事件（旧缺陷：after_id=19 仍整页重发 6–19）
+      expect(page.events.every((e) => e.id > afterId)).toBe(true);
+      expect(page.count).toBe(page.events.length);
+      seenIds.push(...page.events.map((e) => e.id));
+      terminalSeen = page.events.some((e) => e.event === 'run_completed');
+      afterId = page.after_id;
+    }
+    expect(terminalSeen).toBe(true);
+    expect(seenIds).toEqual(Array.from({ length: 21 }, (_, idx) => idx + 1));
+    // 三页到终态后即停：0 → 5 → 19，不存在 after_id=19 的重复请求
+    expect(requestedAfterIds).toEqual([0, 5, 19]);
+  });
+});
+
+/**
  * #1747 项 6：运维视图 tablist 的 WAI-APG 键盘契约 —— roving tabindex +
  * 方向键/Home/End（activation-on-focus）+ tabpanel 关联。此前只有
  * role/aria-selected，键盘用户无法切换视图（与本片 lakehouse 子页签、

@@ -50,6 +50,7 @@ export type AckDeliveryReason =
   | 'http_408'
   | 'http_429'
   | 'http_5xx'
+  | 'http_3xx'
   | 'backend_dropped'
   | 'http_401'
   | 'http_403'
@@ -160,6 +161,10 @@ export function classifyAckDelivery(input: {
   if (typeof status === 'number' && status >= 400 && status < 500) {
     return { kind: 'permanent', reason: 'http_4xx' };
   }
+  // Redirects (proxy 302/304) are not delivery confirmation — never success.
+  if (typeof status === 'number' && status >= 300 && status < 400) {
+    return { kind: 'transient', reason: 'http_3xx' };
+  }
   if ((input.dropped ?? 0) > 0) return { kind: 'transient', reason: 'backend_dropped' };
   return { kind: 'success', reason: 'ok' };
 }
@@ -265,13 +270,12 @@ export function createMapActionAckSender(options: MapActionAckSenderOptions): Ma
     const nowTs = now();
     let nextAt = Number.POSITIVE_INFINITY;
     for (let i = 0; i < queue.length; i += 1) {
-      if (queue[i].readyAt > nowTs && queue[i].readyAt < nextAt) {
+      if (queue[i].readyAt >= nowTs && queue[i].readyAt < nextAt) {
         nextAt = queue[i].readyAt;
       }
     }
     if (nextAt === Number.POSITIVE_INFINITY) return;
     retryTimer = trackTimer(setTimeout(() => {
-      retryTimer = null;
       flushInternal(false);
     }, Math.max(0, nextAt - now())));
   };
@@ -279,7 +283,6 @@ export function createMapActionAckSender(options: MapActionAckSenderOptions): Ma
   const scheduleDebounce = (): void => {
     untrackTimer(debounceTimer);
     debounceTimer = trackTimer(setTimeout(() => {
-      debounceTimer = null;
       flushInternal(false);
     }, debounceMs));
   };
@@ -346,19 +349,30 @@ export function createMapActionAckSender(options: MapActionAckSenderOptions): Ma
       timeoutId = null;
     };
 
-    doFetch(
-      `${API_BASE}/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/map-action-ack`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'X-Session-Token': token } : {}),
-          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+    let request: Promise<Response>;
+    try {
+      request = doFetch(
+        `${API_BASE}/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/map-action-ack`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'X-Session-Token': token } : {}),
+            ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+          },
+          body: JSON.stringify({ acks }),
+          signal: controller.signal,
         },
-        body: JSON.stringify({ acks }),
-        signal: controller.signal,
-      },
-    ).then(async (response) => {
+      );
+    } catch (error: unknown) {
+      // A synchronous throw (e.g. an injected fetch or an invalid URL) must
+      // settle the batch: the action ids are already in `inFlight`, so leaving
+      // here without a retry would wedge them behind hasItem() forever.
+      finishRequest();
+      settleBatch(sessionId, items, classifyAckDelivery({ error }), gen);
+      return;
+    }
+    request.then(async (response) => {
       if (response.status === 401 && accessToken && await refreshAuthToken()) {
         finishRequest();
         settleBatch(sessionId, items, { kind: 'transient', reason: 'http_401' }, gen);

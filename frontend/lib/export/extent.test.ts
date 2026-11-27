@@ -76,6 +76,17 @@ describe('boundsContained / projectLngLatToPixel', () => {
     expect(boundsContained(MASK, null)).toBe(true);
   });
 
+  it('退化数据范围（单点 / 零宽零高）按几何包含性判定，不漏报超界', () => {
+    const frame = exportBoundsForFrame(MASK, 1.414)!;
+    // 单点数据在导出范围内 → 包含
+    expect(boundsContained([104.05, 30.65, 104.05, 30.65], frame)).toBe(true);
+    // 单点数据在导出范围外 → 必须发超界提示（修复前被 isFiniteBounds 误判为非法而返回 true）
+    expect(boundsContained([90, 20, 90, 20], frame)).toBe(false);
+    // 零宽 / 零高数据同理
+    expect(boundsContained([90, 30.65, 90, 30.65], frame)).toBe(false);
+    expect(boundsContained([104.05, 20, 104.05, 20], frame)).toBe(false);
+  });
+
   it('解析投影：frame 角点 → (0,0)/(W,H)；Mercator 中点 → 半幅（亚像素精度基准）', () => {
     const frame: BoundsWSEN = [104.0, 30.0, 104.3, 30.3];
     const W = 1414;

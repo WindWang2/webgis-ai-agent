@@ -24,9 +24,12 @@ from app.services.data_import.commit import commit_member
 from app.services.data_import.discovery import DiscoveryError, discover_source
 from app.services.data_import.interpretation import InterpretationError
 from app.services.data_import.models import (
+    INTERPRETATION_MODES,
     BatchStatus,
     CommitReceipt,
+    ContainerKind,
     ImportBatchState,
+    MemberKind,
     MemberRecord,
     MemberStatus,
     TableInterpretation,
@@ -61,9 +64,16 @@ def _interpretation_model(kind: str, payload: Dict[str, Any]):
     try:
         if kind == "vector":
             return VectorInterpretation.model_validate(payload)
-        return TableInterpretation.model_validate(payload)
+        model = TableInterpretation.model_validate(payload)
     except Exception as e:  # noqa: BLE001 — pydantic 校验错误 → typed
         raise DataImportError("BAD_INTERPRETATION", str(e)[:200])
+    # mode 是合同枚举（auto|points|wkt|table）：非法值不得静默落成纯表
+    if model.mode not in INTERPRETATION_MODES:
+        raise DataImportError(
+            "BAD_INTERPRETATION",
+            f"非法 mode {model.mode!r}；可用: {', '.join(sorted(INTERPRETATION_MODES))}",
+        )
+    return model
 
 
 def _job_active_by_id(job_id: int) -> Optional[Dict[str, Any]]:
@@ -145,6 +155,18 @@ class DataImportService:
                     await asyncio.to_thread(staging.delete_batch, state.batch_id)
                     raise DataImportError(e.code, e.detail, status=413) from e
                 state.notes.append(f"{src.original_name}: 发现失败（{e.code}: {e.detail}）")
+                # 发现失败的文件不得从成员清单消失（注记会被 NOTES_MAX 截断）：
+                # 给占位成员承载 unsupported_reason，UI/工具可见且不可导入
+                members.append(
+                    MemberRecord(
+                        member_key=f"f:{src.source_id}",
+                        source_id=src.source_id,
+                        container=ContainerKind.FILE,
+                        kind=MemberKind.TABLE,
+                        display_name=src.original_name,
+                        unsupported_reason=f"discovery_failed:{e.code}",
+                    )
+                )
                 continue
             members.extend(ms)
             state.notes.extend(notes[:16])
@@ -293,8 +315,13 @@ class DataImportService:
             task = self._commit_tasks.get(batch_id)
             if task is not None and not task.done():
                 raise DataImportError("COMMIT_IN_PROGRESS", "提交进行中，请先取消", status=409)
-            if state.status == BatchStatus.COMMITTING:
-                active = self._active_commit_job(state)
+            # 锁内重读（评审 P1）：start_commit 持同一把锁把状态推进到
+            # COMMITTING 后才放锁；锁外快照可能仍是旧值（configured/…），
+            # 不重读就会 rmtree 掉在飞 durable job 的 staging（该 run 随后
+            # 以 NOT_FOUND 中断）。
+            fresh = await asyncio.to_thread(staging.load_state, batch_id)
+            if fresh is not None and fresh.status == BatchStatus.COMMITTING:
+                active = self._active_commit_job(fresh)
                 if active is not None:
                     raise DataImportError(
                         "COMMIT_IN_PROGRESS",
@@ -646,11 +673,13 @@ class DataImportService:
         """
         state = await self._load_owned(batch_id, session_id)
         active = self._active_commit_job(state) if state.status == BatchStatus.COMMITTING else None
-        if active is not None and state.active_job_id:
+        # 以探测到的活跃 job 为准（扫描兜底可能补到状态文件缺失/过期的
+        # job_id）；仅 DB 不可达且无 id 时（job_id=0）退回本地取消路径。
+        if active is not None and (active.get("job_id") or state.active_job_id):
             from app.core.database import async_db_session
             from app.services.jobs.store import DurableJobStore
 
-            job_id = int(state.active_job_id)
+            job_id = int(active.get("job_id") or state.active_job_id)
             async with async_db_session() as db:
                 changed, current = await DurableJobStore.request_cancel(db, job_id)
                 await db.commit()

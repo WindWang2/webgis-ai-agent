@@ -46,6 +46,9 @@ class ReuseStore:
 
     # ── 路径 ────────────────────────────────────────────────────────
     _SCOPE_VALUE_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,128}$")
+    #: key 直接拼进两级目录：必须与 scope 值同口径白名单（否则 "/" 或
+    #: ".." 可穿越 owner 目录读写任意路径）。
+    _KEY_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,128}$")
 
     def _owner_dir(self, owner_scope: Dict[str, str]) -> Path:
         """R1-C6：scope 值白名单（防注册表路径穿越；对齐 data_object 口径）。"""
@@ -58,6 +61,14 @@ class ReuseStore:
         return self._root / scope_key
 
     def _entry_dir(self, owner_scope: Dict[str, str], key: str) -> Path:
+        if (
+            not isinstance(key, str)
+            or not self._KEY_RE.match(key)
+            or key in {".", ".."}
+        ):
+            from app.lib.modelops.errors import ModelOpsError
+
+            raise ModelOpsError("invalid reuse key (charset/length whitelist)")
         return self._owner_dir(owner_scope) / key[:2] / key
 
     # ── API ─────────────────────────────────────────────────────────
@@ -112,36 +123,47 @@ class ReuseStore:
         staging.mkdir(parents=True, exist_ok=True)
         stored_artifacts: List[Dict[str, Any]] = []
         total = 0
-        for art in artifacts:
-            src = Path(str(art["file"]))
-            if not src.exists():
+        published = False
+        try:
+            for index, art in enumerate(artifacts):
+                src = Path(str(art["file"]))
+                if not src.exists():
+                    return False
+                # staging 内以序号前缀命名：同一次 store 里不同目录的同名
+                # artifact 不会互相覆盖（否则 manifest 两条记录指向同一
+                # 文件，lookup 后某 role 读到错误产物）。
+                staged_name = f"{index:04d}-{src.name}"
+                dst = staging / staged_name
+                shutil.copy2(src, dst)
+                size = dst.stat().st_size
+                total += size
+                stored = {k: v for k, v in art.items() if k != "file"}
+                stored["file"] = staged_name
+                stored["size"] = size
+                stored_artifacts.append(stored)
+            entry = {
+                "entry_version": REUSE_ENTRY_VERSION,
+                "key": key,
+                "created_at": self._clock(),
+                "manifest": manifest,
+                "artifacts": stored_artifacts,
+                "total_bytes": total,
+            }
+            (staging / "entry.json").write_text(
+                json.dumps(entry, ensure_ascii=False), encoding="utf-8"
+            )
+            with self._lock:
+                if entry_dir.exists():
+                    shutil.rmtree(entry_dir, ignore_errors=True)
+                os.replace(staging, entry_dir)
+                published = True
+                self._evict()
+        finally:
+            # staging 必须回收：_evict/stats 的 glob 只认 entry.json，遗留的
+            # <key>.tmp.<pid>.<hex> 目录永不回收 → 磁盘无界增长。
+            if not published:
                 shutil.rmtree(staging, ignore_errors=True)
-                return False
-            dst = staging / src.name
-            shutil.copy2(src, dst)
-            size = dst.stat().st_size
-            total += size
-            stored = {k: v for k, v in art.items() if k != "file"}
-            stored["file"] = src.name
-            stored["size"] = size
-            stored_artifacts.append(stored)
-        entry = {
-            "entry_version": REUSE_ENTRY_VERSION,
-            "key": key,
-            "created_at": self._clock(),
-            "manifest": manifest,
-            "artifacts": stored_artifacts,
-            "total_bytes": total,
-        }
-        (staging / "entry.json").write_text(
-            json.dumps(entry, ensure_ascii=False), encoding="utf-8"
-        )
-        with self._lock:
-            if entry_dir.exists():
-                shutil.rmtree(entry_dir, ignore_errors=True)
-            os.replace(staging, entry_dir)
-            self._evict()
-        return True
+        return published
 
     def invalidate(self, key: str, *, owner_scope: Dict[str, str]) -> bool:
         entry_dir = self._entry_dir(owner_scope, key)
@@ -185,6 +207,16 @@ class ReuseStore:
                 (entry_path.stat().st_mtime, int(entry.get("total_bytes", 0)), entry_path.parent)
             )
         candidates.sort(reverse=True)  # 新的在前
+        # 遗留 staging 目录（store 被 kill / 异常路径留下）：上面的 glob 只认
+        # entry.json，这些 <key>.tmp.<pid>.<hex> 目录永不回收。只清远超 TTL
+        # 的 —— 进行中的 store 会持续刷新 mtime，不会被误删。
+        for stale in self._root.glob("*/*/*.tmp.*"):
+            try:
+                if now - stale.stat().st_mtime <= self._ttl_s:
+                    continue
+            except OSError:
+                continue
+            shutil.rmtree(stale, ignore_errors=True)
         owner_totals: Dict[str, Tuple[int, int]] = {}
         for _mtime, size, entry_dir in candidates:
             owner = str(entry_dir.parent.parent)

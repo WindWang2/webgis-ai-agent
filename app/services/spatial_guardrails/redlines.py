@@ -137,7 +137,10 @@ def check_area_budget(
 ) -> None:
     """bbox 面积预算：超限抛 GeofenceRedlineViolationError。"""
     minx, miny, maxx, maxy = (float(v) for v in bbox)
-    dlng_km = abs(maxx - minx) * EARTH_DEG_KM_LNG * math.cos(math.radians((miny + maxy) / 2.0))
+    # 平均纬度越界时 cos 为负会让面积为负、预算恒不触发；取绝对值保证面积非负。
+    dlng_km = abs(maxx - minx) * EARTH_DEG_KM_LNG * abs(
+        math.cos(math.radians((miny + maxy) / 2.0))
+    )
     dlat_km = abs(maxy - miny) * EARTH_DEG_KM_LAT
     area = dlng_km * dlat_km
     if area > max_km2:

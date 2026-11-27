@@ -36,6 +36,7 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.coord_transform": "transformation",
     "app.tools.dasymetric_tools": "analysis",       # 面插值重分配（量守恒分析）
     "app.tools.data_discovery": "inspection",           # 目录/画像/lineage 只读发现
+    "app.tools.task_data_supply_tools": "data_access",  # GOAL-02 任务供给（发现/覆盖/计划只读+受控物化）
     "app.tools.data_fabric_tools": "data_access",
     # GOAL-02：服务发现只读面（inspect_data_service）+ 受控读取/物化（读 =
     # data_access；瓦片上图名字覆盖 map_mutation 在模块内声明）。
@@ -174,6 +175,8 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.skill_job_tools": "debug_internal",
     # 专题样式创作（inspect/preview 只读、apply 写状态名字覆盖）
     "app.tools.thematic_authoring_tools": "rendering",
+    # 图符资格检查和候选布局预览是只读操作；apply 可提交 MapSpec。
+    "app.tools.diagram_symbol_tools": "inspection",
     # 双变量可靠性评估（apply 评估；inspect/preview 只读覆盖）
     "app.tools.bivariate_reliability_tools": "analysis",
     # 会话模型/预算状态（只读状态面）
@@ -350,6 +353,7 @@ _NAME_OVERRIDES: Dict[str, str] = {
     # scale_portrayal_tools：检视只读 + 应用写状态
     "webgis_inspect_scale_portrayal": "inspection",
     "webgis_apply_scale_portrayal": "map_mutation",
+    "webgis_diagram_symbol_apply": "map_mutation",
     # label_authoring_tools：检视只读 + 注记写地图
     "webgis_label_inspect": "inspection",
     "webgis_label_author": "map_mutation",

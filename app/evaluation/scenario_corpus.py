@@ -293,8 +293,14 @@ def coverage_report(
     - ``coverage_gaps``：registry 中非 data_access 类 capability 完全没
       有被任何 pack 声明的 id（registry 长出新族而语料未跟 → 非空 = 门红）。
     """
-    cases = cases if cases is not None else build_scenario_corpus(
-        max_cases=build_max_cases or 5000)
+    if cases is None:
+        limit = build_max_cases or 5000
+        # 多构建 1 条用于区分「恰好装满」与「被上限截断」。
+        built = build_scenario_corpus(max_cases=limit + 1)
+        truncated = len(built) > limit
+        cases = built[:limit]
+    else:
+        truncated = bool(build_max_cases and len(cases) > build_max_cases)
     declared: Dict[str, str] = {}
     for c in cases:
         for cap in c.expected:
@@ -312,7 +318,7 @@ def coverage_report(
         "total": len(cases),
         "min_required": MIN_CORPUS_SIZE,
         "size_ok": len(cases) >= MIN_CORPUS_SIZE,
-        "truncated": bool(build_max_cases and len(cases) >= build_max_cases),
+        "truncated": truncated,
         "registry_missing": registry_missing[:32],
         "coverage_gaps": coverage_gaps,
         "families": len({c.family for c in cases}),
@@ -357,6 +363,8 @@ def sample_cases(
     n: int = EVAL_SAMPLE_SIZE,
 ) -> List[ScenarioCase]:
     """确定性抽样（stride；无随机 —— 同语料同样本来历）。"""
+    if n <= 0:
+        return []
     if len(cases) <= n:
         return list(cases)
     stride = len(cases) / float(n)

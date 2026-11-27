@@ -316,7 +316,7 @@ def project_journey_evidence(
         or r.get("mapspec_fingerprint") or r.get("success") is True
         for r in by_stage["mutation"]
     )
-    product = (trace.get("verdict") or {}).get("map_product") or {}
+    product = _mapping(_mapping(trace.get("verdict")).get("map_product"))
     mutation_ok = mutation_ok or product.get("mutation_revision") is not None
     stages["mutation"] = _status_records(
         "mutation", by_stage["mutation"],

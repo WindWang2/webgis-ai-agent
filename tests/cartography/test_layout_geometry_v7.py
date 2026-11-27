@@ -279,3 +279,12 @@ class TestCascadeWrapRegression:
         r1 = resolve_floating_rects(comps, canvas, safe)
         r2 = resolve_floating_rects(comps, canvas, safe)
         assert r1.to_bounded_dict() == r2.to_bounded_dict()
+
+
+def test_thin_canvas_top_and_bottom_bands_do_not_overlap():
+    """安全区高 < 顶带 + 底带时两带不得重叠（薄幅/极端边距）。"""
+    canvas = _canvas(width=1280, height=110)
+    safe = safe_area_for(canvas, None)
+    zones = zone_rects(canvas, safe)
+    assert (zones["top-left"].y + zones["top-left"].h
+            <= zones["bottom-left"].y + 1e-9)

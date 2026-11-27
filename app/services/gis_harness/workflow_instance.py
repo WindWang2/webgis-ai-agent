@@ -719,9 +719,14 @@ def _derive_science(
         str(b) for b in (recomputed.get("method_blockers") or [])
     ][:MAX_BLOCKERS]
     recheck.recomputed_fingerprint = canonical_fingerprint(_contract_core(recomputed))
+    # review P2-19：方向裁决必须用**未截断**的重算集合与基线比对 —— 截断到
+    # MAX_BLOCKERS 后再做子集/集合比较，阻断 >8 时会假判 unblocked 并发出
+    # 虚假披露（recheck.*_blockers 仍是有界投影，只影响披露面尺寸）。
     baseline_data = {str(b) for b in (contract.get("data_blockers") or [])}
-    recomputed_data = set(recheck.data_blockers)
-    method_same = sorted(recheck.method_blockers) == sorted(
+    recomputed_data = {str(b) for b in (recomputed.get("data_blockers") or [])}
+    method_same = sorted(
+        str(b) for b in (recomputed.get("method_blockers") or [])
+    ) == sorted(
         str(b) for b in (contract.get("method_blockers") or []))
     if recomputed_data < baseline_data and method_same:
         recheck.direction = "unblocked"
@@ -791,9 +796,11 @@ def _derive_dimensions(
         dims["cartography"] = "pending"
         dims["observed_map"] = "unknown"
     # 披露维：有方法论警告（披露已落地）→ ok；未评估 → unknown。
-    # 不确定性正证据在 W7 落地前保持诚实 unknown。
+    # ``science.evaluated`` 只表示「存在重算契约」，不是披露证据 —— 不能用
+    # 它把无警告的章节虚报为已披露。不确定性正证据在 W7 落地前保持诚实
+    # unknown。
     dims["methodology_disclosure"] = (
-        "ok" if chapter.get("methodology_warnings") or science.evaluated else "unknown"
+        "ok" if chapter.get("methodology_warnings") else "unknown"
     )
     dims["uncertainty_disclosure"] = "unknown"
     return {k: v for k, v in dims.items() if v}
@@ -888,8 +895,6 @@ def format_instance_line(chapter: Optional[Dict[str, Any]]) -> str:
         blockers = list(sci.get("data_blockers") or []) + list(sci.get("method_blockers") or [])
         if blockers:
             lines.append("blocked:" + ",".join(str(b) for b in blockers[:3]))
-        if sci.get("divergent") and sci.get("direction") == "worsened":
-            lines.append("science:awaiting_finalize")
     stages = stored.get("stages") or []
     stale = [
         s.get("capability") for s in stages
@@ -940,11 +945,21 @@ async def maybe_update_workflow_instance(
         revision = int((map_state or {}).get("_cartographic_mutation_revision") or 0)
     except (TypeError, ValueError):
         revision = 0
-    from app.services.gis_harness.render_observation import (
-        load_render_observation,
-        observation_sequence,
-    )
-    render_seq = observation_sequence(await load_render_observation(session_id, map_state))
+    # review P2-20：观测读取必须在 try 内 —— 旧实现只包住 get_map_state，
+    # load_render_observation 的异常会逸出本函数，违反 docstring「失败只记
+    # 日志，下一触发点重试」的契约。
+    try:
+        from app.services.gis_harness.render_observation import (
+            load_render_observation,
+            observation_sequence,
+        )
+
+        render_seq = observation_sequence(
+            await load_render_observation(session_id, map_state))
+    except Exception:  # noqa: BLE001 — 观测读失败按 0 处理（只记日志）
+        logger.debug(
+            "[workflow_instance] render observation read failed", exc_info=True)
+        render_seq = 0
 
     stored = chapter.get(WORKFLOW_INSTANCE_KEY)
     rows_fp = rows_fingerprint(chapter)

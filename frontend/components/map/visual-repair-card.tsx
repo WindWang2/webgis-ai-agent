@@ -151,8 +151,8 @@ export function VisualRepairCard(props: {
       })
     } catch (error) {
       // 拒绝回执失败不打断用户 —— 下次 plan 会重新提案（保守方向）。
+      // 保留当前 plan UI（不得翻成 error 丢掉重试入口）。
       devOnly.warn('[visual-repair-card] reject failed', error)
-      setPhase({ kind: 'error' })
       return
     }
     setPhase({ kind: 'idle' })

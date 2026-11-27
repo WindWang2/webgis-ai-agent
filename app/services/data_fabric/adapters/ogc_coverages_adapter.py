@@ -347,9 +347,11 @@ class OGCCoveragesAdapter(GeospatialDataSourceAdapter):
                 ),
                 "axes": axes,
                 "grid_crs": (domainset or {}).get("srsName") or next((
-                    (reference.get("system") or {}).get("id")
-                    for reference in (domainset or {}).get("referencing", [])
-                    if (reference.get("system") or {}).get("id")
+                    reference["system"].get("id")
+                    for reference in ((domainset or {}).get("referencing") or [])
+                    if isinstance(reference, dict)
+                    and isinstance(reference.get("system"), dict)
+                    and reference["system"].get("id")
                 ), None),
                 "bands": bands,
                 "formats_declared": declared_formats,
@@ -401,9 +403,15 @@ class OGCCoveragesAdapter(GeospatialDataSourceAdapter):
                 details={"hint": "Specify valid HTTP/HTTPS URL in connection profile."},
             )
         try:
-            resp = self.session.get(self.url.rstrip("/") + "/conformance", timeout=5)
+            # stream=True + 立即 close：只读响应头/状态码做可达性判定，
+            # 绝不把超大 conformance 响应体整包缓冲进内存。
+            resp = self.session.get(self.url.rstrip("/") + "/conformance", timeout=5, stream=True)
+            try:
+                status_code = resp.status_code
+            finally:
+                resp.close()
             latency = round((_time.time() - started) * 1000, 2)
-            if resp.status_code == 200:
+            if status_code == 200:
                 return DataFabricHealth(
                     status="healthy",
                     message="OGC API Coverages service online and responsive",
@@ -412,8 +420,8 @@ class OGCCoveragesAdapter(GeospatialDataSourceAdapter):
                 )
             return DataFabricHealth(
                 status="degraded",
-                message=f"OGC API Coverages service responded with HTTP {resp.status_code}",
-                details={"status_code": resp.status_code},
+                message=f"OGC API Coverages service responded with HTTP {status_code}",
+                details={"status_code": status_code},
                 latency_ms=latency,
             )
         except Exception as e:  # noqa: BLE001

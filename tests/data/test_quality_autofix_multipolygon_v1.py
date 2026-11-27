@@ -122,3 +122,42 @@ def test_repair_preserves_z_and_m_ordinates():
     fixed, _ = apply_autofix(_fc(geometry), [_REPAIR])
     coords = fixed["geojson"]["features"][0]["geometry"]["coordinates"][0]
     assert coords == geometry["coordinates"][0] + [geometry["coordinates"][0][0]]
+
+
+def test_dry_run_counts_degenerate_polygon_drops_like_apply():
+    """dry-run 预览必须与 apply 同口径（零面积退化面也计入剔除数）。"""
+    geometry = {"type": "Polygon", "coordinates": [
+        [[0, 0], [1, 0], [2, 0], [0, 0]],
+    ]}
+    payload = _fc(geometry)
+    preview = dry_run_autofix(payload, [_REPAIR])
+    _, evidence = apply_autofix(payload, [_REPAIR])
+    assert evidence["operations"][0]["dropped_features"] == 1
+    assert preview["would_change"]["repair_geometry"]["drop_invalid_features"] == 1
+
+
+def test_bounded_to_reports_scan_window_before_drops():
+    """bounded_to 披露实际扫描窗（删除后的长度不得冒充扫描窗）。"""
+    payload = {"geojson": {"type": "FeatureCollection", "features": [
+        {"type": "Feature", "geometry": None, "properties": {}},
+        {"type": "Feature", "geometry": {"type": "Point", "coordinates": [1, 2]},
+         "properties": {}},
+    ]}}
+    _, evidence = apply_autofix(payload, [_REPAIR], max_scan=5)
+    assert evidence["operations"][0]["dropped_features"] == 1
+    assert evidence["operations"][0]["bounded_to"] == 2
+
+
+def test_normalize_discloses_scan_window():
+    """normalize 只处理扫描窗内要素时必须披露上界/截断，不得静默。"""
+    bad = "ä¸­å›½åœ°å›¾"
+    payload = {"geojson": {"type": "FeatureCollection", "features": [
+        {"type": "Feature", "geometry": None, "properties": {"name": bad}},
+        {"type": "Feature", "geometry": None, "properties": {"name": bad}},
+    ]}}
+    _, evidence = apply_autofix(
+        payload, [AutofixStep(operation="normalize")], max_scan=1)
+    entry = evidence["operations"][0]
+    assert entry["redecoded_strings"] == 1
+    assert entry["bounded_to"] == 1
+    assert entry["truncated"] is True

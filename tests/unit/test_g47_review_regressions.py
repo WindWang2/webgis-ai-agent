@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import math
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -309,3 +310,62 @@ def test_declared_layout_ref_survives_transparent_resolution():
                 for k, v in args.items()}
     assert resolved["layout_ref"] == args["layout_ref"]
     assert isinstance(resolved["layout_ref"], str)
+
+
+# ── P3：预算预检必须先于投影/邻接（最重的一步）──
+
+def test_budget_preflight_runs_before_expensive_geography(monkeypatch):
+    from app.services.cartogram_authoring import compute as compute_module
+    from app.services.cartogram_authoring.errors import AuthoringError
+
+    def _must_not_prepare(*_args, **_kwargs):
+        raise AssertionError("prepare_geography 在预算预检之前被执行")
+
+    monkeypatch.setattr(compute_module, "prepare_geography", _must_not_prepare)
+    with pytest.raises(AuthoringError) as ei:
+        compute_module.compute_layout(
+            plan(max_features=5), frozen(grid_features(values=V9)))
+    assert ei.value.code == "BUDGET_EXCEEDED"
+
+
+# ── P3：PNG 栅格化的超时/OSError 必须是 typed EXPORT_FAILED ──
+
+@pytest.mark.parametrize("exc", [
+    subprocess.TimeoutExpired(cmd="rsvg-convert", timeout=120),
+    OSError("rsvg-convert vanished"),
+])
+def test_render_png_wraps_subprocess_failures_in_export_failed(monkeypatch, exc):
+    from app.services.cartogram_authoring import render as render_module
+    from app.services.cartogram_authoring.errors import AuthoringError
+
+    monkeypatch.setattr(render_module.shutil, "which",
+                        lambda _name: "/usr/bin/rsvg-convert")
+
+    def _raise(*_args, **_kwargs):
+        raise exc
+
+    monkeypatch.setattr(render_module.subprocess, "run", _raise)
+    with pytest.raises(AuthoringError) as ei:
+        render_module.render_png({"extent": {"width": 100.0}, "circles": []})
+    assert ei.value.code == "EXPORT_FAILED"
+
+
+# ── P3：SVG 半径不能把小圆量化为 0.00（回读/可见性契约）──
+
+def test_svg_draws_sub_hundredth_radii_with_artifact_precision():
+    from app.services.cartogram_authoring.render import render_svg
+
+    layout = {
+        "extent": {"width": 1000.0},
+        "status": "converged",
+        "publication_ready": True,
+        "circles": [{"feature_id": "tiny", "label": "Tiny", "x": 500.0,
+                     "y": 500.0, "radius": 0.0012, "value": 1.0}],
+    }
+    svg = render_svg(layout)
+    tag = re.search(r'<circle data-feature-id="tiny"[^>]*>', svg)
+    assert tag, svg
+    r = float(re.search(r'\br="([0-9.]+)"', tag.group(0)).group(1))
+    assert r > 0.0
+    assert r == pytest.approx(0.0012, abs=1e-9)
+

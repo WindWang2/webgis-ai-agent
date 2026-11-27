@@ -194,8 +194,16 @@ async def start_georeference_job(
                     )
         except GeorefDomainError:
             raise
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            # Fail closed: a DB error or an unrecognized persisted status means we
+            # cannot prove the prior job is terminal, so a second concurrent warp
+            # must not be admitted.
+            raise GeorefDomainError(
+                GeorefErrorCode.CAS_CONFLICT,
+                f"Cannot verify state of active job {cur.active_job_id} on plan "
+                f"'{cur.plan_id}' ({exc}); refusing to start a second warp.",
+                status_code=409,
+            ) from exc
 
     idem_db_key = (
         f"georef:{session_id}:{plan.plan_id}:{execution_id}"
@@ -317,6 +325,14 @@ async def start_georeference_job(
         except GeorefDomainError as exc:
             out_path.unlink(missing_ok=True)
             raise RuntimeError(f"{exc.code.value}: {exc.message}") from exc
+        except Exception:
+            # Any other failure (OSError/GDAL/RuntimeError) must not leave a
+            # partial GeoTIFF behind with no artifact record to clean it up.
+            try:
+                out_path.unlink(missing_ok=True)
+            except OSError:
+                logger.warning("[georef] failed to remove partial output %s", out_path, exc_info=True)
+            raise
 
         # Strict cancel fence BEFORE any external store / plan publication (R26).
         if _is_cancelled():
@@ -441,6 +457,9 @@ async def start_georeference_job(
                 mutate_plan_cas(session_id, plan.plan_id, expected_revision=None, mutator=_cleanup_active)
             except Exception:  # noqa: BLE001
                 pass
+            # Terminal job: drop the process-level stage entry so the mapping does
+            # not grow without bound (mirrors the _RUNNERS done_callback pop).
+            _STAGE_BY_JOB.pop(job_id, None)
 
     if background:
         task = asyncio.get_running_loop().create_task(_run_guarded(), name=f"georef:{job_id}")

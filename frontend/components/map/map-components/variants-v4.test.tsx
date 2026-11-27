@@ -65,6 +65,36 @@ describe('V4 component variants — live rendering contract', () => {
     expect(swatches?.length).toBe(11); // 9 色块 + 2 轴标箭头
   });
 
+  it('bivariate legend n 为非数字时确定性回退 3×3（不产生 repeat(NaN) 空阵）', () => {
+    const layer = {
+      ...bivariateLayer,
+      legend_spec: { ...bivariateLayer.legend_spec, n: 'not-a-number' },
+    };
+    const { container } = render(renderComponent(
+      comp('legend', { layerId: 'biv-layer' }), ctx([layer]),
+    ));
+    const el = container.querySelector('[data-testid="spec-chrome-bivariate-legend"]');
+    expect(el).not.toBeNull();
+    const swatches = el?.querySelectorAll('[aria-hidden]');
+    expect(swatches?.length).toBe(11); // 9 色块 + 2 轴标箭头
+    expect(el?.innerHTML).not.toContain('NaN');
+  });
+
+  it('composite 变体超过 3 个图层时披露剩余组数（不静默丢弃第 4+ 层）', () => {
+    const layers = Array.from({ length: 4 }, (_, i) => ({
+      id: `grad-${i}`,
+      legend_spec: {
+        type: 'graduated', field: `v${i}`, breaks: [0, 1, 2],
+        palette_colors: ['#eff3ff', '#6baed6'], title: `分级${i}`,
+      },
+    }));
+    const { container } = render(renderComponent(
+      comp('legend', { variant: 'composite' }), ctx(layers),
+    ));
+    const el = container.querySelector('[data-testid="spec-chrome-legend"]');
+    expect(el?.textContent).toContain('…+1');
+  });
+
   it('uncertainty 变体渲染透明度阶梯 + 披露行', () => {
     const layer = {
       id: 'unc-layer',

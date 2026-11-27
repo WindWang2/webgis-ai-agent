@@ -12,6 +12,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import List, Optional
 
@@ -38,6 +40,19 @@ def _safe_skill_filename(skill_id: str) -> Optional[str]:
     return f"{skill_id}.yaml"
 
 
+def _atomic_write_text(target: Path, text: str) -> None:
+    """原子落盘：同目录临时文件 + ``os.replace``（崩溃/并发不留半截文件）。"""
+    fd, tmp_name = tempfile.mkstemp(dir=str(target.parent),
+                                     prefix=f".{target.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.replace(tmp_name, target)
+    except BaseException:
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
+
+
 class InducedSkillStore:
     """induced 技能草案资产的目录库（fail-closed 装载 + 隔离区）。"""
 
@@ -52,14 +67,15 @@ class InducedSkillStore:
         if filename is None:
             raise ValueError(f"induced skill id 不安全: {skill_id!r}")
         target = self.root / filename
-        target.write_text(compiled.yaml_text, encoding="utf-8")
-        (self.root / f"{skill_id}.report.json").write_text(
+        # 审计面先落盘：YAML 可见时 report 必在（崩溃窗口只留孤立 report）。
+        _atomic_write_text(
+            self.root / f"{skill_id}.report.json",
             json.dumps({"provenance": compiled.provenance,
                         "violations": compiled.violations,
                         "parameters": [p.model_dump()
                                        for p in compiled.parameters]},
-                       ensure_ascii=False, indent=2, default=str),
-            encoding="utf-8")
+                       ensure_ascii=False, indent=2, default=str))
+        _atomic_write_text(target, compiled.yaml_text)
         return target
 
     # ── 读取（装载即校验；fail-closed）───────────────────────────────
@@ -86,8 +102,7 @@ class InducedSkillStore:
 
     # ── 索引与隔离 ───────────────────────────────────────────────────
     def list_ids(self) -> List[str]:
-        return sorted(p.stem for p in self.root.glob("*.yaml")
-                      if not p.name.endswith(".report.json"))
+        return sorted(p.stem for p in self.root.glob("*.yaml"))
 
     def quarantine(self, skill_id: str, *, reason: str = "") -> Optional[Path]:
         filename = _safe_skill_filename(skill_id)

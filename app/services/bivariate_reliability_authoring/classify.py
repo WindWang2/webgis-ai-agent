@@ -69,7 +69,16 @@ def equal_interval(values: List[float], n: int) -> List[float]:
     if hi <= lo:
         return []
     step = (hi - lo) / n
-    return [lo + step * i for i in range(1, n)]
+    out: List[float] = []
+    for i in range(1, n):
+        b = lo + step * i
+        # lo 量级远大于 step 时浮点舍入会把断点塌缩回端点；保留会制造空类并
+        # 让 assign_axis 把要素塞进同一类却仍报满级。与 quantiles 一致丢弃。
+        if b <= lo or b >= hi:
+            continue
+        if not out or b > out[-1]:
+            out.append(b)
+    return out
 
 
 def axis_breaks(

@@ -6,7 +6,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { uploadFile } from './upload';
-import { clearAuth, setAuth } from '../auth/tokenStore';
+import { clearAuth, getAccessToken, setAuth } from '../auth/tokenStore';
 
 /** Minimal XHR double: records open/headers/send, lets the test drive onload. */
 class FakeXHR {
@@ -117,5 +117,22 @@ describe('uploadFile auth headers', () => {
     expect(FakeXHR.instances[1].headers.Authorization).toBe('Bearer fresh');
     await driveSuccess(FakeXHR.instances[1]);
     await expect(promise).resolves.toMatchObject({ id: 1 });
+  });
+
+  it('401 with an expired access token and no refresh token clears auth (F-06)', async () => {
+    const b64 = (o: unknown) => btoa(JSON.stringify(o)).replace(/=+$/, '');
+    const expired = `${b64({ alg: 'HS256' })}.${b64({ exp: Math.floor(Date.now() / 1000) - 5 })}.sig`;
+    setAuth({ accessToken: expired, refreshToken: null }, null);
+    vi.stubGlobal('XMLHttpRequest', FakeXHR);
+
+    const promise = uploadFile(makeFile());
+    const xhr = FakeXHR.instances[0];
+    expect(xhr.headers.Authorization).toBe(`Bearer ${expired}`);
+    xhr.status = 401;
+    xhr.responseText = JSON.stringify({ detail: 'expired' });
+    xhr.onload?.();
+
+    await expect(promise).rejects.toThrow('expired');
+    expect(getAccessToken()).toBeNull();
   });
 });

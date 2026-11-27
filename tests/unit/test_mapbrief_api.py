@@ -351,6 +351,62 @@ class TestPreflightFreeze:
         assert dl1.content == dl2.content
 
 
+class TestFreezeConcurrency:
+    async def test_release_retry_keeps_outer_transaction(
+            self, app_client, seeded_session, monkeypatch):
+        """并发取号撞 (brief_id, release_no) 唯一键：重试只回滚插入帧。
+
+        旧实现 IntegrityError 后 ``db.rollback()`` 回滚整个请求事务 ——
+        同事务其他挂起变更被静默丢弃。
+        """
+        from sqlalchemy import select
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        from app.models.db_model import Conversation
+        from app.models.map_brief import MapBrief, MapBriefRelease
+
+        c, maker = app_client
+        sid, _ = seeded_session
+        resp = await _create_draft(c, sid)
+        assert resp.status_code == 200, resp.text
+
+        # 占住 release_no=1（不同 content_sha256），首次取号必须撞唯一键。
+        async with maker() as setup:
+            brief = await setup.scalar(select(MapBrief).where(
+                MapBrief.conversation_id == sid))
+            setup.add(MapBriefRelease(
+                brief_id=brief.id, conversation_id=sid, release_no=1,
+                frozen_revision=1, status="ready", manifest="{}",
+                content_sha256="0" * 64, html_object_key="preseeded"))
+            await setup.commit()
+
+        from app.services.storymap import brief_release as release_mod
+
+        async with maker() as db:
+            conv = await db.get(Conversation, sid)
+            db.add(Conversation(id=f"{sid}-pending", user_id="u1", title="p"))
+            real_scalar = AsyncSession.scalar
+            state = {"zeroed": False}
+
+            async def _scalar(self, stmt, *args, **kwargs):
+                # 模拟并发取号竞争：首次 max(release_no) 漏看已提交行。
+                if (self is db and not state["zeroed"]
+                        and "max(" in str(stmt).lower()):
+                    state["zeroed"] = True
+                    return 0
+                return await real_scalar(self, stmt, *args, **kwargs)
+
+            monkeypatch.setattr(AsyncSession, "scalar", _scalar)
+            result = await release_mod.freeze_brief_release(
+                db, conv, allow_draft=True)
+            await db.commit()
+
+        assert result["already_released"] is False
+        assert result["release_no"] == 2  # 冲突后重新取号成功
+        async with maker() as verify:
+            assert await verify.get(Conversation, f"{sid}-pending") is not None
+
+
 # ── 旅程 3：分享/撤销/跨 owner（BRF-O09） ────────────────────────────
 
 
@@ -427,3 +483,45 @@ class TestSharing:
         c, _ = app_client
         resp = await c.get("/api/v1/briefs/sessions/nope")
         assert resp.status_code == 404
+
+
+# ── 错误映射纪律（_http_error） ──────────────────────────────────────
+
+
+class TestErrorMapping:
+    """未映射异常不得伪装 422 把内部细节（SQL 原文等）回给客户端。
+
+    契约：RevisionConflict→409；BriefNotFound/ReleaseNotFound→404；
+    BriefCorrupt→422（结构化）；PreflightBlocked→409（携带报告）；
+    ValidationError/ValueError→422（文档契约 + locked 行为锁）；其余
+    （DB/commit/TypeError…）→ 500 通用文案。
+    """
+
+    def test_unmapped_db_error_is_500_without_internal_detail(self):
+        from sqlalchemy.exc import OperationalError
+
+        from app.api.routes.brief import _http_error
+
+        exc = OperationalError(
+            "INSERT INTO briefs (id) VALUES (:id)", {},
+            Exception('relation "briefs" does not exist'))
+        http_exc = _http_error(exc)
+        assert http_exc.status_code == 500
+        detail = str(http_exc.detail)
+        assert "briefs" not in detail
+        assert "INSERT" not in detail
+
+    def test_unmapped_type_error_is_500(self):
+        from app.api.routes.brief import _http_error
+
+        exc = TypeError("unsupported operand type(s) for +: 'NoneType'")
+        assert _http_error(exc).status_code == 500
+
+    def test_value_error_still_422_with_message(self):
+        """文档契约行为锁：locked 块内容编辑被拒仍是 422 + 原文 detail。"""
+        from app.api.routes.brief import _http_error
+
+        exc = ValueError("block b1 is locked; unlock before editing content")
+        http_exc = _http_error(exc)
+        assert http_exc.status_code == 422
+        assert http_exc.detail == str(exc)

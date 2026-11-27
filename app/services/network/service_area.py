@@ -133,6 +133,17 @@ class NetworkServiceAreaService:
                 "(prebuilt graphs alone cannot resolve facility snapping)"
             )
 
+        # dataset-only usage (the mode the error message above advertises):
+        # build the graph here instead of iterating over graph_view=None.
+        # Snap against the rebuilt dataset so node ids stay consistent with
+        # the graph (a hand-built dataset may use non-builder node ids).
+        if graph is None:
+            from app.services.network.graph_builder import NetworkGraphBuilder
+
+            graph, network_dataset = NetworkGraphBuilder().build_graph(
+                network_dataset, profile=profile
+            )
+
         normalized_facilities = self._normalize_facilities(facilities)
         sorted_breaks = sorted(breaks)
 

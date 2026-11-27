@@ -164,3 +164,34 @@ async def test_a14_same_interpreter_preview_and_execute(ops_env):
     receipt = await fc_service.execute(plan.plan_id, SESS)
     assert pv["confirmation"]["params_fingerprint"] == receipt.compute_fingerprint
     assert receipt.row_count == 2
+
+
+async def test_reused_completed_job_not_reported_running(ops_env):
+    """回归（P3）：幂等复用命中已 completed 的 job 但收据不可回读（源内容
+    变化 → 内容 hash 不再命中）时，不得虚报 running；如实回读 DB 终态。"""
+    from app.services.data_operations import compute_jobs as durable_compute
+    from app.services.data_preparation.field_compute import receipt as rc
+
+    plan = await _seed_plan(ops_env)
+    await fc_service.execute(plan.plan_id, SESS)
+    changed = {
+        "geojson": {
+            "type": "FeatureCollection",
+            "features": [
+                {"type": "Feature",
+                 "properties": {"人口": 999, "面积 平方千米": 1.0},
+                 "geometry": None},
+            ],
+        }
+    }
+    await sdm.overwrite(SESS, plan.input_ref, changed)
+    out = await durable_compute.submit_compute_job(
+        plan=plan, session_id=SESS, project_id="", owner="",
+        background=False,
+        execute_locked=fc_service._execute_durable_entry,
+        payload_loader=fc_service._payload,
+        receipt_finder=rc.find_receipt,
+    )
+    assert out.get("receipt") is None
+    # job 已终态 completed：不能返回 running（谎报进行中）
+    assert out["status"] == "completed"

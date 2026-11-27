@@ -90,3 +90,37 @@ async def test_middleware_echoes_request_id():
         assert r1.headers.get("x-request-id") == "req-echo-1"
         r2 = await ac.get("/api/v1/health")
         assert (r2.headers.get("x-request-id") or "").strip() != ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "incoming",
+    ["a" * 129, "bad\r\nvalue", "bad value", "bad☃"],
+)
+async def test_middleware_rejects_oversized_or_invalid_request_id(
+    monkeypatch, incoming
+):
+    """客户端关联 ID 超限或含非法字符时回退生成值，上下文与响应一致。"""
+    from app.lib.runtime import context as runtime_context
+    from app.main import RequestCorrelationMiddleware
+    from starlette.requests import Request
+    from starlette.responses import Response
+
+    generated = "req-generated"
+    monkeypatch.setattr(runtime_context, "new_request_id", lambda: generated)
+    bound_ids = []
+
+    async def call_next(_request):
+        bound_ids.append(runtime_context.current_runtime_context().request_id)
+        return Response()
+
+    request = Request({
+        "type": "http",
+        "headers": [(b"x-request-id", incoming.encode("utf-8"))],
+    })
+    response = await RequestCorrelationMiddleware(call_next).dispatch(
+        request, call_next
+    )
+
+    assert bound_ids == [generated]
+    assert response.headers["X-Request-ID"] == generated

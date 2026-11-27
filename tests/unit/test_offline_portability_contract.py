@@ -46,6 +46,28 @@ def test_manifest_output_is_lf_stable(tmp_path):
     assert b"\r\n" not in raw
 
 
+def test_sbom_degrades_when_pnpm_lock_is_invalid_yaml(tmp_path):
+    """pnpm-lock.yaml 存在但非法 YAML：generate_sbom 降级为 unavailable，
+    不得抛 yaml.YAMLError 崩溃。"""
+    from unittest import mock
+
+    from app.services import offline_inventory
+
+    frontend = tmp_path / "frontend"
+    frontend.mkdir()
+    (frontend / "package.json").write_text(
+        json.dumps({"dependencies": {"next": "14.0.0"}}), encoding="utf-8")
+    (frontend / "pnpm-lock.yaml").write_text(
+        "packages: [unclosed", encoding="utf-8")
+
+    fake_module = tmp_path / "app" / "services" / "offline_inventory.py"
+    with mock.patch.object(offline_inventory, "__file__", str(fake_module)):
+        frontend_payload = offline_inventory.generate_sbom()["frontend"]
+    assert frontend_payload["resolved_packages"] == []
+    assert frontend_payload["lock_source"] == (
+        "frontend/pnpm-lock.yaml (unavailable)")
+
+
 def test_preflight_write_probe_works_on_platform(tmp_path):
     """DATA_DIR/TMP_DIR 可写性探针在本平台真实可执行。"""
     from app.services.offline_preflight import check_data_dirs
@@ -123,6 +145,35 @@ def test_redis_down_detail_redacts_url_password():
     assert result["status"] == "down"
     assert "s3cr3t-pw" not in result["detail"]
     assert "redis://:***@redis:6379/0" in result["detail"]
+
+
+def test_redis_check_closes_client_when_probe_fails():
+    """离线部署最常见情形（redis 不可达/鉴权失败）也必须关闭客户端。
+
+    ping 走 except 分支直接返回时，若连接已建立（鉴权失败、连接后超时等），
+    连接池里的 socket 句柄不显式释放即泄漏；--json/--out 之外，preflight
+    还被 health/report 面反复调用。
+    """
+    from unittest import mock
+
+    from app.services import offline_preflight as pf
+
+    closed = []
+
+    class _BoomClient:
+        def ping(self):
+            raise OSError("connection refused")
+
+        def close(self):
+            closed.append(True)
+
+    with mock.patch("app.core.config.settings") as fake_settings:
+        fake_settings.USE_REDIS = True
+        fake_settings.REDIS_URL = "redis://:s3cr3t-pw@redis:6379/0"
+        with mock.patch("redis.from_url", return_value=_BoomClient()):
+            result = pf.check_redis()
+    assert result["status"] == "down"
+    assert closed, "失败路径未调用 r.close()——连接池 socket 泄漏"
 
 
 def test_check_layer_scrubs_url_and_keyvalue_secrets():

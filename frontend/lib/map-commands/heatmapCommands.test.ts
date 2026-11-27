@@ -74,6 +74,18 @@ describe('heatmap commands (issue #393: post-state verification, no fake success
       expect(heatmapCommands.add_heatmap_raster.requiredParams({ image: 'x' })).toBe(true);
     });
 
+    it('rejects a malformed bbox as invalid_params (no undefined coordinates)', () => {
+      const map = makeMockMaplibreMap();
+      const image = 'data:image/png;base64,AAAA';
+      // 短数组 / 非数值元素：真值判断放行时 coords 会含 undefined，
+      // addImageSource 收到非法坐标且静默入库。
+      expect(heatmapCommands.add_heatmap_raster.run(makeCtx(map, { image, bbox: [116, 39] })))
+        .toEqual({ status: 'failed', error: 'invalid_params' });
+      expect(heatmapCommands.add_heatmap_raster.run(makeCtx(map, { image, bbox: [116, 39, 117, 'x'] })))
+        .toEqual({ status: 'failed', error: 'invalid_params' });
+      expect(map._calls.addSource).toHaveLength(0);
+    });
+
     it('fails mutation_failed when the map never registers the mount', () => {
       // getSource/getLayer always null — the renderer calls no-op → old code
       // returned void → dispatcher acked succeeded. Now it must fail honestly.
@@ -197,6 +209,21 @@ describe('heatmap commands (issue #393: post-state verification, no fake success
       expect(result).toEqual({ status: 'succeeded', result: { confirmed: true } });
       const layer = map.getLayer('custom-native-heatmap-pop');
       expect(JSON.stringify(layer.paint['heatmap-color'])).toContain('68,1,84'); // viridis 首色
+    });
+
+    it('requiredParams 放行的 params.id 形态挂成可寻址层（不再落到 native-heatmap-default）', () => {
+      const map = makeMockMaplibreMap();
+      const legacyParams = {
+        geojson: { type: 'FeatureCollection', features: [] },
+        id: 'legacy-heat',
+      };
+      expect(heatmapCommands.add_native_heatmap.requiredParams(legacyParams)).toBe(true);
+
+      const result = heatmapCommands.add_native_heatmap.run(makeCtx(map, legacyParams));
+
+      expect(result).toEqual({ status: 'succeeded', result: { confirmed: true } });
+      expect(map.getLayer('custom-legacy-heat')).toBeTruthy();
+      expect(map.getLayer('custom-native-heatmap-default')).toBeFalsy();
     });
   });
 

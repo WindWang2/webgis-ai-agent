@@ -9,6 +9,7 @@ module owns the Python side: invoke it, parse its JSON report, compute the
 5-dimension eval score, and persist report.json.
 """
 import asyncio
+import errno
 import json
 import logging
 import os
@@ -88,10 +89,42 @@ def _exit_session_guard(session_id: str) -> None:
     locks.pop(session_id, None)
 
 
+async def _acquire_runtime_file_lock(session_id: str) -> int:
+  """跨 event loop/进程串行化同一会话的共享编译与证据目录。"""
+  session_dir = await asyncio.to_thread(mapspec_store.get_session_dir, session_id)
+  fd = os.open(session_dir / ".runtime-validate.lock", os.O_CREAT | os.O_RDWR, 0o600)
+  try:
+    while True:
+      try:
+        if os.name == "nt":
+          import msvcrt
+          # Windows allows a byte-range lock past EOF on an empty sidecar.
+          os.lseek(fd, 0, os.SEEK_SET)
+          msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        else:
+          import fcntl
+          fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return fd
+      except OSError as exc:
+        if exc.errno not in (errno.EACCES, errno.EAGAIN):
+          raise
+        await asyncio.sleep(0.05)
+  except BaseException:
+    os.close(fd)
+    raise
+
+
 # Path to the Seam C Node script, mirroring how compile_mapspec_cli resolves cli.ts.
 RUNTIME_VALIDATE_SCRIPT = (
     PROJECT_ROOT / "frontend" / "lib" / "mapspec-compiler" / "runtime-validate.ts"
 )
+
+
+def _float_or_default(value: Any, default: float) -> float:
+  try:
+    return float(value)
+  except (TypeError, ValueError):
+    return default
 
 
 def compute_eval_scores(report: Dict[str, Any], mapspec: Dict[str, Any]) -> Dict[str, Any]:
@@ -137,8 +170,8 @@ def compute_eval_scores(report: Dict[str, Any], mapspec: Dict[str, Any]) -> Dict
   ctrl_stats = report.get("controls") or {}
 
   # 1. Visual Contrast & Luminance Variance (8.0 pts max)
-  lum_stddev = float(canvas_stats.get("luminanceStdDev", 0.0))
-  dominant_ratio = float(canvas_stats.get("dominantRatio", 1.0))
+  lum_stddev = _float_or_default(canvas_stats.get("luminanceStdDev", 0.0), 0.0)
+  dominant_ratio = _float_or_default(canvas_stats.get("dominantRatio", 1.0), 1.0)
   if lum_stddev >= 15.0 and dominant_ratio < 0.90:
       visual_contrast_score = 8.0
   elif lum_stddev >= 5.0:
@@ -153,7 +186,7 @@ def compute_eval_scores(report: Dict[str, Any], mapspec: Dict[str, Any]) -> Dict
   label_collision_score = max(0.0, round(6.0 - (total_issues * 2.0), 2))
 
   # 3. Layout Balance & Composition Score (6.0 pts max)
-  transparent_ratio = float(canvas_stats.get("transparentRatio", 1.0))
+  transparent_ratio = _float_or_default(canvas_stats.get("transparentRatio", 1.0), 1.0)
   if transparent_ratio < 0.80 and not canvas_stats.get("blank", False):
       layout_balance_score = 6.0
   else:
@@ -191,9 +224,11 @@ class RuntimeValidator:
   async def validate_runtime(self, session_id: str, probes_path: Path | str | None = None) -> Dict[str, Any]:
     sem, lock = _runtime_guards(session_id)
     _enter_session_guard(session_id)
+    file_lock_fd = None
     try:
       async with lock:
         async with sem:
+          file_lock_fd = await _acquire_runtime_file_lock(session_id)
           # CP-14 取消穿透：await 方被 cancel 时两层 async with 会立即归还
           # 锁/信号量，但真正干活的 worker 线程（subprocess npx tsx，见
           # _run_headless_validator）不可取消 —— 同会话第二次 validate 会与
@@ -219,7 +254,11 @@ class RuntimeValidator:
                       break
               raise
     finally:
-      _exit_session_guard(session_id)
+      try:
+        if file_lock_fd is not None:
+          os.close(file_lock_fd)
+      finally:
+        _exit_session_guard(session_id)
 
   async def _validate_runtime_unlocked(
       self, session_id: str, probes_path: Path | str | None = None

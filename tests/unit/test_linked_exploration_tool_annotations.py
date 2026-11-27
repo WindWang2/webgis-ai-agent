@@ -80,3 +80,20 @@ async def test_real_preview_keeps_dictionary_parsing_and_typed_rejection(tools):
         assert invalid["code"] == "INVALID_CHART"
     finally:
         await session_data_manager.clear_session(session_id)
+
+
+@pytest.mark.asyncio
+async def test_preview_non_typed_condition_error_returns_typed_receipt(tools):
+    """parse_conditions 抛非 LinkedExplorationError 时也回 typed 域错误面。
+
+    绕过 registry 参数校验直调 handler（内部调用方路径）：非 dict 条件会让
+    parse_conditions 抛 AttributeError；工具必须把它规范成 INVALID_CONDITION，
+    而不是让异常穿出工具（P2-app_tools_linked_exploration_tools.py-00:116）。
+    """
+    handler = tools._tools["webgis_exploration_preview"]
+    result = await handler(
+        ref="ref:source", charts=[], conditions=["not-a-dict"],
+        session_id="annotation-preview-cond-error",
+    )
+    assert result["success"] is False
+    assert result["code"] == "INVALID_CONDITION"

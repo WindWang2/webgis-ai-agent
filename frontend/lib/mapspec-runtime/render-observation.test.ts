@@ -78,16 +78,19 @@ describe('observeComponents', () => {
     expect(stats?.rect).toEqual({ x: 12, y: 40, width: 200, height: 120 });
   });
 
-  it('bounds the component list (MAX_OBSERVED_COMPONENTS)', () => {
+  it('bounds the component list (MAX_OBSERVED_COMPONENTS) but keeps chrome fallbacks', () => {
     const many: MapSpecComponent[] = [];
     for (let i = 0; i < MAX_OBSERVED_COMPONENTS + 10; i += 1) {
       many.push({ id: `note-${i}`, type: 'annotation', enabled: true });
     }
     const obs = observeComponents(specWithComponents(many));
     expect(obs.length).toBeLessThanOrEqual(MAX_OBSERVED_COMPONENTS);
+    // 兜底 north/scale 真实上屏 —— 即使 resolved 已占满上限也必须保留。
+    expect(obs.filter((c) => c.fallback).map((c) => c.type).sort())
+      .toEqual(['north_arrow', 'scale_bar']);
   });
 
-  it('null/undefined spec is safe (empty observation, fallbacks still mounted)', () => {
+  it('null/undefined spec is safe (empty observation; chrome does not mount)', () => {
     expect(observeComponents(null)).toEqual([]);
   });
 });
@@ -274,11 +277,11 @@ describe('waitForRenderSettle', () => {
   });
 
   it('resolves false (bounded) when idle never fires — no leaked listener', async () => {
-    // 用极短 settle：直接验证 timer 分支有界（2500ms 太长 —— 用假计时器不可行
-    // 的场景退化为查契约：返回 boolean 而不是挂起）。
+    // 400ms（RENDER_SETTLE_TIMEOUT_MS）后走 timer 分支；断言具体返回值 false
+    // —— 只查 boolean 无法发现超时分支被改成 resolve(true) 的回归。
     const map = { once: () => {}, off: () => {} };
     const result = await waitForRenderSettle(map as any);
-    expect(typeof result).toBe('boolean');
+    expect(result).toBe(false);
   }, 4000);
 
   it('null map resolves immediately (no hang)', async () => {

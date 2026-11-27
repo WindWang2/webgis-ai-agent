@@ -147,6 +147,42 @@ def test_merge_product_edit_result_presence():
     assert chapter["product_spec"] == {"digest": "e"}
 
 
+@pytest.mark.asyncio
+async def test_remove_map_view_discloses_no_component_family(clean_session):
+    """review P2-10：remove_view/toggle_view 命中无组件族的 kind（map/
+    overview）时必须进欠账账本，不得双空静默分叉。"""
+    from app.services.gis_harness.product_runtime import produce_product_layer
+    from app.services.session_plan import ensure_session_plan_slot, save_session_plan
+
+    plan, intent, template = _plan()
+    layer_out = produce_product_layer(plan=plan, intent=intent, template=template)
+    sid = clean_session
+    slot = await ensure_session_plan_slot(sid)
+    slot.gis_chapter = {
+        "query": plan.query,
+        "recipe_id": plan.recipe_id,
+        "product_spec": layer_out["product_spec"],
+    }
+    await save_session_plan(slot)
+
+    from app.services.gis_harness.tools import register_gis_harness_tools
+    from app.tools.registry import ToolRegistry
+
+    reg = ToolRegistry()
+    register_gis_harness_tools(reg)
+    res = await reg.dispatch(
+        "webgis_product_edit",
+        {"op": "remove_view", "target": "v-map"},
+        session_id=sid,
+    )
+    assert res["success"] is True
+    effects = res.get("unapplied_effects") or []
+    assert any(e.get("effect") == "no_component_family" for e in effects), (
+        f"map 视图无组件族承载面必须披露欠账：{effects}"
+    )
+    assert res.get("removed_components") == []
+
+
 async def test_apply_tool_result_routes_product_edit(clean_session):
     """webgis_product_edit 结果只动 product_spec 键（能力行状态不动）。"""
     from app.services.session_plan import ensure_session_plan_slot, save_session_plan

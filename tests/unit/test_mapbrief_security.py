@@ -139,6 +139,15 @@ class TestHtmlInjection:
             finally:
                 be.MAX_BRIEF_HTML_BYTES = original
 
+    def test_static_map_lone_surrogate_stripped(self):
+        """冻结图件 SVG 的孤立代理字符不得让导出 500（预算错误才是
+        约定的失败面）。"""
+        bundle = build_brief_bundle(
+            _spec(), static_maps={"blk-map": "<svg>\ud800</svg>"})
+        assert bundle["static_maps"]["blk-map"] == "<svg></svg>"
+        html = render_brief_html(bundle)  # 未修复：UnicodeEncodeError
+        assert "\ud800" not in html
+
 
 class TestCsvInjection:
     def test_formula_cells_prefixed(self):

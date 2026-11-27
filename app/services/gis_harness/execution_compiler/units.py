@@ -37,13 +37,16 @@ UNIT_DIMENSIONS: Dict[str, str] = {
 }
 
 #: 统计词 → (量纲语义, 期望单位, 分母类型)。
+#: mean/median/min/max（及未登记统计词回落）：量纲随**被统计字段**而定
+#: （DEM 高程均值=m、人口均值=unitless）——声明面不虚构期望单位（""），
+#: 由运行期字段单位合同裁决。
 _STATISTIC_SEMANTICS: Dict[str, Tuple[ObligationSemantics, str, str]] = {
     "count": ("count", "unitless", ""),
     "sum": ("count", "unitless", ""),
-    "mean": ("none", "unitless", ""),
-    "median": ("none", "unitless", ""),
-    "min": ("none", "unitless", ""),
-    "max": ("none", "unitless", ""),
+    "mean": ("none", "", ""),
+    "median": ("none", "", ""),
+    "min": ("none", "", ""),
+    "max": ("none", "", ""),
     "density": ("density", "unitless", "area"),
     "share": ("share", "percent", "total"),
     "ratio": ("rate", "ratio", "field"),
@@ -160,6 +163,13 @@ def _adjudicate_denominator(
         return ("not_applicable",
                 "密度语义；boundary 角色数据事实未注入——单位义务按"
                 "未知处理（执行期 family 单位合同权威裁决）")
+    if semantics == "none":
+        # 聚合统计词（mean/median/min/max）：无量纲声明、无分母义务，
+        # 但期望单位随被统计字段而定 —— 恒返 satisfied 是 fail-open
+        # （义务被报闭合却无任何证据绑定），按不可静态裁决披露。
+        return ("not_applicable",
+                "聚合统计语义无量纲声明——期望单位由运行期字段单位"
+                "合同裁决，声明面不断言闭合")
     return ("satisfied", "")
 
 

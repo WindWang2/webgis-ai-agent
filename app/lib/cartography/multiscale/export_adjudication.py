@@ -94,8 +94,10 @@ def active_window_modes(layer: Dict[str, Any]) -> List[str]:
     rows = [
         w for w in windows
         if isinstance(w, dict) and w.get("mode") in REPRESENTATION_MODES
+        and isinstance(w.get("min_zoom"), (int, float))
+        and not isinstance(w.get("min_zoom"), bool)
     ]
-    rows.sort(key=lambda w: float(w.get("min_zoom", 0) or 0))
+    rows.sort(key=lambda w: float(w["min_zoom"]))
     return [str(w.get("mode")) for w in rows]
 
 

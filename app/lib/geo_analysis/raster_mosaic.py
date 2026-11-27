@@ -23,6 +23,10 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
+#: 预填无限幅块尺寸（行 × 列）：块内存不再是 count×512×全宽的 O(width)。
+_MOSAIC_FILL_BLOCK_ROWS = 512
+_MOSAIC_FILL_BLOCK_COLS = 4096
+
 
 class RasterioUnavailableError(RuntimeError):
     """栅格 I/O 依赖缺席（诚实失败；调用方转类型化 NodeExecutionError）。"""
@@ -151,12 +155,15 @@ def mosaic_tiles(
     written = 0
     with atomic_output(out_path) as _tmp_out:
         with rasterio.open(_tmp_out, "w", **profile) as dst:
-            fill_block_rows = 512
+            fill_block_rows = _MOSAIC_FILL_BLOCK_ROWS
+            fill_block_cols = _MOSAIC_FILL_BLOCK_COLS
             for row0 in range(0, int(height), fill_block_rows):
                 n_rows = min(fill_block_rows, int(height) - row0)
-                block = np.full((dst.count, n_rows, int(width)), fill_value,
-                                dtype=profile["dtype"])
-                dst.write(block, window=Window(0, row0, int(width), n_rows))
+                for col0 in range(0, int(width), fill_block_cols):
+                    n_cols = min(fill_block_cols, int(width) - col0)
+                    block = np.full((dst.count, n_rows, n_cols), fill_value,
+                                    dtype=profile["dtype"])
+                    dst.write(block, window=Window(col0, row0, n_cols, n_rows))
             for tile in tiles:
                 core = tile["core_window"]
                 halo = tile.get("window") or core

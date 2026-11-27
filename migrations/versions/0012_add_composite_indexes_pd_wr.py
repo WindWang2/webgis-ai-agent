@@ -20,6 +20,7 @@ so it coexists with create_all).
 """
 from typing import Sequence, Union
 
+import sqlalchemy as sa
 from alembic import op, context
 
 
@@ -38,11 +39,17 @@ def _is_sqlite() -> bool:
 def upgrade() -> None:
     """Add composite indexes for project_datasets and workflow_runs."""
     if _is_sqlite():
-        with op.batch_alter_table("project_datasets", schema=None) as batch_op:
-            batch_op.create_index("idx_project_dataset_pid_created", ["project_id", "created_at"])
-
-        with op.batch_alter_table("workflow_runs", schema=None) as batch_op:
-            batch_op.create_index("idx_workflow_run_wid_created", ["workflow_id", "created_at"])
+        # create_all  coexistence guard（仓库约定；PG 分支用 IF NOT EXISTS）：
+        # 模型已声明这两个复合索引，create_all 自举的库上无守卫的 create_index
+        # 会以 "index already exists" 中断 upgrade。
+        bind = op.get_bind()
+        for index_name, table, columns in (
+            ("idx_project_dataset_pid_created", "project_datasets", ["project_id", "created_at"]),
+            ("idx_workflow_run_wid_created", "workflow_runs", ["workflow_id", "created_at"]),
+        ):
+            if index_name not in {i["name"] for i in sa.inspect(bind).get_indexes(table)}:
+                with op.batch_alter_table(table, schema=None) as batch_op:
+                    batch_op.create_index(index_name, columns)
     else:
         # PostgreSQL: IF NOT EXISTS 与 Base.metadata.create_all() 启动建索引共存
         op.execute("""

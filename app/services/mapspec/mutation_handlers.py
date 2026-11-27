@@ -16,7 +16,7 @@ descriptor 声明），不再触碰 lifecycle_engine 与任何平行 switch。
 import asyncio
 import copy
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from app.lib.cartography.data_tiers import (
     TIER_EXPORT_FEATURES as MAPSPEC_MAX_FEATURES,
@@ -486,6 +486,43 @@ async def _handle_upsertsource(ctx: MutationContext) -> HandlerOut:
     return MutationPlan(mapspec=mapspec, auto_checkpoint=True)
 
 
+def _layout_components_for_mutation(
+    raw_components: Any,
+) -> Tuple[List[Any], List[Any]]:
+    """拆分 layout.components 为可突变模型与不可解析的原始条目。
+
+    SetLayout 只做结构性 id/type 校验，历史/其他写入方可能留下组件模型
+    不接受（如 priority 为字符串）甚至非对象的条目。单个坏条目不得让
+    patch/remove/duplicate/rebind 整笔抛 ValidationError，也不得在写回
+    列表时被静默丢弃——不可解析条目原样保留。
+    """
+    from app.services.gis_harness.components import CartographyComponent
+
+    components: List[Any] = []
+    opaque: List[Any] = []
+    for entry in raw_components if isinstance(raw_components, list) else []:
+        if not isinstance(entry, dict):
+            opaque.append(entry)
+            continue
+        try:
+            components.append(CartographyComponent.model_validate(dict(entry)))
+        except Exception:  # noqa: BLE001 — 单条历史坏数据不阻塞整笔组件突变
+            logger.debug(
+                "skip unparseable layout.components entry id=%s",
+                str(entry.get("id") or "")[:64],
+            )
+            opaque.append(entry)
+    return components, opaque
+
+
+def _layout_components_payload(components: List[Any], opaque: List[Any]) -> List[Any]:
+    """组件模型回写为 MapSpec 条目；不可解析条目原样保留。"""
+    return sorted(
+        [c.to_mapspec() for c in components],
+        key=lambda c: (c.get("priority", 0), c.get("id", "")),
+    ) + opaque
+
+
 async def _handle_patchcomponent(ctx: MutationContext) -> HandlerOut:
     """PatchComponentIntent 分支体（逐字迁移，见模块 docstring 的适配清单）。"""
     origin = ctx.origin
@@ -496,19 +533,12 @@ async def _handle_patchcomponent(ctx: MutationContext) -> HandlerOut:
     # SetLayoutIntent 的整表替换不同，只动命中的单个组件。
     # 突变/校验复用 gis_harness.components.mutate_component，
     # 不出现第二套组件突变实现。
-    from app.services.gis_harness.components import (
-        CartographyComponent,
-        mutate_component,
-    )
+    from app.services.gis_harness.components import mutate_component
 
     mapspec = {**loaded} if loaded else {}
     layout = dict(mapspec.get("layout", {}))
     raw_components = layout.get("components") or []
-    components = [
-        CartographyComponent.model_validate(dict(c))
-        for c in raw_components
-        if isinstance(c, dict)
-    ]
+    components, opaque_components = _layout_components_for_mutation(raw_components)
     if not components and not intent.upsert:
         return MapSpecResult(
             is_error=True,
@@ -562,10 +592,7 @@ async def _handle_patchcomponent(ctx: MutationContext) -> HandlerOut:
                 "stats.items 摘要（≤24 条）。"
             ),
         )
-    layout["components"] = sorted(
-        [c.to_mapspec() for c in mutated],
-        key=lambda c: (c.get("priority", 0), c.get("id", "")),
-    )
+    layout["components"] = _layout_components_payload(mutated, opaque_components)
     mapspec["layout"] = layout
     return MutationPlan(mapspec=mapspec)
 
@@ -579,19 +606,12 @@ async def _handle_removecomponent(ctx: MutationContext) -> HandlerOut:
     # Component Lifecycle V3（Runtime V4 §18）：真删除 ——
     # mutate_component 的 enabled=False 是隐藏；这里是布局
     # 条目移除。纯函数 remove_component 与 patch 同源。
-    from app.services.gis_harness.components import (
-        CartographyComponent,
-        remove_component,
-    )
+    from app.services.gis_harness.components import remove_component
 
     mapspec = {**loaded} if loaded else {}
     layout = dict(mapspec.get("layout", {}))
     raw_components = layout.get("components") or []
-    components = [
-        CartographyComponent.model_validate(dict(c))
-        for c in raw_components
-        if isinstance(c, dict)
-    ]
+    components, opaque_components = _layout_components_for_mutation(raw_components)
     remaining, change = remove_component(
         components,
         component_id=intent.component_id,
@@ -606,10 +626,7 @@ async def _handle_removecomponent(ctx: MutationContext) -> HandlerOut:
                 + ", ".join(f"{c.id}({c.type})" for c in components)
             ),
         )
-    layout["components"] = sorted(
-        [c.to_mapspec() for c in remaining],
-        key=lambda c: (c.get("priority", 0), c.get("id", "")),
-    )
+    layout["components"] = _layout_components_payload(remaining, opaque_components)
     mapspec["layout"] = layout
     return MutationPlan(mapspec=mapspec)
 
@@ -620,19 +637,12 @@ async def _handle_duplicatecomponent(ctx: MutationContext) -> HandlerOut:
     loaded = ctx.loaded
     intent = ctx.intent
 
-    from app.services.gis_harness.components import (
-        CartographyComponent,
-        duplicate_component,
-    )
+    from app.services.gis_harness.components import duplicate_component
 
     mapspec = {**loaded} if loaded else {}
     layout = dict(mapspec.get("layout", {}))
     raw_components = layout.get("components") or []
-    components = [
-        CartographyComponent.model_validate(dict(c))
-        for c in raw_components
-        if isinstance(c, dict)
-    ]
+    components, opaque_components = _layout_components_for_mutation(raw_components)
     # 注意不能用 ``copy`` 作局部名 —— 本函数上游用 stdlib
     # copy.deepcopy（同名局部会把它遮蔽成 UnboundLocal）。
     with_copy, copy_component, dup_error = duplicate_component(
@@ -661,10 +671,7 @@ async def _handle_duplicatecomponent(ctx: MutationContext) -> HandlerOut:
                 f"{_MAX_COMPONENT_BYTES // 1024}KB: " + ", ".join(oversized_dup[:5])
             ),
         )
-    layout["components"] = sorted(
-        [c.to_mapspec() for c in with_copy],
-        key=lambda c: (c.get("priority", 0), c.get("id", "")),
-    )
+    layout["components"] = _layout_components_payload(with_copy, opaque_components)
     mapspec["layout"] = layout
     return MutationPlan(mapspec=mapspec)
 
@@ -675,19 +682,12 @@ async def _handle_rebindcomponent(ctx: MutationContext) -> HandlerOut:
     loaded = ctx.loaded
     intent = ctx.intent
 
-    from app.services.gis_harness.components import (
-        CartographyComponent,
-        rebind_component,
-    )
+    from app.services.gis_harness.components import rebind_component
 
     mapspec = {**loaded} if loaded else {}
     layout = dict(mapspec.get("layout", {}))
     raw_components = layout.get("components") or []
-    components = [
-        CartographyComponent.model_validate(dict(c))
-        for c in raw_components
-        if isinstance(c, dict)
-    ]
+    components, opaque_components = _layout_components_for_mutation(raw_components)
     # review M：layerId 绑定目标在**锁内**对权威 spec 复核
     # （纯函数零 IO）；ref 活性探测留在调用方 best-effort
     # （探测是健康证据不是注册真相 —— 文档如实）。
@@ -720,10 +720,7 @@ async def _handle_rebindcomponent(ctx: MutationContext) -> HandlerOut:
             origin=origin,
             error_msg=rebind_error or "rebind failed",
         )
-    layout["components"] = sorted(
-        [c.to_mapspec() for c in rebound],
-        key=lambda c: (c.get("priority", 0), c.get("id", "")),
-    )
+    layout["components"] = _layout_components_payload(rebound, opaque_components)
     mapspec["layout"] = layout
     return MutationPlan(mapspec=mapspec)
 
@@ -777,7 +774,8 @@ async def _handle_reorderlayers(ctx: MutationContext) -> HandlerOut:
     leftover = [
         layer
         for layer in current
-        if isinstance(layer, dict) and str(layer.get("id") or "") not in matched_ids
+        if not isinstance(layer, dict)
+        or str(layer.get("id") or "") not in matched_ids
     ]
     if not matched_ordered:
         return MapSpecResult(
@@ -921,9 +919,37 @@ async def _handle_setlayout(ctx: MutationContext) -> HandlerOut:
                     "(gis_harness.components)."
                 ),
             )
+        bad_priority = [
+            str(c.get("id"))
+            for c in intent.components
+            if isinstance(c, dict)
+            and c.get("priority") is not None
+            and (
+                not isinstance(c.get("priority"), (int, float))
+                or isinstance(c.get("priority"), bool)
+            )
+        ]
+        if bad_priority:
+            # priority 参与确定性排序；非数值（如 "high"）与缺省 0 混排会在
+            # sorted 处抛 TypeError —— 在此确定性拒绝，不留 500。
+            return MapSpecResult(
+                is_error=True,
+                origin=origin,
+                error_msg=(
+                    "layout.components priority must be numeric: "
+                    + ", ".join(bad_priority[:5])
+                ),
+                correction_hint=(
+                    "priority 是数值排序键（小值先渲染）；"
+                    "非数值优先级无法确定性排序。"
+                ),
+            )
         layout["components"] = sorted(
             intent.components,
-            key=lambda c: (c.get("priority", 0), c.get("id", "")),
+            key=lambda c: (
+                c.get("priority") if c.get("priority") is not None else 0,
+                c.get("id", ""),
+            ),
         )
     if intent.component_links is not None:
         # ADR-0214 D2：实例边整表写入（确定性拒绝非法/超限，

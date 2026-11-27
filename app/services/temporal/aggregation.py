@@ -102,7 +102,12 @@ class TemporalAggregationEngine:
 
         if agg_spec:
             time_field = time_field or agg_spec.time_field
-            group_by_unit = agg_spec.group_by_unit
+            # A caller-supplied non-default unit wins over the spec, matching
+            # the metrics/target_fields precedence; the DAY default stays a
+            # fallback so spec-driven calls (notably engine.aggregate, which
+            # forwards its own DAY default) keep the spec's unit.
+            if group_by_unit == TemporalUnit.DAY:
+                group_by_unit = agg_spec.group_by_unit
             metrics = metrics or agg_spec.metrics
             target_fields = target_fields or agg_spec.target_fields
 

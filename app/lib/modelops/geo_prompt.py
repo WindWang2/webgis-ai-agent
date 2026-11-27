@@ -391,8 +391,16 @@ class GeoPromptArtifact:
                     f"malformed {what} block: {exc}"
                 ) from exc
 
+        try:
+            schema_version = int(payload.get("schema_version", GEO_PROMPT_SCHEMA_VERSION))
+            labels = tuple(int(v) for v in payload.get("labels", []))
+        except (TypeError, ValueError) as exc:
+            raise PromptArtifactError(
+                f"malformed prompt artifact scalar fields: {exc}"
+            ) from exc
+
         artifact = cls(
-            schema_version=int(payload.get("schema_version", GEO_PROMPT_SCHEMA_VERSION)),
+            schema_version=schema_version,
             crs=payload.get("crs"),
             points=_float_pairs(payload.get("points", []), "points"),
             boxes=_float_quads(payload.get("boxes", []), "boxes"),
@@ -410,7 +418,7 @@ class GeoPromptArtifact:
             target=_nested(GeoPromptTarget, target_raw, "target")
             if target_raw else None,
             combine=payload.get("combine", "union"),
-            labels=tuple(int(v) for v in payload.get("labels", [])),
+            labels=labels,
             created_by=str(prov.get("created_by", "")),
             note=str(prov.get("note", "")),
             source_refs=tuple(str(r) for r in prov.get("source_refs", [])),
@@ -710,7 +718,23 @@ def compile_prompt(
     if artifact.crs is not None:
         from pyproj import CRS
 
-        if raster_crs is None or CRS.from_user_input(artifact.crs) != CRS.from_user_input(raster_crs):
+        if raster_crs is None:
+            raise PlanningError(
+                "prompt CRS must match the declared raster CRS; reproject the prompt before compilation"
+            )
+        try:
+            prompt_crs = CRS.from_user_input(artifact.crs)
+        except Exception as exc:
+            raise PromptArtifactError(
+                f"prompt artifact crs {artifact.crs!r} could not be parsed: {exc}"
+            ) from exc
+        try:
+            raster_crs_obj = CRS.from_user_input(raster_crs)
+        except Exception as exc:
+            raise PlanningError(
+                f"raster CRS {raster_crs!r} could not be parsed: {exc}"
+            ) from exc
+        if prompt_crs != raster_crs_obj:
             raise PlanningError("prompt CRS must match the declared raster CRS; reproject the prompt before compilation")
         if transform is None:
             raise PlanningError(

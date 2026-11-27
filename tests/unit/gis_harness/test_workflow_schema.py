@@ -144,6 +144,29 @@ class TestObligationEvaluation:
         ev = report.obligations[0]
         assert ev.status == "warning"  # degrade_with_disclosure → warning not blocked
 
+    def test_temporal_obligation_satisfied_by_count_without_time_field(self):
+        """review P2-21：画像仅含 temporalObservationCount（无时间字段）时
+        不得误判「时间维度不足/观测数不足」—— 守卫已因计数在场放行。"""
+        from app.services.gis_harness.recipe_packs._kit import obl
+
+        report = self._report(
+            [obl("trend_obs", "temporal", precondition="min_temporal_observations:4",
+                 code="TREND_SHORT", action="block_method")],
+            profile={"featureCount": 30, "fields": {"v": {"type": "number"}},
+                     "temporalObservationCount": 9},
+        )
+        ev = report.obligations[0]
+        assert ev.status == "satisfied", ev.detail
+        assert report.method_blockers == []
+        # 计数不足时仍诚实降级（不因计数在场就一律放行）。
+        short = self._report(
+            [obl("trend_obs", "temporal", precondition="min_temporal_observations:4",
+                 code="TREND_SHORT", action="degrade_with_disclosure")],
+            profile={"featureCount": 30, "fields": {"v": {"type": "number"}},
+                     "temporalObservationCount": 2},
+        )
+        assert short.obligations[0].status == "warning"
+
     def test_block_method_violation_becomes_method_blocker(self):
         from app.services.gis_harness.recipe_packs._kit import obl
 
@@ -288,3 +311,24 @@ def test_pack_workflows_validate_clean(recipe_id):
         precondition_exists=precondition_exists,
     )
     assert violations == []
+
+
+def test_statistics_numeric_field_role_keeps_description():
+    """P3：_NUM_FIELD_ROLE 的 name 参数不得被丢弃（note 恒空）。"""
+    from app.services.gis_harness.recipe_packs import statistics as stats
+
+    recipe = next(
+        r for r in stats.RECIPES if r.id == "global_moran_autocorrelation")
+    measure = next(
+        role for role in recipe.workflow.data_roles if role.role == "measure")
+    assert "被检验的数值字段" in measure.note
+
+
+def test_slope_units_disclosure_has_obligation():
+    """P3：TERRAIN_SLOPE_UNITS 披露码必须有对应 obligation（不得悬空）。"""
+    from app.services.gis_harness.recipes import get_recipe_registry
+
+    recipe = get_recipe_registry().get("slope_analysis_workflow")
+    assert recipe is not None and recipe.workflow is not None
+    codes = {o.warning_code for o in recipe.workflow.obligations}
+    assert "TERRAIN_SLOPE_UNITS" in codes

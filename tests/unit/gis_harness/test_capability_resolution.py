@@ -463,3 +463,26 @@ class TestReviewFixes:
                 for c in res.conflicts)
         finally:
             reset_capability_registry()
+
+
+def test_bidirectional_conflict_disclosed_once():
+    """互斥对两端都在 required 集时同一冲突只披露一次（双向边不重复
+    占用 to_dict 的有界冲突切片）。"""
+    from app.lib.gis.capability_registry import (
+        CapabilityDescriptor,
+        get_capability_registry,
+        reset_capability_registry,
+    )
+
+    reg = get_capability_registry()
+    probe_a = "cg_v1_dedup_a"
+    probe_b = "cg_v1_dedup_b"
+    assert not reg.has(probe_a) and not reg.has(probe_b)
+    try:
+        reg.register(CapabilityDescriptor(
+            id=probe_a, name="A", incompatible_with=[probe_b]))
+        reg.register(CapabilityDescriptor(id=probe_b, name="B"))
+        res = resolve_capabilities(_goal(probe_a, probe_b), _neutral())
+        assert len(res.conflicts) == 1
+    finally:
+        reset_capability_registry()

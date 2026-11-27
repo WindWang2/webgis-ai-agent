@@ -197,13 +197,15 @@ class VisualEvidenceRecord:
             )
         if self.source_type == "map_region":
             crop = self.crop or {}
+            # 非数值 crop 值（null/字符串等）按缺失处理 → typed 拒绝，
+            # 不外溢 TypeError/ValueError（登记期只抛 EvidenceRejected）。
             for k in ("x", "y", "w", "h"):
-                if int(crop.get(k, -1)) < 0:
+                if _bounded_int(crop.get(k, -1), -1) < 0:
                     raise EvidenceRejected(
                         "region_requires_crop_rect",
                         "局部证据必须带完整裁剪矩形。",
                     )
-            if int(crop.get("w", 0)) <= 0 or int(crop.get("h", 0)) <= 0:
+            if _bounded_int(crop.get("w", 0), 0) <= 0 or _bounded_int(crop.get("h", 0), 0) <= 0:
                 raise EvidenceRejected("region_crop_empty", "裁剪矩形为空。")
         if self.state not in (STATE_DRAFT, STATE_BOUND, STATE_REVOKED):
             raise EvidenceRejected("invalid_state")

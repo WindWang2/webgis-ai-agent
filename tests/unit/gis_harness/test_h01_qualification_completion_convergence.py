@@ -19,6 +19,7 @@ master 现状：五态 data_qualification 与 fallback_tier 只在编译器证�
 from __future__ import annotations
 
 from app.services.gis_harness.completion.contracts import (
+    F_TASK_SEMANTIC_DOWNGRADED,
     STATUS_COMPLETE,
     MapCompletionResult,
     derive_product_verdict,
@@ -196,6 +197,13 @@ class TestCompletionConsumesQualifications:
 
 
 class TestTaskSemanticPersistence:
+    def test_reason_code_is_lower_snake_machine_code(self):
+        """finding code 词表约定：值 = 小写 snake 机器码（随 verdict
+        reasons 外泄给前端/测试），不能是常量名本身。"""
+        assert F_TASK_SEMANTIC_DOWNGRADED == "task_semantic_downgraded"
+        assert F_TASK_SEMANTIC_DOWNGRADED == F_TASK_SEMANTIC_DOWNGRADED.lower()
+        assert " " not in F_TASK_SEMANTIC_DOWNGRADED
+
     def test_analytical_density_delivered_as_visual_is_blocked_by_method(self):
         chapter = _chapter(
             workflow_family="visual_density",
@@ -205,7 +213,7 @@ class TestTaskSemanticPersistence:
         chapter["intent"] = {"task": "analytical_density", "scope": {"name": "成都"}}
         v = derive_product_verdict(_result(), chapter=chapter)
         assert v["verdict"] == "BLOCKED_BY_METHOD"
-        assert "F_TASK_SEMANTIC_DOWNGRADED" in v["reasons"]
+        assert F_TASK_SEMANTIC_DOWNGRADED in v["reasons"]
 
     def test_analytical_density_quantitative_family_is_fine(self):
         chapter = _chapter(

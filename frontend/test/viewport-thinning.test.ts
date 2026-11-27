@@ -54,7 +54,8 @@ describe('thinFeaturesForViewport（W7）', () => {
     // 90% 的点挤在东北角，10% 均匀分布其余区域
     const features = [];
     for (let i = 0; i < 18_000; i++) {
-      features.push(pointFeature(107 + Math.random() * 2, 37 + Math.random() * 2, `ne-${i}`));
+      // 确定性伪随机（线性同余取模）：同输入必得同分布，T2 的不变式不被破坏
+      features.push(pointFeature(107 + ((i * 37) % 200) / 100, 37 + ((i * 53) % 200) / 100, `ne-${i}`));
     }
     for (let i = 0; i < 2000; i++) {
       features.push(pointFeature(100 + (i % 70) * 0.1, 30 + Math.floor(i / 70) * 0.1, `sw-${i}`));

@@ -288,6 +288,25 @@ def test_error_recovery_requires_same_tool_success():
     assert harness.compute_error_recovery_rate() == 100.0
 
 
+def test_error_recovery_rate_uses_lifetime_denominator(monkeypatch):
+    """FIFO 淘汰不得让分母缩水：4 恢复 / 5 异常 = 80%，而不是被 clamp 成 100%。
+
+    旧实现分母只数 exceptions 列表（MAX_EVENTS=2 时只剩 2 条可见异常），
+    recovered=4 → 200% → clamp 成假 100.0。
+    """
+    harness = PiAgentHarness(session_id="s-recovery-fifo")
+    monkeypatch.setattr(harness, "MAX_EVENTS", 2)
+    harness.record_tool_result("a1", "tool_a", {}, is_error=True)
+    harness.record_tool_result("a2", "tool_a", {}, is_error=True)
+    harness.record_tool_result("a3", "tool_a", {"success": True})
+    for tool, cid in (("tool_b", "b1"), ("tool_c", "c1"), ("tool_d", "d1")):
+        harness.record_tool_result(cid, tool, {}, is_error=True)
+    for tool, cid in (("tool_b", "b2"), ("tool_c", "c2"), ("tool_d", "d2")):
+        harness.record_tool_result(cid, tool, {"success": True})
+    assert len(harness.exceptions) == 2
+    assert harness.compute_error_recovery_rate() == 80.0
+
+
 def test_free_text_ref_mention_is_not_a_ref_cursor():
     """#793: a literal ref-shaped string inside free-text argument fields
     (query/title/text/description/name) must not become a ref cursor; a real
@@ -358,6 +377,68 @@ async def test_evidence_attaches_validity_for_structural_mutation():
     ev = result["evidence"][0]
     assert ev["tool_name"] == "webgis_view_set"
     assert ev["mapspec_validity"]["tier"] == "SEMANTIC_VALID"
+
+
+def test_record_tool_result_tolerates_none_and_non_list_warnings():
+    """录音路径不得因 result=None / warnings 非 list 抛异常（事件透传未校验）。"""
+    harness = PiAgentHarness(session_id="s-warn")
+    harness.record_tool_call("c-none", "webgis_layer_upsert", {})
+    harness.record_tool_result("c-none", "webgis_layer_upsert", None)
+    harness.record_tool_call("c-null", "webgis_layer_upsert", {})
+    harness.record_tool_result(
+        "c-null", "webgis_layer_upsert", {"success": True, "warnings": None})
+    harness.record_tool_call("c-str", "webgis_layer_upsert", {})
+    harness.record_tool_result(
+        "c-str", "webgis_layer_upsert", {"success": True, "warnings": "oops"})
+    # 正常 list warnings 仍并入 semantic_errors。
+    harness.record_tool_call("c-list", "webgis_layer_upsert", {})
+    harness.record_tool_result(
+        "c-list", "webgis_layer_upsert", {"success": True, "warnings": ["w1"]})
+
+    errors = {m["tool_call_id"]: m["semantic_errors"]
+              for m in harness.mapspec_mutations}
+    assert errors["c-none"] == []
+    assert errors["c-null"] == []
+    assert errors["c-str"] == []
+    assert errors["c-list"] == ["w1"]
+
+
+@pytest.mark.asyncio
+async def test_singleton_caches_are_bounded(monkeypatch):
+    """_resolved_refs / _validity_cache 在单例跨 session 累积时有上限。"""
+    from app.lib.harness.pi_agent_harness import (
+        RefResolution,
+        RefResolutionStatus,
+    )
+
+    harness = PiAgentHarness(session_id="s-bound")
+    harness._resolved_refs = {
+        ("old", f"ref:old-{i}"): RefResolution(
+            ref=f"ref:old-{i}", session_id="old",
+            status=RefResolutionStatus.RESOLVED,
+        )
+        for i in range(harness.MAX_EVENTS * 2)
+    }
+    harness._validity_cache = {f"old-{i}": None for i in range(128)}
+    harness.ref_cursors.append({
+        "ref_cursor": "ref:new-1", "session_id": "s-bound",
+        "source": "tool", "tool_call_id": "c-new",
+    })
+
+    async def _resolver(session_id, ref):
+        return RefResolution(
+            ref=ref, session_id=session_id,
+            status=RefResolutionStatus.RESOLVED,
+        )
+
+    harness.ref_resolver = _resolver
+    harness.record_tool_call("c-mut", "webgis_layer_upsert", {})
+    harness.record_tool_result(
+        "c-mut", "webgis_layer_upsert", {"success": True})
+
+    await harness.evaluate_with_evidence()
+    assert len(harness._resolved_refs) <= harness.MAX_EVENTS * 2
+    assert len(harness._validity_cache) <= 128
 
 
 # ── harness_runner: honest metric reporting ──────────────────────────────

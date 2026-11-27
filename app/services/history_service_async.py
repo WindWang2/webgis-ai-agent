@@ -26,7 +26,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.auth import owner_token_matches
+from app.core.auth import authorize_session_write, owner_token_matches
 from app.models.db_model import Conversation, Message
 
 from app.tools._utils import async_db_session
@@ -314,11 +314,22 @@ class AsyncHistoryService(HistoryStoreProtocol):
     ) -> None:
         """Deep seam method: atomically record user query and assistant response."""
         if self.db is not None:
+            conv = await self.db.get(Conversation, session_id)
+            # Ownership guard: knowing a session_id must not grant write access
+            # (same rules as get_session / delete_session).
+            if not authorize_session_write(conv, user_id):
+                logger.warning(
+                    "Refusing commit_interaction for session %s — ownership mismatch",
+                    session_id,
+                )
+                return
             await self._commit_interaction_internal(session_id, user_content, assistant_content, metadata)
         else:
             async with async_db_session() as db:
                 svc = AsyncHistoryService(db)
-                await svc._commit_interaction_internal(session_id, user_content, assistant_content, metadata)
+                await svc.commit_interaction(
+                    session_id, user_content, assistant_content, metadata, user_id=user_id
+                )
 
     async def save_interaction(
         self,
@@ -332,8 +343,16 @@ class AsyncHistoryService(HistoryStoreProtocol):
         this method adds both rows and commits once. If the commit fails
         (locked / IntegrityError) neither row persists — no orphan user row.
         """
-        import anyio
+        await self._save_interaction_internal(session_id, user_content, assistant_content)
 
+    async def _save_interaction_internal(
+        self,
+        session_id: str,
+        user_content: str,
+        assistant_content: str,
+        metadata: Optional[dict] = None,
+    ) -> None:
+        import anyio
         for attempt in range(3):
             try:
                 if user_content:
@@ -342,6 +361,7 @@ class AsyncHistoryService(HistoryStoreProtocol):
                             conversation_id=session_id,
                             role="user",
                             content=user_content,
+                            context_receipt=metadata,
                             created_at=datetime.now(timezone.utc),
                         )
                     )
@@ -365,6 +385,7 @@ class AsyncHistoryService(HistoryStoreProtocol):
                     await anyio.sleep(0.1 * (attempt + 1))
                     await self.db.rollback()
                     continue
+                await self.db.rollback()
                 raise
 
     async def _commit_interaction_internal(
@@ -376,7 +397,9 @@ class AsyncHistoryService(HistoryStoreProtocol):
     ) -> None:
         # #915 atomic: single transaction for the user+assistant pair so that a
         # failure on the second insert cannot leave an orphan user row.
-        await self.save_interaction(session_id, user_content, assistant_content)
+        await self._save_interaction_internal(
+            session_id, user_content, assistant_content, metadata
+        )
 
     async def get_or_create_conversation(
         self,
@@ -508,6 +531,7 @@ class AsyncHistoryService(HistoryStoreProtocol):
                     await anyio.sleep(0.1 * (attempt + 1))
                     await self.db.rollback()
                     continue
+                await self.db.rollback()
                 raise
 
     async def update_title(self, session_id: str, title: str) -> None:

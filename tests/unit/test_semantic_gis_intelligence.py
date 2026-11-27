@@ -65,6 +65,17 @@ def test_ratio_via_unit_interval_samples():
     assert SemanticFieldRole.RATIO_MEASURE.value in row.roles
 
 
+def test_single_unit_interval_sample_not_enough_for_ratio():
+    """单样本 [0] 不能证明比率值域（可能只是计数/标志位）。"""
+    sem = derive_semantic_profile(
+        _profile({"flag_value": "number"}),
+        value_samples={"flag_value": [0]},
+    )
+    row = next(fr for fr in sem.field_roles if fr.field == "flag_value")
+    assert SemanticFieldRole.RATIO_MEASURE.value not in row.roles
+    assert not sem.has_role(SemanticFieldRole.RATIO_MEASURE)
+
+
 def test_population_implies_normalization_denominator():
     sem = derive_semantic_profile(
         _profile({"resident_population": "integer"}),
@@ -119,6 +130,25 @@ def test_equity_pattern_requires_denominator():
     equity = get_pattern("spatial_equity")
     assert equity is not None
     assert SemanticFieldRole.NORMALIZATION_DENOMINATOR in equity.required_roles
+
+
+def test_pattern_capability_ids_all_registered():
+    """模式的 recommended/optional 能力 id 必须都能在能力注册表里解析到。
+
+    network_accessibility 曾是 accessibility 模式的 optional 能力，但它是
+    工具/契约名而非能力 id（注册表里只有 accessibility）——悬空 id 让按能力
+    解析的消费方静默拿到空。
+    """
+    from app.lib.gis.capability_registry import get_capability_registry
+
+    registered = set(get_capability_registry().all_ids)
+    dangling = [
+        (p.id, c)
+        for p in all_patterns()
+        for c in list(p.recommended_capabilities) + list(p.optional_capabilities)
+        if c not in registered
+    ]
+    assert dangling == []
 
 
 # ── C4 projection / Scenario F ────────────────────────────────────────────

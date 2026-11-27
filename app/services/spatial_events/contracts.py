@@ -261,6 +261,10 @@ class WatchCondition(BaseModel):
         minx, miny, maxx, maxy = v
         if minx > maxx or miny > maxy:
             raise ValueError("aoi_bbox must be [minx, miny, maxx, maxy]")
+        if not (-180.0 <= minx <= 180.0 and -180.0 <= maxx <= 180.0):
+            raise ValueError("aoi_bbox longitude must be within [-180, 180]")
+        if not (-90.0 <= miny <= 90.0 and -90.0 <= maxy <= 90.0):
+            raise ValueError("aoi_bbox latitude must be within [-90, 90]")
         return v
 
     @model_validator(mode="after")
@@ -281,6 +285,8 @@ class WatchState(BaseModel):
     last_version: Optional[str] = None
     inside_aoi: Optional[bool] = None
     last_fired_at: Optional[datetime] = None
+    #: 真正触发过的最近事件 id（区分「上次触发时间」与「本事件是否触发过」）
+    last_fired_event_id: str = ""
     last_event_id: str = ""
     window_event_times: List[datetime] = Field(default_factory=list)
 

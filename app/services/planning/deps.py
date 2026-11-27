@@ -61,7 +61,7 @@ def validate_static_refs(steps: list[CanonicalStep]) -> list[str]:
         inferred = set(step.depends_on) | _extract_refs(step.args)
         if step.id in inferred:
             issues.append(f"step '{step.id}' depends on itself")
-        for ref in inferred - {step.id}:
+        for ref in sorted(inferred - {step.id}):
             if ref not in order_index:
                 issues.append(f"step '{step.id}' references unknown step '{ref}'")
             elif order_index[ref] > order_index[step.id]:

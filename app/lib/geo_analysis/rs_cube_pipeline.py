@@ -146,7 +146,7 @@ def run_temporal_cube_pipeline(
         if len(optical_gap_codes) != opt_arr.shape[0]:
             raise ValueError(
                 "optical_gap_codes 长度须与光学栈时间轴一致")
-        declared_ids = rs_gaps.GAP_CODE_IDS
+        declared_ids = rs_gaps.GAP_CODES
         for i, code in enumerate(optical_gap_codes):
             if code is not None:
                 if code not in declared_ids:
@@ -155,7 +155,7 @@ def run_temporal_cube_pipeline(
                 opt_invalid[i] = True      # 声明缺口 = 该切片不作观测
     opt_values = np.where(opt_invalid, np.nan, opt_arr)
     optical_features = rs_features.temporal_feature_pack(
-        opt_values, optical_times_sec)
+        opt_values, optical_times_sec, nodata=optical.nodata)
 
     # ③ SAR 特征
     sar_arr = _check_stack_inputs(sar_stack, sar_times_sec, sar, "sar")
@@ -165,10 +165,13 @@ def run_temporal_cube_pipeline(
             raise ValueError("sar_gap_codes 长度须与 SAR 栈时间轴一致")
         for i, code in enumerate(sar_gap_codes):
             if code is not None:
+                if code not in rs_gaps.GAP_CODES:
+                    raise ValueError(
+                        f"gap_code {code!r} 不在 GAP_CODES 封闭词表")
                 sar_invalid[i] = True
     sar_values = np.where(sar_invalid, np.nan, sar_arr)
     sar_features = rs_features.temporal_feature_pack(
-        sar_values, sar_times_sec)
+        sar_values, sar_times_sec, nodata=sar.nodata)
 
     # ④ 特征级融合（p50 + sen_slope 双侧）
     def _feat_pack(pack, prefix):

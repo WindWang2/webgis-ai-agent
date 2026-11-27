@@ -629,9 +629,9 @@ class Driver:
         # 绑定态节点：data_input/output 的「执行」= 绑定传递（产物已存在）。
         kind = str(node.get("kind") or "")
         if kind in ("data_input", "output"):
-            ref = (await asyncio.to_thread(
-                store.get_node, instance_id, node_id)).get("bound_ref") \
-                or (input_refs[0] if input_refs else "")
+            ref = ((await asyncio.to_thread(
+                store.get_node, instance_id, node_id)) or {}).get(
+                    "bound_ref") or (input_refs[0] if input_refs else "")
             out_fp = await self._ref_fingerprint(session_id, ref)
             tr = await asyncio.to_thread(
                 store.transition_node,
@@ -1106,8 +1106,8 @@ class Driver:
         port_descs: Dict[str, Any] = {}
         port_idents: Dict[str, Dict[str, str]] = {}
         for idx, (up, to_port) in enumerate(
-                [(u, "") for u in M.upstream_of(dag).get(node_id, ())][:4]
-                if not edge_ports else edge_ports[:4]):
+                [(u, "") for u in M.upstream_of(dag).get(node_id, ())][:6]
+                if not edge_ports else edge_ports[:6]):
             row = await asyncio.to_thread(self.store.get_node, instance_id, up)
             ref = (row or {}).get("output_ref") or (row or {}).get("bound_ref") or ""
             if not ref:
@@ -1299,7 +1299,7 @@ class Driver:
         else:
             level = min(
                 levels,
-                key=lambda lv: (lv != "content", lv != "profile_digest"),
+                key=lambda lv: (lv != "profile_digest", lv != "content"),
             )
         await asyncio.to_thread(
             self.reuse_index.record,
@@ -1392,10 +1392,16 @@ class Driver:
             if st in (C.NodeState.SUCCEEDED, C.NodeState.FAILED,
                       C.NodeState.SKIPPED, C.NodeState.CANCELLED):
                 continue
-            await asyncio.to_thread(
+            r = await asyncio.to_thread(
                 self.store.transition_node,
                 instance_id, nid, C.NodeState.CANCELLED,
                 reason="INSTANCE_CANCELLED", event="cancel")
+            if r.ok:
+                states[nid] = C.NodeState.CANCELLED
+            else:
+                logger.warning(
+                    "[WorkflowRuntime] instance cancel failed %s/%s: %s",
+                    instance_id, nid, r.code)
         inst = await asyncio.to_thread(
             self.store.get_instance, instance_id, self.owner_scope)
         if inst is None or inst["status"] in C.INSTANCE_TERMINAL_STATUSES:

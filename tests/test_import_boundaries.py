@@ -154,6 +154,23 @@ def test_type_checking_imports_exempt(tmp_path):
     assert result.returncode == 0, result.stderr
 
 
+def test_type_checking_attribute_imports_exempt(tmp_path):
+    pkg = _make_pkg(tmp_path, "app.core")
+    (pkg / "typed_attr.py").write_text(
+        "import typing\n"
+        "\n"
+        "if typing.TYPE_CHECKING:\n"
+        "    from app.services.chat_engine import ChatEngine\n"
+        "\n"
+        "\n"
+        "def build() -> 'ChatEngine':  # noqa: F821\n"
+        "    raise NotImplementedError\n",
+        encoding="utf-8",
+    )
+    result = _run_gate(tmp_path)
+    assert result.returncode == 0, result.stderr
+
+
 def test_allow_comment_exempts_and_is_visible(tmp_path):
     pkg = _make_pkg(tmp_path, "app.core")
     (pkg / "waived.py").write_text(

@@ -208,3 +208,69 @@ def test_tin_driver_all_nodata_field_rejected():
         f["properties"]["v"] = float("nan")
     with pytest.raises(ValueError, match="有限"):
         tin_surface(fc, "v", resolution=8, cross_validate=False)
+
+
+def test_tin_loocv_all_convex_position_typed_reject():
+    """P2 修复：全样本处于凸位置（留一预测全 NaN）时 LOOCV 类型化拒绝。
+
+    4 个凸四边形顶点（或共圆等 ≥4 凸包顶点）留一后焦点必在约化凸包外 →
+    残差集为空。旧实现对空数组取 mean → rmse/mae/bias=nan 写入证据块，
+    uncertainty 的 quantile 同样作用于空数组（非法 NaN）。
+    """
+    xy, vals = _square_grid()
+    with pytest.raises(DegenerateData, match="凸位置"):
+        tin_loocv(xy, vals, method="linear")
+    # 共圆 5 点（全部在凸包上）同理
+    ang = np.linspace(0.0, 2.0 * np.pi, 6, endpoint=False)
+    ring = np.column_stack([100.0 + 50.0 * np.cos(ang),
+                            100.0 + 50.0 * np.sin(ang)])
+    with pytest.raises(DegenerateData, match="凸位置"):
+        tin_loocv(ring, np.arange(len(ring), dtype=float), method="linear")
+    # 凸包内部有一个样本 → 覆盖残差非空，照常产出有限指标
+    inside = np.vstack([xy, [5.0, 5.0]])
+    out = tin_loocv(inside, np.append(vals, 10.0), method="linear")
+    assert out["sample_count"] >= 1
+    assert np.isfinite(out["rmse"]) and np.isfinite(out["mae"])
+
+
+def test_tin_surface_all_convex_position_discloses_no_cv_evidence():
+    """P2 修复：驱动层全凸位置时 LOOCV 证据缺失以 validation_note 披露，
+    不写含 NaN 的 validation/uncertainty 证据块。"""
+    import json
+
+    # 4 个凸四边形顶点（小范围，H3 单元数可控）
+    coords = [(120.0, 30.0), (120.01, 30.0), (120.0, 30.01), (120.01, 30.01)]
+    vals = [0.0, 10.0, 10.0, 20.0]
+    fc = {"type": "FeatureCollection", "features": [
+        {"type": "Feature",
+         "geometry": {"type": "Point", "coordinates": [lon, lat]},
+         "properties": {"v": float(v)}}
+        for (lon, lat), v in zip(coords, vals)
+    ]}
+    out = tin_surface(fc, "v", resolution=8, cross_validate=True)
+    md = out["metadata"]
+    assert "validation_note" in md and "凸位置" in md["validation_note"]
+    assert "validation" not in md and "uncertainty" not in md
+    json.dumps(out, allow_nan=False)      # 旧实现在此抛（nan 证据）
+    # 表面本身不受影响：样本点仍被精确重建
+    assert out["records"]
+
+
+def test_tin_descriptor_crs_class_allows_geographic_input():
+    """TIN 声明 crs_class=PROJECTED_REQUIRED 与其 assumptions（L297：地理
+    输入经 estimate_utm_crs 自动投影，与 IDW 同政策）矛盾——resolver CRS
+    硬门据此拒掉最常见的 WGS84 输入，TIN 静默改走自然邻域/IDW。
+    实现确实内部投影（tin_surface 的 _pick_metric_crs），故声明必须放行度数。"""
+    from app.lib.gis.algorithm_registry import get_algorithm_registry
+
+    algo = get_algorithm_registry().get("interpolation.tin")
+    assert algo is not None
+    assert algo.crs_class == "GEOGRAPHIC_OK"
+
+    from app.lib.gis.algorithm_resolver import AlgorithmResolver
+
+    profile = {"geometryTypes": ["Point"], "featureCount": 200, "crs": "EPSG:4326"}
+    res = AlgorithmResolver().resolve("triangulation_interpolation", profile=profile)
+    assert not any(
+        r.startswith("crs_class_mismatch:interpolation.tin") for r in res.rejected
+    )

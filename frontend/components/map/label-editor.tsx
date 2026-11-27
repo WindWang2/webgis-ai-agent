@@ -88,6 +88,12 @@ export function LabelEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null>
           },
         } as never);
         await commitLabelAuthoring(specLayerId, ops);
+        // 提交后刷新 override 基准：否则 target.override 停留提交前的旧值，
+        // 后续 Enter 以陈旧 offset 计算并覆盖，刚提交的拖动/微调结果被静默
+        // 回退（commitLabelAuthoring resolve 时 committed spec 已同步）。
+        setTarget((prev) => (prev && prev.specLayerId === specLayerId
+          ? { ...prev, override: readOverride(prev.specLayerId, prev.featureId) }
+          : prev));
       } catch {
         /* toast 已由 mutation 客户端发出（原子拒绝/网络） */
       } finally {
@@ -133,8 +139,7 @@ export function LabelEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null>
         layers?: Array<{ id?: string; label?: { size?: unknown; authoring?: { overrides?: unknown[] } } }>;
       } | null;
       const specLayer = (spec?.layers ?? []).find((l) => l.id === rawLayerId);
-      const existing = ((specLayer?.label?.authoring?.overrides ?? []) as Array<Record<string, unknown>>)
-        .find((o) => o.featureId === featureId) ?? null;
+      const existing = readOverride(rawLayerId, featureId);
       const fontPx = Number(specLayer?.label?.size ?? 12) || LABEL_FONT_PX_FALLBACK;
       const next: EditTarget = {
         layerId: rawLayerId,
@@ -245,6 +250,10 @@ export function LabelEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null>
       return;
     }
     const onKeyDown = (e: KeyboardEvent) => {
+      // 文字输入面内不劫键：方向键归光标移动，Enter 归输入框自己的文字
+      // 提交 —— 否则窗口微调与文字提交双发（光标不动 + 偏移被覆盖）。
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
       const nudged = nudgeRef.current;
       if (e.key === 'Enter' && nudged) {
         e.preventDefault();
@@ -429,6 +438,16 @@ function baseOffset(tgt: EditTarget): [number, number] {
     return [off.dx, off.dy];
   }
   return [0, 0];
+}
+
+/** 当前覆写（committed spec 是权威 —— 与 runtime baseSize 同源）。 */
+function readOverride(specLayerId: string, featureId: string): Record<string, unknown> | null {
+  const spec = getCommittedMapSpec() as {
+    layers?: Array<{ id?: string; label?: { authoring?: { overrides?: unknown[] } } }>;
+  } | null;
+  const specLayer = (spec?.layers ?? []).find((l) => l.id === specLayerId);
+  return ((specLayer?.label?.authoring?.overrides ?? []) as Array<Record<string, unknown>>)
+    .find((o) => o.featureId === featureId) ?? null;
 }
 
 

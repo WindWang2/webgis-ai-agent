@@ -395,12 +395,24 @@ def project_render_work_envelope(
             (w.component_id, w.component_type, w.enabled)
             for w in component_work
         }
+        # scene_work 同进口径：仅增删 scene 资产或改其 visible/format 时
+        # work_fingerprint 已变，style_only 不得仍为 True（scene 资产是
+        # 真实执行面，不是样式皮）。
+        prev_scene = {
+            (w.asset_id, w.source_id, w.format, w.visible, w.revision)
+            for w in previous.scene_work
+        }
+        cur_scene = {
+            (w.asset_id, w.source_id, w.format, w.visible, w.revision)
+            for w in scene_work
+        }
         invalidation = InvalidationHints(
             style_only=(
                 not data_changed
                 and not (cur_layers - prev_layers)
                 and not (prev_layers - cur_layers)
                 and prev_components == cur_components
+                and prev_scene == cur_scene
             ),
             data_changed=data_changed[:MAX_DATA_DEPENDENCIES],
             layers_added=tuple(sorted(cur_layers - prev_layers))[:MAX_LAYER_WORK],

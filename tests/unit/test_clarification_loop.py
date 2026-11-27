@@ -313,6 +313,35 @@ async def test_chapter_pending_stamp_enables_refusal(kernel_sid):
 
 
 @pytest.mark.asyncio
+async def test_chapter_questions_are_bounded(kernel_sid):
+    """超长/超量的 questions 不得撑破 KB 级有界信封不变式。"""
+    rt = get_runtime(kernel_sid)
+    await rt.begin_turn("t1", host="pi", message="问")
+    plan = await rt.hydrate()
+    plan.gis_chapter = {"query": "问", "intent": {"task": "simple_view"}}
+    from app.services.session_plan import save_session_plan
+    await save_session_plan(plan)
+
+    changed = await rt.update_chapter_clarification(
+        status="pending", turn_id="t1", question="范围？",
+        questions=[
+            {"code": "c1", "context_key": "k1", "question_zh": "长" * 5000},
+            {"code": "c2", "context_key": "k2", "question_zh": "第二"},
+            {"code": "c3", "context_key": "k3", "question_zh": "第三"},
+        ],
+        request_id="r-bounded",
+    )
+    assert changed is True
+    clar = (await _plan_of(kernel_sid)).gis_chapter["intent"]["clarification"]
+    assert len(clar["questions"]) <= 2
+    assert all(
+        len(str(v)) <= 200
+        for q in clar["questions"]
+        for v in q.values()
+    )
+
+
+@pytest.mark.asyncio
 async def test_chapter_pending_restamp_overwrites_raised_turn(kernel_sid):
     """review P2-2b：后续 turn 重新提出问题 → raised_turn_id 覆盖为新 turn
     （否则 refusal 谓词的 raised==turn 匹配永远失配，该 turn 误标 completed）。"""
@@ -499,3 +528,40 @@ async def test_bridge_no_clarification_without_pending(monkeypatch):
 
 def test_clarification_in_sse_vocabulary():
     assert "clarification" in CHAT_EVENT_TYPES
+
+
+# ── 4) turn 收口采集：空 questions 的 envelope 不得被吞成系统性故障 ──
+
+
+@pytest.mark.asyncio
+async def test_collect_settlement_clarification_empty_questions(monkeypatch):
+    """P2 regression：``_env.questions`` 为空列表时 ``questions[0]`` 抛
+    IndexError，被外层 never-raise 吞掉只记 debug —— blocking 澄清静默丢失、
+    turn 按「无澄清」收口，且故障被记成 ``clarification_collect_failed``
+    系统性指标。空 questions 不是 blocking 澄清，必须诚实跳过。"""
+    from types import SimpleNamespace
+
+    from app.services.chat import pi_turn_clarification as clar_mod
+    from app.services.gis_harness.requirement_ir import envelope as env_mod
+    from app.services.harness_kernel import metrics as hk_metrics
+
+    recorded = []
+    monkeypatch.setattr(
+        env_mod, "collect_turn_clarification",
+        AsyncMock(return_value=(
+            SimpleNamespace(questions=[], request_id="req-empty"),
+            "pending",
+        )),
+    )
+    monkeypatch.setattr(
+        hk_metrics, "record", lambda event, **dims: recorded.append(event)
+    )
+
+    out = await clar_mod.collect_settlement_clarification(
+        "sess-empty-q", "turn-empty-q"
+    )
+
+    assert out is None
+    assert "clarification_collect_failed" not in recorded, (
+        "empty-questions envelope was swallowed as a systematic failure (P2)"
+    )

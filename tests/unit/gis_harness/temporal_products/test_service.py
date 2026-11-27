@@ -134,6 +134,16 @@ class TestBind:
 
 
 class TestControl:
+    async def test_step_with_empty_frames_refused_not_indexerror(
+            self, seeded_ref, monkeypatch):
+        async def _empty(session_id):
+            return {"enabled": True, "frames": [], "cursor_frame": ""}
+
+        monkeypatch.setattr(tp, "_committed_temporal", _empty)
+        r = await tp.control_temporal_view("sid-empty", "step", steps=1)
+        assert r["status"] == "refused"
+        assert r["code"] == "no_frames"
+
     async def test_seek_step_play_pause_rate(self, seeded_ref):
         sid = f"tp-{uuid.uuid4().hex[:10]}"
         await tp.bind_temporal_view(sid, "ref:schools")

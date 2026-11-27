@@ -31,6 +31,7 @@ import os
 import time
 from typing import Any, Optional
 
+from app.services.geocompute.payload_rows import row_items
 from app.services.task_queue import celery_app
 
 logger = logging.getLogger(__name__)
@@ -222,7 +223,7 @@ def run_geocompute_node(
             session_id=session_id, ref_id=ref_id, owner_scope=owner_scope,
             payload=payload, locality_key=exec_node.semantic_fingerprint(),
         )
-        rows = len(payload.get("features") or payload.get("rows") or [])
+        rows = len(row_items(payload) or [])
         # node_output_ready = worker 侧唯一的输出信号；节点终局事件
         # （node_completed 等）由 coordinator 统一发射（契约：终局事实
         # 单一来源，双写会让无重复输出断言失真）。
@@ -500,7 +501,9 @@ def _estimate_payload_bytes(payload: dict[str, Any]) -> int:
     """
     total = 0
     for key in ("features", "rows"):
-        items = payload.get(key) or []
+        # rows 信封 dict（features 下嵌 {"rows": [...]}）经同一投影还原；
+        # 裸 dict 切片会抛 TypeError（节点已成功却在 finish_job 前崩溅）。
+        items = row_items({key: payload.get(key)})
         if items:
             sample = items[:64]
             avg = sum(len(str(f)) for f in sample) / len(sample)
@@ -518,7 +521,7 @@ def _bounded_summary(payload: dict) -> dict[str, Any]:
     """有界摘要（进 job 行，经 redaction；绝不含载荷本体）。"""
     meta = payload.get("metadata") or {}
     return {
-        "rows": len(payload.get("features") or payload.get("rows") or []),
+        "rows": len(row_items(payload) or []),
         "ref_id": payload.get("ref_id"),
         # V8：raster tile 的输出路径经 result_summary 回传 coordinator
         # （raster 载荷通货是路径字符串；partition 合并侧消费）。

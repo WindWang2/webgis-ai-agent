@@ -24,7 +24,7 @@ V4 基线：0-360 / antimeridian 的真实处理只存在于 MVT 瓦片切分
 from __future__ import annotations
 import logging
 
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 LongitudeConvention = str  # "pm180" | "e360" | "ambiguous"
 
@@ -248,9 +248,10 @@ def normalize_geojson_geometry(
         coords = geometry.get("coordinates")
         lons = _sample_lons(coords)
         conv = detect_longitude_convention(lons)
-        if conv == "e360":
-            # e360 输入 → 平移回 pm180；>180 部分取模后可能与 <=180 部分
-            # 拼出环绕几何 —— AM 穿越时必须拆分。
+        if conv == "e360" or geometry_crosses_antimeridian(lons):
+            # e360 输入 → 平移回 pm180；pm180 环绕表示（如 175 → -175）
+            # 同样是跨 AM 几何 —— 两者都必须拆分。>180 部分取模后可能与
+            # <=180 部分拼出环绕几何，不拆分即输出自交碎片。
             parts = split_geometry_at_antimeridian(geometry)
             if len(parts) == 1:
                 return parts[0]
@@ -263,22 +264,45 @@ def normalize_geojson_geometry(
         return geometry
 
 
-def _sample_lons(coords: Any, cap: int = 512) -> List[float]:
-    """深度优先采样坐标数组中的经度（有界；Polygon 优先外环）。"""
-    out: List[float] = []
-
-    def walk(node: Any, depth: int) -> None:
-        if len(out) >= cap or node is None:
-            return
+def _walk_lons(coords: Any) -> Iterator[float]:
+    """深度优先产出坐标数组中的全部经度（惰性；有界由调用方负责）。"""
+    stack: List[Any] = [coords]
+    while stack:
+        node = stack.pop()
+        if node is None:
+            continue
         if isinstance(node, (list, tuple)):
             if node and isinstance(node[0], (int, float)):
-                out.append(float(node[0]))
-                return
-            for child in node:
-                walk(child, depth + 1)
+                yield float(node[0])
+                continue
+            stack.extend(reversed(node))
 
-    walk(coords, 0)
-    return out[:cap]
+
+def _sample_lons_with_truncation(
+    coords: Any, cap: int = 512,
+) -> Tuple[List[float], bool]:
+    """(经度样本, 是否因 cap 截断) —— 截断事实供证据面披露。"""
+    total = sum(1 for _ in _walk_lons(coords))
+    if total <= cap:
+        return list(_walk_lons(coords)), False
+    # 等分索引（含首尾）：样本铺满整个顶点序列而非 DFS 前缀，后续环/后续
+    # part 的经度因此进入样本；样本数 ≤ cap。
+    picked = {round(index * total / cap) for index in range(cap)}
+    sampled = [lon for index, lon in enumerate(_walk_lons(coords))
+               if index in picked]
+    return sampled, True
+
+
+def _sample_lons(coords: Any, cap: int = 512) -> List[float]:
+    """深度优先采样坐标数组中的经度（有界；Polygon 优先外环）。
+
+    顶点数超过 cap 时按**等分索引**抽样而非取 DFS 前缀 —— 前缀会系统性丢掉
+    后续环/后续 part 的经度，``detect_longitude_convention`` 与 AM 拆分据此
+    在残缺证据上下全局结论（e360 被误判 ambiguous 而不转换、跨 AM 不被
+    拆分）。截断与否由 :func:`_sample_lons_with_truncation` 披露。
+    """
+    lons, _ = _sample_lons_with_truncation(coords, cap)
+    return lons
 
 
 def geometry_crosses_antimeridian(lons: Sequence[float]) -> bool:
@@ -302,19 +326,24 @@ def describe_longitude_semantics(
     """DatasetProfile / planner 的经度约定事实（有界、确定性）。
 
     返回 ``{"convention": ..., "crosses_antimeridian": bool,
-    "normalization_required": bool}``；证据缺失时 convention 为
-    ``ambiguous`` 且显式给 ``evidence: "absent"``（绝不虚构）。
+    "normalization_required": bool, "geometry_sample_truncated": bool}``；
+    证据缺失时 convention 为 ``ambiguous`` 且显式给 ``evidence: "absent"``
+    （绝不虚构）。顶点数超过采样上限时 ``geometry_sample_truncated`` 为
+    True —— 全局判定是在等步长样本上做的，截断事实必须可对账。
     """
     lons: List[float] = []
     crosses = False
     evidence = "absent"
+    sampled_truncated = False
     if bbox is not None and len(bbox) >= 4:
         minx, miny, maxx, maxy = (float(v) for v in bbox[:4])
         evidence = "bbox"
         crosses = bbox_crosses_antimeridian(minx, miny, maxx, maxy)
         lons = [minx, maxx]
     if geometry is not None:
-        geo_lons = _sample_lons(geometry.get("coordinates"))
+        geo_lons, truncated = _sample_lons_with_truncation(
+            geometry.get("coordinates"))
+        sampled_truncated = sampled_truncated or truncated
         if geo_lons:
             evidence = "geometry" if evidence == "absent" else "bbox+geometry"
             # 证据合并（取并集）而非整体替换：bbox 的 e360 证据（maxx>180）
@@ -328,6 +357,7 @@ def describe_longitude_semantics(
         "convention": conv,
         "crosses_antimeridian": crosses,
         "normalization_required": crosses or conv == "e360",
+        "geometry_sample_truncated": sampled_truncated,
         "evidence": evidence,
     }
 

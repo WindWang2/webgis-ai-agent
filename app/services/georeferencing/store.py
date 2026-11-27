@@ -4,6 +4,7 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import json
+import logging
 import os
 import shutil
 import uuid
@@ -12,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
+from pydantic import ValidationError
+
 from app.schemas.georeferencing_schema import (
     FrozenExecutionSnapshot,
     GeorefDomainError,
@@ -19,6 +22,9 @@ from app.schemas.georeferencing_schema import (
     GeorefErrorCode,
     GeorefSourceRecord,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 import re
@@ -68,20 +74,33 @@ def _session_file_lock(session_id: str) -> Iterator[None]:
         os.close(fd)
 
 
+def _empty_state(session_id: str) -> Dict[str, Any]:
+    return {"session_id": session_id, "sources": {}, "plans": {}, "idempotency": {}}
+
+
 def _read_state_unlocked(session_id: str) -> Dict[str, Any]:
     sp = _state_path(session_id)
     if not sp.is_file():
-        return {"session_id": session_id, "sources": {}, "plans": {}, "idempotency": {}}
+        return _empty_state(session_id)
     try:
         data = json.loads(sp.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
-            return {"session_id": session_id, "sources": {}, "plans": {}, "idempotency": {}}
+            raise ValueError("state root is not a JSON object")
         data.setdefault("sources", {})
         data.setdefault("plans", {})
         data.setdefault("idempotency", {})
         return data
-    except Exception:  # noqa: BLE001
-        return {"session_id": session_id, "sources": {}, "plans": {}, "idempotency": {}}
+    except Exception as exc:  # noqa: BLE001
+        # Fail closed: returning an empty state here would let the next
+        # save_source / mutate_plan_cas write it back and silently erase every
+        # source/plan record of this session.
+        raise GeorefDomainError(
+            GeorefErrorCode.SOURCE_CORRUPT_OR_TAMPERED,
+            f"Georeference state for session '{session_id}' is unreadable ({exc}); "
+            "refusing to treat it as empty or overwrite it.",
+            status_code=500,
+            details={"session_id": session_id},
+        ) from exc
 
 
 def _write_state_unlocked(session_id: str, state: Dict[str, Any]) -> None:
@@ -130,14 +149,34 @@ def get_plan(session_id: str, plan_id: str) -> Optional[GeorefDraftPlan]:
     with _session_file_lock(session_id):
         state = _read_state_unlocked(session_id)
         raw = state["plans"].get(plan_id)
-    return GeorefDraftPlan.model_validate(raw) if raw else None
+    if not raw:
+        return None
+    try:
+        return GeorefDraftPlan.model_validate(raw)
+    except ValidationError as exc:
+        raise GeorefDomainError(
+            GeorefErrorCode.SOURCE_CORRUPT_OR_TAMPERED,
+            f"Georeference plan '{plan_id}' failed schema validation: {exc}",
+            status_code=500,
+            details={"session_id": session_id, "plan_id": plan_id},
+        ) from exc
 
 
 def list_plans(session_id: str) -> List[GeorefDraftPlan]:
     with _session_file_lock(session_id):
         state = _read_state_unlocked(session_id)
         items = list(state["plans"].values())
-    return [GeorefDraftPlan.model_validate(x) for x in items]
+    plans: List[GeorefDraftPlan] = []
+    for raw in items:
+        try:
+            plans.append(GeorefDraftPlan.model_validate(raw))
+        except ValidationError:
+            # Per-record isolation: one unparseable plan (schema drift/manual
+            # edit) must not break listing every other plan in the session.
+            logger.warning(
+                "[georef] skipping unparseable plan record in session %s", session_id, exc_info=True
+            )
+    return plans
 
 
 def mutate_plan_cas(

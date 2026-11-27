@@ -25,6 +25,7 @@
 """
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.contracts.completion import F_RENDER_APPLY_FAILED, MapCompletionFinding
@@ -87,6 +88,20 @@ def _clean_id(value: Any) -> str:
     return str(value or "")[:_MAX_ID]
 
 
+def _finite_int(value: Any) -> Optional[int]:
+    """有限数值 → int；bool / 非数值 / NaN / Infinity → None。
+
+    Python 的 json 可解析 ``NaN``/``Infinity``，而 ``int()`` 对它们抛
+    ValueError/OverflowError —— fail-closed 校验自身不能崩（500）。
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if not math.isfinite(number):
+        return None
+    return int(number)
+
+
 def validate_render_apply_ack(
     payload: Any,
     *,
@@ -105,10 +120,9 @@ def validate_render_apply_ack(
     if payload.get("schema_version") != ACK_SCHEMA_VERSION:
         return None, [f"unsupported schema_version: {payload.get('schema_version')!r}"]
     rev_raw = payload.get("mapspec_revision")
-    if isinstance(rev_raw, bool) or not isinstance(rev_raw, (int, float)) \
-            or int(rev_raw) < 0:
+    ack_revision = _finite_int(rev_raw)
+    if ack_revision is None or ack_revision < 0:
         return None, ["mapspec_revision must be a non-negative number"]
-    ack_revision = int(rev_raw)
     status = payload.get("status")
     if status not in ACK_STATUSES:
         return None, [f"invalid transaction status: {status!r}"]
@@ -206,15 +220,11 @@ def _validate_work_block(
     out: Dict[str, Any] = {"work_id": work_id, "work_fingerprint": work_fp}
     epoch = work.get("style_epoch")
     if epoch is not None:
-        if (
-            isinstance(epoch, bool)
-            or not isinstance(epoch, (int, float))
-            or int(epoch) < 0
-            or int(epoch) > _MAX_STYLE_EPOCH
-        ):
+        epoch_int = _finite_int(epoch)
+        if epoch_int is None or epoch_int < 0 or epoch_int > _MAX_STYLE_EPOCH:
             errors.append("work.style_epoch must be a bounded non-negative number")
         else:
-            out["style_epoch"] = int(epoch)
+            out["style_epoch"] = epoch_int
     return out
 
 

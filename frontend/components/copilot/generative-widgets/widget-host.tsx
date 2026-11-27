@@ -34,6 +34,59 @@ const KIND_LABEL_KEYS: Record<WidgetSpec['kind'], string> = {
   sketch_box: 'kindSketchBox',
 };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+/**
+ * payload 形状兜底：具体组件在渲染期直接 .map / 解构字段，畸形 payload 会
+ * TypeError（且无错误边界）。按 kind 校验最小可渲染形状，不合格即不挂载。
+ */
+function hasRenderablePayload(spec: WidgetSpec): boolean {
+  const payload = spec.payload;
+  if (!isRecord(payload)) return false;
+  switch (spec.kind) {
+    case 'histogram_slider':
+      return (
+        Array.isArray(payload.bins) &&
+        payload.bins.every(
+          (bin) =>
+            isRecord(bin) &&
+            isFiniteNumber(bin.lo) &&
+            isFiniteNumber(bin.hi) &&
+            isFiniteNumber(bin.count),
+        ) &&
+        Array.isArray(payload.breaks) &&
+        payload.breaks.every(isFiniteNumber)
+      );
+    case 'swipe_compare':
+      return (
+        isRecord(payload.left) &&
+        typeof payload.left.label === 'string' &&
+        isRecord(payload.right) &&
+        typeof payload.right.label === 'string'
+      );
+    case 'candidate_picker':
+      return (
+        Array.isArray(payload.candidates) &&
+        payload.candidates.every(
+          (candidate) =>
+            isRecord(candidate) &&
+            typeof candidate.id === 'string' &&
+            typeof candidate.label === 'string',
+        )
+      );
+    case 'sketch_box':
+      return typeof payload.prompt === 'string';
+    default:
+      return false;
+  }
+}
+
 function WidgetCard({ spec }: { spec: WidgetSpec }) {
   const dismissCopilotWidget = useHudStore((s) => s.dismissCopilotWidget);
   const t = useT('copilot');
@@ -66,8 +119,10 @@ export function WidgetHost() {
   // ?? []：测试以部分状态 mock store（repo 惯例），挂载点须容忍缺字段。
   const widgets = useHudStore((s) => s.copilotWidgets) ?? [];
   if (widgets.length === 0) return null;
-  // 防御：进入渲染面前再过一遍词表（push 时已校验，这里兜底旧持久态）。
-  const safe = widgets.filter((w) => WIDGET_KINDS.includes(w.spec.kind));
+  // 防御：进入渲染面前再过一遍词表与 payload 形状（push 时已校验，这里兜底旧持久态）。
+  const safe = widgets.filter(
+    (w) => WIDGET_KINDS.includes(w.spec.kind) && hasRenderablePayload(w.spec),
+  );
   if (safe.length === 0) return null;
   return (
     <div

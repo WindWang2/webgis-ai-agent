@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, get_args
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -38,7 +38,10 @@ from app.lib.cartography.composition_contract import (
     CompositionContractV1,
     ContractSlot,
 )
-from app.lib.cartography.composition_templates import MapCompositionTemplate
+from app.lib.cartography.composition_templates import (
+    LayoutProfile,
+    MapCompositionTemplate,
+)
 
 #: 资产命名空间（系统 seed/pack 用 composition.*；物理不可撞）。
 ASSET_ID_PREFIX = "asset."
@@ -65,6 +68,10 @@ _OVERRIDABLE_SLOT_FIELDS = frozenset({
 
 #: 资产生命周期状态词表（asset 与 version 共用；迁移语义见 services 层）。
 ASSET_STATUS_VALUES = ("draft", "published", "retired")
+
+#: layout_profile 词表（与 MapCompositionTemplate.layout_profile 的 Literal
+#: 同源取词 —— 单一真相，不复制字面量清单）。
+_LAYOUT_PROFILES = frozenset(get_args(LayoutProfile))
 
 
 class TemplateAssetError(ValueError):
@@ -220,7 +227,15 @@ def _apply_top_overrides(tpl: MapCompositionTemplate,
     if p.output_targets:
         tpl.output_targets = [str(t)[:16] for t in p.output_targets[:5]]
     if p.layout_profile:
-        tpl.layout_profile = p.layout_profile  # Literal 词表由 pydantic 校验
+        # 赋值路径不过 pydantic 校验（MapCompositionTemplate 未设
+        # validate_assignment，pydantic 2.x 默认关）而载荷侧是无校验 str
+        # —— 词表外值（拼写错误/大小写不符/尾随空格/任意串）会静默物化进
+        # 模板，按 layout_profile 分派的下游拿到未定义值（review P2）。
+        profile = str(p.layout_profile)[:32]
+        if profile not in _LAYOUT_PROFILES:
+            raise TemplateAssetError(
+                f"asset_template_error: layout_profile_unknown {profile[:32]}")
+        tpl.layout_profile = profile  # type: ignore[arg-type]
     if p.tags:
         tpl.tags = [str(t)[:24] for t in p.tags[:MAX_ASSET_TAGS]]
     return tpl

@@ -51,7 +51,8 @@ export function mergeSceneRotary(
   committedScene: UserScenePayload | null | undefined,
   terrainSourceId: string | null | undefined,
 ): UserScenePayload | null {
-  const existingTerrain = committedScene?.terrain ?? undefined;
+  const existingTerrain = committedScene?.terrain
+    ?? (terrainSourceId ? { source: terrainSourceId } : undefined);
   const nextTerrain =
     rotary.exaggeration !== undefined
       ? { ...(existingTerrain ?? {}), exaggeration: rotary.exaggeration }
@@ -110,6 +111,14 @@ export async function commitUserScene(
       if (getMapSpecSessionCursor().sessionId !== enqueuedSessionId) {
         return { outcome: 'failed', error: new Error('session detached') };
       }
+      // 200 也可能携带拒绝语义（success=false / status=superseded）——
+      // 不得投影为 committed，更不得把未落账的 mapspec 当权威真相提交。
+      if (data.success === false || data.status === 'superseded') {
+        return {
+          outcome: 'failed',
+          error: new Error(data.correction_hint || 'MapSpec scene mutation was not committed'),
+        };
+      }
       if (typeof data.mutation_revision === 'number') {
         setMapSpecRevision(data.mutation_revision);
       }
@@ -128,6 +137,11 @@ export async function commitUserScene(
             ? raw.detail
             : raw
         ) as MutationResponse | undefined;
+        // 仅 status==='superseded' 才走收敛语义：其它 409（blocked/校验类）
+        // 不是「被更新状态取代」，不得静默回灌服务端真相当成功。
+        if (body?.status !== 'superseded') {
+          return { outcome: 'failed', error: err };
+        }
         if (getMapSpecSessionCursor().sessionId !== enqueuedSessionId) {
           return { outcome: 'failed', error: err };
         }

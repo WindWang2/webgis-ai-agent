@@ -162,8 +162,15 @@ async def preview_flow_product(session_id: str, config: FlowProductConfig) -> Di
         if not isinstance(edge_fc, dict) or not isinstance(node_fc, dict):
             raise FlowServiceError("FLOW_ARTIFACT_NOT_FOUND", "Cached OD flow artifacts are unavailable")
         product, edge_fc, encoding_changed = restyle_product(cached, edge_fc, node_fc, config)
+        # 产品身份必须只由（源 + 完整 config）决定：restyle 路径与 build 路径
+        # 共用同一 fingerprint（此前 restyle 另算，同 config 会因缓存路径不同
+        # 而漂移，且 full_alias 永远不命中）。
+        product["fingerprint"] = full_key
         if encoding_changed:
             product.pop("edge_ref", None)
+        # 样式变体是独立产品：不得沿用分析缓存产品的 ref 覆盖写，
+        # 否则先前 preview 的 ref 会被套上新样式（envelope 与 apply 不一致）。
+        product.pop("product_ref", None)
         product = await _store_product(session_id, product, edge_fc, node_fc, config)
         cache_hit = "analysis"
     else:

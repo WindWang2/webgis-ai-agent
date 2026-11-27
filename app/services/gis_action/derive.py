@@ -174,11 +174,16 @@ def _iter_classification_intents(ir: MapPlanIR):
         if bp is None:
             continue
         params = classification_params_of(bp.classification)
-        if not params.present:
-            continue
         legend = bp.legend_spec if isinstance(bp.legend_spec, dict) else {}
         if isinstance(legend.get("breaks"), list) and legend.get("breaks"):
             continue  # 已物化（planner 直接给了完整 legend）
+        if not params.present:
+            # 仅含非法/越界 k：k 已被钳制清空，但仍须让 materialize 产出
+            # DERIVE_SKIPPED 披露（否则用户既无 legend 也不知原因）。
+            raw_k = bp.classification.get("k") \
+                if isinstance(bp.classification, dict) else None
+            if raw_k is None:
+                continue
         yield li, bp, params, legend
 
 
@@ -241,7 +246,7 @@ async def materialize_classification(
     测试为 stub）。失败路径全部 typed 记录并保留原 IR 形态（向后兼容）。
     """
     records: List[MaterializationRecord] = []
-    updates: Dict[str, Dict[str, Any]] = {}   # intent_id → legend_spec
+    updates: Dict[str, LayerBlueprint] = {}   # intent_id → validated blueprint
 
     for li, bp, params, legend in _iter_classification_intents(ir):
         raw_k = (bp.classification or {}).get("k") \
@@ -250,8 +255,10 @@ async def materialize_classification(
             raw_k_int = int(raw_k) if raw_k is not None else None
         except (TypeError, ValueError):
             raw_k_int = None
-        if raw_k_int is not None and not (MIN_CLASS_K <= raw_k_int <= MAX_CLASS_K):
-            # 越界 k：typed 拒绝（资源放大通道，见 classification_params_of）。
+        if raw_k is not None and (
+                raw_k_int is None
+                or not (MIN_CLASS_K <= raw_k_int <= MAX_CLASS_K)):
+            # 非法/越界 k：typed 拒绝（资源放大通道，见 classification_params_of）。
             records.append(MaterializationRecord(
                 layer_id=li.layer_id, intent_id=li.intent_id,
                 code=DERIVE_SKIPPED))
@@ -295,7 +302,25 @@ async def materialize_classification(
                 code=DERIVE_NO_DATA, field=field_name,
                 source_ref=source_ref))
             continue
-        updates[li.intent_id] = spec
+        # 构造式重建（非 model_copy）：LayerBlueprint 的键数/字节闸在
+        # model_post_init，model_copy 会绕过 —— 巨型 legend_spec 不得
+        # 借物化入库。
+        try:
+            updates[li.intent_id] = LayerBlueprint(
+                layer_type=li.blueprint.layer_type,
+                cartography=li.blueprint.cartography,
+                paint=li.blueprint.paint,
+                legend_spec=spec,
+                classification=li.blueprint.classification,
+                label_spec=li.blueprint.label_spec,
+            )
+        except Exception as exc:  # noqa: BLE001 — 单层重建故障只记该层
+            logger.warning("[action-derive] blueprint rebuild failed for %s: %s",
+                           li.intent_id, exc)
+            records.append(MaterializationRecord(
+                layer_id=li.layer_id, intent_id=li.intent_id,
+                code=DERIVE_SKIPPED))
+            continue
         records.append(MaterializationRecord(
             layer_id=li.layer_id, intent_id=li.intent_id, code=DERIVE_OK,
             field=field_name, breaks_count=len(spec.get("breaks") or []),
@@ -306,21 +331,9 @@ async def materialize_classification(
 
     new_intents = []
     for li in ir.layer_intents:
-        spec = updates.get(li.intent_id)
-        if spec is None or li.blueprint is None:
+        blueprint = updates.get(li.intent_id)
+        if blueprint is None or li.blueprint is None:
             new_intents.append(li)
             continue
-        # 构造式重建（非 model_copy）：LayerBlueprint 的键数/字节闸在
-        # model_post_init，model_copy 会绕过 —— 巨型 legend_spec 不得
-        # 借物化入库。
-        new_intents.append(li.model_copy(update={
-            "blueprint": LayerBlueprint(
-                layer_type=li.blueprint.layer_type,
-                cartography=li.blueprint.cartography,
-                paint=li.blueprint.paint,
-                legend_spec=spec,
-                classification=li.blueprint.classification,
-                label_spec=li.blueprint.label_spec,
-            ),
-        }))
+        new_intents.append(li.model_copy(update={"blueprint": blueprint}))
     return ir.model_copy(update={"layer_intents": new_intents}), records

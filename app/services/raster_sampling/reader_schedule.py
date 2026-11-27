@@ -593,6 +593,7 @@ def execute_sampling(
         # 批读阶段：再开一次并保持打开（批间仅 stat 复核，不重开）
         for grid in grids:
             with open_raster(grid.path) as ds:
+                metrics.opens += 1
                 all_rows.extend(_run_source_pass(
                     ds, grid, station_set, method, metrics, progress))
     return all_rows, metrics, cost

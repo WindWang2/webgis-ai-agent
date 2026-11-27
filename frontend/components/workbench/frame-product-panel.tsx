@@ -37,6 +37,7 @@ export function FrameProductPanel() {
   const view = useFrameProductView();
   const t = useT();
   const [busy, setBusy] = useState(false);
+  const [titleDraft, setTitleDraft] = useState<{ frameId: string; value: string } | null>(null);
   const baseId = useId();
 
   const runPatch = useCallback(
@@ -114,14 +115,22 @@ export function FrameProductPanel() {
                 id={`${baseId}-title-${slot.frameId}`}
                 aria-label={t('workbench.frameProduct.frameTitle')}
                 className="min-w-0 flex-1 rounded border border-edge-subtle bg-surface-sunken px-1.5 py-1 text-body text-ink focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)]"
-                defaultValue={slot.title}
+                value={titleDraft?.frameId === slot.frameId ? titleDraft.value : slot.title}
                 disabled={busy}
+                onChange={(e) => setTitleDraft({ frameId: slot.frameId, value: e.target.value })}
                 onBlur={(e) => {
                   const next = e.target.value.trim();
-                  if (!next || next === slot.title) return;
+                  const clearDraft = () =>
+                    setTitleDraft((d) => (d?.frameId === slot.frameId ? null : d));
+                  if (!next || next === slot.title) {
+                    clearDraft();
+                    return;
+                  }
                   const frames = framesPatchBase(view);
                   frames[index] = { ...frames[index], title: next };
-                  void runPatch({ frames }, 'workbench.frameProduct.saved');
+                  // 落盘结果（applied / superseded / 失败）确定后清空草稿：
+                  // 输入框回落到 committed 真相，绝不显示未落盘的标题。
+                  void runPatch({ frames }, 'workbench.frameProduct.saved').finally(clearDraft);
                 }}
               />
               {slot.active ? (

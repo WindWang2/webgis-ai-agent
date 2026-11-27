@@ -103,12 +103,9 @@ class CapabilityBindingGovernanceReport:
         }
 
 
-def _derived_face(algorithms: Iterable[Any]) -> Tuple[
-    Dict[str, set], Dict[str, Dict[str, str]]
-]:
-    """capability → {algorithm-backed tool set} 与 capability → {tool: out_type}."""
+def _derived_face(algorithms: Iterable[Any]) -> Dict[str, set]:
+    """capability → {algorithm-backed tool set}。"""
     derived_tools: Dict[str, set] = {}
-    derived_out: Dict[str, Dict[str, str]] = {}
     for algo in algorithms:
         caps = [str(c).strip() for c in (getattr(algo, "capabilities", None) or [])]
         tools = [str(t).strip() for t in (getattr(algo, "tool_candidates", None) or [])]
@@ -116,7 +113,7 @@ def _derived_face(algorithms: Iterable[Any]) -> Tuple[
             if not cap:
                 continue
             derived_tools.setdefault(cap, set()).update(tools)
-    return derived_tools, derived_out
+    return derived_tools
 
 
 def _majority_output_face(
@@ -149,7 +146,7 @@ def govern_capability_bindings(
     for name, meta in tool_metadata:
         meta_map[str(name)[:_STR_MAX]] = meta
     caps = {str(c) for c in capability_ids}
-    derived_tools, _ = _derived_face(algorithms)
+    derived_tools = _derived_face(algorithms)
 
     issues = validate_capability_conformance(
         capability_ids=caps,
@@ -244,6 +241,7 @@ def durable_label_honesty_facts(
         "celery_required": False,
         "label_effective": None,
         "affected_tools": [],
+        "affected_count": 0,
     }
     try:
         from app.core.config import settings

@@ -136,6 +136,21 @@ def _compute(monkeypatch, message, disclosure):
     return compute_turn_active_tools(message, disclosure=disclosure)
 
 
+def test_repinned_distribution_tools_not_reported_as_budget_dropped(
+    monkeypatch, registry
+):
+    """字节预算后重钉回面 → 同一工具不得同时出现在 selected 与 budget_dropped。"""
+    from app.agent_pi_bridge import set_tool_registry
+
+    set_tool_registry(registry)
+    monkeypatch.setenv("PI_SURFACE_BYTE_BUDGET", "1")
+    disclosure = {}
+    names = _compute(monkeypatch, "做一份成都市小学密度热力图", disclosure)
+    dropped = set(disclosure.get("budget_dropped") or ())
+    assert dropped, "极小预算应实际裁剪动态候选"
+    assert not (dropped & set(names)), "重钉回激活面的工具不得声称被预算逐出"
+
+
 def test_default_budget_keeps_typical_turn_unchanged(monkeypatch, registry):
     from app.agent_pi_bridge import set_tool_registry
 

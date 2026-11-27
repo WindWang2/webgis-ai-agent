@@ -383,6 +383,36 @@ async def test_plan_repairs_for_chapter_consumes_cartographic_review(
 
 
 @pytest.mark.asyncio
+async def test_plan_repairs_tolerates_non_numeric_mutation_revision(
+    clean_session,
+):
+    """P3：_cartographic_mutation_revision 非数字时修复计划不得抛出。"""
+    from app.services.gis_harness.completion.contracts import (
+        MapCompletionResult,
+    )
+    from app.services.gis_harness.repair_planner import plan_repairs_for_chapter
+
+    await session_data_manager.set_map_state(
+        clean_session, "_cartographic_mutation_revision", "not-a-number")
+    await session_data_manager.set_map_state(
+        clean_session, "_cartographic_review", {
+            "cartography": {"checks": [{
+                "rule": "RUNTIME_LEGEND_CONVERGENCE",
+                "status": "fail",
+                "severity": "error",
+                "message": "legend missing",
+                "layer_id": "poi-main",
+                "repairability": "auto_safe",
+            }]},
+            "gate": {},
+            "overall_passed": False,
+        })
+    result = MapCompletionResult(status=STATUS_COMPLETE)
+    plan = await plan_repairs_for_chapter(clean_session, {}, result)
+    assert plan is not None
+
+
+@pytest.mark.asyncio
 async def test_visual_error_finding_lands_deferred_warning_skipped():
     """plan 面视觉语义（review #2/#15）：error 级软发现 → deferred
     （requires_user_approval）；warning 级纯披露，不产生 plan 动作。"""

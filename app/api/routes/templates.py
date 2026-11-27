@@ -360,7 +360,7 @@ async def delete_template(
         raise HTTPException(status_code=404, detail="Template not found")
     if not tmpl:
         # Check built-in seeds
-        seed = next((s for s in SEED_TEMPLATES if s["id"] == template_id), None)
+        seed = next((s for s in SEED_TEMPLATES if s.get("id") == template_id), None)
         if seed and seed.get("is_builtin"):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

@@ -155,6 +155,63 @@ class TestDetectOtherRepresentations:
         probe = detect_time_binding(_fc([{"year": y} for y in YEARS]))
         assert probe.semantics == "snapshot"  # 年对齐值 → 快照语义
 
+    def test_unknown_explicit_granularity_refused(self):
+        # review P2-5：未知显式粒度不得被兜底成 hour（否则 day 精度边界串
+        # lo==hi，所有帧过滤为空且无拒绝码）。
+        probe = detect_time_binding(
+            _fc([{"d": f"2023-{m:02d}-15"} for m in (1, 2, 4)]),
+            granularity="fortnight",
+        )
+        assert not probe.ok
+        assert probe.code == "invalid_granularity"
+
+    def test_probe_bounds_retained_field_values(self):
+        # review P2-4：自动探测只为评分保留有界样本，不再把每个特征的每个
+        # 属性值全量常驻（50k 特征 × 20 属性 = 100 万对象）。
+        import weakref
+
+        from app.services.gis_harness.temporal_products.frames import (
+            _MAX_PROBE_SAMPLE,
+            probe_fc_time_field,
+        )
+
+        n_features, n_lazy = 9000, 12
+        live_at_end: list = []
+
+        class _Value:
+            """按需生成的属性值：存活数 = 探测器实际留存数。"""
+
+            live: "weakref.WeakSet" = weakref.WeakSet()
+
+            def __init__(self) -> None:
+                _Value.live.add(self)
+
+        class _LazyProps(dict):
+            """properties：非时间字段的值在迭代时才生成（输入不持有它们）。"""
+
+            def items(self):
+                for k, v in super().items():
+                    yield (k, _Value() if k.startswith("f") else v)
+                live_at_end.append(len(_Value.live))
+
+        features = []
+        for i in range(n_features):
+            props = _LazyProps({"year": 2020 + (i % 3)})
+            for j in range(n_lazy):
+                props[f"f{j}"] = None
+            features.append(
+                {"type": "Feature", "geometry": None, "properties": props})
+        fc = {"type": "FeatureCollection", "features": features}
+
+        field, sample, all_values = probe_fc_time_field(fc)
+        assert field == "year"
+        assert len(all_values) == n_features
+        assert sample[:3] == [2020, 2021, 2022]
+        bound = n_lazy * _MAX_PROBE_SAMPLE
+        # 探测期任一时点不得常驻全部值（未修复时 = 9000×12 全量常驻）。
+        assert live_at_end[-1] < n_features * n_lazy, (
+            f"探测期常驻 {live_at_end[-1]} 个非时间字段值（应有界 ≤ {bound}）")
+
 
 class TestGranularityFromSpan:
     def test_five_years_of_hours_coarsens(self):
@@ -198,6 +255,39 @@ class TestTimeFilterCompiler:
         assert v == "2023-01"
         hi = normalize_boundary_value(frame["end"], "date_string", "quarter")
         assert hi == "2023-04"
+
+    def test_date_string_precision_follows_data_literal_not_granularity(self):
+        """显式 granularity 细于列精度（"YYYY-MM" 列传 day/week）时，边界
+        必须按数据字面精度渲染 —— 否则 lo 排到所有数据字面之后
+        （"2023-07-01" > "2023-07"），每帧 where/MapLibre 过滤命中 0 条。"""
+        # YYYY-MM 列 + day 粒度 → 月精度边界（与数据同构）
+        assert normalize_boundary_value(
+            "2023-07-01T00:00:00Z", "date_string", "day", "UTC",
+            "2023-07") == "2023-07"
+        assert normalize_boundary_value(
+            "2023-09-30T00:00:00Z", "date_string", "week", "UTC",
+            "2023-09") == "2023-09"
+        # YYYY 列 + day 粒度 → 年精度
+        assert normalize_boundary_value(
+            "2023-07-01T00:00:00Z", "date_string", "day", "UTC",
+            "2023") == "2023"
+        # YYYY-MM-DD 列 + week 粒度 → 日精度（字典序仍是时间序）
+        assert normalize_boundary_value(
+            "2023-07-05T00:00:00Z", "date_string", "week", "UTC",
+            "2023-07-05") == "2023-07-05"
+        # hint 缺席 → 退化为 granularity（既有行为/兼容直调）
+        assert normalize_boundary_value(
+            "2023-01-01T00:00:00Z", "date_string", "quarter") == "2023-01"
+        # where AST / MapLibre 两侧同源（地图与统计同窗）
+        frame = {"start": "2023-07-01T00:00:00Z", "end": "2023-08-01T00:00:00Z"}
+        ast = compile_where_ast(frame, "m", "date_string", "day", "UTC", "2023-07")
+        mlf = compile_maplibre_filter(frame, "m", "date_string", "day", "UTC",
+                                      "2023-07")
+        assert ast["terms"][0]["value"] == "2023-07"
+        assert ast["terms"][1]["value"] == "2023-08"
+        assert mlf[1][2] == "2023-07" and mlf[2][2] == "2023-08"
+        # 窗内数据字面命中（此前 day 精度边界会全数脱靶）
+        assert "2023-07" <= "2023-07" < "2023-08"
 
     def test_maplibre_filter_same_values_as_where(self):
         # 地图与统计同窗的结构性保证：两侧值完全同源。

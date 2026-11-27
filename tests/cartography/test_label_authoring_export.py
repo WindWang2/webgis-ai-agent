@@ -155,6 +155,23 @@ class TestAuthoringExportBehavior:
         codes = [d.get("code") for d in out.diagnostics]
         assert "label_authoring_stale" in codes
 
+    def test_malformed_source_revision_does_not_blank_export(self):
+        # 回归：authoring sourceRevision 为非数值（损坏载荷）不得让 stale
+        # 判定抛异常而被整函数 catch-all 吞成空白导出。
+        spec = _schools_spec(
+            overrides=[{
+                "featureId": "s1", "text": "旧版本名字",
+                "sourceRevision": "not-a-number",
+            }],
+            labels_cfg={"collision": "deterministic"},
+        )
+        spec["sources"]["schools"]["content_revision"] = 2
+        out = compile_mapspec_to_svg_detailed(spec)
+        assert "旧版本名字" in out.svg
+        # 无法比较 → 不计 stale（不虚构 stale 结论）。
+        codes = [d.get("code") for d in out.diagnostics]
+        assert "label_authoring_stale" not in codes
+
 
 class TestGeometryObstacles:
     def _road_spec(self, labels_cfg, road_paint=None, second_road=False):

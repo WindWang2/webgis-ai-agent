@@ -107,8 +107,8 @@ def register_workspace_tools(registry) -> None:
 
         sid = _resolve_session_id(session_id)
         if not sid:
-            return {"success": True, "snapshots": [], "count": 0,
-                    "message": "当前会话没有快照。可先 save_workspace_snapshot。"}
+            return {"success": False, "code": "NO_SESSION",
+                    "error": "缺少有效会话，无法列出工作空间快照"}
         items = await get_workspace_snapshot_service().list_snapshots(sid)
         return {"success": True, "snapshots": items, "count": len(items)}
 

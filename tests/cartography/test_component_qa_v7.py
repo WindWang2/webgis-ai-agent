@@ -91,6 +91,24 @@ class TestGraphQARules:
         assert fix["placements"][0]["component_id"] == "chart"
         assert fix["placements"][0]["x"] >= 0
 
+    def test_unresolvable_floating_not_marked_auto_safe(self, monkeypatch):
+        """无可用 placements 时不得标 auto_safe（自动通道会拿到空载荷）。"""
+        from app.lib.cartography import layout_geometry
+
+        monkeypatch.setattr(
+            layout_geometry, "resolve_floating_rects",
+            lambda *_args, **_kwargs: layout_geometry.GeometryReport(),
+        )
+        report = evaluate_cartography_semantics(_spec_with_components([
+            {"id": "chart", "type": "chart_panel",
+             "placement": {"mode": "floating", "x": -900, "y": 50,
+                           "width": 300, "height": 200}},
+        ]))
+        check = _checks_by_rule(report)["COMPONENT_OUTSIDE_CANVAS"]
+        assert check.status == "fail"
+        assert check.repairability == "not_repairable"
+        assert check.suggested_fix is None
+
     def test_beyond_nominal_viewport_warns(self):
         report = evaluate_cartography_semantics(_spec_with_components([
             {"id": "chart", "type": "chart_panel",

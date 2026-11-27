@@ -477,6 +477,8 @@ export function MapPanel({
   }, [])
 
   const mapRef = useRef<MapRef>(null)
+  // G36：仅释放本 MapPanel 登记的采集函数，避免分屏时先卸载者清掉仍存活的地图。
+  const mapCaptureReleaseRef = useRef<(() => void) | null>(null)
   // G25：主图活实例登记句柄（onLoad 注册 / mapKey 重建与卸载时释放 ——
   // 画幅网格预算仲裁把主图计入总数，A09）。
   const mainInstanceHandleRef = useRef<{ release: () => void } | null>(null)
@@ -485,7 +487,8 @@ export function MapPanel({
       mainInstanceHandleRef.current?.release()
       mainInstanceHandleRef.current = null
       // G36：卸载时释放聊天附图采集登记（迟到的采集不得命中已销毁实例）。
-      registerMapCapture(null)
+      mapCaptureReleaseRef.current?.()
+      mapCaptureReleaseRef.current = null
     }
   }, [])
   const processLayers = useHudStore((s: HudState) => s.processLayers)
@@ -637,7 +640,11 @@ export function MapPanel({
 
     return () => {
       cancelled = true
-      if (lastFittedFocusRef.current === focusLayerId) lastFittedFocusRef.current = null
+      // 不清 lastFittedFocusRef：#739 的去重标记必须跨重跑存活 ——
+      // cleanup 每次重跑都清它，会让 layers/t 身份在 800ms 复位窗口内的
+      // 变化重复 fitBounds + commitExplicitView 回 POST（自持循环）。
+      // 标记的清理归 focusLayerId→null 路径（effect 顶部）与 800ms 复位
+      // 定时器；取消的 continuation 仍会调度复位定时器（#843/#852）。
     }
   }, [focusLayerId, mapReady, layers, focusLayerSetter, t])
 
@@ -976,8 +983,14 @@ export function MapPanel({
       });
     }
     refBudgetNotice.current = noticeKey;
+    // 代次守卫：mapKey 重建（WebGL 重试）会 dispose 旧 runtime 并新建，
+    // 在途的旧 reconcile 落定时不得把旧 spec/is3D 应用到新地图实例 ——
+    // 若晚于新 reconcile，地形与 3D 资产会停留在陈旧状态。effect 重跑
+    // （含 mapReady 重建链）即作废在途 continuation 的收尾。
+    let alive = true
     void runtimeRef.current.reconcileAsync(spec)
       .then(() => {
+        if (!alive) return
         syncInteractiveIds()
         // GOAL 03 M4：displayed_at 门控 —— reconcile 落定（applied spec
         // 已前进）后才回执**本次应用**的 live 帧；stale/乱序由控制器拒绝。
@@ -1042,6 +1055,7 @@ export function MapPanel({
       })
       // #1008：reconcile 失败的裸 console.error 泄漏内部细节 → devOnly。
       .catch((e) => devOnly.error("[map] reconcile failed", e))
+    return () => { alive = false }
   }, [layers, processLayers, activeFilters, selectionFilters, is3D, liveGeneration, refSourcesGeneration, temporalLiveGeneration, mapReady, currentMapStyle, runtimeRecoveryGeneration, syncInteractiveIds, sessionId, ownerToken, sessionTokenRef, issueCartographicObservation, buildSceneTerrainOptions, tMap])
 
   // Runtime V4（§14）：过滤命中证据 —— settle 后对「有过滤的内联层」做有界
@@ -1127,7 +1141,15 @@ export function MapPanel({
         const sources = Object.values(style?.sources ?? {}) as Array<{ type?: string }>
         const layers = style?.layers ?? []
         const hasTileSource = sources.some((s) => s?.type === "vector" || s?.type === "raster")
-        if (layers.length > 0 && !hasTileSource) {
+        // 只有「配置的底图本身声明了瓦片源」才把瓦片源缺失视为丢失。
+        // 离线兜底 / 纯 GeoJSON 底图（object style 且无 vector/raster source）
+        // 本就没有瓦片源，不得每次选中要素都全量 setStyle 重建（撕裂业务层）。
+        const configuredSources = typeof currentMapStyle === 'string'
+          ? null
+          : Object.values((currentMapStyle as unknown as { sources?: Record<string, { type?: string }> }).sources ?? {})
+        const configuredHasTileSource = configuredSources === null
+          || configuredSources.some((s) => s?.type === "vector" || s?.type === "raster")
+        if (layers.length > 0 && !hasTileSource && configuredHasTileSource) {
           devOnly.warn("[map] 底图瓦片源丢失，自动重建样式")
           map.setStyle(currentMapStyle)
           runtimeRef.current?.invalidateStyle()
@@ -1999,7 +2021,10 @@ export function MapPanel({
             mainInstanceHandleRef.current = mapInstanceRegistry.register("main", "main");
             // G36（ADR-0291）：登记聊天附图采集函数（活实例；mapKey 重建时
             // 重新 onLoad → 重注册，卸载时释放）。
-            registerMapCapture(makeMapCapture(mapRef.current?.getMap() ?? null));
+            mapCaptureReleaseRef.current?.()
+            mapCaptureReleaseRef.current = registerMapCapture(
+              makeMapCapture(mapRef.current?.getMap() ?? null),
+            )
           }}
           onError={handleMapError}
           style={{ position: "absolute", inset: 0 }}

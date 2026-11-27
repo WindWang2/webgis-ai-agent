@@ -59,6 +59,24 @@ async def test_idempotency_waiter_never_executes_while_lock_is_held(monkeypatch)
     execute.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_idempotency_waiter_never_reexecutes_after_uncached_completion(monkeypatch):
+    from starlette.responses import Response
+
+    from app.core.idempotency import IdempotencyMiddleware
+
+    middleware = IdempotencyMiddleware(object())
+    # 首次 SET NX 失败（他人持锁）；等待期间锁被释放且无重放记录，
+    # 说明首个执行者已完成但响应不可缓存 —— 绝不能再执行 mutating handler。
+    redis = SimpleNamespace(set=AsyncMock(side_effect=[False, True]))
+    monkeypatch.setattr(middleware, "_wait_for_response", AsyncMock(return_value=None))
+    execute = AsyncMock(return_value=Response(content=b"stream", media_type="text/plain"))
+    request = SimpleNamespace(headers={}, state=SimpleNamespace(idempotency_authority="a"))
+    response = await middleware._singleflight(redis, "same-key", request, execute)
+    assert response.status_code == 409
+    execute.assert_not_called()
+
+
 def test_serialization_failure_is_an_error_event():
     from app.utils.sse import sse_event
 
@@ -162,6 +180,19 @@ def test_session_gate_can_be_reused_after_loop_is_closed():
     asyncio.run(use())
     asyncio.run(use())
     assert gate.held_sessions == 0
+
+
+def test_oversized_data_url_png_is_refused_before_decode():
+    from app.services.tool_dispatch_gates import _decode_data_url_png
+
+    # P3 resource-leak: 超大 base64 载荷（>2MiB，合法 base64）必须先拒绝
+    # 再解码，否则内存按 4/3 放大；拒绝后调用方回退 ref:/无地址图像路径。
+    oversized = "data:image/png;base64," + "A" * (2 * 1024 * 1024 + 4)
+    assert _decode_data_url_png(oversized) is None
+    # 边界内的 data URL 仍正常解码（不改变既有形状）。
+    small = "data:image/png;base64," + "A" * 64
+    assert _decode_data_url_png(small) == b"\x00" * 48
+    assert _decode_data_url_png("ref:raster/abc") is None
 
 
 def test_context_peek_never_allocates_or_crosses_tenants():

@@ -75,6 +75,45 @@ describe("cartographic runtime evidence", () => {
     expect(JSON.stringify(observation)).not.toContain("features");
   });
 
+  it("counts MapLibre's default opacity for a derived layer without an opacity key", () => {
+    const { map, spec, hud } = fixture();
+    const heatId = "ref:geojson-1__heat";
+    const desiredHeat = {
+      ...(spec.layers[0] as any),
+      id: heatId,
+      paint: { "circle-radius": circleRadiusExpression({}) },
+      representation: {
+        windows: [{ min_zoom: 0, max_zoom: 24, mode: "visual_heatmap" }],
+      },
+    };
+    spec.layers.push(desiredHeat);
+    const liveHeat = {
+      id: heatId,
+      source: "ref:geojson-1",
+      type: "heatmap",
+      paint: { "heatmap-radius": circleRadiusExpression({}) },
+      layout: { visibility: "visible" },
+      minzoom: 24,
+    };
+    const liveById: Record<string, any> = {
+      [spec.layers[0].id]: spec.layers[0],
+      [heatId]: liveHeat,
+    };
+    map.getLayer = (id: string) => liveById[id];
+    map.getPaintProperty = (id: string, key: string) => {
+      const layer = liveById[id];
+      if (!layer) return undefined;
+      if (layer.type === "heatmap" && key === "heatmap-opacity") return 1;
+      return (layer.paint as any)[key];
+    };
+
+    const observation = collectCartographicRuntimeObservation(
+      map, spec, [hud], "carto-sha256:abc", "", spec,
+    ) as any;
+
+    expect(observation.layers[0].opacity).toBeUndefined();
+  });
+
   it("reports a missing/rejected MapLibre layer instead of fake convergence", () => {
     const { map, spec, hud } = fixture();
     map.getLayer = () => undefined;

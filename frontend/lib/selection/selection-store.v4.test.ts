@@ -52,6 +52,26 @@ describe('selection store V4', () => {
     expect(getSelection()?.predicate).toBeUndefined();
   });
 
+  it('drops malformed raw bboxes (non-finite / length ≠ 4)', () => {
+    publishSelection('brush', {
+      source: 'map', layer_id: 'l1', bbox: [NaN, 30.6, 104.1, 30.7],
+    });
+    expect(getSelection()?.bbox).toBeUndefined();
+    publishSelection('brush', {
+      source: 'map', layer_id: 'l1', bbox: [104, Infinity, 104.1, 30.7],
+    });
+    expect(getSelection()?.bbox).toBeUndefined();
+    publishSelection('brush', {
+      source: 'map', layer_id: 'l1',
+      bbox: [104, 30.6, 104.1] as unknown as [number, number, number, number],
+    });
+    expect(getSelection()?.bbox).toBeUndefined();
+    publishSelection('brush', {
+      source: 'map', layer_id: 'l1', bbox: [104, 30.6, 104.1, 30.7],
+    });
+    expect(getSelection()?.bbox).toEqual([104, 30.6, 104.1, 30.7]);
+  });
+
   it('carries matched_count and truncation-safe payload', () => {
     publishSelection('brush', {
       source: 'map', layer_id: 'l1',

@@ -14,7 +14,7 @@ import { QueryPane } from './query-pane';
 import { StacExplorer } from './stac-explorer';
 import { VersionWorkbench } from './version-workbench';
 import { OpsPanel } from './ops-panel';
-import { useLakehouseCatalog, EMPTY_CATALOG_FILTERS, type CatalogFilters } from './use-lakehouse-catalog';
+import { useLakehouseCatalog, EMPTY_CATALOG_FILTERS, CATALOG_PAGE_SIZE, type CatalogFilters } from './use-lakehouse-catalog';
 import { useT } from '@/lib/i18n/useT';
 
 /**
@@ -217,7 +217,7 @@ export function LakehouseTab({ sessionId, ownerToken }: LakehouseTabProps) {
                       <button
                         type="button"
                         disabled={offset === 0}
-                        onClick={() => setOffset(Math.max(0, offset - 50))}
+                        onClick={() => setOffset(Math.max(0, offset - CATALOG_PAGE_SIZE))}
                         className="rounded-sm bg-surface-sunken px-2 py-1 transition-colors hover:bg-surface-hover disabled:opacity-40"
                       >
                         {t('kdd9mn')}</button>

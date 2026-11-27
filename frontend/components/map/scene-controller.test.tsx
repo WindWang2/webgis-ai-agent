@@ -38,6 +38,12 @@ vi.mock('@/lib/store/useHudStore', () => ({
   },
 }));
 
+// apply 的失败可见通道（动态 import）—— 断言 toast 与乐观态回滚。
+const addToast = vi.fn();
+vi.mock('@/components/ui/toast', () => ({
+  useToastStore: { getState: () => ({ addToast }) },
+}));
+
 vi.mock('@/lib/i18n/useT', () => ({
   useT: () => (key: string) => key,
 }));
@@ -68,6 +74,7 @@ describe('SceneController', () => {
     is3D = false;
     commitUserScene.mockReset().mockResolvedValue({ outcome: 'committed' });
     setIs3D.mockClear();
+    addToast.mockClear();
   });
   afterEach(() => cleanup());
 
@@ -107,6 +114,52 @@ describe('SceneController', () => {
     expect(payload.camera.pitch).toBe(0);
     expect(payload.camera.bearing).toBe(0);
     expect(setIs3D).toHaveBeenCalledWith(false);
+  });
+
+  it('提交失败（outcome=failed）→ 回滚乐观 is3D，hud 不背离 committed spec', async () => {
+    commitSpec({
+      scene: { mode: '2d', camera: { pitch: 0, bearing: 0 } },
+      sources: {},
+    });
+    render(<SceneController />);
+    openPanel();
+    commitUserScene.mockResolvedValueOnce({ outcome: 'failed', error: new Error('500') });
+    fireEvent.click(screen.getByRole('radio', { name: 'sceneController.mode_3d' }));
+    await vi.waitFor(() => expect(commitUserScene).toHaveBeenCalledTimes(1));
+    // 先乐观翻转，失败后回滚到 committed 2d 态（修复前只弹 toast 不回滚，
+    // 单向桥下 hud 与 spec 长期分歧）。
+    expect(setIs3D).toHaveBeenCalledWith(true);
+    await vi.waitFor(() => expect(setIs3D).toHaveBeenLastCalledWith(false));
+    expect(addToast).toHaveBeenCalledWith('sceneController.sceneApplyFailed', 'warning');
+  });
+
+  it('commitUserScene 抛错 → 失败 toast 可见 + 回滚（不逃逸未处理拒绝）', async () => {
+    commitSpec({
+      scene: { mode: '2d', camera: { pitch: 0, bearing: 0 } },
+      sources: {},
+    });
+    render(<SceneController />);
+    openPanel();
+    // 修复前：try 只有 finally 无 catch → 错误逃逸成未处理 Promise 拒绝，
+    // 用户零反馈（违背「失败可见」）。
+    commitUserScene.mockRejectedValueOnce(new Error('network down'));
+    fireEvent.click(screen.getByRole('radio', { name: 'sceneController.mode_3d' }));
+    await vi.waitFor(() =>
+      expect(addToast).toHaveBeenCalledWith('sceneController.sceneApplyFailed', 'warning'),
+    );
+    await vi.waitFor(() => expect(setIs3D).toHaveBeenLastCalledWith(false));
+  });
+
+  it('nudgeCamera 提交失败 → 同样回滚乐观 is3D', async () => {
+    commitSpec({ scene: { mode: '3d', camera: { pitch: 0, bearing: 0 } }, sources: {} });
+    is3D = false;
+    render(<SceneController />);
+    openPanel();
+    commitUserScene.mockResolvedValueOnce({ outcome: 'failed', error: new Error('500') });
+    fireEvent.click(screen.getByRole('button', { name: 'sceneController.pitchUp' }));
+    await vi.waitFor(() => expect(commitUserScene).toHaveBeenCalledTimes(1));
+    expect(setIs3D).toHaveBeenCalledWith(true);
+    await vi.waitFor(() => expect(setIs3D).toHaveBeenLastCalledWith(false));
   });
 
   it('exaggeration slider disabled without raster-dem evidence', () => {

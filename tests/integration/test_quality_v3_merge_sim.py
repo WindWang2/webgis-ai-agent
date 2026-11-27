@@ -241,3 +241,65 @@ def test_cli_blocked_and_clean(pair_repo: Path, monkeypatch, capsys):
     assert mod.main() == 1, "同序号 fork 必须阻塞"
     out = capsys.readouterr().out
     assert "BLOCKED" in out
+
+
+@pytest.mark.parametrize("error", [
+    FileNotFoundError("git executable not found"),
+    subprocess.CalledProcessError(128, ["git", "diff"]),
+])
+def test_cli_git_errors_exit_two(monkeypatch, capsys, error):
+    """git 缺失或子进程失败按输入错误退出，不泄露 traceback。"""
+    import importlib.util
+    import sys
+
+    repo_root = Path(merge_sim.__file__).parents[3]
+    spec = importlib.util.spec_from_file_location(
+        "simulate_merge", repo_root / "scripts/simulate_merge.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    def fail(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr("app.lib.integration.manifest.build_manifest", fail)
+    monkeypatch.setattr(sys, "argv",
+                        ["simulate_merge.py", "--branches", "feat/a,feat/b",
+                         "--base", "master"])
+    assert mod.main() == 2
+    err = capsys.readouterr().err
+    assert err.startswith("拒绝：")
+    assert "Traceback" not in err
+
+
+def test_cli_sanitized_branch_names_do_not_overwrite(pair_repo: Path,
+                                                     monkeypatch):
+    """feat/a 与 feat_a 的报告文件名必须不同。"""
+    repo = pair_repo
+    _git(repo, "branch", "feat_a", "master")
+
+    import importlib.util
+    import sys
+
+    repo_root = Path(merge_sim.__file__).parents[3]
+    spec = importlib.util.spec_from_file_location(
+        "simulate_merge", repo_root / "scripts/simulate_merge.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    out_dir = repo / ".agent-work/merge-sim"
+    monkeypatch.setattr(mod, "REPO", repo)
+    monkeypatch.setattr(mod, "OUT_DIR", out_dir)
+
+    monkeypatch.setattr(sys, "argv",
+                        ["simulate_merge.py", "--branches", "feat/a,feat/b",
+                         "--base", "master"])
+    assert mod.main() == 0
+    first_reports = set(out_dir.iterdir())
+    assert len(first_reports) == 2
+
+    monkeypatch.setattr(sys, "argv",
+                        ["simulate_merge.py", "--branches", "feat_a,feat/b",
+                         "--base", "master"])
+    assert mod.main() == 0
+    assert first_reports < set(out_dir.iterdir())
+    assert len(list(out_dir.glob("*.json"))) == 2
+    assert len(list(out_dir.glob("*.md"))) == 2

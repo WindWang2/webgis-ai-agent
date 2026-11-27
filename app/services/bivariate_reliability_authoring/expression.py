@@ -135,6 +135,10 @@ def build_bivariate_candidate(
     layer_type: str,
     title: Optional[str],
 ) -> CandidateExpression:
+    if layer_type not in ("fill", "circle", "line"):
+        raise AuthoringError(
+            "UNSUPPORTED_LAYER_TYPE",
+            f"层型 {layer_type!r} 不支持本域双变量矩阵表达", status_code=409)
     legend = build_bivariate_legend(
         spec, scan, result, anchor=anchor, plan_digest=plan_digest, title=title)
     paint_color, warnings = spec_to_paint(legend)

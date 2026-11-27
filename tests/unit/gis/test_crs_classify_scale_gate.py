@@ -57,3 +57,23 @@ def test_classify_is_cached_and_deterministic():
     """lru_cache 命中不改变判定（尺度闸门幂等）。"""
     assert classify_crs("EPSG:3035") == classify_crs("EPSG:3035") == "projected"
     assert classify_crs("EPSG:2154") == "projected_local_metric"
+
+
+def test_recommend_metric_crs_returns_empty_on_invalid_crs_string():
+    """crs 为非法串时 Transformer.from_crs 抛 pyproj CRSError
+    （RuntimeError 子类，不是 ValueError）—— 旧代码只捕
+    (TypeError, ValueError)，异常逸出到 resolver CRS 硬门之外，调用方拿不到
+    文档承诺的保守空串。"""
+    from app.lib.gis.crs_safety import recommend_metric_crs
+
+    bbox = (104.0, 30.0, 104.5, 30.5)
+    assert recommend_metric_crs(bbox, "EPSG:4326") == "EPSG:32648"
+    # 非空但非法的 crs 串 → 保守空串（CRSError 被收编）
+    for bad in ("not-a-crs", "EPSG:99999999", "EPSG:notanumber", ";;;"):
+        assert recommend_metric_crs(bbox, bad) == "", bad
+    # crs 缺席（空串/None）时根本不做变换，照旧推荐 UTM（`if crs:` 门）
+    assert recommend_metric_crs(bbox, "") == "EPSG:32648"
+    assert recommend_metric_crs(bbox, None) == "EPSG:32648"
+    # bbox 本身非数值同样保守空串（既有行为不回退）
+    assert recommend_metric_crs(("a", "b", "c", "d"), None) == ""
+    assert recommend_metric_crs(None, "EPSG:4326") == ""

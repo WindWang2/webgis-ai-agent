@@ -259,6 +259,37 @@ def test_preprocess_batch_memory_guard():
         preprocess_batch(plan, desc, [(big, None), (big, None), (big, None), (big, None)])
 
 
+def test_preprocess_mean_std_length_mismatch_is_typed():
+    from types import SimpleNamespace
+
+    from app.lib.modelops.descriptor import SpatialRequirements
+
+    desc = SimpleNamespace(
+        normalization=NormalizationSpec(kind="mean_std", mean=(1.0, 2.0), std=(1.0, 2.0)),
+        input_bands=1,
+        spatial=SpatialRequirements(chip_size=(4, 4), context_size=(4, 4)),
+    )
+    plan = build_plan(desc, source_band_count=1)
+    window = np.zeros((1, 4, 4), dtype=np.float32)
+    with pytest.raises(PreprocessError, match="normalization length"):
+        preprocess_window(plan, desc, window, None)
+
+
+def test_band_order_partial_name_resolution_rejected():
+    from types import SimpleNamespace
+
+    from app.lib.modelops.descriptor import SpatialRequirements
+
+    desc = SimpleNamespace(
+        normalization=NormalizationSpec(kind="none"),
+        input_bands=3,
+        band_order=("red", "green", "blue"),
+        spatial=SpatialRequirements(chip_size=(4, 4), context_size=(4, 4)),
+    )
+    with pytest.raises(PreprocessError, match="do not satisfy"):
+        build_plan(desc, source_band_count=3, source_band_names=("red", "green", "nir"))
+
+
 # ── metrics ──────────────────────────────────────────────────────────
 
 

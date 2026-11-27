@@ -33,12 +33,14 @@ class SpatialIndexUnavailable(RuntimeError):
 
 def h3_available() -> bool:
     global _H3_OK
-    try:
-        import h3  # noqa: F401
+    if _H3_OK is None:
+        try:
+            import h3  # noqa: F401
 
-        return True
-    except Exception:  # noqa: BLE001
-        return False
+            _H3_OK = True
+        except Exception:  # noqa: BLE001
+            _H3_OK = False
+    return _H3_OK
 
 
 def _feature_centroid(feature: Dict[str, Any]) -> Optional[Tuple[float, float]]:
@@ -189,7 +191,7 @@ def grid_partition(
             continue
         cx, cy = centroid
         # 偏移到非负域后均匀落格（分区只需稳定，不需要地理正确）。
-        gx = min(cells_per_axis - 1, max(0, int((cx + 360.0) / (720.0 / cells_per_axis))))
+        gx = min(cells_per_axis - 1, max(0, int((cx + 180.0) / (360.0 / cells_per_axis))))
         gy = min(cells_per_axis - 1, max(0, int((cy + 90.0) / (180.0 / cells_per_axis))))
         out.setdefault((gx, gy), []).append(f)
     return out

@@ -6,9 +6,9 @@ import { useCallback, useEffect, useState } from 'react';
 /**
  * Lakehouse 查询历史 + 收藏（本地持久化）。
  *
- * localStorage 直存（非 zustand persist）：查询历史是「工作痕迹」而非
- * 布局态 —— 不进 PERSIST_KEY 的 partialize 集合（该集合演进受持久化
- * 兼容性约束），独立 key 便于整段清理与容量控制（有界 50 条）。
+ * sessionStorage 按用户分域直存（非 zustand persist）：查询历史是「工作
+ * 痕迹」而非布局态 —— 不进 PERSIST_KEY 的 partialize 集合（该集合演进受
+ * 持久化兼容性约束），独立 key 便于整段清理与容量控制（有界 50 条）。
  */
 export const LAKEHOUSE_HISTORY_KEY = 'geoagent-lakehouse-history';
 export const LAKEHOUSE_FAVORITES_KEY = 'geoagent-lakehouse-favorites';
@@ -55,16 +55,38 @@ function loadFavorites(): LakehouseQueryRecord[] {
   return readJson<LakehouseQueryRecord[]>(LAKEHOUSE_FAVORITES_KEY, []);
 }
 
+/**
+ * #2064 之前历史/收藏直存无后缀 localStorage 键；改为 per-user
+ * sessionStorage 后需一次性迁移，否则升级用户首次挂载即静默丢数据。
+ */
+function migrateLegacyStorage(key: string): void {
+  try {
+    if (typeof window === 'undefined') return;
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return;
+    // 坏 JSON / 非数组：旧值不可用，删除即可（与旧版读失败回退一致）。
+    if (Array.isArray(JSON.parse(raw))) {
+      const scoped = `${key}:${getAuthUser()?.id ?? 'anonymous'}`;
+      if (!window.sessionStorage.getItem(scoped)) {
+        window.sessionStorage.setItem(scoped, raw);
+      }
+    }
+    window.localStorage.removeItem(key);
+  } catch {
+    // 配额耗尽 / 隐私模式：保留旧键，下次挂载重试。
+  }
+}
+
 export function useLakehouseHistory() {
-  // 挂载后读 localStorage（SSR 安全：首次渲染与服务端一致，随后水合）。
+  // 挂载后读 sessionStorage（SSR 安全：首次渲染与服务端一致，随后水合）。
   const [history, setHistory] = useState<LakehouseQueryRecord[]>([]);
   const [favorites, setFavorites] = useState<LakehouseQueryRecord[]>([]);
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
     const load = () => { setHistory(loadHistory()); setFavorites(loadFavorites()); setHydrated(true); };
-    window.localStorage.removeItem(LAKEHOUSE_HISTORY_KEY);
-    window.localStorage.removeItem(LAKEHOUSE_FAVORITES_KEY);
+    migrateLegacyStorage(LAKEHOUSE_HISTORY_KEY);
+    migrateLegacyStorage(LAKEHOUSE_FAVORITES_KEY);
     load();
     return subscribeAuth(load);
   }, []);

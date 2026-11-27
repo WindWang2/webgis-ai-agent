@@ -313,15 +313,22 @@ async def _record_cartographic_evidence(d: DispatchDisclosure) -> bool:
             return True
     if d.status == "ok":
         for ma in d.map_actions:
-            harness.record_map_action_issued(
-                session_id=d.session_id,
-                tool_call_id=d.tool_call_id,
-                turn_id="",
-                action_id=str(ma.get("action_id") or ""),
-                command=str(ma.get("command") or ""),
-                requested=ma.get("requested") or {},
-                mapspec_fingerprint=ma.get("mapspec_fingerprint"),
-            )
+            try:
+                harness.record_map_action_issued(
+                    session_id=d.session_id,
+                    tool_call_id=d.tool_call_id,
+                    turn_id="",
+                    action_id=str(ma.get("action_id") or ""),
+                    command=str(ma.get("command") or ""),
+                    requested=ma.get("requested") or {},
+                    mapspec_fingerprint=ma.get("mapspec_fingerprint"),
+                )
+            except Exception:  # noqa: BLE001 — 坏动作不得丢整帧 harness 证据
+                logger.warning(
+                    "[PiBridge][post-dispatch] map action record skipped "
+                    "session=%s tool=%s", d.session_id, d.tool_name,
+                    exc_info=True,
+                )
     harness.record_event(event)
 
     if has_cartographic_generation or indicates_map_change:

@@ -179,6 +179,32 @@ class WorkerCacheRegistry:
                 else:
                     existing.last_hit_at = now
                     existing.size_bytes = size
+                    # 更新同样受字节闸约束：覆写 size_bytes 不得绕过逐出，
+                    # 否则 per-worker 注册表字节可超 MAX_CACHE_BYTES_PER_WORKER。
+                    while True:
+                        total = int(db.execute(
+                            select(func.coalesce(func.sum(_Cache.size_bytes), 0))
+                            .where(_Cache.worker_id == worker_id)
+                        ).scalar_one())
+                        if total <= MAX_CACHE_BYTES_PER_WORKER:
+                            break
+                        victim = db.execute(
+                            select(_Cache.worker_id, _Cache.cache_key)
+                            .where(
+                                _Cache.worker_id == worker_id,
+                                _Cache.cache_key != key,
+                            )
+                            .order_by(_Cache.last_hit_at.asc())
+                            .limit(1)
+                        ).first()
+                        if victim is None:
+                            break
+                        db.execute(
+                            delete(_Cache).where(
+                                _Cache.worker_id == victim[0],
+                                _Cache.cache_key == victim[1],
+                            )
+                        )
                 db.commit()
                 return True
         except Exception:  # noqa: BLE001 - 登记失败绝不抛进节点执行

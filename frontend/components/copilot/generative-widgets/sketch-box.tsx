@@ -30,11 +30,18 @@ export function SketchBoxWidget({
   const setCopilotTool = useHudStore((s) => s.setCopilotTool);
   const t = useT('copilot');
   const highlight = useHudStore((s) => s.copilotHighlight);
+  const copilotTool = useHudStore((s) => s.copilotTool);
 
   const arm = () => {
     armedRef.current = true;
     setCopilotTool('box_select');
   };
+
+  // 取消（Escape 清工具态）/ 工具被别的手势接管 → 解除待决。否则 armed 悬空，
+  // 下一次任意 copilot 高亮完成都会替本卡片回传几何并使其自动消失。
+  useEffect(() => {
+    if (copilotTool !== 'box_select') armedRef.current = false;
+  }, [copilotTool]);
 
   useEffect(() => {
     if (!armedRef.current || !highlight?.lnglatRing) return;

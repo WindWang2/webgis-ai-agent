@@ -187,6 +187,65 @@ def test_downgrade_preserves_existing_rows(tmp_path):
     assert "running" in statuses and "completed" in statuses
 
 
+def test_downgrade_restores_not_null_and_bigint_id_when_no_nulls(tmp_path):
+    """0013 upgrade 在 SQLite 上把 org_id/creator_id 放松为 nullable、把 id 收敛为
+    INTEGER PRIMARY KEY；downgrade 回 0012 必须对称还原（org_id/creator_id 恢复
+    NOT NULL、id 恢复 BIGINT），否则再次 upgrade 时这三处变 no-op、迁移不可往返。
+
+    未修复代码的 SQLite downgrade 只 drop 新列 + 重建 CHECK，不还原这三处 →
+    org_id/creator_id 仍 nullable、id 仍 INTEGER，本测试失败。
+    """
+    db_path = tmp_path / "restore.db"
+    assert _alembic(db_path, "upgrade", "0013_unified_durable_job_runtime").returncode == 0
+
+    # 灌入非 NULL org_id/creator_id 的行（SQLite 默认不强制 FK）
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO analysis_tasks (org_id, creator_id, task_type, parameters, status, progress)"
+            " VALUES (5, 'user-1', 't', '{}', 'completed', 100)"
+        )
+        conn.commit()
+
+    down = _alembic(db_path, "downgrade", "0012_add_composite_indexes_pd_wr")
+    assert down.returncode == 0, f"downgrade failed:\n{down.stdout}\n{down.stderr}"
+
+    with sqlite3.connect(db_path) as conn:
+        info = {row[1]: (row[2], row[3]) for row in conn.execute("PRAGMA table_info(analysis_tasks)")}
+        count = conn.execute("SELECT COUNT(*) FROM analysis_tasks").fetchone()[0]
+    # org_id/creator_id 恢复 NOT NULL（notnull=1）
+    assert info["org_id"][1] == 1, f"org_id 未恢复 NOT NULL: {info['org_id']}"
+    assert info["creator_id"][1] == 1, f"creator_id 未恢复 NOT NULL: {info['creator_id']}"
+    # id 恢复 0012 的 BIGINT
+    assert info["id"][0].upper() == "BIGINT", f"id 未恢复 BIGINT: {info['id']}"
+    assert count == 1, "downgrade 丢了数据行"
+
+
+def test_downgrade_keeps_nullable_when_null_rows_present(tmp_path):
+    """有 NULL org_id/creator_id 行时（匿名/无 creator job），downgrade 保留 nullable
+    而非强行 SET NOT NULL（规范 §39：不得要求删除数据；与 PG 条件式同前提）。"""
+    db_path = tmp_path / "nullkeep.db"
+    assert _alembic(db_path, "upgrade", "0013_unified_durable_job_runtime").returncode == 0
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO analysis_tasks (org_id, creator_id, task_type, parameters, status, progress)"
+            " VALUES (NULL, NULL, 't', '{}', 'running', 0)"
+        )
+        conn.commit()
+
+    down = _alembic(db_path, "downgrade", "0012_add_composite_indexes_pd_wr")
+    assert down.returncode == 0, f"downgrade failed:\n{down.stdout}\n{down.stderr}"
+
+    with sqlite3.connect(db_path) as conn:
+        info = {row[1]: (row[2], row[3]) for row in conn.execute("PRAGMA table_info(analysis_tasks)")}
+        count = conn.execute("SELECT COUNT(*) FROM analysis_tasks").fetchone()[0]
+    assert info["org_id"][1] == 0, f"有 NULL 行时应保留 nullable: {info['org_id']}"
+    assert info["creator_id"][1] == 0, f"有 NULL 行时应保留 nullable: {info['creator_id']}"
+    # id 仍还原为 BIGINT（id 恒非空，无条件还原）
+    assert info["id"][0].upper() == "BIGINT", f"id 未恢复 BIGINT: {info['id']}"
+    assert count == 1, "downgrade 丢了数据行"
+
+
 def test_upgrade_is_reapplicable_after_downgrade(tmp_path):
     db_path = tmp_path / "reapply.db"
     assert _alembic(db_path, "upgrade", "head").returncode == 0

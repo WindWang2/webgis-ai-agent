@@ -169,8 +169,12 @@ def _visibility_clause(db: Any, model: Any, actor_user_id: Optional[str],
     # 列表可见性（#2200；与 data_quality._quality_report_clause 同语义）：
     # - 非 admin、或 admin 但无 org：只看见自己创建的行；
     # - 有 org 的 admin：own ∪ 同行 org ∪ NULL-org 且创建者 live org 同行。
-    from sqlalchemy import and_, or_
+    from sqlalchemy import and_, false, or_
 
+    if not actor_user_id:
+        # 无身份（工具路径/未登录）不是超管 —— 无可见行，绝不回退全表
+        # （否则 list_runs/list_rulesets 泄露他人 session_id/project_id/bindings）。
+        return false()
     if actor_user_id and (not is_admin or actor_org_id in (None, "")):
         return model.created_by == actor_user_id
     if not (is_admin and actor_user_id and actor_org_id not in (None, "")):

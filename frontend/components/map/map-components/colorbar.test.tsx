@@ -111,4 +111,32 @@ describe('Colorbar renderer — shared formatter + unit (#998)', () => {
     expect(bar).toBeTruthy();
     expect(screen.queryByText('0')).toBeNull();
   });
+
+  it('显式 layerId 未命中/无 legend_spec 时不串用别层图例', () => {
+    const spec = {
+      version: '1.0',
+      sources: {},
+      layers: [
+        { id: 'target-layer', source: 's', type: 'circle' },
+        {
+          id: 'other-layer', source: 's', type: 'circle',
+          legend_spec: {
+            type: 'continuous', min: 0, max: 99,
+            palette_colors: ['#0ff0ff', '#ff2d55'],
+          },
+        },
+      ],
+    } as unknown as MapSpec;
+    render(
+      <>
+        {renderComponent(
+          { id: 'cb-explicit', type: 'continuous_colorbar', enabled: true, options: { layerId: 'target-layer' } },
+          { spec, zoom: 10, centerLat: 30, bearing: 0 },
+        )}
+      </>,
+    );
+    // 已声明 layerId 却无图例 → 不渲染；绝不回退展示 other-layer 的 0–99。
+    expect(screen.queryByTestId('spec-chrome-colorbar')).toBeNull();
+    expect(screen.queryByText('99')).toBeNull();
+  });
 });

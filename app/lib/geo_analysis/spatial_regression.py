@@ -796,6 +796,20 @@ def slx_regression_narrated(
         )
     wm = _regression_weights(gdf, n, weights_scheme, k, distance_band)
     wx_raw = wm.matrix @ x_raw
+    # 与 _design_matrix 同式的零方差防御（P2 修复）：W 全零（distance_band
+    # 过小 / queen·rook 全岛 → s0=0）时 W·X 列恒 0，滞后项不可识别 ——
+    # se=0、t/p=NaN 且 _vif 对常数列还会编造 vif=1.0。OLS（零方差解释
+    # 变量）与 SAR/SEM（空权重矩阵）均拒此情形，SLX 不得静默出模型。
+    wx_ptp = np.ptp(wx_raw, axis=0)
+    if np.any(wx_ptp == 0.0):
+        bad = [f"WX:{names[i]}" for i in np.flatnonzero(wx_ptp == 0.0)]
+        raise DegenerateData(
+            f"spatially lagged field(s) with zero variance: {bad}",
+            correction_hint="the weights matrix is likely empty (every "
+                            "observation is an island) — increase the "
+                            "distance band / k, or check geometry "
+                            "connectivity",
+        )
     x_mat = np.column_stack([x_base, wx_raw])
     col_names = [*base_names, *[f"WX:{f}" for f in names]]
     if x_mat.shape[1] > n - 1:
@@ -898,7 +912,11 @@ def sar_ml_regression_narrated(
     sigma2 = sse / n
     lr = _lr_test(ll_max, ols["log_lik"])
     pseudo_r2 = 1.0 - sse / ols["sse"] if ols["sse"] > 0 else 0.0
-    # 条件渐近协方差（给定 ρ̂）：σ²(X_ρ'A'A X_ρ)⁻¹ 的对角，A = I − ρW。
+    # 条件渐近协方差（给定 ρ̂）：SAR 的 ML-β 是 **Ay 对 X** 的 OLS
+    # （A = I − ρW），而 Ay = Xβ + ε —— A 只作用在 y 上、与 ε 不相干，故
+    # Var(β̂|ρ̂) = σ²(X'X)⁻¹（与 OLS 同式，但 σ² 取 SAR 变换残差 sse/n）。
+    # 不要照 SEM 改成 (AX)'(AX)：SEM 是 Cy = CXβ + ε（两侧同变换）才有
+    # (CX)'(CX) 面包；SAR 换过去会把截距标准误放大一个量级（蒙特卡洛验证）。
     # 不含 ρ̂ 自身的估计不确定性（披露于 docstring），t/p 仅作参考量级。
     se = np.sqrt(np.maximum(
         np.diag(np.linalg.pinv(x_mat.T @ x_mat)) * sigma2, 0.0))
@@ -1335,9 +1353,12 @@ def gwr_regression_narrated(
     ss_tot = float(((y - y.mean()) ** 2).sum())
     r2 = 1.0 - sse / ss_tot if ss_tot > 0 else 0.0
     q_eff = tr_s + 1.0  # +1 计 σ²
-    aic = n * (np.log(2.0 * np.pi) + np.log(sse / n) + 1.0) + 2.0 * q_eff
-    aicc = aic + (2.0 * q_eff * (q_eff + 1.0) / (n - q_eff - 1.0)
-                  if n - q_eff - 1.0 > 0 else 0.0)
+    if sse > 0:
+        aic = n * (np.log(2.0 * np.pi) + np.log(sse / n) + 1.0) + 2.0 * q_eff
+        aicc = aic + (2.0 * q_eff * (q_eff + 1.0) / (n - q_eff - 1.0)
+                      if n - q_eff - 1.0 > 0 else 0.0)
+    else:
+        aic = aicc = None  # 完全拟合：高斯似然无定义（诚实留空）
     rmse = float(np.sqrt(sse / n))
 
     # 审计 F-4（P0）：descriptor 无条件声明 sensitivity_envelope，fixed
@@ -1379,8 +1400,8 @@ def gwr_regression_narrated(
         "target_field": str(target_field),
         "explanatory_fields": list(names),
         "r_squared": round(float(r2), 6),
-        "aic": round(float(aic), 6),
-        "aicc": round(float(aicc), 6),
+        "aic": None if aic is None else round(float(aic), 6),
+        "aicc": None if aicc is None else round(float(aicc), 6),
         "effective_params": round(float(q_eff), 6),
         "rmse": round(rmse, 6),
         "bandwidth": {
@@ -1495,7 +1516,9 @@ def gwr_regression_narrated(
     narrative = (
         f"GWR（bisquare 自适应核，带宽={k_used} 最近邻"
         f"{'，CV 选择' if selection == 'cv' else ''}）："
-        f"R²={r2:.4f}，AICc={aicc:.1f}。局部 R² ∈ "
+        f"R²={r2:.4f}，AICc="
+        f"{'不可用（完全拟合）' if aicc is None else f'{aicc:.1f}'}。"
+        f"局部 R² ∈ "
         f"[{data_out['local_r2']['min']:.4f}, "
         f"{data_out['local_r2']['max']:.4f}]；截距 IQR="
         f"{variation['intercept']['iqr']:.4g} —— "

@@ -112,7 +112,7 @@ export function parseRenderWorkEnvelope(raw: unknown): RenderWorkEnvelope | null
   const r = raw as Record<string, unknown>;
   if (r.schema_version !== RENDER_WORK_SCHEMA_VERSION) return null;
   const workId = boundedId(r.work_id);
-  const workFp = boundedId(r.work_fingerprint);
+  const workFp = boundedFp(r.work_fingerprint) ?? '';
   const sessionId = boundedId(r.session_id);
   if (!workId || !workFp || !sessionId) return null;
   const revision = typeof r.mapspec_revision === 'number'

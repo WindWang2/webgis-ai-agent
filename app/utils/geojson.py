@@ -108,7 +108,7 @@ def summarize_feature_properties(
                 field_types.setdefault(k_str, set()).add(infer_field_type(v))
                 
         if idx < sample_size:
-            sample.append(props)
+            sample.append(props if isinstance(props, dict) else {})
 
     # Consolidate types: discard null, >1 implies mixed
     typed_properties: Dict[str, str] = {}

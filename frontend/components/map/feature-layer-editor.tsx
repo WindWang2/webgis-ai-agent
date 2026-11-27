@@ -178,8 +178,13 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
   const [sharedHighlight, setSharedHighlight] = useState<GeoJSON.Feature[]>(EMPTY_FEATURES);
   const [splitTarget, setSplitTarget] = useState<string | null>(null);
   const draftRef = useRef<Draft>(null);
-  const [, forceRender] = useState(0);
-  const bump = useCallback(() => forceRender((n) => n + 1), []);
+  /**
+   * 草稿代次：draft 是 ref 源（手势期间零 setState / 零 REST），bump() 只
+   * 递增本代次触发重渲染 —— 草稿同步 effect 必须依赖它才能重跑，否则画线/
+   * 面/分割时草稿预览永不渲染，Escape 也清不掉已渲染的陈旧草稿。
+   */
+  const [draftEpoch, setDraftEpoch] = useState(0);
+  const bump = useCallback(() => setDraftEpoch((n) => n + 1), []);
   /** selection 订阅（merge 按钮可用性）。 */
   const [selectionGen, setSelectionGen] = useState(getSelectionGeneration());
   useEffect(() => subscribeSelection(() => setSelectionGen(getSelectionGeneration())), []);
@@ -353,7 +358,9 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
       }
     }
     source.setData({ type: 'FeatureCollection', features } as never);
-  }, [mapReady, getMap, editTarget, vertexTarget, status, selectionGen]);
+    // draftEpoch：draftRef 变更的唯一可依赖信号（bump 递增）—— 缺它则
+    // 顶点增删后同步不重跑，预览停滞 / Escape 残留陈旧草稿。
+  }, [mapReady, getMap, editTarget, vertexTarget, status, selectionGen, draftEpoch]);
 
   /* ─── 共享顶点拖拽：邻接要素临时高亮源（本地预览，非共享真相） ─── */
   useEffect(() => {
@@ -518,7 +525,12 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
         if (active === 'delete_feature') {
           await submit([{ op: 'delete_features' }], { featureIds: [picked.id], labelKey: 'map.edit.deleteFeature', what: t('map.edit.deleteFeature') });
         } else {
-          setVertexTarget({ featureId: picked.id, geometry: picked.feature.geometry ?? null });
+          // 合法 GeoJSON 允许 feature.geometry = null；顶点编辑只接受
+          // 有点/线/面几何的目标（ringOf / 拖拽 handler 解引用 geometry.type，
+          // 存 null 会 TypeError 崩溃）。
+          const geometry = picked.feature.geometry;
+          if (!geometry) return;
+          setVertexTarget({ featureId: picked.id, geometry });
         }
         return;
       }

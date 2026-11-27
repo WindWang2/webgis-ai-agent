@@ -57,6 +57,11 @@ _MAX_VLM_CRITIQUES = 12
 _SOURCE = "visual_observation_provider"
 _VLM_SLOTS = threading.BoundedSemaphore(2)
 
+#: 引擎缺席的机器可读原因（两者收场不同，不得混为一谈）：
+#: 墙钟超时 vs 并发预算耗尽（根本没启动引擎）。
+_ENGINE_TIMEOUT_REASON = "provider_timeout"
+_ENGINE_BUDGET_REASON = "provider_budget_exhausted"
+
 
 def provider_mode() -> str:
     """实时读 env（与 seam 同纪律：导入期快照会让运维改变量后必须重启）。"""
@@ -149,8 +154,15 @@ def _gated_screenshot(
             "screenshot_fingerprint_mismatch", provider=mode,
             screenshot_sha256=entry.sha256)
     # C13 会话绑定护栏：跨会话猜 ref 在解析面直接拒绝（诚实缺席）。
-    data = resolve_visual_screenshot(
-        entry, session_id=str(obs.session_id or ""))
+    # review P2-13：快照无 session_id 时不得传空串 —— 那会让解析面的会话
+    # 绑定护栏整体跳过（fail-open），任意 vshot ref 无所有权证据即可读出
+    # 字节。无会话上下文 = 无所有权证据 → 拒绝评估。
+    session_id = str(obs.session_id or "")
+    if not session_id:
+        return None, VisualObservationResult.not_evaluated(
+            "screenshot_session_unbound", provider=mode,
+            screenshot_sha256=entry.sha256)
+    data = resolve_visual_screenshot(entry, session_id=session_id)
     if data is None:
         return None, VisualObservationResult.not_evaluated(
             "screenshot_unresolvable", provider=mode,
@@ -191,10 +203,10 @@ def _eval_vlm(obs: VisualObservationInput) -> VisualObservationResult:
     if gate is not None:
         return gate
     sha = entry.sha256 if entry is not None else ""
-    report = _run_engine_with_timeout(obs, data)
+    report, engine_reason = _run_engine_with_timeout(obs, data)
     if report is None:
         return VisualObservationResult.not_evaluated(
-            "provider_timeout", provider=MODE_VLM,
+            engine_reason, provider=MODE_VLM,
             screenshot_sha256=sha)
     if not getattr(report, "evaluated", False):
         reason = str(getattr(report, "reason", "") or "not_evaluated")
@@ -225,7 +237,7 @@ def _eval_hybrid(obs: VisualObservationInput) -> VisualObservationResult:
         return gate
     sha = entry.sha256 if entry is not None else ""
     rule_findings = evaluate_pixel_rules(data)
-    report = _run_engine_with_timeout(obs, data)
+    report, engine_reason = _run_engine_with_timeout(obs, data)
     vlm_findings: List[UnifiedFinding] = []
     evaluated = False
     if report is not None and getattr(report, "evaluated", False):
@@ -237,9 +249,11 @@ def _eval_hybrid(obs: VisualObservationInput) -> VisualObservationResult:
     if not fused and not evaluated and not rule_findings:
         # vlm not_evaluated 且 rules 无发现：诚实缺席（有截图但画面干净
         # 时 rules 已 evaluated——只有引擎缺席才落这里）。
-        reason = str(getattr(report, "reason", "") or "not_evaluated")
+        reason = engine_reason if report is None else str(
+            getattr(report, "reason", "") or "not_evaluated")
         return VisualObservationResult.not_evaluated(
-            reason, provider=MODE_HYBRID, screenshot_sha256=sha)
+            reason or "not_evaluated", provider=MODE_HYBRID,
+            screenshot_sha256=sha)
     categories = [_taxonomy_of(vf) for vf in fused]
     return VisualObservationResult(
         status="evaluated",
@@ -312,9 +326,12 @@ def _entity_from_bbox_or_map(bbox: Any) -> str:
         return "map"
     try:
         ymin, xmin, ymax, xmax = bbox.to_list()
+        # review P2-14：int() 也必须在 try 内 —— VLM 可能返回非数值坐标
+        # （None/str），那会让 ValueError 逃出 evaluate()，违反「失败只降级」
+        # 契约（_entity_from_bbox_or_map 由 _critiques_to_findings 调用）。
+        return f"bbox[{int(ymin)},{int(xmin)},{int(ymax)},{int(xmax)}]"
     except Exception:  # noqa: BLE001 — 定位是增值信息，不是门禁
         return "map"
-    return f"bbox[{int(ymin)},{int(xmin)},{int(ymax)},{int(xmax)}]"
 
 
 def _taxonomy_of(finding: Any) -> str:
@@ -337,16 +354,30 @@ def _deterministic_proxies(obs: VisualObservationInput) -> Tuple[Any, ...]:
 
 def _run_engine_with_timeout(
     obs: VisualObservationInput, image: bytes
-) -> Optional[Any]:
+) -> Tuple[Optional[Any], str]:
     """一次性 worker thread 里的 async 引擎调用（墙钟预算；不碰调用方 loop）。
 
-    返回 None = 超时/线程失败（fail-closed ``provider_timeout`` 由调用方
-    落 not_evaluated）。线程内再无派生 loop —— httpx 自身超时兜底线程寿命。
+    返回 ``(report, reason)``；report 为 None 时 reason 区分收场：并发预算
+    耗尽（引擎未启动，``provider_budget_exhausted``）与墙钟超时/线程失败
+    （``provider_timeout``）。线程内再无派生 loop —— httpx 自身超时兜底
+    线程寿命。
     """
     if not _VLM_SLOTS.acquire(blocking=False):
         logger.warning("[VisualProvider] concurrent evaluation budget exhausted")
-        return None
+        return None, _ENGINE_BUDGET_REASON
     outcome: Dict[str, Any] = {"report": None}
+    # 槽只归还一次：看门狗（墙钟到点）与 worker finally 谁先到谁释放；
+    # 另一次成为 no-op（BoundedSemaphore 重复 release 会抛 ValueError）。
+    released = False
+    release_guard = threading.Lock()
+
+    def _release_slot_once() -> None:
+        nonlocal released
+        with release_guard:
+            if released:
+                return
+            released = True
+        _VLM_SLOTS.release()
 
     def _worker() -> None:
         async def _run() -> None:
@@ -375,7 +406,7 @@ def _run_engine_with_timeout(
             logger.warning("[VisualProvider] engine thread failed",
                            exc_info=True)
         finally:
-            _VLM_SLOTS.release()
+            _release_slot_once()
 
     thread = threading.Thread(target=_worker, daemon=True,
                               name="visual-observation-vlm")
@@ -384,8 +415,14 @@ def _run_engine_with_timeout(
     if thread.is_alive():
         logger.warning("[VisualProvider] evaluation timed out after %.1fs",
                        provider_timeout_s())
-        return None
-    return outcome["report"]
+        # 看门狗：协程挂起时 worker 的 finally 可能永不执行 —— 槽必须在此
+        # 归还，否则两次挂起后并发预算永久归零（所有评估恒 absent）。
+        _release_slot_once()
+        return None, _ENGINE_TIMEOUT_REASON
+    report = outcome["report"]
+    if report is None:
+        return None, _ENGINE_TIMEOUT_REASON
+    return report, ""
 
 
 __all__ = [

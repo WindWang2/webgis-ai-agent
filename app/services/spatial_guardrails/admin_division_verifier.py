@@ -184,12 +184,17 @@ def resolve_name(name: str) -> str | None:
         PROVINCE_CODES_BY_SHORT_NAME,
     )
 
+    matched: list[str] = []
     for code, (full_name, _aliases, _center) in _admin.PROVINCES.items():
         if raw == full_name:
             return code + "0000"
     for code, (full_name, _province) in _admin.PREFECTURES.items():
         if raw == full_name:
-            return code + "00"
+            matched.append(code)
+    # 跨省重名全称（「省直辖县级」→ 3790/4190/4290）不得首匹配即返回：
+    # 那样会把 claimed_parent 归一成任一首码所属省份（错归属山东）。
+    if len(matched) == 1:
+        return matched[0] + "00"
     if len(raw) == 1:
         return None
     if raw in PROVINCE_CODES_BY_SHORT_NAME:

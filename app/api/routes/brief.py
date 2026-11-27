@@ -120,7 +120,16 @@ def _http_error(exc: Exception) -> HTTPException:
         return HTTPException(status_code=409, detail={
             "error": "preflight_blocked",
             "report": exc.report.to_dict()})
-    return HTTPException(status_code=422, detail=str(exc))
+    # 文档契约（模块 docstring）：ValidationError/ValueError → 422。detail 是
+    # 自家校验文案（locked/depth/字段名），非内部细节 —— 行为锁见
+    # tests/unit/test_mapbrief_api.py（422 + "locked" in detail）。
+    if isinstance(exc, ValueError):
+        return HTTPException(status_code=422, detail=str(exc))
+    # 未映射异常（DB/commit/TypeError/KeyError…）：str(exc) 会把 SQL 原文、
+    # 内部状态回给客户端，真实 500 被伪装成 422 —— 一律 500 + 通用文案
+    # （完整异常已由全局 handler 落日志；app/core/exception.py:180-185
+    # 非 PlatformError → 500，此处不得抢先降级成 4xx）。
+    return HTTPException(status_code=500, detail="internal error")
 
 
 def _summary(spec: MapBriefSpec, revision: int, brief_id: str) -> Dict[str, Any]:

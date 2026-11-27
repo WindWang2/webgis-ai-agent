@@ -175,8 +175,11 @@ def ring_to_wgs84_geojson(
                 status_code=422,
             )
         ring_wgs84.append([float(lon), float(lat)])
-    if ring_wgs84 and ring_wgs84[0] != ring_wgs84[-1]:
-        ring_wgs84.append(list(ring_wgs84[0]))
+    # Drop a duplicated closure point before unwrapping: the loop below rewrites
+    # longitudes and would shift an already-appended closure by +/-360 when the
+    # ring's longitudinal sweep exceeds 180 deg, returning a non-closed Polygon.
+    if len(ring_wgs84) > 1 and ring_wgs84[0] == ring_wgs84[-1]:
+        ring_wgs84.pop()
     # Unwrap longitudes so a ring crossing the antimeridian keeps a continuous
     # sweep: pyproj wraps every corner into [-180, 180], and naive min/max turns
     # a ~300 km UTM zone-60N box into a ~357 deg "spans the globe" bbox. Lons
@@ -191,6 +194,10 @@ def ring_to_wgs84_geojson(
                 lon += 360.0
         pt[0] = lon
         prev_lon = lon
+    # Re-append the closure from the already-unwrapped first point so the
+    # returned ring is always closed (first position == last position).
+    if ring_wgs84:
+        ring_wgs84.append(list(ring_wgs84[0]))
     lons = [p[0] for p in ring_wgs84]
     lats = [p[1] for p in ring_wgs84]
     bbox = [min(lons), min(lats), max(lons), max(lats)]

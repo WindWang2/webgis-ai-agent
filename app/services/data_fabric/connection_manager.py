@@ -326,31 +326,35 @@ class DataFabricConnectionManager:
 
     # -- 生命周期维护（#1715） --------------------------------------------------
 
-    def _drop_locked(self, key: Tuple[Optional[str], str]) -> Optional[str]:
-        """移除一条连接（调用方持锁）；返回其 profile_id（级联清理用）。"""
+    def _drop_locked(self, key: Tuple[Optional[str], str]) -> Optional[Tuple[str, Any]]:
+        """移除一条连接（调用方持锁）；返回 (profile_id, profile)。
+
+        pool 关闭可能阻塞（网络/连接池排空）—— 绝不在管理器锁内 dispose，
+        由调用方在释放锁后处理，避免其余连接操作排队等锁。
+        """
         profile = self._profiles.pop(key, None)
         self._adapters.pop(key, None)
         self._last_access.pop(key, None)
-        if profile is not None:
-            _dispose_managed_postgis_pool(profile)
-        return profile.id if profile is not None else None
+        if profile is None:
+            return None
+        return profile.id, profile
 
-    def _maintain_locked(self) -> List[str]:
-        """idle 清扫 + LRU 逐出（调用方持锁）；返回被逐出的 profile_id。"""
-        evicted: List[str] = []
+    def _maintain_locked(self) -> List[Tuple[str, Any]]:
+        """idle 清扫 + LRU 逐出（调用方持锁）；返回待锁外 dispose 的条目。"""
+        evicted: List[Tuple[str, Any]] = []
         if self._idle_ttl_s > 0:
             now = self._clock()
             for key in [
                 k for k, ts in self._last_access.items() if now - ts > self._idle_ttl_s
             ]:
-                pid = self._drop_locked(key)
-                if pid is not None:
-                    evicted.append(pid)
+                dropped = self._drop_locked(key)
+                if dropped is not None:
+                    evicted.append(dropped)
         while len(self._adapters) > self._max_entries and self._last_access:
             victim = min(self._last_access.items(), key=lambda kv: (kv[1], kv[0]))[0]
-            pid = self._drop_locked(victim)
-            if pid is not None:
-                evicted.append(pid)
+            dropped = self._drop_locked(victim)
+            if dropped is not None:
+                evicted.append(dropped)
         return evicted
 
     def _cascade_catalog_cleanup(self, profile_id: str) -> None:
@@ -368,7 +372,8 @@ class DataFabricConnectionManager:
         """idle 清扫 + LRU 逐出 + 目录足迹级联清理（#1715）。"""
         with self._lock:
             evicted = self._maintain_locked()
-        for pid in evicted:
+        for pid, profile in evicted:
+            _dispose_managed_postgis_pool(profile)
             self._cascade_catalog_cleanup(pid)
 
     def stats(self) -> Dict[str, Any]:
@@ -402,7 +407,8 @@ class DataFabricConnectionManager:
             self._last_access[key] = self._clock()
             evicted = self._maintain_locked()
 
-        for pid in evicted:
+        for pid, profile in evicted:
+            _dispose_managed_postgis_pool(profile)
             self._cascade_catalog_cleanup(pid)
 
         logger.info(
@@ -466,8 +472,10 @@ class DataFabricConnectionManager:
             key = self._key(profile_id, owner)
             if key not in self._profiles:
                 return False
-            self._drop_locked(key)
+            dropped = self._drop_locked(key)
             still_live = any(pid == profile_id for (_o, pid) in self._adapters)
+        if dropped is not None:
+            _dispose_managed_postgis_pool(dropped[1])
         # 级联清理（#1715）：无存活连接引用该 profile → 清其全部目录足迹；
         # 仍有其它会话/全局连接在用 → 仅清本次 (owner, profile) 注册的条目。
         if still_live:

@@ -216,6 +216,12 @@ export function resolveComponentLayout(
     attribution: 18, continuous_colorbar: 120, legend: 140,
     categorical_legend: 140, annotation: 90, statistics_panel: 160,
     chart_panel: 200, inset_map: 168,
+    // VNext 大盘面板族：缺省 90px 会让 user 浮动盒压中真实大面板时漏判
+    // 碰撞（既不侧让也不披露 floating-anchor），按典型内容高度估算。
+    exploration_chart_panel: 200, methodology_note: 120,
+    uncertainty_panel: 160, design_candidates: 180,
+    decision_panel: 180, table_panel: 240,
+    scene_disclosure: 120, elevation_profile: 200,
   };
   const slotBox = (slot: LayoutSlot, h: number): Box => {
     const W = canvas?.width ?? 1200;

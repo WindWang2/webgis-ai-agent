@@ -312,3 +312,72 @@ async def test_materialize_over_budget_route_typed_reject(client, store):
         detail = r.json()["detail"]
         assert detail["error"] == "selection_over_budget"
         assert detail["actual"] == sh.MAX_MATERIALIZE_FEATURES + 5
+
+
+async def test_metadata_endpoint_does_not_read_full_payload(
+        client, store, monkeypatch):
+    """P3 perf：元数据端点只走 descriptor 授权通道，不白读整个 FC。"""
+    sid = "sess-g24-route-meta"
+    ref = await _seed_ref(store, sid)
+    with _patched_store(store):
+        created = (await client.post(
+            f"/api/v1/layers/data/{ref}/selection?session_id={sid}",
+            json={"kind": "ids", "ids": ["3"]},
+        )).json()
+        assert created["count"] == 1
+
+        async def _boom(*_a, **_k):
+            raise AssertionError(
+                "metadata endpoint must not read the full FeatureCollection")
+
+        monkeypatch.setattr(store, "get_ref_data_shared", _boom)
+        resp = await client.get(
+            f"/api/v1/layers/data/{ref}/selection/{created['handle']}"
+            f"?session_id={sid}")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["count"] == 1
+
+
+async def test_create_without_numeric_revision_fails_closed(client, store, monkeypatch):
+    """P3：descriptor 无 content_revision 时不能静默跳过 revision guard。
+
+    修复前：current_revision=None → v 不校验、创建成功（A22 失效）。
+    修复后：fail-closed 503 selection_revision_unavailable。
+    """
+    sid = "sess-g24-route-0011"
+    ref = await _seed_ref(store, sid)
+
+    async def _no_descriptor(*_a, **_k):
+        return None
+
+    with _patched_store(store):
+        monkeypatch.setattr(store, "get_ref_descriptor", _no_descriptor)
+        r = await client.post(
+            f"/api/v1/layers/data/{ref}/selection?session_id={sid}&v=1",
+            json={"kind": "ids", "ids": ["1"]},
+        )
+    assert r.status_code == 503, r.text
+    assert r.json()["detail"]["error"] == "selection_revision_unavailable"
+
+
+async def test_consume_with_unreadable_revision_fails_closed(client, store, monkeypatch):
+    """P3：消费时 revision 不可读 → 不能继续服务（陈旧 handle 不再 410）。"""
+    sid = "sess-g24-route-0012"
+    ref = await _seed_ref(store, sid)
+    with _patched_store(store):
+        created = (
+            await client.post(
+                f"/api/v1/layers/data/{ref}/selection?session_id={sid}",
+                json={"kind": "ids", "ids": ["1"]},
+            )
+        ).json()
+
+        async def _no_descriptor(*_a, **_k):
+            return None
+
+        monkeypatch.setattr(store, "get_ref_descriptor", _no_descriptor)
+        r = await client.get(
+            f"/api/v1/layers/data/{ref}/selection/{created['handle']}"
+            f"?session_id={sid}")
+    assert r.status_code == 503, r.text
+    assert r.json()["detail"]["error"] == "selection_revision_unavailable"

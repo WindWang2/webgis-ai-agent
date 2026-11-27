@@ -52,7 +52,8 @@ function supersededFromError(err: unknown): MutationResponse | null {
 
 function applyCommittedPresentationToHud(mapspec: { layers?: any[] } | null | undefined): void {
   for (const layer of useHudStore.getState().layers) {
-    const specLayerId = mapspecLayerId(layer.id);
+    // 逐层自读（不再线性 find store）：每次 mutation 响应的回灌是 O(n)。
+    const specLayerId = String(layer._mapspecLayerId || layer.id);
     // 在途乐观态保护（ST-P1-2 放大器）：响应 mapspec 的 presentation 是
     // 服务端该时刻的真相，但其它层可能还有未落定的本地 pending——
     // 全层无差别回灌会把在途乐观 toggle/opacity 改回旧值。仍有 pending
@@ -149,7 +150,16 @@ export async function refreshMapSpecAfterExternalMutation(
   if (!mapspec || typeof mapspec !== 'object') return;
   // R2-N2：restore 响应与 fetch 之间可能又有 mutation 落地 —— 游标取两者
   // 较高值，否则下一笔用户 mutation 一次 spurious 409。
-  const candidates = [revision, Number(state?._cartographic_mutation_revision)]
+  const stateRevision = state?._cartographic_mutation_revision;
+  // Number(null/''/[]) 会静默变成 0 成为候选，把本次 fetch 的 spec 当旧代次
+  // 拒收并跳过 sync —— 只接受真实数值（或非空数字字符串）。
+  const parsedStateRevision =
+    typeof stateRevision === 'number'
+      ? stateRevision
+      : typeof stateRevision === 'string' && stateRevision.trim() !== ''
+        ? Number(stateRevision)
+        : undefined;
+  const candidates = [revision, parsedStateRevision]
     .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
   const nextRevision = candidates.length ? Math.max(...candidates) : undefined;
   if (nextRevision !== undefined) setMapSpecRevision(nextRevision);
@@ -243,7 +253,10 @@ export async function commitLayerPresentation(patch: LayerPresentationPatch): Pr
   const enqueuedSessionId = getMapSpecSessionCursor().sessionId;
   // 方向 8：客户端幂等键 —— 弱网重试（同 id 重发）由服务端返回已提交世代。
   const mutationId = newMutationId();
-  const interactionRevision = () => getMapSpecSessionCursor().revision;
+  // 本笔实际发出的 CAS revision（轮到本笔时的游标值）——落定后游标已被
+  // setMapSpecRevision 推进，不能在此后重读游标（否则 expected 恒等于 mutationRevision）。
+  let attemptedRevision: number | undefined;
+  const interactionRevision = () => attemptedRevision ?? getMapSpecSessionCursor().revision;
   const emitPresentationEvent = (
     field: 'visible' | 'opacity',
     outcome: 'committed' | 'superseded' | 'failed',
@@ -273,7 +286,17 @@ export async function commitLayerPresentation(patch: LayerPresentationPatch): Pr
   // 串行链内执行：revision 在轮到本笔时才读（ST-P1-2）。
   await enqueueUserMutation(async () => {
     const { sessionId, revision, ownerToken } = getMapSpecSessionCursor();
-    if (!sessionId) return;
+    attemptedRevision = revision;
+    if (!sessionId) {
+      // 无绑定会话：乐观 pending 已在上方合并 —— 直接 return 会让这笔操作
+      // 永不清理 pending、不发 failed、调用方也无从回滚（地图停在未持久化
+      // 的乐观态）。清理本笔 pending 后抛出，调用方按失败语义回滚 HUD。
+      if (patch.visible !== undefined) emitPresentationEvent('visible', 'failed');
+      if (patch.opacity !== undefined) emitPresentationEvent('opacity', 'failed');
+      clearPendingPresentation(specLayerId, mutationId);
+      clearPendingPresentation(patch.layerId, mutationId);
+      throw new Error('当前没有已绑定会话，改动未保存');
+    }
     if (sessionId !== enqueuedSessionId) return; // 会话已切换：作废排队操作
 
     try {
@@ -377,6 +400,8 @@ export async function commitLayerStyleAndCommit(
   const enqueuedSessionId = getMapSpecSessionCursor().sessionId;
   const mutationId = newMutationId();
   const attributeNames = Object.keys(paint).sort().slice(0, 8);
+  // 同 presentation：落定后游标已推进，expectedRevision 必须是本笔发出的 CAS 值。
+  let attemptedRevision: number | undefined;
   const emitStyleEvent = (
     outcome: 'committed' | 'superseded' | 'failed',
     revision?: number,
@@ -389,7 +414,7 @@ export async function commitLayerStyleAndCommit(
         { layer_id: specLayerId, attribute_names: attributeNames },
         {
           clientMutationId: mutationId,
-          expectedRevision: getMapSpecSessionCursor().revision,
+          expectedRevision: attemptedRevision ?? getMapSpecSessionCursor().revision,
           outcome,
           ...(revision !== undefined ? { mutationRevision: revision } : {}),
         },
@@ -398,6 +423,7 @@ export async function commitLayerStyleAndCommit(
   };
   await enqueueUserMutation(async () => {
     const { sessionId, revision, ownerToken } = getMapSpecSessionCursor();
+    attemptedRevision = revision;
     if (!sessionId) return;
     if (sessionId !== enqueuedSessionId) return;
     try {
@@ -818,6 +844,10 @@ export async function removeLayerAndCommit(layerId: string): Promise<void> {
         return removeLayerFromSpec(specLayerId, enqueuedSessionId);
       },
     );
+    // 会话在 await 窗口内切换：removeLayerFromSpecOnce 的守卫把在途尝试
+    // 折叠为 'reflected'（未发 POST / 响应已作废）—— 服务端并未落账，
+    // 不得把 reflected 投影为 committed，旧会话结局也不得进新会话 ledger。
+    if (getMapSpecSessionCursor().sessionId !== enqueuedSessionId) return;
     // ADR-0227：删除结局如实入事件（reflected = 并发已删，服务端真相一致；
     // unsynced = 双 superseded 未落账 —— 绝不投影为成功）。关联真实铸造的
     // client_mutation_id（committed 那笔在服务端留有 c:<id> 存证）。
@@ -899,6 +929,9 @@ export async function reorderLayersAndCommit(layers: { id: string; _mapspecLayer
       if (from >= 0 && from !== i) movedLayer = { id: movedId, from, to: i };
     }
   }
+  // 本笔发出的 CAS revision：commitMapSpecMutation 落定后游标已推进，emit 时
+  // 重读会让 expectedRevision 恒等于 mutationRevision（调用时先捕获）。
+  let attemptedRevision: number | undefined;
   const emitReorderEvent = (
     outcome: 'committed' | 'superseded' | 'failed',
     revision?: number,
@@ -912,13 +945,14 @@ export async function reorderLayersAndCommit(layers: { id: string; _mapspecLayer
         to_index: movedLayer.to,
       } : {}, {
         clientMutationId: reorderMutationId,
-        expectedRevision: getMapSpecSessionCursor().revision,
+        expectedRevision: attemptedRevision ?? getMapSpecSessionCursor().revision,
         outcome,
         ...(revision !== undefined ? { mutationRevision: revision } : {}),
       });
     } catch { /* 观察层不影响主链路 */ }
   };
   try {
+    attemptedRevision = getMapSpecSessionCursor().revision;
     const data = await commitMapSpecMutation({
       intent: 'reorder_layers',
       layer_ids: layers.map((layer) => String(layer._mapspecLayerId || layer.id)),

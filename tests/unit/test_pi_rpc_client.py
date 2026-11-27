@@ -3,15 +3,18 @@
 Tests subprocess initialization, request-response matching, and event queueing.
 """
 import asyncio
+import contextlib
+import gc
 import json
 import subprocess
+import weakref
 from pathlib import Path
 
 import pytest
 from unittest.mock import MagicMock, patch, AsyncMock
 import unittest.mock
 
-from app.services.chat.pi_rpc_client import PiRpcClient
+from app.services.chat.pi_rpc_client import PiRpcClient, PiRpcError
 
 
 class DummyPipe:
@@ -685,3 +688,166 @@ async def test_stop_escalation_windows(monkeypatch, survive_eof, survive_term, e
     assert fake.events.count("terminate") <= 1
     assert fake.events.count("kill") <= 1
     assert client._process is None
+
+
+# ─── P2：stop() 收尾时在飞 RPC 必须被收口 ───────────────────────────
+
+
+class _StopFakeProc:
+    """stop() 用的轻量进程 double：stdin EOF 后 wait() 立即返回（有序停机）。"""
+
+    def __init__(self):
+        self.stdin = MagicMock()
+        self.stdin.closed = False
+        self.stdout = DummyPipe([])
+        self.stderr = DummyPipe([])
+        self._alive = True
+
+    def wait(self, timeout=None):
+        self._alive = False
+        return 0
+
+    def terminate(self):
+        self._alive = False
+
+    def kill(self):
+        self._alive = False
+
+    def poll(self):
+        return None if self._alive else 0
+
+
+@pytest.mark.asyncio
+async def test_stop_fails_inflight_rpc_when_reader_is_parked():
+    """P2 regression：stop() 收尾时 reader 仍阻塞在 executor 的 readline 里
+    （``proc.wait`` 的完成回调先于 reader 的 EOF 回调被调度）—— reader 被
+    cancel 后 finally 命中代际守卫（``self._process is not proc``）而 return，
+    跳过 ``_fail_all_pending`` / ``_process_died``。stop() 自身必须收口在飞
+    RPC，否则它们只能等 ``collect()`` 的 ``asyncio.wait_for(future,
+    timeout=PI_RPC_TIMEOUT)``（默认 300s）超时才收口。"""
+    import threading
+
+    from app.services.chat.pi_rpc_client import PiRpcError
+
+    client = PiRpcClient()
+    proc = _StopFakeProc()
+    release = threading.Event()
+
+    def _parked_readline(_proc=None):
+        release.wait(timeout=10)
+        return b""
+
+    client._process = proc
+    client._readline_bounded = _parked_readline
+    reader = asyncio.create_task(client._read_responses(proc))
+    client._reader_task = reader
+    await asyncio.sleep(0)  # reader 进入 run_in_executor 挂起
+
+    fut = asyncio.get_running_loop().create_future()
+    client._pending_requests["req-inflight"] = fut
+
+    try:
+        await client.stop()
+        assert fut.done(), "stop() left the in-flight RPC pending (P2)"
+        assert isinstance(fut.exception(), PiRpcError)
+    finally:
+        release.set()
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.wait_for(reader, timeout=5)
+
+
+# ─── P2：stdout 非 UTF-8 字节不得崩溃读循环 ────────────────────────
+
+
+class _RawBytesPipe:
+    """stdout 桩：按字节原样吐出（可含非 UTF-8 字节），走 read(1) 有界路径。"""
+
+    def __init__(self, chunks):
+        self._buf = b"".join(chunks)
+
+    def read(self, n=-1):
+        if n == -1:
+            line, self._buf = self._buf, b""
+            return line
+        ch, self._buf = self._buf[:1], self._buf[1:]
+        return ch
+
+    def readline(self, *args):
+        if b"\n" in self._buf:
+            line, self._buf = self._buf.split(b"\n", 1)
+            return line + b"\n"
+        line, self._buf = self._buf, b""
+        return line
+
+
+@pytest.mark.asyncio
+async def test_read_responses_survives_non_utf8_line():
+    """P2 regression：``json.loads`` 对 bytes 先 ``detect_encoding`` 再
+    decode —— 单个非 UTF-8 字节抛 ``UnicodeDecodeError``（``JSONDecodeError``
+    捕不到）。漏捕会崩溃读循环 → ``_fail_all_pending`` + ``_process_died``，
+    整桥不可用直至重启；读循环必须跳过坏行继续。"""
+    client = PiRpcClient()
+
+    mock_proc = MagicMock()
+    mock_proc.stdin = MagicMock()
+    mock_proc.stdout = _RawBytesPipe([
+        b'{"type":"agent_end","seq":1}\n',
+        b'{"type":"agent_end","seq":2,"bad":"\xff\xfe"}\n',  # 非 UTF-8 字节
+        b'{"type":"agent_end","seq":3}\n',
+    ])
+    mock_proc.stderr = DummyPipe([])
+    mock_proc.poll.return_value = None
+
+    client._process = mock_proc
+    await client._read_responses()
+
+    seen = []
+    while not client._event_queue.empty():
+        seen.append(client._event_queue.get_nowait().get("type"))
+    assert seen == ["agent_end", "agent_end"], (
+        f"reader crashed on the non-UTF-8 line instead of resyncing: {seen}"
+    )
+
+
+def test_env_int_invalid_and_non_positive_fall_back(monkeypatch):
+    """PI_MAX_* 非整数/<=0 不得 import 崩溃或产生无界/零长度语义。"""
+    from app.services.chat.pi_rpc_client import _env_int
+
+    monkeypatch.setenv("PI_TEST_MAX_LINE", "garbage")
+    assert _env_int("PI_TEST_MAX_LINE", 16) == 16
+    monkeypatch.setenv("PI_TEST_MAX_LINE", "")
+    assert _env_int("PI_TEST_MAX_LINE", 16) == 16
+    monkeypatch.setenv("PI_TEST_MAX_LINE", "0")
+    assert _env_int("PI_TEST_MAX_LINE", 16) == 16
+
+
+def test_atexit_hook_does_not_keep_client_alive():
+    """atexit 不得强引用 client（否则构造过的实例永不 GC）。"""
+    client = PiRpcClient()
+    ref = weakref.ref(client)
+    del client
+    gc.collect()
+    assert ref() is None
+
+
+@pytest.mark.asyncio
+async def test_issue_maps_closed_stdin_value_error_to_pi_rpc_error():
+    client = PiRpcClient()
+    proc = MagicMock()
+    proc.stdin.write.side_effect = ValueError("I/O operation on closed file")
+    client._process = proc
+    with pytest.raises(PiRpcError):
+        await client.issue("abort")
+    assert client._pending_requests == {}
+    client._process = None
+
+
+@pytest.mark.asyncio
+async def test_send_ui_response_maps_closed_stdin_value_error():
+    client = PiRpcClient()
+    proc = MagicMock()
+    proc.stdin.write.side_effect = ValueError("I/O operation on closed file")
+    client._process = proc
+    with pytest.raises(PiRpcError):
+        await client.send_ui_response({"type": "extension_ui_response", "id": "u"})
+    client._process = None

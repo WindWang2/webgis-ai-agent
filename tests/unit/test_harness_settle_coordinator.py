@@ -602,6 +602,90 @@ async def test_metrics_dimensions(_isolated_effects):
     assert hk_metrics.get_counter("turn_ended|host=pi|status=completed") == 1
 
 
+async def test_idempotency_key_scoped_to_turn(_isolated_effects):
+    """host 给出的 idempotency_key 不得跨 turn 复用收据：后续 turn 必须结算。"""
+    sid = _sid()
+    await _begin(sid, "t-key-1")
+    first = await settle_turn(HarnessSettleInput(
+        session_id=sid, turn_id="t-key-1", cause="success",
+        idempotency_key="reused-key",
+    ))
+    assert first.disposition == "settled"
+
+    await _begin(sid, "t-key-2")
+    second = await settle_turn(HarnessSettleInput(
+        session_id=sid, turn_id="t-key-2", cause="success",
+        idempotency_key="reused-key",
+    ))
+    assert second.disposition == "settled"
+    assert await _status_of(sid, "t-key-2") == "completed"
+
+
+async def test_claim_unavailable_is_observed(_isolated_effects, monkeypatch):
+    """claim 不可用分支也必须走 _observe（结构化日志 + turn_settled 指标）。"""
+    from app.services.harness_kernel.settle_claim import SettlementClaim
+
+    sid, turn = _sid(), "t-claim-1"
+    await _begin(sid, turn)
+
+    async def _in_progress(*args, **kwargs):
+        return SettlementClaim("in_progress")
+
+    seen: list[str] = []
+    monkeypatch.setattr(
+        "app.services.harness_kernel.settle_claim.acquire_settlement_claim",
+        _in_progress,
+    )
+    monkeypatch.setattr(
+        hks, "_observe",
+        lambda inp, outcome, started: seen.append(outcome.disposition),
+    )
+    out = await settle_turn(HarnessSettleInput(
+        session_id=sid, turn_id=turn, cause="success",
+    ))
+    assert out.disposition == "in_progress"
+    assert seen == ["in_progress"]
+
+
+async def test_outer_budget_timeout_finishes_pending_end_turn(
+    _isolated_effects, monkeypatch,
+):
+    """外层结算预算到期时，后台 end_turn 必须被接续等待并 complete。"""
+    from app.services.harness_kernel import settle_claim as sc
+    from app.services.harness_kernel.settle import SettleEffectReceipt
+
+    sid, turn = _sid(), "t-pending-1"
+    pending: asyncio.Future = asyncio.get_running_loop().create_future()
+
+    async def _over_budget(*args, **kwargs):
+        raise TimeoutError("outer settle budget")
+
+    async def _end_leg(inp, status, *, was_running, claim_token=""):
+        return SettleEffectReceipt("kernel_end_turn", "applied")
+
+    completed: list[tuple[str, str, str]] = []
+
+    async def _complete(session_id, turn_id, token):
+        completed.append((session_id, turn_id, token))
+        return True
+
+    monkeypatch.setattr(hks, "_settle_running", _over_budget)
+    monkeypatch.setattr(hks, "_end_turn_leg", _end_leg)
+    monkeypatch.setattr(sc, "complete_settlement", _complete)
+    hks._pending_end_turns[(sid, turn)] = pending
+    asyncio.get_running_loop().call_later(0.01, pending.set_result, None)
+    try:
+        outcome = await hks._settle_owned(
+            HarnessSettleInput(session_id=sid, turn_id=turn),
+            "failed", "running", "tok-pending",
+        )
+    finally:
+        hks._pending_end_turns.pop((sid, turn), None)
+    assert outcome.disposition == "unknown_turn"
+    assert completed == [(sid, turn, "tok-pending")]
+    assert (sid, turn) not in hks._pending_end_turns
+
+
 # ── legacy 引擎接线（chat / chat_stream 真实触发锁外 settle）────────────
 
 

@@ -82,6 +82,10 @@ export function DataJoinPanel({ sessionId, ownerToken }: DataJoinPanelProps): Re
 
   const sessionIdRef = useRef<string | null>(null);
   sessionIdRef.current = sessionId ?? null;
+  // open 同款 ref：轮询循环必须读实时值 —— 回调创建时捕获的 open 恒为 true，
+  // 关闭面板后旧循环仍会每 1s 打 inspectRun（评审 P2 资源泄漏）。
+  const openRef = useRef(open);
+  openRef.current = open;
   const epochRef = useRef(0);
 
   useEffect(() => {
@@ -125,7 +129,7 @@ export function DataJoinPanel({ sessionId, ownerToken }: DataJoinPanelProps): Re
       if (epoch !== epochRef.current || sessionIdRef.current !== sessionId) return;
       setSide((s) => ({ ...s, describe: view, loading: false }));
     } catch (err) {
-      if (epoch !== epochRef.current) return;
+      if (epoch !== epochRef.current || sessionIdRef.current !== sessionId) return;
       setSide((s) => ({ ...s, describe: null, loading: false }));
       setError(asDataJoinError(err));
     }
@@ -236,18 +240,20 @@ export function DataJoinPanel({ sessionId, ownerToken }: DataJoinPanelProps): Re
 
   const pollRun = useCallback(async (runId: string) => {
     if (!api) return;
+    // 关闭面板会自增 epochRef —— 旧轮询代次失效即停（不向已关闭面板 setState）。
+    const epoch = epochRef.current;
     for (let i = 0; i < 240; i++) {
       await new Promise((r) => setTimeout(r, 1000));
-      if (sessionIdRef.current !== sessionId || !open) return;
+      if (sessionIdRef.current !== sessionId || !openRef.current || epochRef.current !== epoch) return;
       try {
         const view = await api.inspectRun(runId);
-        if (sessionIdRef.current !== sessionId) return;
+        if (sessionIdRef.current !== sessionId || !openRef.current || epochRef.current !== epoch) return;
         setRun(view);
         if (view.status === 'completed') { await loadResultPage(runId, 0); return; }
         if (view.status === 'failed' || view.status === 'cancelled') return;
       } catch { /* 轮询失败继续 */ }
     }
-  }, [api, sessionId, open, loadResultPage]);
+  }, [api, sessionId, loadResultPage]);
 
   const doExecute = useCallback(async () => {
     if (!api) return;

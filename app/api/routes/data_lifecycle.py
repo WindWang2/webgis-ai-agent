@@ -173,6 +173,9 @@ def list_lifecycle_objects(
     from app.models.data_lifecycle import LifecycleObject
 
     limit_n, offset_n = clamp_pagination(limit, offset)
+    # 先算 owner scopes（其内部自带 SessionLocal），再开本端点的会话 ——
+    # 避免单请求同时占用两个池连接（30 连接池下有效并发减半）。
+    scopes = _owner_scope_values(user)
     with SessionLocal() as db:
         stmt = select(LifecycleObject).order_by(
             LifecycleObject.kind, LifecycleObject.last_used_at.desc()
@@ -185,7 +188,6 @@ def list_lifecycle_objects(
         if tier:
             stmt = stmt.where(LifecycleObject.tier == tier)
             count_stmt = count_stmt.where(LifecycleObject.tier == tier)
-        scopes = _owner_scope_values(user)
         scope_clause = _chunked_in(LifecycleObject.owner_scope, scopes)
         stmt = stmt.where(scope_clause)
         count_stmt = count_stmt.where(scope_clause)
@@ -291,9 +293,10 @@ def upsert_policy(
     if org in (None, ""):
         raise HTTPException(status_code=403, detail="org_context_required")
     with SessionLocal() as db:
-        row = db.query(LifecyclePolicy).filter_by(name=name, org_id=org).one_or_none()
+        row_name = name[:64]
+        row = db.query(LifecyclePolicy).filter_by(name=row_name, org_id=org).one_or_none()
         if row is None:
-            row = LifecyclePolicy(name=name[:64], kind=body.kind, org_id=org)
+            row = LifecyclePolicy(name=row_name, kind=body.kind, org_id=org)
             db.add(row)
         row.kind = body.kind
         row.action = body.action
@@ -318,6 +321,9 @@ def create_plan(
     from app.services.data_lifecycle.gc_plan import create_gc_plan
 
     try:
+        # 先算 owner scopes（内部 SessionLocal）再开会话：不嵌套占用两个
+        # 池连接。
+        owner_scopes = _owner_scope_values(user)
         with SessionLocal() as db:
             plan = create_gc_plan(
                 db,
@@ -325,7 +331,7 @@ def create_plan(
                 tiers=body.tiers,
                 created_by=(user.get("user_id") if isinstance(user, dict) else None),
                 # DATA-03：非 admin 的计划候选树只含自己的 owner scope。
-                owner_scopes=_owner_scope_values(user),
+                owner_scopes=owner_scopes,
                 org_id=user.get("org_id"),
             )
             return {"success": True, "plan": _plan_view(plan)}

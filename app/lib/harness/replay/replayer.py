@@ -89,11 +89,16 @@ class TurnSpec:
     cartography: Optional[Dict[str, Any]] = None     # L4 审查证据 fixture
     refs: Dict[str, Any] = field(default_factory=dict)  # ref → fixture payload
     expect: Dict[str, Any] = field(default_factory=dict)  # exact 比对白名单
+    #: 重放实际侧最终输出文本（nondeterministic_text 校验用；语料显式声明，
+    #: 缺席 = 无输出证据，绝不拿 user_input 冒充）。追加在末尾，保持既有
+    #: 位置参数构造兼容。
+    output_text: str = ""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TurnSpec":
         return cls(
             user_input=str(data.get("user_input") or ""),
+            output_text=str(data.get("output_text") or ""),
             ops=[ScenarioOp.from_dict(op) for op in data.get("ops") or []],
             mutations=list(data.get("mutations") or []),
             visual_report=data.get("visual_report"),
@@ -740,6 +745,7 @@ class OfflineReplayer:
             goal_satisfaction=goal,
             mutation_outcomes=mutation_outcomes,
             evidence_count=len(evidence_result.get("evidence") or []),
+            output_text=turn.output_text or None,
             dispatch_decisions=dispatch_entries,
             decision_rederive=(rederive if index == 0 and rederive is not None else {}),
         )

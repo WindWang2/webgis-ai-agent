@@ -334,6 +334,23 @@ def test_arrow_offset_only_read_respects_budget(v8_env):
     assert out["total_rows"] == 150_000
 
 
+def test_arrow_none_row_offset_is_treated_as_zero(v8_env):
+    """可选参数转发 None（非 int）不得抛裸 TypeError。"""
+    from app.services.lakehouse.arrow_adapter import (
+        publish_arrow_ipc,
+        read_arrow_batches,
+    )
+    from app.services.lakehouse.data_object import normalize_owner_scope
+
+    scope = normalize_owner_scope(session_id="sess-v8")
+    obj_id = publish_arrow_ipc(_arrow_table(10), owner_scope=scope).data_object_id
+    out = read_arrow_batches(
+        obj_id, row_offset=None, row_limit=3, session_id="sess-v8",
+    )
+    assert out["rows"] == 3
+    assert out["batch_range"] == [0, 1]
+
+
 def test_arrow_commit_as_dataset_version(v8_env):
     """Arrow 对象可直接作为 dataset 版本内容（格式无关版本层）。"""
     from app.services.lakehouse import dataset_registry as reg

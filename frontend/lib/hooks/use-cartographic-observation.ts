@@ -260,12 +260,14 @@ export function useCartographicObservation({
       // data URL（docstring 自称 bounded metadata only 被该字段违反），
       // 每次 reconcile 在主线程序列化 MB 级 base64 仅为算键。用稳定字段
       // + raster 载荷的长度引用计数替代（内容变化必然改变长度或指纹）。
-      const rasterImg = (observation as { raster_image?: string }).raster_image
-      // len + 首尾采样：同长异容（同 bbox 换调色板重渲染）也能变键
+      const rasterImg = (observation as { raster_image?: unknown }).raster_image
+      // len + 首尾采样：同长异容（同 bbox 换调色板重渲染）也能变键。
+      // 证据字段可能是 null/非字符串（后端/采集器降级）—— 只在确为 string
+      // 时建键，否则长度/切片会抛 TypeError 让整份观测静默丢失。
       const rasterMark =
-        rasterImg === undefined
-          ? undefined
-          : `len:${rasterImg.length}:${rasterImg.slice(0, 24)}:${rasterImg.slice(-24)}`
+        typeof rasterImg === 'string'
+          ? `len:${rasterImg.length}:${rasterImg.slice(0, 24)}:${rasterImg.slice(-24)}`
+          : undefined
       // P9：observed_at 是采集墙钟（每次都变），不参与去重键 —— 否则同
       // 一渲染状态的重复采集永远不命中去重、每个 reconcile 都 POST。
       const { observed_at: _volatileAt, perf: _volatilePerf, ...stateFields } = observation
@@ -276,8 +278,11 @@ export function useCartographicObservation({
       // pending 出现/消失或失败集变化 → 键变 → 新 ACK 得以上报；稳态
       // 下 ACK 签名不变 → 去重照常生效。
       const ack = observation.apply_ack
+      // apply_ack 来自运行时投影，layers 缺失/非数组（旧构建/降级）时不得
+      // 让 .filter 抛错吞掉整份观测：按空集折叠，status 仍然参与去重键。
+      const ackLayers = ack && Array.isArray(ack.layers) ? ack.layers : []
       const ackMark = ack
-        ? `${ack.status}:${ack.layers.filter((e) => e.status === 'failed').length}:${ack.layers.filter((e) => e.status === 'pending').length}`
+        ? `${ack.status}:${ackLayers.filter((e) => e.status === 'failed').length}:${ackLayers.filter((e) => e.status === 'pending').length}`
         : ''
       const keyPayload = {
         ...stateFields,
@@ -377,9 +382,10 @@ export function useCartographicObservation({
           const duplicate = Boolean(repairId && appliedRepairIdsRef.current.has(repairId))
           const budgetLeft = totalRepairsRef.current < MAX_TOTAL_SESSION_REPAIRS
           if (repairId && !duplicate && budgetLeft) {
-            totalRepairsRef.current += 1
             dispatchAction(repair)
-            // Record AFTER dispatch so a dispatch throw leaves the repair re-issuable.
+            // Record AFTER dispatch so a dispatch throw leaves the repair re-issuable
+            // and does not leak a unit of the session repair budget.
+            totalRepairsRef.current += 1
             const seen = appliedRepairIdsRef.current
             seen.add(repairId)
             if (seen.size > MAX_APPLIED_REPAIR_IDS) {
@@ -420,7 +426,11 @@ export function useCartographicObservation({
         lastCartographicObservationKeyRef.current = ''
         devOnly.warn('[map] cartographic observation failed:', error)
       })
-    })()
+    })().catch((error) => {
+      // 观测是旁路证据：采集/去重键序列化等同步异常若逃逸会变成
+      // unhandled rejection —— 观测静默不上行且无告警。只告警，不阻断渲染。
+      devOnly.warn('[map] cartographic observation collection failed:', error)
+    })
   }, [sessionId, ownerToken, dispatchAction, runtimeRef, getMap])
 
   return issueCartographicObservation

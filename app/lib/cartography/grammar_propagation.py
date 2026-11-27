@@ -138,9 +138,15 @@ class CompositeGrammarAuditor:
             return ""
         if len(self._refs) == 1:
             return self._refs[0].decision.fingerprint
-        joined = ",".join(r.decision.fingerprint[:8] for r in self._refs[:8])
-        extra = len(self._refs) - min(len(self._refs), 8)
-        return (f"{joined}+{len(self._refs)}" + (f"+{extra}more" if extra > 0 else ""))[:64]
+        # 尾部的 ref 计数/溢出标记必须完整留在 64 字符内：若整体 [:64] 截断，
+        # 8 个与 9 个 ref 会产出同一指纹（joined 前缀被齐平、后缀被削掉），
+        # 审计证据归因失真——先给后缀留位，再截断前缀。
+        suffix = f"+{len(self._refs)}" + (
+            f"+{len(self._refs) - 8}more" if len(self._refs) > 8 else "")
+        budget = max(0, 64 - len(suffix))
+        joined = ",".join(
+            r.decision.fingerprint[:8] for r in self._refs[:8])
+        return (joined[:budget] + suffix)
 
     @staticmethod
     def _match_layer(

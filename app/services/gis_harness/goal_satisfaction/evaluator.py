@@ -98,6 +98,19 @@ R_FRAME_SNAPSHOT_ONLY = "frame_product_snapshot_only"
 _DELIVERY_DETAIL_PREFIX = "delivery:"
 _MAP_EXPORT_DETAIL_PREFIX = "map_export:"
 
+
+def _detail_fmt(detail: Any) -> str:
+    """detail 里的 ``fmt=<token>`` **终结**值（小写；无 token → ""）。
+
+    与 :func:`_delivery_caps_verdict` 的行选择同口径（token 精确匹配）：
+    子串匹配 ``fmt=geojson in detail`` 会把 export:geojson 需求错配到
+    ``fmt=geojsonseq`` 回执 —— 用错格式回执把导出需求判 FULFILLED。
+    """
+    for token in str(detail or "").split():
+        if token.startswith("fmt="):
+            return token[4:].strip().lower()
+    return ""
+
 #: 语义 cap 码 → 失败规则 id（semantics.py 词表对齐）。
 _CAP_RULE_MAP = {
     "population_partial": R_RECEIPT_PARTIAL,
@@ -128,6 +141,14 @@ def _rows(value: Any) -> List[Dict[str, Any]]:
     return [r for r in value if isinstance(r, dict)]
 
 
+def _int_or_none(value: Any) -> Optional[int]:
+    """诚实整数读取：损坏/非数值 → None（调用方 fail-closed）。"""
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return None
+
+
 def _verdict_token(map_product: Optional[Dict[str, Any]]) -> str:
     verdict = _dict(map_product).get("product_verdict")
     return str(
@@ -148,9 +169,19 @@ def _frame_gate(map_product: Optional[Dict[str, Any]]):
             "complete", "incomplete"):
         return None
     summary = _dict(fp.get("summary"))
-    required = int(summary.get("required") or 0)
-    verified = int(summary.get("verified") or 0)
-    snapshot_only = int(summary.get("snapshot_only") or 0)
+    required = _int_or_none(summary.get("required"))
+    verified = _int_or_none(summary.get("verified"))
+    snapshot_only = _int_or_none(summary.get("snapshot_only"))
+    if required is None or verified is None or snapshot_only is None:
+        # 摘要数值不可解析（伪造/损坏）→ fail-closed，绝不越过闸。
+        def _gate_corrupt(out):
+            out.verdict = ReqState.PARTIAL
+            out.failed_rule = R_FRAME_INCOMPLETE
+            out.missing.append("frame_summary_unparseable")
+            out.next_action = "reobserve"
+            return out
+
+        return _gate_corrupt
     # G28 复审加固（fail-closed 一致性重查）：frames 行在场时以**行**为准
     # 重算 required/verified/snapshot_only，与 summary 取更严一侧 —— 伪造
     # summary（complete/全 verified/required=0）不得越过逐行事实（评审
@@ -174,8 +205,9 @@ def _frame_gate(map_product: Optional[Dict[str, Any]]):
         # 复审第二轮加固：行在场时 required=0 只可能是双伪造（summary 与行
         # 标志同时伪造）—— 生产者（verify_frame_product）对启用产品的每个
         # 槽位恒发 required=True，且空 required 集不可能产出 complete 状态
-        # → fail-closed（绝不静默放行）。
-        if frame_rows and str(fp.get("status")) == "complete":
+        # → fail-closed（绝不静默放行）。status 自报 incomplete 同样不放行：
+        # 伪造块经 return None 会整体绕过闸，未完成画幅产品仍可判 FULFILLED。
+        if frame_rows:
             def _gate_double_forge(out):
                 out.verdict = ReqState.PARTIAL
                 out.failed_rule = R_FRAME_INCOMPLETE
@@ -601,11 +633,14 @@ def _eval_export_requirement(
     receipt = next((e for e in evidence if e.id == receipt_id), None)
     if receipt is None and requirement.delivery_expected and receipts:
         # 交付需求也接受 delivery:<fmt> 命名回执（适配器产出两种 id 形态）。
+        # fmt 取 detail 内 token 的**精确**匹配（同 _delivery_caps_verdict
+        # 行选择口径）—— 子串匹配会让 export:geojson 命中 fmt=geojsonseq。
+        want_fmt = str(requirement.export_format or "").strip().lower()
         receipt = next(
             (e for e in evidence
              if e.id.startswith("export_receipt:delivery:")
              and e.detail.startswith(_DELIVERY_DETAIL_PREFIX)
-             and f"fmt={requirement.export_format}" in e.detail), None)
+             and _detail_fmt(e.detail) == want_fmt), None)
         if receipt is not None:
             receipt_id = receipt.id
     out.evidence_ids = [receipt_id]
@@ -745,8 +780,9 @@ def _eval_requirement(
             e for e in evidence
             if e.status == EvidenceStatus.PRESENT
             and e.evidence_class in PASS_CAPABLE_CLASSES
-            and (not target or target in e.id.lower()
-                 or target in e.detail.lower())
+            # 只按证据 id（row:/data:/receipt 等能力绑定键）匹配；扫 detail
+            # 会把 "skip" 命中无一相关证据的 "skipped=2" 之类文本。
+            and (not target or target in e.id.lower())
         ]
         if target and violated:
             out.verdict = ReqState.FAILED

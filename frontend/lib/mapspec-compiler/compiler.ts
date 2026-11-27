@@ -871,6 +871,13 @@ export function compileMapSpec(
       }
     }
 
+    // #1747 项 1：circle 层 spec 上的原生 heatmap-* paint（授权链路
+    // analysis_cartography_converter 发的是 MapLibre 原生表达式）的收纳处。
+    // 它们不能进主层 paint（MapLibre 拒绝 circle 层上的 heatmap-* 键），但
+    // visual_heatmap 表达窗子层的密度色带来自它们 —— heatmapOnlyPaint 只收
+    // heatmap-* 键，主层 paint 里没有就掉回 MapLibre 默认蓝色色带（导出降级）。
+    // 由下方 heatmap 窗分支透出（与 live runtime 同一口径）。
+    const heatmapNativePaint: Record<string, unknown> = {};
     if (layer.paint) {
       if (layerType === "circle") {
         if (layer.paint.color !== undefined)
@@ -890,6 +897,23 @@ export function compileMapSpec(
           maplibreLayer.paint["circle-translate"] = compileStyleMethod(layer.paint.translate);
         if (layer.paint.translateAnchor !== undefined)
           maplibreLayer.paint["circle-translate-anchor"] = compileStyleMethod(layer.paint.translateAnchor);
+        // #1747 项 1：原生 heatmap-* paint 透传收纳（方言桥接产物 —— 与
+        // 下方 heatmap 分支同款，优先级低于高级键；此处 circle 层无 heatmap
+        // 高级键可冲突）。只进 heatmapNativePaint，不落主层 paint。
+        for (const rawKey of [
+          "heatmap-weight",
+          "heatmap-intensity",
+          "heatmap-color",
+          "heatmap-radius",
+          "heatmap-opacity",
+        ] as const) {
+          const rawValue = (layer.paint as Record<string, unknown>)[rawKey];
+          if (rawValue !== undefined) {
+            heatmapNativePaint[rawKey] = isStyleMethodObject(rawValue)
+              ? (compileStyleMethod(rawValue) ?? null)
+              : asPaintValue(rawValue);
+          }
+        }
       } else if (layerType === "line") {
         if (layer.paint.color !== undefined)
           maplibreLayer.paint["line-color"] = compileStyleMethod(layer.paint.color);
@@ -1063,7 +1087,12 @@ export function compileMapSpec(
           "heatmap-opacity",
         ] as const) {
           const rawValue = (layer.paint as Record<string, unknown>)[rawKey];
-          if (rawValue !== undefined && maplibreLayer.paint[rawKey] === undefined) {
+          if (rawValue !== undefined && (
+            maplibreLayer.paint[rawKey] === undefined || rewrittenFromCircle
+          )) {
+            // circle→heatmap 改写时，显式原生热力键表达的是热力语义，优先于
+            // 由 circle color/opacity 派生的同目标键；普通 heatmap 层仍保持
+            // 上方“规范键优先”的既有契约。
             maplibreLayer.paint[rawKey] = isStyleMethodObject(rawValue)
               ? (compileStyleMethod(rawValue) ?? null)
               : asPaintValue(rawValue);
@@ -1260,19 +1289,19 @@ export function compileMapSpec(
       labelLayerCountDelta = 1;
       // 簇色板像素色（hex）进 legend 摘要（计数分级），有组件在场时由
       // 组件渲染；无组件时导出 HUD 图例兜底同链。
-      const clusterLegend = {
+      const clusterLegend: LegendDef = {
         layerId: layer.id,
-        title: layer.label?.field ?? undefined,
-        entries: [
-          { color: "#9ecae1", label: "1–9" },
-          { color: "#6baed6", label: "10–49" },
-          { color: "#3182bd", label: "50–199" },
-          { color: "#08519c", label: "200+" },
+        title: layer.label?.field ?? layer.id,
+        items: [
+          { color: "#9ecae1", label: "1–9", type: "point" },
+          { color: "#6baed6", label: "10–49", type: "point" },
+          { color: "#3182bd", label: "50–199", type: "point" },
+          { color: "#08519c", label: "200+", type: "point" },
         ],
       };
-      // 既有形状漂移（entries vs LegendDef.items —— 簇计数图例从未进导出
-      // 图例链；P3 记录，不改行为）。typed 收口见 PR 审查注记。
-      legends.push(clusterLegend as unknown as LegendDef);
+      // P3：按 LegendDef 契约用 items（此前 entries + as unknown as 断言，
+      // 消费方遍历 legend 读 .items 得 undefined）。
+      legends.push(clusterLegend);
     }
 
     // ── v1.6（方向 5）：表达窗口展开 ───────────────────────────────────
@@ -1284,6 +1313,10 @@ export function compileMapSpec(
     //   heatmap-radius；仅 circle 原生层可改写，否则透传 + 证据）；
     // - point_cluster 窗 → 上方簇三子层已承载（跳过）；
     // - hidden 窗 → 不产出层 + 证据（detail visibility 门）。
+    // P2（review）：raw/artifact 克隆先于 G40 补丁创建 —— G40 会整体替换
+    // 主层 filter（新数组）并原地改 paint/layout，spread 出来的克隆追不上
+    // 新 filter（类别排除缺失 → 类别要素双绘）。收集后统一同步最终定义。
+    const rawWindowClones: Array<CompiledLayer & { layout: MapLibrePaint }> = [];
     if (planEffective) {
       const subNoneLayout = vis.visibility === "none"
         ? { layout: { visibility: "none" as const } }
@@ -1309,12 +1342,16 @@ export function compileMapSpec(
           // 单一实现 —— 原生 heatmap paint（heatmap-color 密度色带 /
           // intensity / weight / opacity）必须穿透到子层，否则带原生色带
           // 的层在导出里掉回 MapLibre 默认蓝色色带（导出降级）。
+          // circle 主层的原生 heatmap paint 收纳在 heatmapNativePaint
+          // （主层自身不能带 heatmap-* 键 —— MapLibre 会拒绝整层），此处
+          // 与主层 paint 合并后过 heatmapOnlyPaint；live 侧对应地通过
+          // paint-bridge 的 includeHeatmapKeys 热力改写通道透出同组键。
           const heatSub: CompiledLayer & { layout: MapLibrePaint } = {
             id: representationSublayerId(layer.id, w.index),
             type: "heatmap",
             source: layer.source,
             ...(subNoneLayout ?? { layout: {} }),
-            paint: heatmapOnlyPaint(maplibreLayer.paint, featureCount),
+            paint: heatmapOnlyPaint({ ...heatmapNativePaint, ...maplibreLayer.paint }, featureCount),
             minzoom: wMin,
             maxzoom: wMax,
           };
@@ -1346,6 +1383,7 @@ export function compileMapSpec(
         };
         if (subNoneLayout) repSub.layout = { ...maplibreLayer.layout, visibility: "none" };
         compiledLayers.push(repSub);
+        rawWindowClones.push(repSub);
         recordSymbolLawEvidence("representation-window-layer", {
           mode: w.mode, minZoom: wMin, maxZoom: wMax, sublayerId: repSub.id,
         }, layer.id);
@@ -1363,6 +1401,18 @@ export function compileMapSpec(
           ? ["all", maplibreLayer.filter, g40MainFilterExtra]
           : g40MainFilterExtra) as typeof maplibreLayer.filter;
       }
+    }
+    // P2（review）：把克隆同步到主层最终定义（G40 paint/layout 原地补丁 +
+    // filter 整体替换之后）。visibility:none 的窗子层保持自隐。
+    for (const clone of rawWindowClones) {
+      const cloneHidden = (clone.layout as Record<string, unknown> | undefined)?.visibility === "none";
+      clone.paint = { ...maplibreLayer.paint };
+      clone.layout = {
+        ...maplibreLayer.layout,
+        ...(cloneHidden ? { visibility: "none" as const } : {}),
+      };
+      if (maplibreLayer.filter !== undefined) clone.filter = maplibreLayer.filter;
+      else delete clone.filter;
     }
     compiledLayers.push(maplibreLayer);
     for (const sub of g40SublayerDefs) {
@@ -1395,8 +1445,10 @@ export function compileMapSpec(
         type: "symbol",
         source: layer.source,
         // C11 v1.5：标注子层继承主层 zoom 门（显隐经 layout.visibility）。
-        ...(vis.gate.minzoom !== undefined ? { minzoom: vis.gate.minzoom } : {}),
-        ...(vis.gate.maxzoom !== undefined ? { maxzoom: vis.gate.maxzoom } : {}),
+        // P2（review）：必须继承 **合成门**（vis ∩ 表达窗门）—— 仅继承
+        // vis.gate 会让标注在主层 zoom 窗外（退化门时主层恒隐）仍渲染。
+        ...(maplibreLayer.minzoom !== undefined ? { minzoom: maplibreLayer.minzoom } : {}),
+        ...(maplibreLayer.maxzoom !== undefined ? { maxzoom: maplibreLayer.maxzoom } : {}),
         layout: {
           "text-field": asExpression(["get", labelSpec.field]),
           "text-size": compileStyleMethod(labelSpec.size ?? layer.layout?.labelSize ?? 12),

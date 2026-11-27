@@ -11,7 +11,7 @@ import { test, expect, type Page, type BrowserContext } from 'playwright/test';
 import { awaitShellReady, defaultWorld, loginViaApi, seedAuthUser } from '../helpers/bootstrap';
 import { seedConversationViaApi } from '../helpers/real-chat';
 import { installJourneyStubs } from '../fixtures/api-stubs';
-import { MODE, REAL_ONLY_REASON } from '../helpers/mode';
+import { MODE, REAL_ONLY_REASON, API_ORIGIN } from '../helpers/mode';
 
 const SESSION_ID = 's-j13';
 
@@ -370,12 +370,12 @@ test.describe('journey-13 证据化地图简报交付', () => {
     const denied = outsider.waitForResponse((response) =>
       response.request().method() === 'GET' &&
       new URL(response.url()).pathname === `/api/v1/chat/sessions/${sessionId}`);
-    await outsider.goto(`http://localhost:3310/story?session_id=${sessionId}`);
+    await outsider.goto(`/story?session_id=${sessionId}`);
     const response = await denied;
     expect([401, 403, 404]).toContain(response.status());
     await outsider.close();
     const briefProbe = await outsider.request.get(
-      `http://localhost:8001/api/v1/briefs/sessions/${sessionId}`);
+      `${API_ORIGIN}/api/v1/briefs/sessions/${sessionId}`);
     expect([401, 403, 404]).toContain(briefProbe.status());
 
     // 6) 撤销分享 → 服务端读取失败

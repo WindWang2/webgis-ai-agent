@@ -7,6 +7,7 @@ Create Date: 2026-07-22
 from typing import Sequence, Union
 
 from alembic import op, context
+import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
@@ -21,17 +22,29 @@ def _is_sqlite() -> bool:
     return context.get_context().dialect.name == "sqlite"
 
 
+def _index_exists(table: str, name: str) -> bool:
+    return name in {
+        i["name"] for i in sa.inspect(op.get_bind()).get_indexes(table)
+    }
+
+
 def upgrade() -> None:
     """Add composite indexes for common multi-column query patterns."""
     if _is_sqlite():
         # SQLite: use batch_alter_table
+        # create_all 共存守卫：四个索引都由模型声明，create_all 库上无守卫的
+        # create_index 即 duplicate index（PG 分支已有 IF NOT EXISTS）。
         with op.batch_alter_table("layers", schema=None) as batch_op:
-            batch_op.create_index("idx_layer_org_status", ["org_id", "status"])
-            batch_op.create_index("idx_layer_org_category_status", ["org_id", "category", "status"])
+            if not _index_exists("layers", "idx_layer_org_status"):
+                batch_op.create_index("idx_layer_org_status", ["org_id", "status"])
+            if not _index_exists("layers", "idx_layer_org_category_status"):
+                batch_op.create_index("idx_layer_org_category_status", ["org_id", "category", "status"])
 
         with op.batch_alter_table("analysis_tasks", schema=None) as batch_op:
-            batch_op.create_index("idx_task_org_status", ["org_id", "status"])
-            batch_op.create_index("idx_task_org_type_status", ["org_id", "task_type", "status"])
+            if not _index_exists("analysis_tasks", "idx_task_org_status"):
+                batch_op.create_index("idx_task_org_status", ["org_id", "status"])
+            if not _index_exists("analysis_tasks", "idx_task_org_type_status"):
+                batch_op.create_index("idx_task_org_type_status", ["org_id", "task_type", "status"])
     else:
         # PostgreSQL
         # IF NOT EXISTS: Base.metadata.create_all() 在启动时已按模型定义建好同名索引，

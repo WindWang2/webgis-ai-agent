@@ -22,6 +22,9 @@ def test_business_status_checkers():
     # Baidu success vs failure
     assert check_baidu_status({"status": 0, "result": {}})[0] is True
     assert check_baidu_status({"status": 2, "message": "Parameter Error"})[0] is False
+    # Fail-closed: 缺 status 键（代理错误页/畸形 JSON）不得判成功
+    assert check_baidu_status({"result": {}})[0] is False
+    assert check_baidu_status({})[0] is False
 
     # Tianditu success vs failure
     # #771: the checker now requires status == "1000" — a payload without the
@@ -172,6 +175,44 @@ async def test_can_call_prunes_expired_timestamps(monkeypatch):
     fake_now += 120  # all expired
     assert await tracker.can_call("baidu") is True
     assert len(window) == 0, "expired timestamps must be pruned, not just filtered"
+
+
+@pytest.mark.asyncio
+async def test_baidu_missing_status_trips_circuit(monkeypatch):
+    """Baidu 响应缺 status 键（代理错误页/畸形 JSON）必须 fail-closed：
+
+    记 provider 错误并打开熔断，而不是 record_success + 把原始 payload 上抛。
+    """
+    tracker = ProviderHealthTracker(calls_per_minute=20)
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value={"result": {"name": "x"}})  # 无 status
+
+    mock_get = MagicMock()
+    mock_get.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_get.__aexit__ = AsyncMock(return_value=None)
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=mock_get)
+
+    async def fake_get_shared_client():
+        return mock_session
+
+    monkeypatch.setattr("app.core.network.get_shared_client", fake_get_shared_client)
+
+    for _ in range(6):
+        res = await tracked_provider_get(
+            "baidu",
+            "https://api.map.baidu.com/place/v2/search",
+            {},
+            business_checker=check_baidu_status,
+            tracker=tracker,
+        )
+        assert "error" in res
+        assert "result" not in res
+    state = (await tracker.snapshot())["baidu"]
+    assert state["consecutive_errors"] == 5
+    assert state["circuit_open"] is True
 
 
 @pytest.mark.asyncio

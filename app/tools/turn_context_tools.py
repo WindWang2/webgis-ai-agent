@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 
+from app.tools._utils import std_error_response
 from app.tools.registry import ToolRegistry, tool
 
 logger = logging.getLogger(__name__)
@@ -29,7 +30,12 @@ async def query_turn_context_receipt(
 ) -> dict:
     """只读回执查询实现（注册工具的单一实现；测试/工具共用）。"""
     if not session_id:
-        return {"error": "session context unavailable"}
+        # registry 错误契约（std_error_response）：success/code/message 信封，
+        # 与同批其余工具一致 —— 裸 {"error": str} 无法让调用方稳定判定失败。
+        return std_error_response(
+            "session context unavailable",
+            code="SESSION_CONTEXT_UNAVAILABLE",
+        )
     from app.services.turn_context_store import (
         get_receipt,
         list_receipts,

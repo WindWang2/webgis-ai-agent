@@ -382,6 +382,26 @@ class TestGoalScoreDerivation:
         assert report.goal_score is None
         assert report.goal_score_derivation == ""
 
+    def test_goal_evaluator_receives_cartography_review(self):
+        """本次制图 review 必须进入 goal 评估（G7 CARTOGRAPHY 证据面）。"""
+        delivery, ledger = _delivery_with_ledger()
+        seen: Dict[str, Any] = {}
+
+        def _evaluate(
+            chapter, *, user_goal="", map_product=None, cartographic_review=None
+        ):
+            seen["review"] = cartographic_review
+            return _FakeGoalReport(
+                "passed", [_FakeRequirement("req.map", "fulfilled")]
+            )
+
+        report = CriticAuditorAgent(evaluator=_evaluate).audit(
+            delivery, ledger=ledger, chapter=_contract_chapter([_REQ_MAP]),
+        )
+        assert report.goal_score == pytest.approx(1.0)
+        assert isinstance(seen.get("review"), dict)
+        assert seen["review"].get("checks")
+
 
 class TestFailClosedVerdicts:
     """证据不全 / 语义检查未过 → fail-closed。"""

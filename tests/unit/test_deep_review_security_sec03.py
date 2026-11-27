@@ -242,3 +242,63 @@ async def test_tier3_cannot_approve_dynamic_target_from_upstream():
     blocked = await plan_svc.execute_plan_async(sid, plan_id, reg)
     assert blocked['code'] == 'DESTRUCTIVE_ARGUMENTS_REQUIRE_LITERAL_VALUES'
     assert blocked['executed'] == []
+
+
+async def test_non_ascii_challenge_id_fails_closed_not_500():
+    """确认端点传入含非 ASCII 的 challenge_id 必须 fail-closed 返回
+    CONFIRMATION_MISMATCH（路由层 409）——裸 hmac.compare_digest 对非 ASCII
+    str 直接 TypeError，会把守卫变成未处理异常 500。"""
+    reg = _tier3_registry()
+    sid = "sec03-non-ascii-challenge"
+    plan_id = await _store_tier3_plan(sid)
+    pending = await plan_svc.execute_plan_async(sid, plan_id, reg)
+    assert pending["code"] == "CONFIRMATION_REQUIRED"
+
+    result = await plan_svc.approve_destructive_confirmation(
+        sid, plan_id, "挑战-é-café"
+    )
+    assert result["success"] is False
+    assert result["code"] == "CONFIRMATION_MISMATCH"
+
+    # 仍未获批准：tier-3 步骤不得放行。
+    again = await plan_svc.execute_plan_async(sid, plan_id, reg)
+    assert again["code"] == "CONFIRMATION_REQUIRED"
+
+
+async def test_non_ascii_stored_fingerprint_fails_closed_not_500():
+    """存储载荷里 args_fingerprint 被污染为非 ASCII 时，approve 与 execute
+    两条路径都必须 fail-closed（CONFIRMATION_MISMATCH / 重发挑战），
+    而非 compare_digest 的 TypeError 500。"""
+    reg = _tier3_registry()
+    sid = "sec03-non-ascii-fingerprint"
+    plan_id = await _store_tier3_plan(sid)
+    await plan_svc.execute_plan_async(sid, plan_id, reg)
+    stored = await plan_svc.load_plan(sid, plan_id)
+    challenge_id = stored["__destructive_confirmation__"]["challenge_id"]
+
+    # 待确认 artifact 指纹污染 → approve 归为不匹配（challenge_id 本身正确）。
+    tampered_pending = dict(stored["__destructive_confirmation__"])
+    tampered_pending["args_fingerprint"] = "非-ascii-指纹-é"
+    await plan_svc.update_plan_status(
+        sid, plan_id, __destructive_confirmation__=tampered_pending
+    )
+    rejected = await plan_svc.approve_destructive_confirmation(
+        sid, plan_id, challenge_id
+    )
+    assert rejected["code"] == "CONFIRMATION_MISMATCH"
+
+    # 已批准 artifact 指纹污染 → execute 重新发挑战，不执行 tier-3 步骤。
+    plan_id2 = await _store_tier3_plan(sid)
+    pending2 = await plan_svc.execute_plan_async(sid, plan_id2, reg)
+    await plan_svc.approve_destructive_confirmation(
+        sid, plan_id2, pending2["challenge_id"]
+    )
+    stored2 = await plan_svc.load_plan(sid, plan_id2)
+    tampered_approved = dict(stored2["__destructive_confirmation__"])
+    tampered_approved["args_fingerprint"] = "非-ascii-指纹-é"
+    await plan_svc.update_plan_status(
+        sid, plan_id2, __destructive_confirmation__=tampered_approved
+    )
+    blocked = await plan_svc.execute_plan_async(sid, plan_id2, reg)
+    assert blocked["code"] == "CONFIRMATION_REQUIRED"
+    assert blocked["destructive_steps"] == ["d1"]

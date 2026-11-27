@@ -380,3 +380,29 @@ class TestReviewFindings:
         audit = auditor.audit(layers)
         assert d1.fingerprint not in audit.decision_fingerprint  # 合并形态
         assert "+" in audit.decision_fingerprint
+
+
+def test_merged_fingerprint_distinguishes_ref_counts_at_cap() -> None:
+    """P2：joined 整体 [:64] 截断会让 8 个与 9 个 ref 产出同一指纹。"""
+    from app.lib.cartography.grammar_propagation import (
+        CompositeGrammarAuditor,
+        _DecisionRef,
+    )
+    from app.lib.cartography.grammar_solver import GrammarDecision, LegendPlan
+
+    def _auditor(n: int) -> CompositeGrammarAuditor:
+        refs = [
+            _DecisionRef(
+                layer_id=f"L{i}", layer_index=i,
+                decision=GrammarDecision(
+                    fingerprint=f"fp{i:08d}", legend=LegendPlan(form="none")),
+            )
+            for i in range(n)
+        ]
+        return CompositeGrammarAuditor(refs, [])
+
+    fps = {n: _auditor(n)._merged_fingerprint() for n in (7, 8, 9, 12, 20)}
+    assert len(set(fps.values())) == len(fps), f"指纹碰撞: {fps}"
+    for n, fp in fps.items():
+        assert len(fp) <= 64
+        assert f"+{n}" in fp, f"ref 计数必须留在指纹内: {fp}"

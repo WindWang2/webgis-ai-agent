@@ -268,15 +268,21 @@ def profile_temporal_dataset(
     if not records:
         return TemporalDatasetProfile(overall_confidence=0.0)
 
-    # Collect property values per field
+    # Collect property values per field. PERF-F5 / review P3: only the first
+    # _MAX_TEMPORAL_SAMPLE values per field are retained — a 100k-feature
+    # layer with many fields otherwise held N×F values in memory even though
+    # at most 5000 are ever parsed or profiled.
+    _MAX_TEMPORAL_SAMPLE = 5000
     field_values: Dict[str, List[Any]] = {}
+    field_counts: Dict[str, int] = {}
     for item in records:
         props = item.get("properties", item) if isinstance(item, dict) else {}
         if isinstance(props, dict):
             for k, v in props.items():
-                if k not in field_values:
-                    field_values[k] = []
-                field_values[k].append(v)
+                field_counts[k] = field_counts.get(k, 0) + 1
+                bucket = field_values.setdefault(k, [])
+                if len(bucket) < _MAX_TEMPORAL_SAMPLE:
+                    bucket.append(v)
 
     # Profile candidate time fields
     candidate_fields: List[TimeField] = []
@@ -307,14 +313,14 @@ def profile_temporal_dataset(
 
     # Parse all values for primary field to build extent & detect gaps
     p_vals_all = field_values.get(selected_primary.field_name, [])
+    field_total = field_counts.get(selected_primary.field_name, 0)
     total_records = len(records)
     valid_instants: List[TimeInstant] = []
 
     # PERF-F5: extent/granularity/gap estimation is heuristic — capping the
     # parsed sample avoids an O(F) python parse + O(F log F) sort per layer
     # upsert on 100k-feature layers.
-    _MAX_TEMPORAL_SAMPLE = 5000
-    sampled_count = min(len(p_vals_all), _MAX_TEMPORAL_SAMPLE)
+    sampled_count = min(field_total, _MAX_TEMPORAL_SAMPLE)
     p_vals = p_vals_all[:_MAX_TEMPORAL_SAMPLE]
 
     for v in p_vals:
@@ -336,7 +342,6 @@ def profile_temporal_dataset(
     # layer reported missing_time_records=1000). Extrapolate the sampled
     # validity ratio to the full time-value population instead, and document
     # the sample cap in the profile metadata.
-    field_total = len(p_vals_all)
     if field_total > sampled_count and sampled_count > 0:
         valid_count = int(round(valid_count * field_total / sampled_count))
     missing_count = max(0, total_records - valid_count)

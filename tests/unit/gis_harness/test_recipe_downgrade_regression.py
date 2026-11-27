@@ -327,3 +327,44 @@ def test_two_degraded_elements_promote_single_primary() -> None:
         assert primaries[0].cartography == "point_overlay"
     finally:
         reg.unregister("dual_degrade_recipe")
+
+
+def test_resolved_to_reports_actually_promoted_layer():
+    """反证（review P2）：声明 use 层不在计划中（或已被同批禁用）时，
+    resolved_to 必须报**实际**提升的层 —— 否则降级披露与计划事实不符
+    （to_element/disclosure 声称的目标并未被提升）。"""
+    planner = MapProductPlanner()
+    reg = get_recipe_registry()
+    ghost = CartographyRecipe(
+        id="ghost_use_recipe",
+        name="幽灵 use 目标锚",
+        required_geometry=["Point", "MultiPoint"],
+        eligibility=[
+            EligibilityRule(element="visual_heatmap", check_points=True,
+                            reason_code="INSUFFICIENT_POINTS"),
+        ],
+        primary_cartography="visual_heatmap",
+        secondary_cartography=["point_overlay"],
+        fallbacks=[
+            RecipeFallback(when="点数不足", reason_code="INSUFFICIENT_POINTS",
+                           use="administrative_choropleth"),
+        ],
+    )
+    reg.register(ghost)
+    try:
+        intent = MapRequestIntent(query="幽灵 use 目标锚")
+        plan = planner.plan_from_intent(
+            intent, recipe_id="ghost_use_recipe", use_memo=False)
+        fin = planner.finalize_with_profile(plan, _profile(["Point"], 3))
+    finally:
+        reg.unregister("ghost_use_recipe")
+
+    assert fin.status == "finalized"
+    # 前提：计划里没有 administrative_choropleth 层，实际提升的是 point_overlay
+    promoted = [ly for ly in fin.map_layers if ly.role == "primary" and ly.enabled]
+    assert promoted and promoted[0].cartography == "point_overlay"
+    disclosed = [fb for fb in fin.fallbacks if fb.disclosure]
+    assert disclosed
+    assert all("administrative_choropleth" not in fb.disclosure for fb in disclosed), (
+        f"降级披露声称了并未提升的目标：{[(fb.from_element, fb.to_element) for fb in disclosed]}")
+    assert any(fb.to_element == "point_overlay" for fb in disclosed)

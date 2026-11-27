@@ -473,3 +473,15 @@ def test_autofix_apply_filter_null_drops_rows():
     feats = new_payload["geojson"]["features"]
     assert len(feats) == 1 and feats[0]["properties"]["a"] == 1
     assert evidence["operations"][0]["dropped_features"] == 1
+
+
+def test_payload_fingerprint_stable_for_equal_opaque_values():
+    """指纹不得含 repr 内存地址：同形载荷跨进程/跨对象必须同指纹。"""
+    from app.services.data_quality.engine import _payload_fingerprint
+
+    class _Opaque:
+        pass
+
+    a = _payload_fingerprint({"geojson": {"features": []}, "extra": _Opaque()})
+    b = _payload_fingerprint({"geojson": {"features": []}, "extra": _Opaque()})
+    assert a == b

@@ -23,6 +23,7 @@ import React, {
   useEffect,
   useId,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -191,12 +192,21 @@ export const StructuredFeatureForm = forwardRef<StructuredFeatureFormHandle, Str
     onChangeRef.current = onChange;
     const rulesRef = useRef(rules);
     rulesRef.current = rules;
+    const initialPropsRef = useRef(initialProps);
+    initialPropsRef.current = initialProps;
+    // initialProps 按**内容**参与重建判定：对象引用身份（父组件传内联字面量）
+    // 每次渲染都变，直接进 deps 会让 states 被反复重建、用户已键入内容被清空；
+    // 重建本意是合同文档变化（换图层/换合同）或初始值内容真实变化。
+    const initialPropsKey = useMemo(
+      () => JSON.stringify(initialProps ?? null),
+      [initialProps],
+    );
 
     // 合同文档变化（换图层/换合同）→ 重建控件状态
     useEffect(() => {
-      setStates(buildStates(rules, initialProps));
+      setStates(buildStates(rules, initialPropsRef.current));
       setShowAllErrors(false);
-    }, [rules, initialProps]);
+    }, [rules, initialPropsKey]);
 
     // 状态 → props 发射（含挂载时的 default 采用）
     useEffect(() => {

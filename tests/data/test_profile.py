@@ -4,7 +4,9 @@ import pytest
 
 from app.lib.data.profile import (
     DatasetProfileV3,
+    FieldProfile,
     ProfileQuality,
+    TableProfileData,
     profile_features,
     profile_from_field_schema,
     profile_rows,
@@ -103,6 +105,16 @@ class TestProfileFeatures:
         assert vp.fields_truncated
         assert len(vp.fields) == 64
 
+    def test_non_positive_max_scan_rows_falls_back_to_default(self, monkeypatch):
+        import app.lib.data.profile as profile_mod
+
+        monkeypatch.setattr(profile_mod, "DEFAULT_MAX_SCAN_ROWS", 10)
+        vp, q = profile_features(_fc_features(30), max_scan_rows=0)
+        # 0 不是「无限制」：回退默认闸，仍按步长采样。
+        assert q is ProfileQuality.SAMPLED
+        assert vp.row_count == 30
+        assert vp.scanned_rows <= 10
+
 
 class TestProfileRows:
     def test_candidate_keys_and_coords(self):
@@ -124,6 +136,16 @@ class TestProfileRows:
         assert q is ProfileQuality.SAMPLED
         assert tp.row_count == 2000
         assert tp.scanned_rows == 500
+
+    def test_non_positive_max_scan_rows_falls_back_to_default(self, monkeypatch):
+        import app.lib.data.profile as profile_mod
+
+        monkeypatch.setattr(profile_mod, "DEFAULT_MAX_SCAN_ROWS", 10)
+        tp, q = profile_rows([{"a": i} for i in range(30)], max_scan_rows=-1)
+        # 负值同样不是「无限制」：回退默认闸。
+        assert q is ProfileQuality.SAMPLED
+        assert tp.row_count == 30
+        assert tp.scanned_rows <= 10
 
 
 class TestProfileFromFieldSchema:
@@ -148,6 +170,22 @@ class TestProfileFromFieldSchema:
         vp, _ = profile_from_field_schema({"a": {"type": "string"}}, complete=False, row_count=5)
         assert vp.fields_truncated
 
+    def test_bbox_projected_to_extent(self):
+        vp, _ = profile_from_field_schema(
+            {"a": {"type": "number"}}, row_count=1, bbox=[116, 39, 117, 40]
+        )
+        assert vp.extent == [116.0, 39.0, 117.0, 40.0]
+
+    def test_numeric_samples_do_not_imply_temporal(self):
+        vp, _ = profile_from_field_schema(
+            {"elevation": {"type": "number", "sampleValues": [2000, 2010]},
+             "when": {"type": "string", "sampleValues": ["2024-01-01"]}},
+            row_count=2,
+        )
+        assert vp.fields["elevation"].temporal_hint is False
+        assert vp.fields["when"].temporal_hint is True
+        assert vp.temporal_fields == ["when"]
+
 
 class TestDatasetProfileV3:
     def test_summary_bounded(self):
@@ -162,6 +200,29 @@ class TestDatasetProfileV3:
         assert len(json.dumps(s, ensure_ascii=False)) <= 1200
         assert s["category"] == "vector"
         assert s["row_count"] == 10
+
+    def test_summary_table_lists_stay_within_budget(self):
+        import json
+
+        long = "col" + "x" * 117  # FieldProfile.name 上限 128
+        columns = {
+            f"{long}{i}": FieldProfile(name=f"{long}{i}") for i in range(12)
+        }
+        tp = TableProfileData(
+            row_count=10,
+            scanned_rows=10,
+            columns=columns,
+            candidate_keys=[f"{long}k{i}" for i in range(8)],
+            coordinate_candidates=[f"{long}x{i}" for i in range(8)],
+            time_candidates=[f"{long}t{i}" for i in range(8)],
+        )
+        prof = DatasetProfileV3(
+            target_ref="ref:table", category="table", table=tp,
+            profile_quality=ProfileQuality.COMPLETE,
+        )
+        s = prof.summary(max_chars=600)
+        # fields/raster 缺席时，table 的列名/候选键列表也必须继续降级。
+        assert len(json.dumps(s, ensure_ascii=False)) <= 600
 
     def test_invalid_category_rejected(self):
         from pydantic import ValidationError

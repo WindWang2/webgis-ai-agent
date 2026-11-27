@@ -24,6 +24,21 @@ from pydantic import BaseModel, Field
 #: 收纳桶的规范键（与 cartography_service 既有 ``__other__`` 一致）。
 OTHER_KEY = "__other__"
 
+
+def _legend_key(value: Any, prior_values: Sequence[Any]) -> str:
+    """图例 key：默认 ``str(value)``（与 cartography_service #783 逐字节兼容）。
+
+    唯一例外：该 ``str`` 已被**不同类型**的类别值占用时加类型前缀消歧
+    （``int:1`` vs ``str:1``）——否则混合类型值 1 与 ``"1"`` 会生成同名
+    key 的异色条目，正是本模块要消除的「颜色循环误导图」（legend 与
+    数据侧 ``<field>:collapsed`` 同口径，两处必须用同一把钥匙）。
+    """
+    key = str(value)
+    if any(str(w) == key and (type(w) is not type(value) or w != value)
+           for w in prior_values):
+        key = f"{type(value).__name__}:{key}"
+    return key
+
 #: 数据侧收纳属性的后缀（``<field>:collapsed``；tooltip/label 同口径消费面）。
 COLLAPSED_PROPERTY_SUFFIX = ":collapsed"
 
@@ -54,9 +69,9 @@ class CollapseOutcome(BaseModel):
 
     def collapse_key_for(self, value: Any) -> str:
         """原始类别值 → 收纳后键（保留类=原值字符串；其余=other）。"""
-        for kept in self.kept_values:
+        for i, kept in enumerate(self.kept_values):
             if type(value) is type(kept) and value == kept:
-                return str(kept)
+                return _legend_key(kept, self.kept_values[:i])
         return self.meta.other_key
 
 
@@ -75,7 +90,9 @@ def apply_collapse(
     """
     kept = list(categorical_values[:max(0, int(keep_classes))])
     entries: List[Dict[str, Any]] = [
-        {"key": str(v), "color": colors[i % len(colors)] if colors else "#cccccc", "label": str(v)}
+        {"key": _legend_key(v, kept[:i]),
+         "color": colors[i % len(colors)] if colors else "#cccccc",
+         "label": str(v)}
         for i, v in enumerate(kept)
     ]
     other_color = colors[keep_classes % len(colors)] if colors else "#cccccc"
@@ -85,7 +102,7 @@ def apply_collapse(
         entries=entries,
         kept_values=kept,
         meta=CollapseMeta(
-            kept_keys=[str(v) for v in kept],
+            kept_keys=[_legend_key(v, kept[:i]) for i, v in enumerate(kept)],
             other_key=OTHER_KEY,
             other_label=other_label,
             observed_classes=len(categorical_values),

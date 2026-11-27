@@ -87,6 +87,34 @@ describe('fastGet (F-FE-FGP)', () => {
     expect(_cacheSize()).toBe(1);
   });
 
+  it('an evicted in-flight GET cannot overwrite the newer entry after invalidation', async () => {
+    let releaseOld!: (v: Response) => void;
+    let releaseNew!: (v: Response) => void;
+    mockFetch.mockImplementationOnce(
+      () => new Promise<Response>((resolve) => { releaseOld = resolve; }),
+    );
+    mockFetch.mockImplementationOnce(
+      () => new Promise<Response>((resolve) => { releaseNew = resolve; }),
+    );
+
+    const oldRequest = fastGet<{ v: string }>('/race');
+    // Mutation invalidates the entry while the old GET is still in flight.
+    invalidateCache('/race');
+    const newRequest = fastGet<{ v: string }>('/race');
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+
+    // New response lands first, then the pre-mutation response.
+    releaseNew(jsonOk({ v: 'new' }) as unknown as Response);
+    await expect(newRequest).resolves.toMatchObject({ data: { v: 'new' } });
+    releaseOld(jsonOk({ v: 'old' }) as unknown as Response);
+    const oldResult = await oldRequest;
+    expect(oldResult.stale).toBe(true);
+
+    const third = await fastGet<{ v: string }>('/race');
+    expect(third.cached).toBe(true);
+    expect(third.data).toEqual({ v: 'new' });
+  });
+
   it('clearCache wipes the entire cache', async () => {
     mockFetch.mockResolvedValue(jsonOk({ ok: true }));
     await fastGet('/a');

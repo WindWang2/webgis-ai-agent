@@ -211,7 +211,9 @@ class PreparationPlan(BaseModel):
     @classmethod
     def _steps(cls, v: Any) -> Tuple[PlanStep, ...]:
         if isinstance(v, tuple) and all(isinstance(s, PlanStep) for s in v):
-            return v[:MAX_PLAN_STEPS]
+            if len(v) > MAX_PLAN_STEPS:
+                raise ValueError(f"plan exceeds {MAX_PLAN_STEPS} steps")
+            return v
         steps = tuple(parse_step(s) for s in (v or []))
         if len(steps) > MAX_PLAN_STEPS:
             raise ValueError(f"plan exceeds {MAX_PLAN_STEPS} steps")
@@ -362,7 +364,11 @@ def _load_sync(path: Path) -> List[PreparationPlan]:
                 line = line.strip()
                 if not line:
                     continue
-                plan = PreparationPlan.from_dict(json.loads(line))
+                try:
+                    raw = json.loads(line)
+                except Exception:  # noqa: BLE001 — 坏行跳过（持久化纪律）
+                    continue
+                plan = PreparationPlan.from_dict(raw)
                 if plan is not None:
                     out.append(plan)
     except Exception:  # noqa: BLE001 — 读失败按空（诚实缺席）

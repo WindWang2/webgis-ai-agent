@@ -4,6 +4,7 @@ import {
   LATEST_SUPPORTED_MAPSPEC_VERSION,
   DEFAULT_MAPSPEC_VERSION,
   migrateMapSpec,
+  checkMapSpecVersion,
   checkComponentAbi,
   type MigratedMapSpec,
 } from "./version";
@@ -46,9 +47,9 @@ function deepFreeze<T>(value: T): T {
 }
 
 describe("migrateMapSpec：已知版本词表", () => {
-  it("SUPPORTED_MAPSPEC_VERSIONS 词表与契约镜像锁定到 2.1（1.10 = G21 OD flow；2.0 = G15 号位；2.1 = G16 label authoring）", () => {
-    expect(SUPPORTED_MAPSPEC_VERSIONS).toEqual(["1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10", "2.0", "2.1"]);
-    expect(LATEST_SUPPORTED_MAPSPEC_VERSION).toBe("2.1");
+  it("SUPPORTED_MAPSPEC_VERSIONS 词表与契约镜像锁定到 2.2（1.10 = G21 OD flow；2.0 = G15 号位；2.1 = G16 label authoring；2.2 = GOAL-20261126-04 diagram_symbol）", () => {
+    expect(SUPPORTED_MAPSPEC_VERSIONS).toEqual(["1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10", "2.0", "2.1", "2.2"]);
+    expect(LATEST_SUPPORTED_MAPSPEC_VERSION).toBe("2.2");
     expect(DEFAULT_MAPSPEC_VERSION).toBe("1.0");
   });
 
@@ -125,15 +126,18 @@ describe("migrateMapSpec：缺失/非字符串 version → 视为 1.0 并披露"
     expect(result.disclosures[0]?.kind).toBe("invalid");
     expect(result.disclosures[0]?.detail).toContain("non-string version (number)");
   });
-
-  it('version 为空字符串 "" → 视为缺失 → 缺省 1.0', () => {
-    const result = expectMigratedOk(migrateMapSpec({ version: "", layers: [] }));
-    expect(result.originalVersion).toBe("1.0");
-    expect(result.disclosures[0]?.kind).toBe("invalid");
-  });
 });
 
 describe("migrateMapSpec：forward version → fail-safe 拒绝", () => {
+  it('version 为空字符串 "" → 词表外字符串 → forward fail-safe 拒绝（与 checkMapSpecVersion 同裁决）', () => {
+    const result = expectMigratedFail(migrateMapSpec({ version: "", layers: [] }));
+    expect(result.reason).toBe("forward_version");
+    expect(result.version).toBe("");
+    expect(result.disclosures[0]?.kind).toBe("policy");
+    // 渲染门免克隆判定同口径（此前 migrate 按缺失放行 1.0，与门裁决分歧）
+    expect(checkMapSpecVersion({ version: "" }).ok).toBe(false);
+  });
+
   it('version "9.9" → ok:false、reason forward_version、policy 披露', () => {
     const result = expectMigratedFail(migrateMapSpec({ version: "9.9", layers: [] }));
     expect(result.reason).toBe("forward_version");

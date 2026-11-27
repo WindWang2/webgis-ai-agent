@@ -212,7 +212,7 @@ class ProjectService:
         # eager loads, which we do not need here.
         proj = db.execute(
             select(Project)
-            .where(Project.id == project_id)
+            .where(Project.id == project_id, Project.status != "deleted")
             .options(noload(Project.organization), noload(Project.owner))
         ).scalar_one_or_none()
         if proj is None:
@@ -308,7 +308,7 @@ class ProjectService:
         # Slim project read: only the columns we need, no relationships.
         proj = db.execute(
             select(Project)
-            .where(Project.id == project_id)
+            .where(Project.id == project_id, Project.status != "deleted")
             .options(noload(Project.organization), noload(Project.owner))
         ).scalar_one_or_none()
         if proj is None:
@@ -359,6 +359,7 @@ class ProjectService:
         The full ORM rows are returned (caller picks full DTO or summary).
         """
         from sqlalchemy import func
+        from sqlalchemy.orm import defer
 
         base = select(Project).where(Project.status == status)
         if org_id:
@@ -381,7 +382,12 @@ class ProjectService:
         # Defer the large metadata_json column for list views — it's kB-scale
         # per row and the list UI never renders it. The detail endpoint
         # already triggers a fresh row load.
-        page_stmt = base.order_by(Project.updated_at.desc()).limit(limit).offset(offset)
+        page_stmt = (
+            base.options(defer(Project.metadata_json))
+            .order_by(Project.updated_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
         rows = list(db.execute(page_stmt).scalars().all())
         return rows, total
 

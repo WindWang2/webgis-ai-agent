@@ -72,7 +72,6 @@ def _ensure_builtin_registrations() -> None:
     global _BUILTINS_LOADED
     if _BUILTINS_LOADED:
         return
-    _BUILTINS_LOADED = True
     from app.evaluation import (
         anti_claim,
         case_matrix,
@@ -174,6 +173,9 @@ def _ensure_builtin_registrations() -> None:
         builder=lambda: scenario_corpus.build_scenario_corpus(
             registry_validate=False),
         is_benchmark_case=False, group="scenario"))
+    # 导入 / 登记全部成功后才落 flag：中途失败 → 下次调用重试，而不是
+    # 在 flag=True 下静默返回半截（或空）注册表。
+    _BUILTINS_LOADED = True
 
 
 def corpus_version_hash(cases: List[Any]) -> str:

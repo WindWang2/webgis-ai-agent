@@ -89,8 +89,8 @@ export function AnalysisTab({ onSend, aiStatus }: AnalysisTabProps & { aiStatus?
     activeTool === 'buffer'
       ? !!bufferLayer && !isNaN(bufferDist) && bufferDist > 0
       : activeTool === 'overlay'
-        ? !!overlayLayerA && !!overlayLayerB
-        : !!clipTarget && !!clipMask;
+        ? !!overlayLayerA && !!overlayLayerB && overlayLayerA !== overlayLayerB
+        : !!clipTarget && !!clipMask && clipTarget !== clipMask;
   const canSubmit = baseCanSubmit && !isBusy;
 
   const handleSubmit = () => {

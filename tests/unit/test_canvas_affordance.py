@@ -146,6 +146,21 @@ async def test_ingest_accepts_envelope_writes_ring():
 
 
 @pytest.mark.asyncio
+async def test_ingest_non_string_meta_key_never_raises():
+    """摄入是 fail-open 面：meta 非字符串键不得让 TypeError 逃出调用方。"""
+    session_id = _sid()
+    store = FakeSituationStore()
+    action = _box_action("a-bad-meta")
+    action["meta"] = {1: "x", "kind": "y"}
+    ack = await ingest_canvas_actions(
+        session_id, _envelope([action]), store=store
+    )
+    assert isinstance(ack, CanvasAffordanceAck)
+    assert not ack.accepted
+    assert ack.reason == "empty_or_invalid_envelope"
+
+
+@pytest.mark.asyncio
 async def test_ingest_dedupes_cross_channel_double_report():
     """同一 action 双通道双报（即时端点 + turn 捎带）→ 不双计。"""
     session_id = _sid()
@@ -288,6 +303,25 @@ def test_topology_derive_never_raises_on_invalid_geometry():
     }
     result = topology_derive(bowtie, _water_features(), op="select_intersect")
     assert "error" in result or result["hit_count"] == 0
+
+
+def test_topology_derive_tolerates_non_dict_properties():
+    """非 dict properties 不得中止整层派生（单要素引用回退索引）。"""
+    features = [
+        {
+            "geometry": _box_polygon(116.31, 39.81, 116.32, 39.82),
+            "properties": ["not", "a", "dict"],
+        },
+        {
+            "id": "w-ok",
+            "geometry": _box_polygon(116.33, 39.82, 116.34, 39.83),
+            "properties": {"type": "pond"},
+        },
+    ]
+    result = topology_derive(_box_polygon(), features, op="select_intersect")
+    assert "error" not in result
+    assert result["hit_count"] == 2
+    assert result["hit_refs"] == ["0", "w-ok"]
 
 
 # ---------------------------------------------------------------------------

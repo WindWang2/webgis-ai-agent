@@ -190,6 +190,53 @@ async def test_multi_turn_amendments_touch_only_targets(clean_session):
 
 @pytest.mark.cartography
 @pytest.mark.asyncio
+async def test_merged_upsert_does_not_revert_visibility_of_same_layer(clean_session):
+    """review P1：同层「merged upsert（整层替换）+ presentation patch」
+    并存时，提交后 spec 真值必须是 patch 落定的可见性 —— upsert 载荷携带
+    current 呈现面，先发 patch 会被整层替换回退（隐藏层被永久按回去）。"""
+    engine = MapSpecLifecycleEngine()
+    base_revision = await _seed(clean_session, engine)
+
+    async def layers_now():
+        state = await session_data_manager.get_map_state(clean_session)
+        doc = state.get("mapspec") or state
+        return {layer["id"]: layer for layer in doc.get("layers", [])}
+
+    # 轮 1：建层（期望隐藏）
+    ir1 = _ir(visible=False)
+    state = await session_data_manager.get_map_state(clean_session)
+    first = await apply_plan(clean_session, compile_plan(ir1, state, base_revision=base_revision),
+                             engine=engine)
+    assert first.status == "applied"
+    assert (await layers_now())["pl-primary"].get("visible") is False
+
+    # 轮 2：同层 restyle（换分类数 → merged upsert）+ 期望显示
+    #       → upsert 与 presentation patch 同层两笔
+    ir2 = _ir(visible=True).model_copy(update={"layer_intents": [
+        LayerIntent(intent_id="li-01-primary", action="restyle",
+                    layer_id="pl-primary", source_ref="src:pop",
+                    expected_visible=True,
+                    blueprint=LayerBlueprint(
+                        layer_type="fill",
+                        paint={"fill-color": "#313695"},
+                        classification={"k": 6, "method": "quantile"}))]})
+    state = await session_data_manager.get_map_state(clean_session)
+    revision = int(state.get("_cartographic_mutation_revision", 0))
+    compilation = compile_plan(ir2, state, base_revision=revision)
+    assert [m.intent for m in compilation.mutations] == [
+        "upsert_layer", "patch_layer_presentation"], \
+        "整层 upsert 必须先于同层 presentation patch"
+    second = await apply_plan(clean_session, compilation, engine=engine)
+    assert second.status == "applied"
+
+    layer = (await layers_now())["pl-primary"]
+    assert layer.get("visible") is not False, "可见性不得被整层替换回退"
+    assert (layer.get("layout") or {}).get("visibility", "visible") == "visible"
+    assert layer["legend_spec"]["classification"]["k"] == 6, "restyle 的 legend 变更仍落账"
+
+
+@pytest.mark.cartography
+@pytest.mark.asyncio
 async def test_receipt_staleness_detects_drift(clean_session):
     engine = MapSpecLifecycleEngine()
     base_revision = await _seed(clean_session, engine)

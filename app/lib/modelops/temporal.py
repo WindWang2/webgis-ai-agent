@@ -43,7 +43,22 @@ class TemporalStackSpec:
             )
         if self.missing_policy not in MISSING_POLICIES:
             raise DescriptorError(f"unknown missing_policy {self.missing_policy!r}")
-        if list(self.times) != sorted(self.times):
+        # 升序按**时刻**判定（ISO-8601 字符串排序会把不同 UTC 偏移的
+        # 合法时刻排错：+08:00 的 2026-01-01 早于 Z 的 2025-12-31T20:00）。
+        from datetime import datetime, timezone
+
+        instants = []
+        for value in self.times:
+            try:
+                moment = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise DescriptorError(
+                    f"temporal times must be ISO-8601 (got {value!r})"
+                ) from exc
+            if moment.tzinfo is None:
+                moment = moment.replace(tzinfo=timezone.utc)
+            instants.append(moment.astimezone(timezone.utc))
+        if instants != sorted(instants):
             raise DescriptorError("temporal times must be ascending ISO-8601")
         if len(set(self.times)) != len(self.times):
             raise DescriptorError("temporal times must be unique")

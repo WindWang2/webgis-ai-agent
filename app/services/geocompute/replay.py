@@ -92,8 +92,6 @@ def replay_trace(events: list[dict[str, Any]]) -> dict[str, Any]:
                 if status not in _MARKED_ALLOWED_STATUS:
                     violations.append(
                         f"[{i}] node_marked with non-terminal status '{status}'")
-            if name == "node_attempt_failed":
-                pass
             state["terminal"] = name
         else:
             # 计数型/进度型事件（node_dispatched 等）：不构成转移约束。
@@ -102,6 +100,13 @@ def replay_trace(events: list[dict[str, Any]]) -> dict[str, Any]:
     # 终态收尾校验：run 未结束也算一个 violation（截断 trace 是异常）。
     if run_finished_index is None and events:
         violations.append("trace truncated: no run_finished")
+    # 每个 admitted 节点必须到达终态：run_finished 存在但某节点缺终态事件
+    # （worker 崩溃/事件漏写）恰是状态机最该抓的异常，不能因 run 已终结而
+    # 静默判 valid（假阴性）。
+    for node_id, state in nodes.items():
+        if state["admitted"] > 0 and state["terminal"] is None:
+            violations.append(
+                f"node '{node_id}' admitted but never reached a terminal event")
 
     return {
         "valid": not violations,

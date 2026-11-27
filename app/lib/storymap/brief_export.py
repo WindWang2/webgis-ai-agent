@@ -179,9 +179,6 @@ def build_brief_bundle(
                 "table": widget.data if widget.kind in ("table", "stats", "kpi") else None,
             }
     facts_by_id = {f.fact_id: f.model_dump(mode="json") for f in spec.facts}
-    blocks_by_chapter: Dict[str, List[str]] = {}
-    for block in spec.blocks:
-        blocks_by_chapter.setdefault(block.chapter_id, []).append(block.id)
     bundle: Dict[str, Any] = {
         "schema_version": BRIEF_BUNDLE_SCHEMA_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -189,7 +186,7 @@ def build_brief_bundle(
         "release": _project_release_meta(release_meta),
         "spec": strip_surrogates(spec_dict),  # type: ignore[arg-type]
         "widgets": strip_surrogates(widgets),
-        "static_maps": static_maps,
+        "static_maps": strip_surrogates(static_maps),
         "facts_index": strip_surrogates(facts_by_id),
         "manifest": {
             "chapter_count": len(spec.chapters),

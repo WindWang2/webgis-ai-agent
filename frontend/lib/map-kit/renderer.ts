@@ -63,8 +63,12 @@ const VIEWPORT_RENDER_BUDGET = 5000;
  * W7：陈旧视口应用取消 —— refresh 的重活在 idle 回调里执行；新一轮
  * refresh 使旧 token 失效，旧回调不再 setData（避免排队中的过时视口
  * 突变逐个落地，表现为缩放停止后地图"抖动回放"）。
+ *
+ * token 按 map 记账（WeakMap）：对比视图下对 map B 的 refresh 不得作废
+ * map A 排队中的 apply —— 模块级单值会让 A 的内联源保留陈旧视口裁剪
+ * 且无后续触发。
  */
-let _viewportRefreshGeneration = 0;
+const _viewportRefreshGeneration = new WeakMap<object, number>();
 
 /**
  * Phase 8: viewport-driven feature culling for large inline GeoJSON sources.
@@ -301,15 +305,18 @@ export function addGeoJsonSource(
 export function refreshGeoJsonSourcesByViewport(map: Map, viewport: ViewportBBox) {
   if (!map) return;
   // W7：新一代 token 使在途旧回调失效 —— 连续平移/缩放时排队中的过时
-  // 视口应用被取消（最后稳定视口的 refresh 是唯一落地的写）。
-  const generation = ++_viewportRefreshGeneration;
+  // 视口应用被取消（最后稳定视口的 refresh 是唯一落地的写）。token 按
+  // map 记账：别图 refresh 不作废本图排队中的 apply。
+  const generation = (_viewportRefreshGeneration.get(map) ?? 0) + 1;
+  _viewportRefreshGeneration.set(map, generation);
+  const current = () => _viewportRefreshGeneration.get(map) ?? 0;
   const apply = () => {
-    if (generation !== _viewportRefreshGeneration) return; // stale → cancelled
+    if (generation !== current()) return; // stale → cancelled
     // R1-m13：idle 回调推迟 ≤200ms 执行 —— 地图可能已卸载/样式已重建，
     // 全体访问有界包裹（与 boundedVisibilityRepair 同款防御口径）。
     try {
       _registeredGeoJsonSourceIds.forEach((id) => {
-        if (generation !== _viewportRefreshGeneration) return; // 中途失效同样取消
+        if (generation !== current()) return; // 中途失效同样取消
         if (isMvtSourceId(id)) return; // #668: double-crop guard
         const source = map.getSource?.(id) as GeoJSONSource;
         if (!source) return;
@@ -327,7 +334,7 @@ export function refreshGeoJsonSourcesByViewport(map: Map, viewport: ViewportBBox
             viewport,
             VIEWPORT_RENDER_BUDGET,
           ).then((trimmed) => {
-            if (generation !== _viewportRefreshGeneration || map.getSource(id) !== source) return; // stale source or viewport
+            if (generation !== current() || map.getSource(id) !== source) return; // stale source or viewport
             const effective = trimmed ?? _filterForViewport(source, raw, viewport); // 同步兜底
             if (_lastGeoJsonData.get(source) !== effective) {
               _lastGeoJsonData.set(source, effective);
@@ -681,7 +688,8 @@ export interface HeatmapOptions {
  * 超窗回落默认 30px —— 米值绝不再被当作像素消费。
  */
 export function resolveHeatmapRadiusPx(options: HeatmapOptions): number {
-  const explicit = Number(options.radiusPx);
+  // JSON null 不是显式数值：Number(null)===0 会把契约字段静默变成最小半径。
+  const explicit = options.radiusPx == null ? Number.NaN : Number(options.radiusPx);
   if (Number.isFinite(explicit)) {
     return Math.max(4, Math.min(80, Math.floor(explicit)));
   }
@@ -763,7 +771,14 @@ export function addNativeHeatmap(map: Map, options: HeatmapOptions) {
  * failures — MapLibre throws on removeLayer/removeSource of a missing id.
  */
 export function removeLayerStack(map: Map, id: string, prefix: boolean = false): boolean {
-  const style = map.getStyle();
+  // 地图已卸载时 getStyle 会抛（disposed 防御与 remove 调用同口径）—— 返回
+  // ok=false，不让异常穿透。
+  let style: ReturnType<typeof map.getStyle>;
+  try {
+    style = map.getStyle();
+  } catch {
+    return false;
+  }
   const targetLayerIds = new Set<string>();
   const targetSourceIds = new Set<string>();
 
@@ -1048,45 +1063,60 @@ export function addProcessLayerStack(
   style: ProcessLayerStyle = {},
 ) {
   const sourceId = `process-${stepId}`;
-  if (map.getSource(sourceId)) return;
+  const fillId = `process-${stepId}-fill`;
+  const lineId = `process-${stepId}-line`;
+  const pointId = `process-${stepId}-point`;
+  // 以三层全在场为完成判据：addLayer 曾抛错（样式未就绪）时 source 已建、
+  // 图层缺失，仅凭 getSource 早退会让重试永远跳过 → 过程层静默缺失。
+  if (map.getSource(sourceId) && map.getLayer(fillId) && map.getLayer(lineId) && map.getLayer(pointId)) {
+    return;
+  }
 
   const color = style.color || '#16a34a';
   const fillOpacity = style.fillOpacity ?? 0.08;
 
-  map.addSource(sourceId, { type: 'geojson', data: geojson as GeoJsonSourceData });
-  map.addLayer({
-    id: `process-${stepId}-fill`,
-    type: 'fill',
-    source: sourceId,
-    paint: {
-      'fill-color': color,
-      'fill-opacity': fillOpacity,
-      'fill-outline-color': 'rgba(22, 163, 74, 0.3)',
-    },
-  });
-  map.addLayer({
-    id: `process-${stepId}-line`,
-    type: 'line',
-    source: sourceId,
-    paint: {
-      'line-color': color,
-      'line-width': 1.5,
-      'line-opacity': 0.4,
-      'line-dasharray': [3, 3],
-    },
-  });
-  map.addLayer({
-    id: `process-${stepId}-point`,
-    type: 'circle',
-    source: sourceId,
-    filter: ['==', '$type', 'Point'],
-    paint: {
-      'circle-radius': 4,
-      'circle-color': 'rgba(22, 163, 74, 0.3)',
-      'circle-stroke-width': 1,
-      'circle-stroke-color': color,
-    },
-  });
+  if (!map.getSource(sourceId)) {
+    map.addSource(sourceId, { type: 'geojson', data: geojson as GeoJsonSourceData });
+  }
+  if (!map.getLayer(fillId)) {
+    map.addLayer({
+      id: fillId,
+      type: 'fill',
+      source: sourceId,
+      paint: {
+        'fill-color': color,
+        'fill-opacity': fillOpacity,
+        'fill-outline-color': 'rgba(22, 163, 74, 0.3)',
+      },
+    });
+  }
+  if (!map.getLayer(lineId)) {
+    map.addLayer({
+      id: lineId,
+      type: 'line',
+      source: sourceId,
+      paint: {
+        'line-color': color,
+        'line-width': 1.5,
+        'line-opacity': 0.4,
+        'line-dasharray': [3, 3],
+      },
+    });
+  }
+  if (!map.getLayer(pointId)) {
+    map.addLayer({
+      id: pointId,
+      type: 'circle',
+      source: sourceId,
+      filter: ['==', '$type', 'Point'],
+      paint: {
+        'circle-radius': 4,
+        'circle-color': 'rgba(22, 163, 74, 0.3)',
+        'circle-stroke-width': 1,
+        'circle-stroke-color': color,
+      },
+    });
+  }
   noteStyleLayerAdded(map, `process-${stepId}-fill`);
   noteStyleLayerAdded(map, `process-${stepId}-line`);
   noteStyleLayerAdded(map, `process-${stepId}-point`);

@@ -360,7 +360,9 @@ class RecoveryLedger:
                 entries.pop(oldest)
             return entries
 
-        self._mutate(new_session_id, _fn)
+        if self._mutate(new_session_id, _fn) is None:
+            # ledger 禁用/路径不可用/写失败 —— 未真正拷贝，不得谎报计数。
+            return 0
         return len(items)
 
 

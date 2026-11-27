@@ -284,3 +284,72 @@ async def test_runs_listing_survives_refresh(_registry):
     assert runs[0]["skill_id"] == "validate_spatial_data"
     assert runs[0]["status"] == "completed"
     assert runs[0]["result_ref"].startswith("ref:skillreport-")
+
+
+@pytest.mark.asyncio
+async def test_runs_listing_uses_single_db_session(monkeypatch):
+    """review P2-2：批量列表复用单次 DB 会话（不逐 job 各开一次 = N+1）。"""
+    import app.core.database as db_mod
+    from app.models.db_model import AnalysisTask
+    from app.services.gis_harness.skill_jobs.runner import list_skill_job_views
+
+    sid = "t-run-list-sessions"
+    with db_mod.SessionLocal() as db:
+        for i in range(3):
+            db.add(AnalysisTask(
+                task_type="skill_job", job_kind="skill_job", session_id=sid,
+                status="completed",
+                parameters={"skill_id": f"skill-{i}", "skill_version": "1.0.0"}))
+        db.commit()
+
+    real = db_mod.SessionLocal
+    opened: list = []
+
+    class _CountingSession:
+        def __init__(self) -> None:
+            opened.append(1)
+            self._s = real()
+
+        def close(self) -> None:
+            self._s.close()
+
+        def __getattr__(self, name):
+            return getattr(self._s, name)
+
+    monkeypatch.setattr(db_mod, "SessionLocal", _CountingSession)
+    runs = await list_skill_job_views(session_id=sid)
+    assert sorted(r["skill_id"] for r in runs) == [
+        "skill-0", "skill-1", "skill-2"]
+    assert all(r["status"] == "completed" for r in runs)
+    assert len(opened) == 1, f"N+1 会话（应为 1）：{len(opened)}"
+
+
+@pytest.mark.asyncio
+async def test_reused_view_unavailable_does_not_overwrite_active_bookkeeping(
+        _registry, monkeypatch):
+    """reused=True 且视图瞬态不可读时，不得覆盖同 job 的进程内簿记。"""
+    from app.services.gis_harness.skill_jobs import runner as runner_mod
+    import app.services.data_operations.runner as data_runner
+
+    sid = "t-run-reuse-none"
+    ref = await _store_ref(sid, _points())
+    result = await _prepare_and_put(
+        sid, "validate_spatial_data", {}, [{"role": "subject", "ref": ref}])
+
+    job_id = 987654
+    sentinel = asyncio.Event()
+    runner_mod._run_state.events[job_id] = sentinel
+    monkeypatch.setattr(
+        data_runner, "submit_async_job",
+        lambda **kwargs: (job_id, "pending", True))
+    monkeypatch.setattr(runner_mod, "_job_view_sync", lambda jid: None)
+    try:
+        view = await start_skill_job(
+            result.prepared, result.inline_payloads,
+            owner=SkillJobOwner(session_id=sid), wait_timeout_s=0)
+        assert view["already_running"] is True
+        assert runner_mod._run_state.events[job_id] is sentinel
+        assert job_id not in runner_mod._run_state.tasks
+    finally:
+        runner_mod._run_state.events.pop(job_id, None)
+        runner_mod._run_state.tasks.pop(job_id, None)

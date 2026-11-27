@@ -415,7 +415,12 @@ async def plan_repairs_for_chapter(
             runtime_rev = 0
     epoch = f"{runtime_rev}"
     if isinstance(map_state, dict):
-        epoch = f"{runtime_rev}:{int(map_state.get('_cartographic_mutation_revision') or 0)}"
+        try:
+            mutation_rev = int(
+                map_state.get('_cartographic_mutation_revision') or 0)
+        except (TypeError, ValueError):
+            mutation_rev = 0
+        epoch = f"{runtime_rev}:{mutation_rev}"
         ledger = map_state.get(REPAIR_LOOP_KEY)
         ledger = ledger if isinstance(ledger, dict) else None
     else:

@@ -139,3 +139,47 @@ def test_single_node_facility_produces_valid_polygon():
     )
     assert len(areas) == 1
     assert areas[0].breaks[0].geometry["type"] in ("Polygon", "MultiPolygon")
+
+
+def test_dataset_only_call_builds_graph_instead_of_none_iteration():
+    """Passing only network_dataset (the usage the entry-point error message
+    advertises) used to leave graph_view=None and raise TypeError on
+    ``start_node_id not in graph_view``; with barriers it silently returned []."""
+    _graph, dataset = _grid_network()
+    fac = Facility(facility_id="f1", geometry={"type": "Point", "coordinates": [116.005, 39.005]})
+    areas = NetworkServiceAreaService().network_service_area(
+        facilities=[fac],
+        breaks=[1.0, 2.0],
+        break_unit="minutes",
+        graph=None,
+        network_dataset=dataset,
+        profile=TravelProfile(),
+    )
+    assert len(areas) == 1
+    assert len(areas[0].breaks) == 2
+
+
+def test_dataset_only_call_handles_hand_built_node_ids():
+    """A hand-built NetworkDataset may use non-builder node ids; the rebuilt
+    graph and the dataset used for snapping must stay consistent."""
+    from app.services.network.models import Edge, NetworkDataset, Node
+
+    dataset = NetworkDataset(
+        dataset_id="manual",
+        nodes=[Node(id="a", x=116.0, y=39.0), Node(id="b", x=116.002, y=39.0)],
+        edges=[
+            Edge(id="e_ab", u="a", v="b", length_m=171.0, travel_time_s=10.0),
+            Edge(id="e_ba", u="b", v="a", length_m=171.0, travel_time_s=10.0),
+        ],
+    )
+    fac = Facility(facility_id="f1", geometry={"type": "Point", "coordinates": [116.0, 39.0]})
+    areas = NetworkServiceAreaService().network_service_area(
+        facilities=[fac],
+        breaks=[1.0],
+        break_unit="minutes",
+        graph=None,
+        network_dataset=dataset,
+        profile=TravelProfile(),
+    )
+    assert len(areas) == 1
+    assert areas[0].breaks[0].reachable_edge_count >= 1

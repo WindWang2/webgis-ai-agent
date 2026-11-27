@@ -33,7 +33,7 @@ def validate_data_path(path: str, data_dir: str = "./data") -> str:
     # 安全检查：确保解析后的路径在 data_dir 之下
     if not resolved.startswith(data_dir_real + os.sep) and resolved != data_dir_real:
         # 允许 ./tmp 作为临时工作区（同样 realpath 化以避免符号链接绕过）
-        tmp_dir = os.path.realpath("./tmp")
+        tmp_dir = os.path.realpath(os.path.join(os.path.dirname(data_dir_real), "tmp"))
         if not (resolved.startswith(tmp_dir + os.sep) or resolved == tmp_dir):
             raise ValueError(f"非法路径: '{path}' 超出允许目录范围 ({data_dir_real})")
 

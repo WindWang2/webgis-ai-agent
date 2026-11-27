@@ -228,6 +228,23 @@ def test_table_source_for_spatial_blocked():
     assert ei.value.code == "source_geometry_missing"
 
 
+def test_malformed_point_coordinates_do_not_escape():
+    """坐标 null/字符串 → 按 null_geometry 披露，不抛 TypeError/ValueError 逃出。"""
+    left_fc = points_fc()
+    left_fc["features"][0]["geometry"]["coordinates"] = [None, 5.0]
+    left_fc["features"][1]["geometry"]["coordinates"] = ["bad", 5.0]
+    left = loaded_from_fc("left", left_fc, "fpL")
+    right = loaded_from_fc("right", regions_fc(), "fpR")
+    plan = spatial_plan(
+        spatial={"predicate": "within", "multi_match": "require_unique"},
+        field_map=_map_entries())
+    out, stats, _ = _run(plan, left, right)
+    by = _by_pid(out)
+    assert by["P1"]["_join_status"] == "null_geometry"
+    assert by["P2"]["_join_status"] == "null_geometry"
+    assert stats.left_null_geometry == 2
+
+
 def test_deterministic_replay_same_snapshot_identical_output():
     """J18：同快照重放 → 配对/输出值/身份逐位一致。"""
 

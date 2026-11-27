@@ -14,6 +14,7 @@ Create Date: 2026-08-16
 """
 from typing import Sequence, Union
 
+import sqlalchemy as sa
 from alembic import op, context
 
 
@@ -34,8 +35,14 @@ def _is_sqlite() -> bool:
 def upgrade() -> None:
     """Create the composite index for per-session upload listing."""
     if _is_sqlite():
-        with op.batch_alter_table("uploads", schema=None) as batch_op:
-            batch_op.create_index(INDEX_NAME, ["session_id", "upload_time"])
+        # create_all  coexistence guard：ix_uploads_session_time 由 upload 模型
+        # 声明，create_all 先行建索引后无守卫的 create_index 在 SQLite 必崩
+        # （PG 分支已有 IF NOT EXISTS）。
+        if INDEX_NAME not in {
+            i["name"] for i in sa.inspect(op.get_bind()).get_indexes("uploads")
+        }:
+            with op.batch_alter_table("uploads", schema=None) as batch_op:
+                batch_op.create_index(INDEX_NAME, ["session_id", "upload_time"])
     else:
         # PostgreSQL: IF NOT EXISTS 与启动期 create_all 幂等共存（新库由
         # create_all 按模型建出同名索引，alembic upgrade 不得碰撞报错）。

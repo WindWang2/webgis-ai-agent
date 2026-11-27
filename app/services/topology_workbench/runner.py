@@ -27,7 +27,7 @@ import json
 import logging
 import time
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -65,9 +65,13 @@ class RunExecutionError(Exception):
 
 
 def compute_input_digest(
-    ruleset_digest: str, role_fingerprints: Dict[str, str], scopes: Dict[str, Any]
+    ruleset_digest: str, role_fingerprints: Dict[str, str], scopes: Dict[str, Any],
+    role_refs: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> str:
-    """复用键：全部源内容指纹 + 规则 digest + scope + 方法版本。
+    """复用键：全部源内容指纹 + 源绑定身份（kind/ref）+ 规则 digest + scope + 方法版本。
+
+    kind/ref 必须入键：同内容可能挂在不同 ref/产物上，复用会把旧运行的
+    locators（含原 ref/revision）克隆到新运行 —— 修复桥随后打到错误数据源。
 
     computation_crs 不单独入键：它是源联合范围的纯函数
     （recommend_metric_crs，无随机性），已由内容指纹内蕴 —— 单列反而
@@ -76,6 +80,10 @@ def compute_input_digest(
     material = json.dumps(
         {
             "roles": {r: role_fingerprints[r] for r in sorted(role_fingerprints)},
+            "refs": {
+                r: (role_refs or {}).get(r) or {}
+                for r in sorted(role_fingerprints)
+            },
             "scopes": {r: scopes.get(r) for r in sorted(scopes)},
             "ruleset_digest": ruleset_digest,
             "method_version": METHOD_VERSION,
@@ -101,14 +109,31 @@ async def execute_topology_run(
 
     started = time.monotonic()
     with SessionLocal() as db:
-        run = db.get(TopologyRun, run_id)
-        if run is None:
-            raise RunExecutionError("run_not_found", f"运行不存在: {run_id}")
-        if run.status in ("completed", "failed", "cancelled"):
-            return {"status": run.status, "run_id": run_id, "already_terminal": True}
-        run.status = "running"
-        run.started_at = run.started_at or datetime.now(timezone.utc)
+        # 状态 claim 必须是原子条件更新（pending → running）：并发的两个 worker
+        # 读-改-写都会通过终态检查并各自落库，同 run_id 下 finding 重复。
+        claimed = db.execute(
+            update(TopologyRun)
+            .where(TopologyRun.id == run_id, TopologyRun.status == "pending")
+            .values(
+                status="running",
+                started_at=func.coalesce(
+                    TopologyRun.started_at, datetime.now(timezone.utc)
+                ),
+            )
+        )
         db.commit()
+        if claimed.rowcount != 1:
+            run = db.get(TopologyRun, run_id)
+            if run is None:
+                raise RunExecutionError("run_not_found", f"运行不存在: {run_id}")
+            return {
+                "status": run.status,
+                "run_id": run_id,
+                "already_terminal": run.status in (
+                    "completed", "failed", "cancelled"
+                ),
+            }
+        run = db.get(TopologyRun, run_id)
 
         rules: List[Dict[str, Any]] = list(run.rules_snapshot or [])
         bindings_evidence: Dict[str, Dict[str, Any]] = dict(run.bindings or {})
@@ -172,6 +197,7 @@ async def _execute(
     role_snapshots: Dict[str, Any] = {}
     role_fingerprints: Dict[str, str] = {}
     role_scopes: Dict[str, Any] = {}
+    role_refs: Dict[str, Dict[str, Any]] = {}
     for role, ev in bindings_evidence.items():
         binding = ev.get("binding") or {}
         snap = await _resolve_binding_for_execution(role, binding, run)
@@ -189,9 +215,10 @@ async def _execute(
         role_snapshots[role] = snap
         role_fingerprints[role] = snap.fingerprint_full()
         role_scopes[role] = snap.scope
+        role_refs[role] = {"kind": snap.kind, "ref": snap.ref}
 
     run.input_digest = compute_input_digest(
-        run.ruleset_digest, role_fingerprints, role_scopes
+        run.ruleset_digest, role_fingerprints, role_scopes, role_refs
     )
     db.commit()
 

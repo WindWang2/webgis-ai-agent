@@ -67,7 +67,7 @@ def evaluate_case(library: SkillLibrary, case: Dict[str, Any]) -> Dict[str, Any]
         top_expect = expect.get("top")
         in_top3 = list(expect.get("in_top3") or [])
         top_ids = [c.skill_id for c in result.ranked[:3]]
-        if result.selected == top_expect:
+        if top_expect is not None and result.selected == top_expect:
             out.update(passed=True, kind="top1")
         elif top_expect and top_expect in top_ids:
             out.update(passed=True, kind="top3")

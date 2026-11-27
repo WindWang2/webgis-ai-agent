@@ -118,7 +118,8 @@ def _canonical_json_sha256(obj: Any) -> str:
 def _as_fc_payload(payload: Any) -> Optional[Dict[str, Any]]:
     """FC 形态：{type: FeatureCollection, features: [...]}（宽容 bbox/properties）。"""
     if isinstance(payload, dict) and payload.get("type") == "FeatureCollection" \
-            and isinstance(payload.get("features"), list):
+            and isinstance(payload.get("features"), list) \
+            and all(isinstance(f, dict) for f in payload["features"]):
         return payload
     return None
 
@@ -126,7 +127,7 @@ def _as_fc_payload(payload: Any) -> Optional[Dict[str, Any]]:
 def _as_rows_payload(payload: Any) -> Optional[Dict[str, Any]]:
     """rows 形态：{rows: [dict,...]}（feature_aggregate 等标准表格产物）。"""
     if isinstance(payload, dict) and isinstance(payload.get("rows"), list) \
-            and all(isinstance(r, dict) for r in payload["rows"][:8]):
+            and all(isinstance(r, dict) for r in payload["rows"]):
         return payload
     return None
 
@@ -325,14 +326,14 @@ class SourceSnapshot:
 
     async def verify_unchanged(self, session_id: Optional[str]) -> None:
         """执行前复核：内容指纹漂移 → typed 拒绝（不混读两版本）。"""
-        if self.kind == "session_ref" and session_id:
+        if self.kind in ("session_ref", "table_rows") and session_id:
             from app.services.session_data import session_data_manager
 
             payload = await session_data_manager.get(session_id, self._src_ref or "")
             if payload is None:
                 raise SourceResolutionError(
                     dl_contracts.ERR_SOURCE_EXPIRED, "源会话引用已过期或被清除")
-            fresh = _snapshot_from_payload(self.label, payload, self._src_ref)
+            fresh = _snapshot_from_payload(self.label, payload, self._src_ref or "")
             if fresh.content_fingerprint != self.content_fingerprint:
                 raise SourceResolutionError(
                     dl_contracts.ERR_SOURCE_REVISION_CHANGED,
@@ -547,7 +548,7 @@ def _snapshot_from_parquet(ref: str, path: Path) -> SourceSnapshot:
         t = str(f.type)
         if t.startswith("large_"):
             t = t[len("large_"):]
-        fields.append({"name": f.name, "inferred_type": t, "sample_values": None})
+        fields.append({"name": f.name, "inferred_type": t, "sample_values": []})
     snap = SourceSnapshot(
         kind="fabric_parquet", label=ref, is_table=(geometry_column is None),
         row_count=int(meta.num_rows), content_fingerprint=_file_sha256(path),

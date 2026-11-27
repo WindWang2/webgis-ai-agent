@@ -24,6 +24,7 @@ from app.services.data_preparation.plan import (
     save_plan,
 )
 from app.services.data_preparation.service import (
+    _extract_fc,
     bind_field_roles,
     inspect_source,
 )
@@ -262,3 +263,25 @@ class TestCityScenarioE2E:
         r2 = await execute_plan(plan)
         assert r2.output_ref == r1.output_ref
         assert r2.created_at == r1.created_at
+
+
+# ── 载荷 CRS 判定优先级（与 snapshot.parse_payload 对齐）────────────────────
+
+class TestPayloadCrsPriority:
+    def test_outer_crs_wins_over_geojson_crs(self):
+        """外层 crs 优先；geojson.crs 只在未声明时兜底（与 snapshot 一致）。"""
+        payload = {"crs": "EPSG:4326", "geojson": {
+            "type": "FeatureCollection",
+            "crs": {"type": "name", "properties": {"name": "EPSG:3857"}},
+            "features": []}}
+        _fc, features, crs = _extract_fc(payload)
+        assert features == []
+        assert crs == "EPSG:4326"
+
+    def test_geojson_crs_used_when_outer_absent(self):
+        payload = {"geojson": {
+            "type": "FeatureCollection",
+            "crs": {"type": "name", "properties": {"name": "EPSG:3857"}},
+            "features": []}}
+        _fc, _features, crs = _extract_fc(payload)
+        assert crs == "EPSG:3857"

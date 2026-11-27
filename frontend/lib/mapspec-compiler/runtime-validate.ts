@@ -315,6 +315,18 @@ async function run(): Promise<RuntimeReport> {
           // probe.layer is contract-required for reporting context; sampling uses `at`.
           const at = probe.at as [number, number];
           const expectHex = probe.expect as string;
+          // P3：漏写 expect 时 hexToRgb(undefined) 抛 TypeError，被外层
+          // catch 升级成 fatalError 并丢掉整轮 probeResults —— 单条探针
+          // 失败即可。
+          if (typeof expectHex !== "string" || expectHex.length === 0) {
+            probeResults.push({
+              probe: probe as Record<string, unknown>,
+              pass: false,
+              expected: "expect hex color",
+              actual: "missing expect",
+            });
+            continue;
+          }
           if (!capturedPng) {
             probeResults.push({
               probe: probe as Record<string, unknown>,

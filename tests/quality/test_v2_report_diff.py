@@ -6,6 +6,8 @@ render_markdown 字节兼容不在此重复（上游既有测试覆盖）。
 from __future__ import annotations
 
 
+import pytest
+
 from app.evaluation.runner import CaseResult
 from app.evaluation.report import (
     aggregate_by_group,
@@ -13,6 +15,7 @@ from app.evaluation.report import (
     render_json,
     render_markdown,
     result_to_entry,
+    write_baseline,
 )
 
 
@@ -125,3 +128,16 @@ def test_result_to_entry_excludes_elapsed():
     r.elapsed_ms = 123
     entry = result_to_entry(r)
     assert "elapsed_ms" not in entry
+
+
+def test_write_baseline_does_not_truncate_on_render_failure(tmp_path):
+    target = tmp_path / "baseline.json"
+    target.write_text('{"old": true}\n', encoding="utf-8")
+
+    def broken_results():
+        yield _result("A-1", "g")
+        raise RuntimeError("render failed")
+
+    with pytest.raises(RuntimeError):
+        write_baseline(broken_results(), target)
+    assert target.read_text(encoding="utf-8") == '{"old": true}\n'

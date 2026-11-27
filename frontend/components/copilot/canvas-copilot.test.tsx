@@ -262,6 +262,25 @@ describe('WidgetHost 挂载与双向绑定', () => {
     expect(useHudStore.getState().copilotWidgets).toHaveLength(0);
   });
 
+  it('payload 形状不合法的卡片被跳过，不因缺字段触发 TypeError', () => {
+    render(<WidgetHost />);
+    act(() => {
+      useHudStore.getState().pushCopilotWidget({
+        widget_id: 'w-bad-hist',
+        kind: 'histogram_slider',
+        payload: { field: 'ndvi', min: 0, max: 30 },
+      });
+      useHudStore.getState().pushCopilotWidget({
+        widget_id: 'w-bad-cand',
+        kind: 'candidate_picker',
+        payload: {},
+      });
+      useHudStore.getState().pushCopilotWidget(histogramSpec());
+    });
+    expect(screen.getAllByTestId('generative-widget-histogram_slider')).toHaveLength(1);
+    expect(screen.queryByTestId('generative-widget-candidate_picker')).toBeNull();
+  });
+
   it('同 widget_id 重复挂载幂等（resume 重放），FIFO 上限 4', () => {
     useHudStore.getState().pushCopilotWidget(histogramSpec());
     useHudStore.getState().pushCopilotWidget(histogramSpec());
@@ -364,6 +383,50 @@ describe('WidgetHost 挂载与双向绑定', () => {
     // 裁决后工具自动退出
     expect(useHudStore.getState().copilotTool).toBeNull();
   });
+
+  it('sketch-box：Escape 取消框选后解除待决，后续无关高亮不回传几何', () => {
+    const onReply = vi.fn();
+    render(
+      <SketchBoxWidget
+        spec={{
+          widget_id: 'w-sketch-esc-1',
+          kind: 'sketch_box',
+          payload: { prompt: '在图上框选目标水域' },
+        }}
+        onReply={onReply}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('sketch-box-start'));
+    expect(useHudStore.getState().copilotTool).toBe('box_select');
+    // Escape 取消：清高亮 + 关工具（spatial-sketch-tool Escape 处理器同效果）。
+    act(() => {
+      useHudStore.getState().setCopilotHighlight(null);
+      useHudStore.getState().setCopilotTool(null);
+    });
+    // 下一次任意 copilot 高亮完成（别的手势/别的卡片）不得替本卡片回传。
+    act(() => {
+      useHudStore.getState().setCopilotHighlight({
+        ring: [[100, 100], [300, 100], [300, 260], [100, 260]],
+        kind: 'freehand_lasso',
+        lnglatRing: [[116.3, 39.8], [116.36, 39.8], [116.36, 39.86], [116.3, 39.86]],
+      });
+    });
+    expect(onReply).not.toHaveBeenCalled();
+    expect(vi.mocked(globalThis.fetch)).not.toHaveBeenCalled();
+    // 重新点 CTA：工具态复位不得顺带消费上一条残留高亮环……
+    fireEvent.click(screen.getByTestId('sketch-box-start'));
+    expect(useHudStore.getState().copilotTool).toBe('box_select');
+    expect(onReply).not.toHaveBeenCalled();
+    // ……只有本次激活后真正新完成的框选才回传一次。
+    act(() => {
+      useHudStore.getState().setCopilotHighlight({
+        ring: [[100, 100], [300, 100], [300, 260], [100, 260]],
+        kind: 'box_select',
+        lnglatRing: [[116.4, 39.9], [116.46, 39.9], [116.46, 39.96], [116.4, 39.96]],
+      });
+    });
+    expect(onReply).toHaveBeenCalledTimes(1);
+  });
 });
 
 /* ─── 安全校验 ─── */
@@ -464,6 +527,24 @@ describe('信封与 stream 捎带', () => {
     expect(result.dispatched).toBe(false);
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it('reportAffordance 在无 AbortSignal.timeout 的旧浏览器仍同步上报（不抛）', () => {
+    // 旧 Safari/Firefox：AbortSignal.timeout 缺失 → 未做特性检测时
+    // reportAffordance 同步 TypeError，手势回调被打断。
+    const originalTimeout = AbortSignal.timeout;
+    AbortSignal.timeout = undefined as unknown as typeof AbortSignal.timeout;
+    try {
+      const result = reportAffordance(
+        buildEnvelope([{ action_id: 'a-y', kind: 'highlight' }]),
+      );
+      expect(result.dispatched).toBe(true);
+      const fetchMock = vi.mocked(globalThis.fetch);
+      const [, init] = fetchMock.mock.calls[0];
+      expect((init as { signal?: unknown }).signal).toBeUndefined();
+    } finally {
+      AbortSignal.timeout = originalTimeout;
+    }
+  });
 });
 
 /* ─── copilotSlice 行为 ─── */
@@ -505,5 +586,22 @@ describe('widget-binding', () => {
     const body = JSON.parse(String(init?.body));
     expect(body.actions[0].kind).toBe('widget_reply');
     expect(body.actions[0].meta.widget_reply.value).toEqual({ selected: ['c1'] });
+  });
+
+  it('sendWidgetReply 在无 AbortSignal.timeout 的旧浏览器仍执行本地回调', () => {
+    const originalTimeout = AbortSignal.timeout;
+    AbortSignal.timeout = undefined as unknown as typeof AbortSignal.timeout;
+    try {
+      const onReply = vi.fn();
+      const result = sendWidgetReply(
+        { widget_id: 'w-9', kind: 'candidate_picker' },
+        { selected: ['c1'] },
+        onReply,
+      );
+      expect(onReply).toHaveBeenCalledWith({ selected: ['c1'] });
+      expect(result.dispatched).toBe(true);
+    } finally {
+      AbortSignal.timeout = originalTimeout;
+    }
   });
 });

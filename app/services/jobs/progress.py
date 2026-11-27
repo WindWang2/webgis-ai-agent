@@ -124,8 +124,9 @@ class ProgressThrottle:
                 return True
             return False
 
-        # 100% 是有意义的边界，总是放行
-        if progress >= 100:
+        # 100% 是有意义的边界，但只有「首次到达 100」无条件放行；收尾循环里
+        # 重复上报 100 仍走时间节流，否则 DB 写入速率无上界。
+        if progress >= 100 and (self._last_pct is None or self._last_pct < 100):
             self._record(progress, now)
             return True
 

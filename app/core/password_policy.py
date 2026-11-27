@@ -64,7 +64,7 @@ def validate_password_strength(password: str) -> None:
     if not isinstance(password, str) or not (8 <= len(password) <= 128):
         raise PasswordPolicyError("密码长度须为 8–128 位")
     lowered = password.lower()
-    stem = re.sub(r"[\d\W_]+$", "", lowered)
+    stem = re.sub(r"^[\W_]+|[\d\W_]+$", "", lowered)
     if lowered in COMMON_PASSWORDS or stem in COMMON_PASSWORDS:
         raise PasswordPolicyError("密码过于常见，请更换")
     classes = sum([

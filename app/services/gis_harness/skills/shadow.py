@@ -113,19 +113,7 @@ def evaluate_shadow(
             eligible = False
             eligibility_codes = list(rej.reason_codes)
 
-    # 用 shadow 决策壳驱动投影（mode=shadow → guides_planning 仍 False）
-    SkillPolicyDecision(
-        mode="shadow",
-        selected_skill=induced_skill.id,
-        skill_version=induced_skill.version,
-        trust_tier="experimental",
-        confidence=0.0,
-        eligibility_ok=eligible,
-        situation_signature=production_decision.situation_signature,
-        reasons=["shadow_evaluation"],
-    )
-    # project_skill_for_planning 对 shadow 模式：我们临时用 guide 形态提取结构，
-    # 但不把 guides_planning 打开——下面强制 False。
+    # 用 guide 形态提取结构，但不把 guides_planning 打开——下面强制 False。
     structural = SkillPolicyDecision(
         mode="guide",
         selected_skill=induced_skill.id,

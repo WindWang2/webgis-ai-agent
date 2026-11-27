@@ -145,7 +145,10 @@ class BaselineResolver:
 
         if geojson_features:
             spatial_aggregated = self._aggregate_spatial_features(geojson_features, target_area)
-            extracted_raw_metrics.update(spatial_aggregated)
+            # Explicit per-metric values are authoritative: aggregation only
+            # fills metrics that the stored data did not declare explicitly.
+            for key, value in spatial_aggregated.items():
+                extracted_raw_metrics.setdefault(key, value)
 
         # Process each requested metric
         for metric_key in metrics_needed:
@@ -180,14 +183,15 @@ class BaselineResolver:
                         evidence_gap_note=None
                     )
                 else:
-                    # Missing metric — flag evidence gap, NEVER return dummy 100.0!
+                    # Missing metric — flag evidence gap and report it as
+                    # unsimulated (None), NEVER as a zero-valued change.
                     resolved_metrics[metric_key] = MetricDeltaV2(
                         metric_key=metric_key,
                         metric_name=m_name,
-                        baseline=0.0,
-                        simulated=0.0,
-                        delta_abs=0.0,
-                        delta_pct=0.0,
+                        baseline=None,
+                        simulated=None,
+                        delta_abs=None,
+                        delta_pct=None,
                         unit=m_unit,
                         missing_baseline=True,
                         evidence_gap_note=(

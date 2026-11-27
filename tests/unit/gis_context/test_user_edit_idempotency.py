@@ -144,6 +144,28 @@ def test_rebase_receipt_ring_union():
     assert merged.rtv_seq == 2  # max(stored, incoming) — monotonic
 
 
+def test_rebase_receipt_id_collision_keeps_both_receipts():
+    """Per-copy ``rtv_seq`` counters can stamp the same receipt id on two
+    *different* receipts; the rebase must keep both evidence trails instead
+    of silently overwriting one with the other."""
+    from app.services.gis_context.working_context import RevalidationReceipt
+
+    stored = _wc()
+    stored.append_receipt(RevalidationReceipt(
+        receipt_id="rtv-1", kind="CLAIM_REVERIFIED", target="c1",
+        basis_revision=3, verdict="restored"))
+    incoming = _wc()
+    incoming.append_receipt(RevalidationReceipt(
+        receipt_id="rtv-1", kind="DECISION_REAFFIRM", target="dec:x",
+        basis_revision=4, verdict="rejected", reject_reason="not_stale"))
+
+    merged = _rebase(stored, incoming)
+    assert len(merged.revalidations) == 2
+    assert {r.kind for r in merged.revalidations} == {
+        "CLAIM_REVERIFIED", "DECISION_REAFFIRM"}
+    assert len({r.receipt_id for r in merged.revalidations}) == 2
+
+
 def test_rebase_decision_reaffirm_propagates():
     """A reaffirm on one replica (higher basis_revision) must not be drowned
     by the stored stale copy on the other."""

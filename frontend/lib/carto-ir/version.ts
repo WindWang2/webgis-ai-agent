@@ -45,11 +45,14 @@ export const SUPPORTED_MAPSPEC_VERSIONS = [
   // v2.1（G16）：layer.label.authoring + layout.labels
   // obstaclePolicy/forbiddenZones（纯 additive optional）。
   "2.1",
+  // v2.2（GOAL-20261126-04）：layer.diagram_symbol（地理锚定统计图符，
+  // 纯 additive optional；缺失 = 层走既有表达路径）。
+  "2.2",
 ] as const;
 
 export type SupportedMapSpecVersion = (typeof SUPPORTED_MAPSPEC_VERSIONS)[number];
 
-export const LATEST_SUPPORTED_MAPSPEC_VERSION: SupportedMapSpecVersion = "2.1";
+export const LATEST_SUPPORTED_MAPSPEC_VERSION: SupportedMapSpecVersion = "2.2";
 
 /** 版本缺省口径（= 后端 DEFAULT_VERSION）。 */
 export const DEFAULT_MAPSPEC_VERSION = "1.0";
@@ -143,7 +146,7 @@ export function migrateMapSpec(input: unknown): MigratedMapSpec {
   const disclosures: MigrationDisclosure[] = [];
 
   let version: SupportedMapSpecVersion;
-  if (typeof rawVersion !== "string" || rawVersion === "") {
+  if (typeof rawVersion !== "string") {
     version = DEFAULT_MAPSPEC_VERSION;
     disclosures.push({
       path: "version",
@@ -220,6 +223,9 @@ const UPGRADERS: Record<string, Upgrader> = {
   "1.10->2.0": identityUpgrade,
   // 2.1（G16）：要素级标注 authoring（纯 additive optional）。
   "2.0->2.1": identityUpgrade,
+  // 2.2（GOAL-20261126-04）：layer.diagram_symbol 地理锚定统计图符
+  //（纯 additive optional；缺失 = 层走既有表达路径）。
+  "2.1->2.2": identityUpgrade,
 };
 
 function identityUpgrade(_spec: Record<string, unknown>, _d: MigrationDisclosure[]): void {

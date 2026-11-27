@@ -51,6 +51,113 @@ async def test_attribute_perf_curve(n, seeded_sources):
     assert dt < 60.0, f"{n} 行属性关联耗时 {dt:.1f}s 超出性能预期"
 
 
+def test_p1_field_map_resolved_once_per_run(monkeypatch):
+    """P1：字段映射每 run 解析一次（不再每输出行重算映射校验）。"""
+    import app.services.data_join_authoring.executor as executor_mod
+
+    calls: list = []
+    real = executor_mod._resolved_field_map
+
+    def counting(plan, left, right):
+        calls.append(1)
+        return real(plan, left, right)
+
+    monkeypatch.setattr(executor_mod, "_resolved_field_map", counting)
+    n = 40
+    left = loaded_from_rows("left", _big_table(n), "fpL")
+    right = loaded_from_rows("right", _big_table(n), "fpR")
+    plan = parse_plan({
+        "mode": "attribute",
+        "left": {"kind": "session_ref", "session_id": "s", "ref": "r1"},
+        "right": {"kind": "table_rows", "session_id": "s", "ref": "r2"},
+        "keys": [{"left_field": "adcode", "right_field": "adcode"}],
+        "keep_side": "inner",
+        "output_cardinality": "one_to_one",
+        "field_map": [{"side": "left", "field": "adcode"},
+                      {"side": "right", "field": "v"}],
+    })
+    ex = JoinExecutor(plan)
+    out = ex.run_attribute(left, right)
+    assert len(out) == n
+    assert len(calls) == 1          # 未修复：每输出行一次（= n）
+
+
+def test_p1_late_field_probe_not_per_row(monkeypatch):
+    """P1：declared_fields 空且字段不在前 500 行时，字段存在性探测
+    （_field_present 全表扫）每 run 一次，不随输出行数放大。"""
+    import app.services.data_join_authoring.executor as executor_mod
+
+    probes: list = []
+    real = executor_mod._field_present
+
+    def counting(side, field, left, right):
+        probes.append(field)
+        return real(side, field, left, right)
+
+    monkeypatch.setattr(executor_mod, "_field_present", counting)
+    n = 600
+    rows = [{"adcode": f"1101{i:06d}", "v": i} for i in range(n)]
+    for r in rows[500:]:            # 只出现在前 500 行采样窗口之外
+        r["late"] = 1
+    left = loaded_from_rows("left", {"rows": rows}, "fpL")
+    left.declared_fields = []       # 无声明 → 前 500 行采样 + 全表探测兜底
+    right = loaded_from_rows("right", {"rows": rows}, "fpR")
+    plan = parse_plan({
+        "mode": "attribute",
+        "left": {"kind": "session_ref", "session_id": "s", "ref": "r1"},
+        "right": {"kind": "table_rows", "session_id": "s", "ref": "r2"},
+        "keys": [{"left_field": "adcode", "right_field": "adcode"}],
+        "keep_side": "inner",
+        "output_cardinality": "one_to_one",
+        "field_map": [{"side": "left", "field": "adcode"},
+                      {"side": "left", "field": "late"}],
+    })
+    ex = JoinExecutor(plan)
+    out = ex.run_attribute(left, right)
+    assert len(out) == n
+    assert probes.count("late") == 1   # 未修复：每输出行一次全表扫（= n）
+
+
+def test_p1_plan_digest_computed_once_for_one_to_many(monkeypatch):
+    """P1：one_to_many 逐行派生 _wfid 不再重复整计划 json.dumps + sha256。"""
+    import hashlib
+
+    from app.services.data_join_authoring.plan import JoinPlan
+
+    calls: list = []
+    real = JoinPlan.normalized_digest
+
+    def counting(self):
+        calls.append(1)
+        return real(self)
+
+    monkeypatch.setattr(JoinPlan, "normalized_digest", counting)
+    left = loaded_from_rows("left", {"rows": [{"code": "A"}] * 3}, "fpL")
+    right = loaded_from_rows(
+        "right", {"rows": [{"code": "A", "v": j} for j in range(5)]}, "fpR")
+    plan = parse_plan({
+        "mode": "attribute",
+        "left": {"kind": "session_ref", "session_id": "s", "ref": "r1"},
+        "right": {"kind": "table_rows", "session_id": "s", "ref": "r2"},
+        "keys": [{"left_field": "code", "right_field": "code"}],
+        "keep_side": "inner",
+        "output_cardinality": "one_to_many",
+        "field_map": [{"side": "left", "field": "code"},
+                      {"side": "right", "field": "v"}],
+    })
+    ex = JoinExecutor(plan)
+    out = ex.run_attribute(left, right)
+    assert len(out) == 15                # 3 左行 × 5 右行
+    assert len(calls) == 1               # 未修复：每输出行一次（= 15）
+    # 缓存不得改变派生身份：与逐行求 digest 的结果逐一一致
+    digest = real(plan)
+    assert {r["_wfid"] for r in out} == {
+        "wf1-" + hashlib.sha256(
+            f"create:{digest}:{i}:{c}".encode("utf-8")).hexdigest()[:16]
+        for i in range(3) for c in range(5)
+    }
+
+
 def test_j26_runtime_pair_cap_stops_early():
     """预估不充分时（如 pair_cap 放宽后运行中累计超限）→ 阶段预算即时
     typed 停止，不 O(n×m) 无界扫描也不静默部分完成。"""

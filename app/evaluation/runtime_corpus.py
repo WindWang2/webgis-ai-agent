@@ -240,7 +240,8 @@ def _select_runtime_families() -> List[object]:
             continue
         if not (getattr(fam, "expected_task", None)
                 and getattr(fam, "expected_recipe", None)
-                and getattr(fam, "phrases_en", None)):
+                and getattr(fam, "phrases_en", None)
+                and getattr(fam, "phrases_zh", None)):
             continue
         by_domain[domain] = fam
     return [by_domain[d] for d in RUNTIME_DOMAINS if d in by_domain]

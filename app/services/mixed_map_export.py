@@ -552,9 +552,24 @@ def _export_png(doc: Dict[str, Any], bindings: Dict[str, Any],
         # 回归）—— 含纹理时改写根 width/height 后按内在尺寸渲染。
         from app.lib.cartography.symbol_asset_svg import prepare_svg_for_rasterize
         _svg_for_raster = prepare_svg_for_rasterize(comp.svg, 1600, 1100)
-        proc = subprocess.run(
-            [rsvg, "-w", "1600", "-h", "1100", "-o", str(out), "--keep-aspect-ratio", "-"],
-            input=_svg_for_raster.encode("utf-8"), capture_output=True, timeout=120)
+        # 子进程面失败（超时 / 无法 exec）须映射为 typed 拒绝，与 PDF 面
+        # _map_pdf_error 同纪律 —— 裸异常会冒泡成无 code 的 500。
+        try:
+            proc = subprocess.run(
+                [rsvg, "-w", "1600", "-h", "1100", "-o", str(out),
+                 "--keep-aspect-ratio", "-"],
+                input=_svg_for_raster.encode("utf-8"),
+                capture_output=True, timeout=120)
+        except subprocess.TimeoutExpired as ex:
+            raise MixedMapExportError(
+                "PNG_RENDER_TIMEOUT",
+                f"rsvg-convert timed out after {ex.timeout}s",
+                status_code=504) from ex
+        except OSError as ex:
+            raise MixedMapExportError(
+                "PNG_RENDER_FAILED",
+                f"{type(ex).__name__}: {str(ex)[:200]}",
+                status_code=500) from ex
         if proc.returncode != 0 or not out.is_file():
             raise MixedMapExportError(
                 "RENDER_FAILED",

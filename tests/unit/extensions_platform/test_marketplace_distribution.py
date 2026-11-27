@@ -287,6 +287,19 @@ def test_service_search_pagination_deterministic(tmp_path):
     assert [item["id"] for item in page2.items] == ["acme.pkg3", "acme.pkg4"]
 
 
+def test_service_search_rejects_invalid_pagination(tmp_path):
+    """limit<=0 / 负 offset 不得静默返回错窗口（total 仍报全量）。"""
+    from app.extensions_platform.diagnostics import DiagnosticCode
+
+    svc = _service(tmp_path)
+    with pytest.raises(ExtensionPlatformError, match="limit") as excinfo:
+        svc.search(limit=0)
+    assert excinfo.value.diagnostic.code is DiagnosticCode.REGISTRY_INVALID
+    with pytest.raises(ExtensionPlatformError, match="offset") as excinfo:
+        svc.search(offset=-1)
+    assert excinfo.value.diagnostic.code is DiagnosticCode.REGISTRY_INVALID
+
+
 def test_service_revoke_propagates_to_trust_store(tmp_path):
     svc = _service(tmp_path)
     svc.publish(_signed_blob(tmp_path, version="1.0.0"))
@@ -424,6 +437,44 @@ def test_safe_extract_requires_manifest(tmp_path):
         safe_extract_package(_tar_bytes(build), tmp_path / "out")
 
 
+def test_safe_extract_conflicting_file_then_nested_path_is_typed(tmp_path):
+    """tar 内文件 x 后跟 x/y → 裸 FileExistsError 必须收敛为 typed 拒绝。"""
+    import io
+
+    from app.extensions_platform.diagnostics import DiagnosticCode
+
+    def build(tar):
+        info = tarfile.TarInfo("x")
+        info.size = 1
+        tar.addfile(info, io.BytesIO(b"a"))
+        nested = tarfile.TarInfo("x/y")
+        nested.size = 1
+        tar.addfile(nested, io.BytesIO(b"b"))
+
+    with pytest.raises(ExtensionPlatformError) as excinfo:
+        safe_extract_package(_tar_bytes(build), tmp_path / "out")
+    assert excinfo.value.diagnostic.code is DiagnosticCode.PACKAGE_UNSAFE_ENTRY
+
+
+def test_safe_extract_conflicting_file_then_directory_is_typed(tmp_path):
+    """tar 内文件 x 后跟目录 x → 裸 FileExistsError 必须收敛为 typed 拒绝。"""
+    import io
+
+    from app.extensions_platform.diagnostics import DiagnosticCode
+
+    def build(tar):
+        info = tarfile.TarInfo("x")
+        info.size = 1
+        tar.addfile(info, io.BytesIO(b"a"))
+        directory = tarfile.TarInfo("x")
+        directory.type = tarfile.DIRTYPE
+        tar.addfile(directory)
+
+    with pytest.raises(ExtensionPlatformError) as excinfo:
+        safe_extract_package(_tar_bytes(build), tmp_path / "out")
+    assert excinfo.value.diagnostic.code is DiagnosticCode.PACKAGE_UNSAFE_ENTRY
+
+
 # ── installer ────────────────────────────────────────────────────────
 
 class _StubHost:
@@ -484,6 +535,20 @@ def test_installer_install_and_version_on_disk(tmp_path):
     assert host.calls == [("activate", "acme.demo")]
     active = tmp_path / "install" / "extensions" / "acme.demo" / "manifest.json"
     assert json.loads(active.read_text())["version"] == "1.0.0"
+
+
+def test_installer_registry_state_source_error_names_actual_type(tmp_path):
+    """传 RegistryState（只读快照）时错误须点名实际类型，而非只说 remote。"""
+    from app.extensions_platform.diagnostics import DiagnosticCode
+    from app.extensions_platform.marketplace.models import RegistryState
+
+    installer = ExtensionInstaller(
+        install_root=tmp_path / "install",
+        registry=RegistryState(generation=0),
+    )
+    with pytest.raises(ExtensionPlatformError, match="RegistryState") as excinfo:
+        installer.get_state()
+    assert excinfo.value.diagnostic.code is DiagnosticCode.REGISTRY_INVALID
 
 
 def test_installer_upgrade_archives_old_version(tmp_path):

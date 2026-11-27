@@ -4,7 +4,7 @@
  * from_step, empty state.
  */
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { clearCache } from '@/lib/api/get-fast-path';
 import { useHudStore } from '@/lib/store/useHudStore';
@@ -122,6 +122,38 @@ describe('MapProductVersionsPanel', () => {
     serveGet({ items: [], total: 0, limit: 50, offset: 0, has_more: false });
     render(<MapProductVersionsPanel projectId="p1" />);
     await waitFor(() => expect(screen.getByText('暂无产品版本')).toBeTruthy());
+  });
+
+  it('不可解析的 created_at 回退原始串（不渲染 Invalid Date）', async () => {
+    serveGet({
+      items: [{ ...LEDGER.items[0], created_at: 'not-a-date' }],
+      total: 1, limit: 50, offset: 0, has_more: false,
+    });
+    render(<MapProductVersionsPanel projectId="p1" />);
+    await waitFor(() => expect(screen.getByText(/not-a-date/)).toBeTruthy());
+    expect(screen.queryByText(/Invalid Date/)).toBeNull();
+  });
+
+  it('对比在途中把目标改成与基线相同 → 退出 loading（不永久卡住）', async () => {
+    let resolveDiff!: (value: unknown) => void;
+    mockFetch.mockImplementation((url: string, init?: RequestInit) => {
+      const u = String(url);
+      if (init?.method === 'POST') return Promise.resolve(jsonOk({ id: 'run-2' }));
+      if (u.includes('/diff/')) {
+        return new Promise((resolve) => { resolveDiff = resolve; });
+      }
+      if (u.includes('/map-products')) return Promise.resolve(jsonOk(LEDGER));
+      return Promise.resolve(jsonOk({}));
+    });
+    render(<MapProductVersionsPanel projectId="p1" />);
+    await waitFor(() => expect(resolveDiff).toBeTypeOf('function'));
+    // fromNo=2 / toNo=3 的对比在飞；把 toNo 改成与 fromNo 相同（V2）
+    fireEvent.change(document.getElementById('mp-diff-to')!, { target: { value: '2' } });
+    await waitFor(() => expect(screen.queryByText('五维差异')).toBeNull());
+    await act(async () => {
+      resolveDiff(jsonOk(styleOnlyDiff));
+      await Promise.resolve();
+    });
   });
 
   /* C-1（review-fix-rereview-20261108）：style-only 恢复是 REST 通道的带外

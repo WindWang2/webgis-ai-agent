@@ -40,6 +40,50 @@ def test_goal_case_replay_green_including_counterfactual():
         assert result.false_pass is False, case.case_id
 
 
+def test_goal_corpus_build_guard_rejects_duplicate_ids(monkeypatch):
+    import pytest
+
+    from app.evaluation import goal_satisfaction_corpus as corpus
+
+    first = corpus._family_row_matrix()[0]
+    monkeypatch.setattr(corpus, "_family_receipts", lambda: [first])
+    with pytest.raises(ValueError, match="duplicate"):
+        corpus.build_goal_satisfaction_cases()
+
+
+def test_goal_case_checks_all_verdicts_for_duplicate_requirement_ids():
+    from app.evaluation.goal_satisfaction_corpus import GoalSatisfactionCase
+
+    case = GoalSatisfactionCase(
+        case_id="GC-dup-requirement-id",
+        name="duplicate requirement id must not shadow expectations",
+        family="contract",
+        chapter={
+            "query": "q",
+            "intent": {},
+            "analysis_steps": [],
+            "goal_contract": {
+                "schema_version": "goal_contract.v1", "goal_id": "g",
+                "success_threshold": 0.0,
+                "requirements": [
+                    {"id": "dup", "kind": "map", "required": True},
+                    {"id": "dup", "kind": "analysis", "required": True,
+                     "capability": "poi.query"},
+                ],
+            },
+        },
+        map_product={
+            "product_verdict": {"verdict": "READY", "reasons": []},
+            "final_map_status": "verified", "render_status": "verified",
+            "checked_revision": 7,
+        },
+        expected_states={"dup": "not_evaluated"},
+    )
+    result = run_goal_satisfaction_case(case)
+    assert not result.passed
+    assert any("dup" in failure for failure in result.failures)
+
+
 def test_goal_corpus_metrics_shape_and_zero_false_pass():
     cases = build_goal_satisfaction_cases()
     metrics = corpus_metrics(

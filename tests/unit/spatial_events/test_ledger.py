@@ -67,6 +67,44 @@ class TestCursor:
         # 倒退拒收
         assert not ledger.advance_cursor("worker-1", 0)
 
+    def test_stale_read_cannot_regress_cursor(self, ledger, monkeypatch):
+        """并发 drainer 读到旧水位后提交较小值不得覆盖已前进水位。"""
+        from app.models.spatial_events import SpatialEventCursorRow
+
+        assert ledger.advance_cursor("worker-c", 100)
+        assert ledger.advance_cursor("worker-c", 500)  # 并发方先提交了更大水位
+
+        real_factory = ledger._factory
+
+        class StaleReadSession:
+            """模拟「读发生在并发写提交之前」：get 返回旧水位快照。"""
+
+            def __init__(self):
+                self._session = real_factory()
+                # 旧快照只存在于内存；不要让 autoflush 把它先写回库
+                self._session.autoflush = False
+
+            def __enter__(self):
+                self._session.__enter__()
+                return self
+
+            def __exit__(self, *exc):
+                return self._session.__exit__(*exc)
+
+            def get(self, model, ident):
+                row = self._session.get(model, ident)
+                if model is SpatialEventCursorRow and row is not None:
+                    row.last_event_id = 100  # 旧快照（并发写已前进到 500）
+                return row
+
+            def __getattr__(self, name):
+                return getattr(self._session, name)
+
+        monkeypatch.setattr(ledger, "_factory", StaleReadSession)
+        assert ledger.advance_cursor("worker-c", 300) is False
+        ledger._factory = real_factory  # 移除旧快照模拟，按真实库读回
+        assert ledger.get_cursor("worker-c") == 500
+
     def test_read_after_returns_causal_order(self, ledger):
         ids = []
         for i in range(5):
@@ -170,6 +208,30 @@ class TestCoalesce:
         ledger.claim_batch("w", limit=1)
         stats = ledger.coalesce_pending(org_id="org-a")
         assert stats["coalesced"] == 0
+
+    @pytest.mark.parametrize(
+        "kind,subject_type,subject_key",
+        [
+            ("map.mutation_applied", "project", "project:p1"),
+            ("artifact.revision_committed", "artifact", "artifact:a1"),
+            ("mapproduct.version_recorded", "product", "product:pr1"),
+            ("dataset.version_changed", "dataset", "dataset:ndvi-hubei"),
+        ],
+    )
+    def test_coalesce_covers_eventkind_vocabulary(
+        self, ledger, kind, subject_type, subject_key
+    ):
+        """回归：coalesce 词表必须与 EventKind 实际值一致。"""
+        for i in range(3):
+            ledger.append(
+                _evt(kind=kind, subject_type=subject_type,
+                     subject_key=subject_key, payload={"revision": f"v{i}"})
+            )
+        stats = ledger.coalesce_pending(org_id="org-a")
+        assert stats["coalesced"] == 2
+        pending = ledger.list_events(
+            org_id="org-a", after_id=0, limit=10, status="pending")
+        assert len(pending) == 1
 
 
 class TestWatchStore:

@@ -355,6 +355,56 @@ def test_validate_static_refs_duplicate_id():
     assert any("duplicate step id 's1'" in i for i in validate_static_refs(steps))
 
 
+def test_validate_static_refs_issue_order_deterministic():
+    """deps.py:64 — per-step issues must come out in stable sorted order.
+
+    Iterating ``inferred - {step.id}`` (a ``set[str]``) leaked PYTHONHASHSEED
+    into the issue list, contradicting the docstring's "deterministic list"
+    promise and making cross-process order assertions flaky.
+    """
+    import os
+    import subprocess
+    import sys
+
+    names = ["zeta", "alpha", "mike", "bravo", "yankee", "kilo", "delta", "oscar"]
+    steps = _steps(
+        (
+            "s1",
+            names[:4],
+            {
+                "a": f"${{{names[4]}}}",
+                "b": f"${{{names[5]}}}",
+                "c": [f"${{{names[6]}}}", f"${{{names[7]}}}"],
+            },
+        ),
+        ("s2", ["s1"], {}),
+    )
+    expected = [f"step 's1' references unknown step '{n}'" for n in sorted(names)]
+    assert validate_static_refs(steps) == expected
+
+    # 同一 plan 在不同 PYTHONHASHSEED 子进程必须给出同一 issue 列表。
+    code = (
+        "from app.services.planning.deps import validate_static_refs;"
+        "from app.services.planning.models import CanonicalStep;"
+        f"names={names!r};"
+        "steps=[CanonicalStep(id='s1',n=1,goal='',depends_on=names[:4],"
+        "args={'a':'${%s}'%names[4],'b':'${%s}'%names[5],"
+        "'c':['${%s}'%names[6],'${%s}'%names[7]]}),"
+        "CanonicalStep(id='s2',n=2,goal='',depends_on=['s1'],args={})];"
+        "print(validate_static_refs(steps))"
+    )
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    outs = set()
+    for seed in ("0", "1", "424242"):
+        proc = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True, text=True, check=True,
+            cwd=root, env={**os.environ, "PYTHONHASHSEED": seed},
+        )
+        outs.add(proc.stdout.strip())
+    assert outs == {repr(expected)}
+
+
 # ─── reference resolution ─────────────────────────────────────────────
 
 

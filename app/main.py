@@ -8,6 +8,7 @@ import asyncio
 import logging
 import math
 import os
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional, Sequence
@@ -44,6 +45,7 @@ from app.api.routes import project_runtime as project_runtime_routes  # noqa: E4
 from app.api.routes import project_data_refresh as project_data_refresh_routes  # noqa: E402  # G10
 from app.api.routes import project_knowledge as project_knowledge_routes  # noqa: E402
 from app.api.routes import data_delivery as data_delivery_routes  # noqa: E402  # G18 数据交付
+from app.api.routes import task_data_supply as task_data_supply_routes  # noqa: E402  # GOAL-02 任务数据供给
 from app.api.routes import selection_handles as selection_handles_routes  # noqa: E402  # G24 权威选择集句柄
 # Spatial Event Control Plane（事件驱动空间操作控制平面）：REST/SSE/webhook/
 # replay + Mission Portfolio 只读投影（org 域；runtime 默认关，读路径常开）。
@@ -990,13 +992,23 @@ class RequestCorrelationMiddleware(BaseHTTPMiddleware):
     现在服务端正式消费并关联日志）。
     """
 
+    _MAX_REQUEST_ID_LENGTH = 128
+    _REQUEST_ID_PATTERN = re.compile(
+        rf"[A-Za-z0-9._:-]{{1,{_MAX_REQUEST_ID_LENGTH}}}"
+    )
+
     async def dispatch(self, request: Request, call_next):  # type: ignore[override]
         try:
             from app.lib.runtime.context import bind_runtime_context, new_request_id
         except Exception:  # noqa: BLE001
             return await call_next(request)
         incoming = request.headers.get("x-request-id")
-        req_id = incoming.strip() if isinstance(incoming, str) and incoming.strip() else new_request_id()
+        candidate = incoming.strip() if isinstance(incoming, str) else ""
+        req_id = (
+            candidate
+            if self._REQUEST_ID_PATTERN.fullmatch(candidate)
+            else new_request_id()
+        )
         # 合并进 RuntimeContext，并保留 session_id（若已有，如 WebSocket）
         with bind_runtime_context(request_id=req_id):
             response = await call_next(request)
@@ -1199,6 +1211,8 @@ app.include_router(data_join_authoring_routes.router, prefix="/api/v1", tags=["�
 # 多源实体融合工作台（独立 router；UI 与 Pi 共用 data_fusion_authoring.service）
 from app.api.routes import data_fusion_authoring as data_fusion_authoring_routes  # noqa: E402
 app.include_router(data_fusion_authoring_routes.router, prefix="/api/v1", tags=["多源实体融合工作台"])
+# 任务数据供给工作台（GOAL-20261126-02；UI 与 Pi 工具共用 task_data_supply service）
+app.include_router(task_data_supply_routes.router, prefix="/api/v1", tags=["任务数据供给工作台"])
 from app.api.routes import coordinate_operations as coordinate_operations_routes  # noqa: E402
 app.include_router(coordinate_operations_routes.router, prefix="/api/v1", tags=["坐标操作工作台 G45"])
 from app.api.routes import cartographic_assets as cartographic_assets_routes  # noqa: E402
@@ -1218,6 +1232,9 @@ app.include_router(linked_exploration_routes.router, prefix="/api/v1", tags=["�
 # G47：Dorling 圆面积 cartogram 作者工作台（独立 router；UI 与 Pi 共用同一 service）
 from app.api.routes import cartogram_authoring as g47_routes  # noqa: E402
 app.include_router(g47_routes.router, prefix="/api/v1", tags=["Dorling 圆面积 cartogram 工作台"])
+# GOAL-20261126-04：地理锚定统计图符工作台（独立 router；UI 与 Pi 共用同一 service）
+from app.api.routes import diagram_symbols as diagram_symbol_routes  # noqa: E402
+app.include_router(diagram_symbol_routes.router, prefix="/api/v1", tags=["地理锚定统计图符工作台"])
 # 02 任务：方法实验工作台（独立 router；UI 与 Pi 工具共用同一 service——
 # compile/run/evaluate/adopt 全链零分叉）
 from app.api.routes import method_experiment as method_experiment_routes  # noqa: E402

@@ -49,6 +49,18 @@ describe('changed-lane mapping (quality-e2e lane)', () => {
     smokeDecision(['frontend/playwright.config.ts']);
   });
 
+  it('matches file keys exactly, not as loose substrings', () => {
+    // A sibling file whose name starts with the key must not widen the lane
+    // (the documented contract is `f === key || f.startsWith(key + '/')`).
+    expect(mapChangedFiles(['frontend/playwright.config.ts.bak']).run).toBe(false);
+    expect(mapChangedFiles(['.github/workflows/quality-e2e.yml.old']).run).toBe(false);
+  });
+
+  it('keeps directory keys on path boundaries', () => {
+    expect(mapChangedFiles(['frontend/libx-utils/a.ts']).run).toBe(false);
+    expect(mapChangedFiles(['frontend/messages.ts']).run).toBe(false);
+  });
+
   it('a mixed diff with one mapped file still runs', () => {
     smokeDecision(['README.md', 'frontend/lib/store/useHudStore.ts', 'docs/x.md']);
   });

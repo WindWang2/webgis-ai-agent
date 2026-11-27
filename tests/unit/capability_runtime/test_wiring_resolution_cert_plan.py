@@ -105,18 +105,47 @@ class TestCertificationSeed:
             get_execution_catalog,
             seed_execution_catalog,
         )
+        from app.tools import init_tools
+        from app.tools.registry import ToolRegistry
+
+        # 与 lifespan / projection refresher 的生产接线一致：显式传入
+        # registry。不传时 pi-bridge 未注入 → 工具面缺席 → 目录 degraded，
+        # 而 degraded 目录按 get_execution_catalog 同闸不得写单例（否则
+        # 缺条目目录被永久锁死）。
+        reg = ToolRegistry()
+        init_tools(reg)
 
         index = {"acme": {
             "extension_id": "acme.pack", "version": "1.0.0",
             "state": "valid", "certified": True, "signed": True,
         }}
-        catalog = seed_execution_catalog(index)
+        catalog = seed_execution_catalog(index, tool_registry=reg)
         assert catalog.certification_evidence_fingerprint
+        assert not catalog.degraded_sources, catalog.degraded_sources
         assert get_execution_catalog() is catalog  # 单例已播种
         # 确定性:同 index 同指纹
-        again = seed_execution_catalog(index)
+        again = seed_execution_catalog(index, tool_registry=reg)
         assert again.certification_evidence_fingerprint == \
             catalog.certification_evidence_fingerprint
+
+    def test_degraded_seed_does_not_lock_the_singleton(self):
+        """未传 tool_registry 且 pi-bridge 未注入 → 工具面缺席（degraded）：
+        缺条目目录不得写进进程单例（与 get_execution_catalog 同闸）。"""
+        from unittest.mock import patch
+
+        import app.lib.gis.execution_catalog as ec
+        from app.lib.gis.execution_catalog import (
+            get_execution_catalog,
+            seed_execution_catalog,
+        )
+
+        with patch.object(ec, "_lazy_tool_registry", return_value=None):
+            seeded = seed_execution_catalog({"acme": {
+                "state": "valid", "certified": True, "signed": True}})
+        assert "tools" in seeded.degraded_sources
+        assert ec._cached_catalog is not seeded, (
+            "degraded 目录被写进单例 —— 缺条目快照被永久锁死")
+        assert get_execution_catalog() is not seeded
 
     def test_certification_flip_changes_evidence_fingerprint(self):
         """认证升级/过期(状态翻转)→ 证据指纹翻转(旧快照可感知)。"""

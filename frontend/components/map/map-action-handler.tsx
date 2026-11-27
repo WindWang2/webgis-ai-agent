@@ -115,25 +115,30 @@ export const MapActionHandler = React.memo(function MapActionHandler() {
       };
 
       (async () => {
-        const commandName = action.command.toLowerCase();
-        const entry = Object.prototype.hasOwnProperty.call(COMMAND_CATALOGUE, commandName)
-          ? (COMMAND_CATALOGUE as Record<string, CommandEntry>)[commandName]
-          : undefined;
-        if (!entry) {
-          // V3: unknown commands reach a terminal state too (was: warn + silent pop).
-          devOnly.warn('[MapActionHandler] Unknown command:', action.command);
-          finish('failed', { error: 'unknown_command' });
-          return;
-        }
-        // V3: requiredParams now gates the SSE path as well (spec requires terminal
-        // states for param failures).
-        if (!entry.requiredParams(action.params || {})) {
-          finish('failed', { error: 'invalid_params' });
-          return;
-        }
-
-        let result: void | MapCommandResult;
+        // 整个函数体收敛进同一个 try：command 非字符串（畸形 AI 负载）或
+        // requiredParams 校验器抛错时，同样必须 settle + pop —— 否则 async
+        // IIFE 未捕获拒绝，动作不落终态也不出队，队列头永久阻塞、后续 AI
+        // 命令全卡死。reportTerminal/popAction 均幂等（first-terminal-wins +
+        // 队头 id 守卫），重复 finish 无害。
         try {
+          const commandName = action.command.toLowerCase();
+          const entry = Object.prototype.hasOwnProperty.call(COMMAND_CATALOGUE, commandName)
+            ? (COMMAND_CATALOGUE as Record<string, CommandEntry>)[commandName]
+            : undefined;
+          if (!entry) {
+            // V3: unknown commands reach a terminal state too (was: warn + silent pop).
+            devOnly.warn('[MapActionHandler] Unknown command:', action.command);
+            finish('failed', { error: 'unknown_command' });
+            return;
+          }
+          // V3: requiredParams now gates the SSE path as well (spec requires terminal
+          // states for param failures).
+          if (!entry.requiredParams(action.params || {})) {
+            finish('failed', { error: 'invalid_params' });
+            return;
+          }
+
+          let result: void | MapCommandResult;
           // run() contract (design §6): void → succeeded; MapCommandResult → honored;
           // Promise → awaited, then popped by the settle guard below.
           let timer: ReturnType<typeof setTimeout> | undefined;
@@ -143,6 +148,27 @@ export const MapActionHandler = React.memo(function MapActionHandler() {
               new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('timeout')), 300_000); }),
             ]);
           } finally { if (timer) clearTimeout(timer); }
+
+          // Issue #393: every catalogue command now returns an explicit
+          // MapCommandResult (post-state verification is the FIX-B contract), so a
+          // void return is no longer evidence of success — it means the command
+          // forgot to report, or an unverifiable code path slipped through. Fail
+          // honestly instead of acking `succeeded` for a mutation that may never
+          // have landed (the old default silently converted the broken
+          // apply_layer_filter / heatmap commands into fake successes).
+          if (result === undefined || result === null) {
+            finish('failed', { error: 'no_result' });
+            return;
+          }
+          if (result.status === 'failed') {
+            // 用户手势打断的相机动画按 cancelled 上报（设计 §6）；其余失败照实上报。
+            const status: MapActionTerminalStatus = result.error === 'superseded_by_user'
+              ? 'cancelled'
+              : 'failed';
+            finish(status, { error: result.error, actual: result.result });
+            return;
+          }
+          finish('succeeded', { actual: result.result });
         } catch (error) {
           // /review C10: surface AI command failures to the user via system message
           // instead of swallowing in console — otherwise user sees nothing and
@@ -157,29 +183,7 @@ export const MapActionHandler = React.memo(function MapActionHandler() {
             /* defensive: store unavailable */
           }
           finish('failed', { error: msg });
-          return;
         }
-
-        // Issue #393: every catalogue command now returns an explicit
-        // MapCommandResult (post-state verification is the FIX-B contract), so a
-        // void return is no longer evidence of success — it means the command
-        // forgot to report, or an unverifiable code path slipped through. Fail
-        // honestly instead of acking `succeeded` for a mutation that may never
-        // have landed (the old default silently converted the broken
-        // apply_layer_filter / heatmap commands into fake successes).
-        if (result === undefined || result === null) {
-          finish('failed', { error: 'no_result' });
-          return;
-        }
-        if (result.status === 'failed') {
-          // 用户手势打断的相机动画按 cancelled 上报（设计 §6）；其余失败照实上报。
-          const status: MapActionTerminalStatus = result.error === 'superseded_by_user'
-            ? 'cancelled'
-            : 'failed';
-          finish(status, { error: result.error, actual: result.result });
-          return;
-        }
-        finish('succeeded', { actual: result.result });
       })();
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps

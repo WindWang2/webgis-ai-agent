@@ -125,3 +125,31 @@ def test_corrupt_file_falls_back_to_empty(tmp_store):
         f.write("{not valid json")
 
     assert store.load_metadata() == {"chunks": []}
+
+
+@pytest.mark.parametrize("raw", ["[]", "null", '"just a string"', "42"])
+def test_non_object_json_falls_back_to_empty(tmp_store, raw):
+    """Legal JSON that is not an object ([]/null/str/number) must not reach
+    the unguarded meta.get("chunks") callers — load_metadata returns the
+    empty-dict fallback instead of the parsed list/None/str."""
+    store, dir_ = tmp_store
+    meta_path = os.path.join(dir_, "metadata.json")
+    # Write directly so save_metadata's cache invalidation doesn't run.
+    with open(meta_path, "w") as f:
+        f.write(raw)
+
+    assert store.load_metadata() == {"chunks": []}
+
+
+def test_non_object_json_does_not_break_get_stats(tmp_store):
+    """End-to-end guard for the AttributeError: get_stats/search do
+    meta.get("chunks") with no isinstance check, so a non-object
+    metadata.json used to raise AttributeError (→ HTTP 500)."""
+    store, dir_ = tmp_store
+    meta_path = os.path.join(dir_, "metadata.json")
+    with open(meta_path, "w") as f:
+        f.write("[]")
+
+    stats = store.get_stats()
+    assert stats["total_chunks"] == 0
+    assert stats["deleted_count"] == 0

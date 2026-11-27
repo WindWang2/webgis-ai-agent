@@ -1,4 +1,4 @@
-"""G17 评审修复回归（P1-1/P1-2/P2-1/P2-2/P2-3/P2-4/P2-8/P2-9）。
+"""G17 评审修复回归（P1-1/P1-2/P2-1/P2-2/P2-3/P2-4/P2-8/P2-9 + 复审 P1 波次）。
 
 每条对应独立评审 finding；修复前这些测试必须失败（防回归）。
 """
@@ -12,15 +12,18 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
-from .fixtures import make_csv_bytes  # noqa: E402
+from .fixtures import make_csv_bytes, make_geojson_bytes, point_feature  # noqa: E402
 
 from app.core.config import settings
-from app.services.data_import import budgets
+from app.services.data_import import budgets, staging
+from app.services.data_import.models import BatchStatus
 from app.services.data_import.service import DataImportError, DataImportService
+from app.services.session_data import session_data_manager
 
 pytestmark = pytest.mark.heavy
 
 SESSION = "sess-g17-fixes-0001"
+GEOJSON_ONE = make_geojson_bytes([point_feature({"n": 1}, 116.3, 39.8)])
 
 
 @pytest.fixture()
@@ -254,3 +257,238 @@ async def test_p2_9_cancel_intent_persisted(env, tmp_path):
     assert st is not None and st.cancel_requested is True
     final = await env.get_batch(state.batch_id, SESSION)
     assert final.status.value in ("cancelled", "partial", "failed")
+
+
+async def test_p1_commit_keeps_over_cap_columns(env, tmp_path):
+    """P1（数据完整性）：>64 列 CSV 提交不得静默丢列（预览帽只适用预览）。"""
+    n_cols = budgets.SAMPLE_COLUMNS_IN_PREVIEW + 6
+    header = [f"c{i:03d}" for i in range(n_cols)]
+    row = [f"v{i}" for i in range(n_cols)]
+    csv = make_csv_bytes([row], header)
+    state = await env.create_batch(SESSION, "u", [("wide.csv", csv)])
+    m = state.members[0]
+    assert m.fields_total == n_cols
+    await env.save_plan(state.batch_id, SESSION, {m.member_key: {"mode": "table"}},
+                        selected=[m.member_key])
+    # 预览仍按预览帽有界（SAMPLE_COLUMNS_IN_PREVIEW，行为不变）
+    pv = await env.preview_members(state.batch_id, SESSION, [m.member_key], row_limit=10)
+    assert len(pv["previews"][0]["columns"]) == budgets.SAMPLE_COLUMNS_IN_PREVIEW
+    # 提交产物必须含全部列（超帽列不得从 table 产物中静默消失）
+    out = await env.start_commit(state.batch_id, SESSION, background=False)
+    r = out["receipts"][m.member_key]
+    assert r["status"] == "completed"
+    d = await session_data_manager.get(SESSION, r["output_ref"])
+    cols = [c["name"] for c in d["table"]["columns"]]
+    assert cols == header
+    assert d["table"]["rows"][0][-1] == f"v{n_cols - 1}"
+
+
+async def test_p1_delete_batch_rechecks_committing_inside_lock(env, tmp_path, monkeypatch):
+    """P1（并发）：delete_batch 锁外快照陈旧时，锁内必须重读状态 ——
+    在飞 durable job 的 staging 不得被 rmtree（该 run 会以 NOT_FOUND 中断）。"""
+    state = await env.create_batch(SESSION, "u", [("x.geojson", GEOJSON_ONE)])
+    # 另一副本的在飞提交：磁盘状态 COMMITTING + 活跃 job 证据
+    committing = staging.load_state(state.batch_id)
+    committing.status = BatchStatus.COMMITTING
+    committing.active_job_id = 424242
+    staging.save_state(committing)
+    monkeypatch.setattr(
+        env, "_active_commit_job",
+        lambda st: {"job_id": int(st.active_job_id or 424242), "status": "running"},
+    )
+    # 竞态窗口：锁外快照读于状态推进之前（陈旧：仍为 configured）
+    real_load = staging.load_state
+    stale = staging.load_state(state.batch_id)
+    stale.status = BatchStatus.CONFIGURED
+    stale.active_job_id = None
+    seen = {"n": 0}
+
+    def fake_load(batch_id, **kw):
+        seen["n"] += 1
+        return stale if seen["n"] == 1 else real_load(batch_id, **kw)
+
+    monkeypatch.setattr(staging, "load_state", fake_load)
+
+    with pytest.raises(DataImportError) as ei:
+        await env.delete_batch(state.batch_id, SESSION)
+    assert ei.value.code == "COMMIT_IN_PROGRESS"
+    assert staging.batch_root(state.batch_id).exists()
+
+
+async def test_p1_session_cap_protects_committing_batch(env, tmp_path, monkeypatch):
+    """P1（数据完整性）：会话批次帽不得淘汰 COMMITTING 批次 ——
+    它可能正被另一副本的 durable job 提交（staging 被删 → 该 run NOT_FOUND）。"""
+    monkeypatch.setattr(budgets, "MAX_BATCHES_PER_SESSION", 2)
+    states = []
+    for i, name in enumerate(("a", "b", "c")):
+        st = staging.stage_files(SESSION, "u", [(f"{name}.geojson", GEOJSON_ONE)])
+        # 显式 created_at 保证「最旧」判定确定（isoformat 秒级精度会打平）
+        st.created_at = f"2026-01-0{i + 1}T00:00:00+00:00"
+        staging.save_state(st)
+        states.append(st)
+    # 最旧批次置为在飞提交（跨副本证据）
+    states[0].status = BatchStatus.COMMITTING
+    states[0].active_job_id = 7
+    staging.save_state(states[0])
+
+    listed = await env.list_batches(SESSION)
+    assert states[0].batch_id in {b["batch_id"] for b in listed}
+    # 在飞批次 staging 必须保留；帽仍对空闲批次生效（淘汰最旧 1 个）
+    surviving = [p.name for p in staging.batches_root().iterdir() if p.is_dir()]
+    assert states[0].batch_id in surviving
+    assert len(surviving) == budgets.MAX_BATCHES_PER_SESSION
+
+
+async def test_p2_commit_vector_read_is_bounded(env, tmp_path, monkeypatch):
+    """P2（perf）：提交读矢量图层必须带 max_features 上界，不得整读后才判预算。"""
+    import pyogrio
+
+    geo = make_geojson_bytes(
+        [point_feature({"n": i}, 116.3 + i * 0.001, 39.8) for i in range(3)]
+    )
+    state = await env.create_batch(SESSION, "u", [("bounded.geojson", geo)])
+    key = state.members[0].member_key
+    await env.save_plan(state.batch_id, SESSION, {key: {}}, selected=[key])
+
+    captured: dict = {}
+    orig = pyogrio.read_dataframe
+
+    def spy(*args, **kwargs):
+        if "bounded.geojson" in str(args[0]):
+            captured.update(kwargs)
+        return orig(*args, **kwargs)
+
+    monkeypatch.setattr(pyogrio, "read_dataframe", spy)
+    out = await env.start_commit(state.batch_id, SESSION, background=False)
+    assert out["receipts"][key]["status"] == "completed"
+    assert captured.get("max_features") == budgets.COMMIT_ROW_LIMIT + 1
+
+
+async def test_p2_gpkg_attribute_layer_typed_error(env, tmp_path):
+    """P2（error-handling）：GPKG 无几何图层必须 typed 拒绝，不得裸 AttributeError。"""
+    import pandas as pd
+    import pyogrio
+
+    gpkg = tmp_path / "attr.gpkg"
+    pyogrio.write_dataframe(
+        pd.DataFrame({"a": [1, 2]}), gpkg, layer="attr", driver="GPKG"
+    )
+    state = await env.create_batch(SESSION, "u", [("attr.gpkg", gpkg.read_bytes())])
+    member = next(m for m in state.members if m.container_ref == "attr")
+    await env.save_plan(
+        state.batch_id, SESSION, {member.member_key: {}}, selected=[member.member_key]
+    )
+    pv = await env.preview_members(
+        state.batch_id, SESSION, [member.member_key], row_limit=10
+    )
+    assert pv["previews"][0]["error"]["code"] == "VECTOR_GEOMETRY_MISSING"
+    out = await env.start_commit(state.batch_id, SESSION, background=False)
+    r = out["receipts"][member.member_key]
+    assert r["status"] == "failed"
+    assert r["error_code"] == "VECTOR_GEOMETRY_MISSING"
+
+
+def test_p3_xlsx_duplicate_headers_preserved(tmp_path):
+    """P3（data-integrity）：xlsx 重名表头不得静默合并（后值覆盖前值）。"""
+    from openpyxl import Workbook
+
+    from app.services.data_import.interpretation import interpret_table
+    from app.services.data_import.models import TableInterpretation
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "s"
+    ws.append(["a", "a", "b", "a"])
+    ws.append([1, 2, 3, 4])
+    p = tmp_path / "dup.xlsx"
+    wb.save(p)
+
+    result = interpret_table(p, TableInterpretation(), sheet="s", row_limit=10)
+    # 与 CSV（pandas）同口径：a / a.1 / b / a.2
+    assert result.columns == ["a", "a.1", "b", "a.2"]
+    assert result.records[0].properties == {
+        "a": "1", "a.1": "2", "b": "3", "a.2": "4",
+    }
+
+
+async def test_p3_discovery_failure_keeps_placeholder_member(env, tmp_path):
+    """P3（api-contract）：发现失败的文件不得从成员清单消失。"""
+    state = await env.create_batch(SESSION, "u", [("broken.xlsx", b"not-an-xlsx")])
+    assert len(state.members) == 1
+    m = state.members[0]
+    assert m.source_id == "src-1"
+    assert m.display_name == "broken.xlsx"
+    assert m.unsupported_reason
+    assert m.unsupported_reason.startswith("discovery_failed:")
+    assert state.status == BatchStatus.INSPECTED
+    assert any("发现失败" in n for n in state.notes)
+
+
+async def test_p3_invalid_interpretation_mode_rejected(env, tmp_path):
+    """P3（api-contract）：非法 mode 必须 typed 拒绝，不得静默当纯表。"""
+    csv = make_csv_bytes([[116.3, 39.8]], ["x", "y"])
+    state = await env.create_batch(SESSION, "u", [("m.csv", csv)])
+    key = state.members[0].member_key
+    with pytest.raises(DataImportError) as ei:
+        await env.save_plan(state.batch_id, SESSION, {key: {"mode": "kml"}})
+    assert ei.value.code == "BAD_INTERPRETATION"
+    # 合法 mode 不受影响
+    await env.save_plan(state.batch_id, SESSION, {key: {"mode": "table"}})
+
+
+async def test_p3_list_batches_reclaims_orphan_staging(env, tmp_path):
+    """P3（resource-leak）：无 batch.json 的孤儿目录过期后必须回收。"""
+    import os
+    from datetime import datetime, timedelta, timezone
+
+    from app.services.data_import.models import new_batch_id
+
+    root = staging.batches_root()
+
+    def _orphan(session_id: str, expires_at: str) -> Path:
+        d = root / new_batch_id()
+        d.mkdir()
+        (d / "owner.json").write_text(
+            json.dumps({
+                "batch_id": d.name,
+                "session_id": session_id,
+                "user_fingerprint": "u",
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "expires_at": expires_at,
+            }),
+            encoding="utf-8",
+        )
+        return d
+
+    now = datetime.now(timezone.utc)
+    past = (now - timedelta(hours=1)).isoformat(timespec="seconds")
+    future = (now + timedelta(hours=1)).isoformat(timespec="seconds")
+    expired_own = _orphan(SESSION, past)
+    fresh_own = _orphan(SESSION, future)
+    expired_other = _orphan("sess-other", past)
+    # 更早的崩溃（owner.json 也没写成）：按目录 mtime 超过 TTL 判定
+    old_no_owner = root / new_batch_id()
+    old_no_owner.mkdir()
+    old_ts = (now - timedelta(hours=budgets.BATCH_TTL_HOURS + 1)).timestamp()
+    os.utime(old_no_owner, (old_ts, old_ts))
+    fresh_no_owner = root / new_batch_id()
+    fresh_no_owner.mkdir()
+
+    staging.list_batch_states(SESSION)
+
+    assert not expired_own.exists()
+    assert not old_no_owner.exists()
+    assert fresh_own.exists()
+    assert expired_other.exists()
+    assert fresh_no_owner.exists()
+
+
+def test_p3_member_safe_name_truncation_keeps_distinct():
+    """P3（data-integrity）：>150 字符成员键截断后不得同名（产物会互相覆盖）。"""
+    base = "c:src-1:zipset:" + "d" * 300
+    a = staging.member_safe_name(base + ":a")
+    b = staging.member_safe_name(base + ":b")
+    assert a != b
+    assert len(a) <= 150 and len(b) <= 150
+    # 短键行为不变
+    assert staging.member_safe_name("f:src-1") == "f_src-1"

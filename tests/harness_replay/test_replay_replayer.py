@@ -225,6 +225,36 @@ class TestExpectExact:
         assert diff["diff_class"] == "exact"
         assert diff["path"].startswith("gate.checks.MapSpecValidity")
 
+    @pytest.mark.asyncio
+    async def test_user_text_validated_against_turn_output_text(self):
+        """expect.user_text.present=True → 用 TurnSpec.output_text 校验，
+        不再恒判 absent。"""
+        scenario = Scenario(
+            scenario_id="scn-text-present", category="point_distribution",
+            turns=[TurnSpec(
+                ops=[_upsert_op()],
+                output_text="公园分布图已生成",
+                expect={"user_text": {"present": True, "len_bucket": "xs"}},
+            )],
+        )
+        result = await OfflineReplayer().replay_scenario(scenario)
+        assert result.turns[0].output_text == "公园分布图已生成"
+        assert result.turns[0].text_diffs == []
+
+    @pytest.mark.asyncio
+    async def test_user_text_absent_without_output_evidence(self):
+        """无 output_text 证据 → present=True 如实判 absent（text diff）。"""
+        scenario = Scenario(
+            scenario_id="scn-text-absent", category="point_distribution",
+            turns=[TurnSpec(
+                ops=[_upsert_op()],
+                expect={"user_text": {"present": True}},
+            )],
+        )
+        result = await OfflineReplayer().replay_scenario(scenario)
+        assert result.turns[0].output_text is None
+        assert result.turns[0].text_diffs
+
     def test_compare_exact_walks_lists_and_leaves(self):
         assert compare_exact({"a": [1, {"b": 2}]}, {"a": [1, {"b": 2}]}) == []
         diffs = compare_exact({"a": [1, {"b": 2}]}, {"a": [1, {"b": 3}]})

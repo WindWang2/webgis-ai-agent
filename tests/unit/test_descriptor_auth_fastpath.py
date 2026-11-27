@@ -8,23 +8,15 @@ What this seam promises:
   pre-computed descriptor dict, WITHOUT reading the full payload
   (no ``get()`` / ``get_ref_data()`` call)
 - owner-token mismatch → ``error_type="PermissionDenied"``
-- descriptor missing (pre-V3 ref) OR payload gone (``ref_exists`` False)
-  → ``error_type="NotFound"``
+- descriptor missing but payload live → lazily recompute and cache
+- payload gone (``ref_exists`` False) → ``error_type="NotFound"``
 
 Every test here runs against BOTH backends (MemorySessionStore +
 RedisSessionStore over fakeredis) so protocol parity is enforced, mirroring
 tests/unit/test_session_store_contract.py.
 
-KNOWN CONTRACT DEVIATION (Redis, pre-existing — NOT introduced by this branch):
-``RedisSessionStore.get_ref_descriptor`` (session_data_redis.py:895) has an
-on-the-fly fallback: when the descriptor/meta key is missing but the data key
-exists, it reads the full payload, recomputes and caches the descriptor, and
-returns it. Consequently the seam's "descriptor missing → NotFound" promise
-does NOT hold on Redis for pre-V3 refs — the seam returns success with the
-recomputed descriptor. End-user behaviour (200 with a correct descriptor) is
-identical through either path; test_pre_v3_ref_without_descriptor_falls_back
-asserts each backend's actual behaviour and documents this. App source was
-NOT modified per task constraints.
+Both backends recompute a missing descriptor from the live payload. The
+cached-descriptor fast path still avoids hydrating the payload.
 """
 import time
 from contextlib import ExitStack
@@ -398,40 +390,22 @@ async def test_descriptor_orphaned_but_data_gone_not_found(store_factory):
 @pytest.mark.parametrize("store_factory", STORE_FACTORIES)
 @pytest.mark.asyncio
 async def test_pre_v3_ref_without_descriptor_falls_back(store_factory):
-    """Pre-V3 ref (no stored descriptor) must remain servable.
-
-    Memory: remove the descriptor entry → the seam reports NotFound and the
-    ROUTE-level fallback (get_ref_data) recomputes the descriptor; store-level
-    assertion is NotFound. get_ref_data must still return the payload intact
-    (fallback path not broken).
-
-    Redis: deleting the meta key does NOT surface NotFound —
-    RedisSessionStore.get_ref_descriptor's pre-existing on-the-fly fallback
-    reads the data key, recomputes and caches the descriptor, so the seam
-    returns success. This deviates from the seam's documented contract (see
-    module docstring) and is asserted here as the ACTUAL behavior; end-user
-    outcome (200 with a correct descriptor) is identical through either path.
-    """
+    """Pre-V3 ref (no stored descriptor) remains servable on both backends."""
     store = store_factory()
     sid = "fastpath_sid_b8"
     ref_id = await store.store(sid, _point_fc(10), prefix="data")
 
     if isinstance(store, RedisSessionStore):
         await store._r.delete(store._descriptor_key(sid, ref_id))
-        res = await store.get_ref_descriptor_authorized(sid, ref_id)
-        assert res.success is True, (
-            "Redis get_ref_descriptor recomputes a missing descriptor on the "
-            "fly (pre-existing fallback) — see module docstring; flip this to "
-            "expect NotFound if that fallback is ever removed"
-        )
-        assert res.data["feature_count"] == 10
     else:
         store._descriptors[sid].pop(ref_id)
-        res = await store.get_ref_descriptor_authorized(sid, ref_id)
-        assert res.success is False
-        assert res.error_type == "NotFound"
 
-    # Deep read path (route-level fallback) is intact on both backends.
+    res = await store.get_ref_descriptor_authorized(sid, ref_id)
+    assert res.success is True
+    assert res.data["feature_count"] == 10
+    assert await store.get_ref_descriptor(sid, ref_id) == res.data
+
+    # Deep read path remains intact on both backends.
     deep = await store.get_ref_data(sid, ref_id)
     assert deep.success is True
     assert deep.data is not None

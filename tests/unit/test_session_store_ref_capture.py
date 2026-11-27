@@ -30,3 +30,14 @@ async def test_store_capture_is_task_scoped_and_excludes_control_refs(backend):
     assert left[0] != right[0]
     assert left[1] == [left[0]]
     assert right[1] == [right[0]]
+
+
+def test_capture_created_refs_tolerates_cross_context_reset():
+    """A token reset from a different Context must not raise out of finally."""
+    import contextvars
+
+    from app.lib.runtime.ref_capture import capture_created_refs
+
+    manager = capture_created_refs()
+    contextvars.copy_context().run(manager.__enter__)
+    manager.__exit__(None, None, None)  # 不在同一 Context 的 reset 不得抛

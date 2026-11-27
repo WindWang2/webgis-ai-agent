@@ -246,7 +246,7 @@ def record_tool_call(
     dispatch (tool_pipeline.use_origin + chat/bridge bind_runtime_context), and
     asyncio.to_thread copies the context into sync-tool worker threads.
     """
-    if tool_call_id is None or run_id is None or turn_id is None:
+    if tool_call_id is None or run_id is None or turn_id is None or session_id is None:
         try:
             from app.services.jobs.context import current_origin
             _origin = current_origin()
@@ -317,7 +317,7 @@ def record_event(event: ToolCallEvent) -> None:
 
 def _bin_index(duration_ms: int) -> int:
     """log2 分桶: bit_length 即 floor(log2)+1，最大约 32 个 bin（0.5ms ~ 数小时）。"""
-    return max(1, duration_ms.bit_length())
+    return min(32, max(1, duration_ms.bit_length()))
 
 
 def _percentiles(counts: list[int], total: int) -> dict[str, float]:

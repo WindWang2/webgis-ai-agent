@@ -31,6 +31,7 @@ from app.services.data_fabric.tile_cache import DfTileCache
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
@@ -126,6 +127,27 @@ class OgcTilesProxyService:
         self._coalescer = coalescer or TileBuildCoalescer()
         self._content_types: dict[tuple, str] = {}
         self._content_types_max = 2048
+        # 负结果短缓存（远端 404 / zoom 超范围 → None）：地图平移会反复
+        # 请求同一缺失瓦片，零缓存时每次都出网。
+        self._negative: dict[tuple, float] = {}
+        self._negative_ttl_s = 30.0
+        self._negative_max = 2048
+
+    def _negative_get(self, key: tuple) -> bool:
+        at = self._negative.get(key)
+        if at is None:
+            return False
+        if time.monotonic() - at < self._negative_ttl_s:
+            return True
+        self._negative.pop(key, None)
+        return False
+
+    def _negative_put(self, key: tuple) -> None:
+        self._negative[key] = time.monotonic()
+        overflow = len(self._negative) - self._negative_max
+        if overflow > 0:
+            for stale in list(self._negative)[:overflow]:
+                self._negative.pop(stale, None)
 
     def _remember_content_type(self, key: tuple, content_type: str) -> None:
         self._content_types[key] = content_type
@@ -166,6 +188,11 @@ class OgcTilesProxyService:
                 etag=compute_tile_etag(cached.gz, cached.fingerprint),
             )
 
+        if self._negative_get(cache_key):
+            return OgcTileServeResult(
+                None, "application/octet-stream", fingerprint, "miss"
+            )
+
         async def _build() -> OgcTileServeResult:
             adapter = self._resolve_governed_adapter(ds_model)
             fetch = getattr(adapter, "fetch_tile", None)
@@ -176,6 +203,7 @@ class OgcTilesProxyService:
             dataset_id = self._dataset_id_of(item)
             body_ct = await asyncio.to_thread(fetch, dataset_id, z, x, y)
             if body_ct is None:
+                self._negative_put(cache_key)
                 return OgcTileServeResult(None, "application/octet-stream", fingerprint, "miss")
             body, content_type = body_ct
             self._remember_content_type(cache_key, content_type)

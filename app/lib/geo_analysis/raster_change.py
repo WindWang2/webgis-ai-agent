@@ -133,6 +133,17 @@ def detect_raster_change(
                 raise RasterAlignmentError(
                     f"raster B cannot be aligned to A: {decision.reason}", decision
                 )
+            if not decision.aligned and grid_b.has_gcps:
+                # GCP-only B 走不了 WarpedVRT（恒等仿射 → 足迹全 NaN，#2239），
+                # aligned_reader 会回退成**原始未对齐**数据集；此时仍按 A 的网格
+                # 窗口读 B 就是拿错位像元做差值（静默错误）。结构化拒绝：先对 B
+                # 做显式 reproject（GDAL GCP warp）再来做变化检测。
+                raise RasterAlignmentError(
+                    "raster B is GCP-georeferenced and not aligned to A's grid; "
+                    "reproject B explicitly (GDAL GCP-based warp) before change "
+                    "detection",
+                    decision,
+                )
             # 输出磁盘足迹守卫（内存是 O(window)，由预算推导保证）。
             from app.lib.geo_analysis.raster_guard import RasterResourceGuard
 

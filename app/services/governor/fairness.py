@@ -215,8 +215,16 @@ class FairScheduler:
         )
 
     def _position_of(self, seq: int) -> int:
-        order = sorted(self._membership.keys())
-        return order.index(seq) if seq in order else -1
+        """按当前调度键（含 aging）计算队位；0 = 下一个可被执行者。"""
+        now = time.monotonic()
+        order = sorted(
+            self._membership.values(),
+            key=lambda w: (w.effective_key(now, self.aging_threshold_s), w.seq),
+        )
+        for pos, waiter in enumerate(order):
+            if waiter.seq == seq:
+                return pos
+        return -1
 
     def is_mathematically_sane(self) -> bool:
         """不变量自检（chaos 测试用）：在飞 ≤ 容量；成员与堆一致。"""

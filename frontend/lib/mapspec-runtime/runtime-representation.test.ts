@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { MapSpecRuntime } from "./runtime";
+import { compileMapSpec } from "@/lib/mapspec-compiler/compiler";
 import type { Map as MaplibreMap } from "maplibre-gl";
 import type { MapSpec, MapSpecLayer } from "@/lib/mapspec-compiler/types";
 import { getSymbolLawEvidence, resetSymbolLawEvidence } from "@/lib/map-kit/symbol-law";
@@ -235,6 +236,69 @@ describe("MapSpecRuntime — 表达窗口展开（v1.6 方向 5）", () => {
       const ev = getSymbolLawEvidence().events.find((e) => e.kind === "representation-window-layer");
       expect(ev).toBeDefined();
       expect(ev!.detail).toMatchObject({ mode: "visual_heatmap", sublayerId: "L__rep0" });
+    });
+  });
+
+  describe("circle 原生 heatmap paint：live/export parity（P1）", () => {
+    const nativeHeatmapPaint = {
+      "heatmap-radius": 18,
+      "heatmap-opacity": 0.35,
+      "heatmap-intensity": 1.4,
+      "heatmap-weight": 1.25,
+      "heatmap-color": [
+        "interpolate", ["linear"], ["heatmap-density"],
+        0, "rgba(0,0,0,0)", 1, "#ff0000",
+      ],
+    };
+
+    it("raw → heatmap 窗：__rep 子层 paint 与导出一致，circle 主层不带非法键", () => {
+      const layer = {
+        id: "L",
+        source: "S",
+        type: "circle",
+        paint: { color: "#3388aa", radius: 4, ...nativeHeatmapPaint },
+        representation: {
+          windows: [
+            { min_zoom: 0, max_zoom: 11, mode: "raw" },
+            { min_zoom: 11, max_zoom: 24, mode: "visual_heatmap" },
+          ],
+        },
+      } as unknown as MapSpecLayer;
+      const spec = repSpec(layer);
+      const compiled = compileMapSpec(spec);
+      expect(compiled.report.success).toBe(true);
+      const exportedRep = compiled.style.layers.find((l) => l.id === "L__rep1");
+      expect(exportedRep).toBeDefined();
+
+      const rt = makeRuntime(map);
+      rt.reconcile(spec);
+      expect(rt.getLastError()).toBeNull();
+
+      const main = layerOn(map, "L");
+      expect(main.type).toBe("circle");
+      expect(Object.keys(main.paint ?? {}).some((k) => k.startsWith("heatmap-"))).toBe(false);
+      expect(layerOn(map, "L__rep1").paint).toEqual(exportedRep!.paint);
+    });
+
+    it("首窗 heatmap：主层与 __rep 子层 paint 均与导出一致", () => {
+      const layer = {
+        ...HEAT_CLUSTER_LAYER,
+        paint: { color: "#3388aa", radius: 4, opacity: 0.8, ...nativeHeatmapPaint },
+      } as unknown as MapSpecLayer;
+      const spec = repSpec(layer);
+      const compiled = compileMapSpec(spec);
+      expect(compiled.report.success).toBe(true);
+      const exportedMain = compiled.style.layers.find((l) => l.id === "L");
+      const exportedRep = compiled.style.layers.find((l) => l.id === "L__rep0");
+      expect(exportedMain).toBeDefined();
+      expect(exportedRep).toBeDefined();
+
+      const rt = makeRuntime(map);
+      rt.reconcile(spec);
+      expect(rt.getLastError()).toBeNull();
+
+      expect(layerOn(map, "L").paint).toEqual(exportedMain!.paint);
+      expect(layerOn(map, "L__rep0").paint).toEqual(exportedRep!.paint);
     });
   });
 

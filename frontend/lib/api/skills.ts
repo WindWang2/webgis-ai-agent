@@ -24,5 +24,5 @@ export async function getSkills(opts?: { forceRefresh?: boolean; signal?: AbortS
     signal: opts?.signal,
     label: 'Skills API error',
   });
-  return result.data.skills || [];
+  return result.data?.skills || [];
 }

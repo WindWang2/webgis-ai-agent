@@ -139,7 +139,18 @@ async def merge_proposal_intents(
         expected_revision=current,
     )
     if ckpt_res.superseded:
-        return MergeOutcome(ok=False, conflict=True, failure="base_revision_drift")
+        return MergeOutcome(
+            ok=False,
+            conflict=True,
+            failure="base_revision_drift",
+            evidence=_evidence(
+                proposal, actor, "none",
+                int(ckpt_res.mutation_revision or current),
+                failure="base_revision_drift",
+                approvals_considered=approvals_considered,
+                policy=policy,
+            ),
+        )
     if ckpt_res.is_error:
         return MergeOutcome(
             ok=False,

@@ -40,6 +40,7 @@ from app.services.gis_harness.evidence_claim import (
     mark_evidence_superseded,
     narrative_claim_unverified,
     project_artifact_record,
+    project_artifact_registry,
     project_dataset_version,
     project_goal_evidence,
     project_product_facet,
@@ -190,6 +191,24 @@ def test_stale_version_projection():
     )
     store.upsert_evidence(node)
     assert store.get_evidence(node.evidence_id).freshness is EvidenceFreshness.STALE
+
+
+def test_non_dict_metadata_does_not_break_registry_projection():
+    """record.metadata 为真值非 dict（list/str）→ 按缺席处理，绝不抛
+    AttributeError（否则 project_artifact_registry 整循环中断、证据投影
+    全失败）。"""
+    rec = FakeArtifact(artifact_id="ref:weird", status="valid")
+    rec.metadata = ["not", "a", "dict"]
+    node = project_artifact_record(rec, tenant_id="t1", session_id="s1")
+    assert node.ref == "ref:weird"
+    assert node.version == ""
+    assert node.metadata.get("proof_source") == "self_attested_metadata"
+    # 注册表投影循环继续（第二条记录照常入表）
+    store = ClaimStore()
+    nodes = project_artifact_registry(
+        {"a": rec, "b": FakeArtifact(artifact_id="ref:ok", status="valid")},
+        store, tenant_id="t1", session_id="s1")
+    assert len(nodes) == 2
 
 
 def test_cross_tenant_ref_rejected():
@@ -936,3 +955,23 @@ def test_contradiction_one_nan_vs_value_still_hard():
     assert any(r.kind == "hard" for r in results)
     assert store.get_claim("claim:nan-a").status is ClaimStatus.CONTRADICTED
     assert store.get_claim("claim:val-b").status is ClaimStatus.CONTRADICTED
+
+
+def test_declared_scope_missing_on_proof_evidence_fails_closed():
+    """claim 声明时间/空间标签而权威证据节点无 scope → 不判 scope_ok
+    （与 units/semantics 同 fail-closed 口径）。"""
+    store = ClaimStore()
+    store.upsert_evidence(EvidenceNode(
+        evidence_id="stat:noscope", kind=EvidenceKind.STATISTIC, ref="ref:s",
+        freshness=EvidenceFreshness.FRESH, method="admin_density",
+        metadata={"stat_type": "density", "unit": "per_km2", "value": 4.7},
+    ))
+    claim = claim_from_statistic(
+        subject="武侯区", claim_type=ClaimType.DENSITY, value=4.7,
+        unit="per_km2", method="admin_density",
+        statistic_evidence_id="stat:noscope",
+        temporal_scope=Scope(temporal_label="2024"), store=store,
+    )
+    result = verify_claim(claim, store)
+    assert result.positive_proof is False
+    assert any("evidence_temporal_missing" in r for r in result.reasons)

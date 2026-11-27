@@ -763,7 +763,12 @@ async def commit_map_operation(
 
     if not superseded:
         for ce in compiled:
-            if (ce.intent is None and not ce.deferred) or ce.state in ("applied", "skipped"):
+            # failed 也跳过：batch 抛异常被标 failed 的 presentation 效果若
+            # 回到顺序链，mutation_id 由 :pres 变 :e{idx}（引擎不去重）→
+            # 失败记录被覆盖，且违反「presentation 组单事务」约定。
+            if (ce.intent is None and not ce.deferred) or ce.state in (
+                "applied", "skipped", "failed",
+            ):
                 continue
             if ce.deferred:
                 fresh_spec = await _load_spec(session_id)
@@ -912,9 +917,23 @@ def _receipt_message(receipt: Dict[str, Any]) -> str:
     failed = receipt.get("failed_count", 0)
     aborted = receipt.get("aborted_count", 0)
     if status == "committed":
-        return f"地图操作已提交：{applied} 项生效" + (
-            f"，{skipped} 项保留用户决策" if skipped else ""
+        noop = sum(
+            1 for e in (receipt.get("effects") or [])
+            if isinstance(e, dict) and e.get("state") == "skipped"
+            and e.get("reason_code") == RC_NOOP
         )
+        user_wins = max(0, skipped - noop)
+        skipped_parts = []
+        if user_wins:
+            skipped_parts.append(f"{user_wins} 项保留用户决策")
+        if noop:
+            # RC_NOOP = 目标已是请求状态（非用户决策）—— 不得混入
+            # 「保留用户决策」陈述（1 applied + 1 noop 时误导用户）。
+            skipped_parts.append(f"{noop} 项已是目标状态")
+        message = f"地图操作已提交：{applied} 项生效"
+        if skipped_parts:
+            message += "，" + "、".join(skipped_parts)
+        return message
     if status == "partial":
         if receipt.get("superseded"):
             return (

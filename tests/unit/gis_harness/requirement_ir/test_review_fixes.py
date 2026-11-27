@@ -84,6 +84,57 @@ class TestJournalFoldingReplay:
         assert doc_after.revision == revision_before
 
 
+class TestAmbiguityJournalRecovery:
+    """P2：歧义入档必须进 journal，恢复不能重 derives 伪造状态。"""
+
+    def _open_gaps(self):
+        store = MemStore()
+        run(service.ensure_document(
+            store, "s1", "成都的小学分布情况，做一张图", turn=1))
+        result = run(service.apply_user_patches(store, "s1", [
+            service.TurnPatch(
+                op="set", path="time.series", value=True,
+                turn=2, actor="user", op_id="series-gap"),
+            service.TurnPatch(
+                op="set", path="statistics.normalization", value="per_area",
+                turn=2, actor="user", op_id="denominator-gap"),
+        ]))
+        assert result["applied"] == 2 and result["errors"] == []
+        state = run(service.load_state(store, "s1"))
+        current = service._doc_from(state.document)
+        by_code = {a.code: a for a in current.intent.ambiguities}
+        assert by_code["time_range_missing_for_series"].state == "open"
+        assert by_code["denominator_missing_for_normalized_statistic"].state == "open"
+        assert all(a.asked_turn == 2 for a in by_code.values())
+        return store, state, current, by_code
+
+    def test_open_ambiguities_and_asked_turn_survive_replay(self):
+        _store, state, current, by_code = self._open_gaps()
+        rebuilt = service.replay_document(state)
+        assert rebuilt.intent.ambiguities == current.intent.ambiguities
+        assert all(a.state == "open" and a.asked_turn == 2
+                   for a in rebuilt.intent.ambiguities)
+        assert {a.code for a in rebuilt.intent.ambiguities} == set(by_code)
+
+    def test_answer_and_remaining_open_state_survive_replay(self):
+        store, state, current, by_code = self._open_gaps()
+        target = by_code["time_range_missing_for_series"]
+        result = run(service.answer_clarification(
+            store, "s1", target.context_key, "2019-2024", turn=3))
+        assert result["applied"] == 1 and result["errors"] == []
+        state = run(service.load_state(store, "s1"))
+        current = service._doc_from(state.document)
+        rebuilt = service.replay_document(state)
+        assert rebuilt.intent.ambiguities == current.intent.ambiguities
+        restored = {a.code: a for a in rebuilt.intent.ambiguities}
+        answered = restored["time_range_missing_for_series"]
+        assert answered.state == "answered"
+        assert answered.answer == "2019-2024"
+        assert answered.asked_turn == 2 and answered.answered_turn == 3
+        still_open = restored["denominator_missing_for_normalized_statistic"]
+        assert still_open.state == "open" and still_open.asked_turn == 2
+
+
 class TestSupersedeCarriesUserValues:
     """P1-2：超替必须连值带 provenance 携带；幽灵 user-wins 禁止。"""
 

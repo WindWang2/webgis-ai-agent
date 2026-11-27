@@ -330,6 +330,24 @@ describe('DataPlaneScheduler — cancellation & stale protection', () => {
     expect(await p2).toMatchObject({ status: 'fulfilled' });
   });
 
+  it('pre-aborted signal is accounted as cancelled (counter + event), no fetch', async () => {
+    // 会话切换竞态：signal 在 request 前已中止的早退路径也必须入账，
+    // 否则取消计数系统性少报（与其它取消路径同一证据纪律）。
+    const events: Array<{ kind: string; reason?: string }> = [];
+    const fetchImpl = vi.fn(async () => ({ fc: fc(1) }));
+    const scheduler = new DataPlaneScheduler({
+      fetchImpl,
+      onEvent: (kind, detail) => events.push({ kind, reason: detail?.reason }),
+    });
+    const controller = new AbortController();
+    controller.abort();
+    const r = await scheduler.request(req({ signal: controller.signal }));
+    expect(r.status).toBe('cancelled');
+    expect(scheduler.stats().cancelled).toBe(1);
+    expect(events).toEqual([{ kind: 'cancelled', reason: 'pre-aborted' }]);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it('session-scoped: cancelSession(other) leaves s1 untouched', async () => {
     const h = makeHarness({ concurrency: 1 });
     const p = h.scheduler.request(req({ sessionId: 's2', refId: 'ref:s2' }));

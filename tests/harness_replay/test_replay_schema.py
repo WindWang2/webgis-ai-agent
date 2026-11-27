@@ -109,6 +109,19 @@ class TestBuildTrace:
         assert trace.mutations["count"] == 1
         assert trace.mutations["mutation_revision"] is None  # 载荷未带 revision
 
+    def test_missing_tool_result_status_is_unknown_not_ok(self):
+        """TOOL_RESULTS 缺 status = 未知，不得默认升级成 ok（假收据 pin）。"""
+        chain = GisTraceChain(turn_id="turn-nostat", session_id="sess-nostat")
+        chain.record(Stage.TOOL_CALLS, call_id="c-nostat",
+                     tool_name="webgis_layer_upsert")
+        chain.record(Stage.TOOL_RESULTS, tool_name="webgis_layer_upsert",
+                     result={"geojson_ref": "ref://x"})
+        trace = build_trace(
+            session_id="sess-nostat", turn_id="turn-nostat",
+            chain_dict=chain.as_dict(),
+        )
+        assert trace.tool_calls[0]["status"] == "unknown"
+
 
 class TestProductionEmitterShapes:
     def test_production_shaped_chain_populates_all_families(self):
@@ -183,6 +196,16 @@ class TestBehaviorDigest:
         t2 = _build(turn_summary=s2)
         assert t1.behavior_digest == t2.behavior_digest
 
+    def test_digest_tracks_duration_presence_not_precision(self):
+        """duration_ms 存在性必须进 digest；精度不得进。"""
+        base = {"tool_calls": [{"tool_name": "t", "status": "ok"}]}
+        present = {"tool_calls": [{"tool_name": "t", "status": "ok",
+                                   "duration_ms": 1.5}]}
+        changed = {"tool_calls": [{"tool_name": "t", "status": "ok",
+                                   "duration_ms": 999.0}]}
+        assert behavior_digest(base) != behavior_digest(present)
+        assert behavior_digest(present) == behavior_digest(changed)
+
     def test_digest_changes_on_semantic_drift(self):
         t1 = _build()
         product = _synthetic_product()
@@ -204,6 +227,29 @@ class TestBehaviorDigest:
         t1 = _build(final_text="图已生成")
         t2 = _build(final_text="已完成制图，请查看")
         assert t1.behavior_digest == t2.behavior_digest
+
+
+class TestTraceBudget:
+    def test_tool_calls_shrunk_until_trace_fits_budget(self):
+        """chain 降级后 tool_calls 仍超 512KB → 摘要化 + 截断直到真实达标。"""
+        blob = "x" * 300
+        chain_dict = {
+            "stages": [
+                {"stage": "TOOL_CALLS", "call_id": f"c{i}",
+                 "tool_name": "tool.big", "arguments": {"blob": blob}}
+                for i in range(2500)
+            ],
+            "total_records": 2500,
+            "completeness": 1.0,
+            "covered_stages": ["TOOL_CALLS"],
+        }
+        trace = build_trace(
+            session_id="sess-budget", turn_id="turn-budget",
+            chain_dict=chain_dict,
+        )
+        assert trace.truncated is True
+        size = len(canonical_json(trace.to_dict()).encode("utf-8"))
+        assert size <= 512 * 1024, size
 
 
 class TestSanitizeBounded:

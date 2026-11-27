@@ -78,6 +78,19 @@ async def test_descriptor_exposes_real_bands_units_and_provenance(owner_root, se
 
 
 @pytest.mark.asyncio
+async def test_descriptor_discloses_out_of_range_histogram_bands(owner_root, session_id):
+    """越界 histogram_bands 被省略时必须披露，不能静默返回空直方图。"""
+    ref = await register_raster_ref(session_id, write_tif(
+        owner_root / "two.tif", bands=2,
+    ))
+    info = await describe_raster(session_id, ref, histogram_bands=[99])
+    assert info["histograms"] == []
+    assert any(
+        d.startswith("histogram_bands_out_of_range") for d in info["disclosures"]
+    )
+
+
+@pytest.mark.asyncio
 async def test_probe_reads_source_pixel_with_crs_and_scale(owner_root, session_id):
     path = write_tif(
         owner_root / "probe.tif", bands=4,
@@ -123,6 +136,22 @@ async def test_probe_distinguishes_outside_mask_and_no_crs(owner_root, session_i
         session_id, no_crs_ref, [[10.005, 19.995]], crs="source",
     )
     assert no_crs_source["points"][0]["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_probe_after_source_file_deleted_is_typed_unavailable(
+    owner_root, session_id,
+):
+    """resolve_source 成功后文件被删：probe 必须 typed，不是裸 RasterioIOError。"""
+    from app.services.raster_authoring.probe import probe
+
+    path = write_tif(owner_root / "gone.tif")
+    ref = await register_raster_ref(session_id, path)
+    source = await resolve_source(session_id, ref)
+    path.unlink()
+    with pytest.raises(RasterExpressionError) as exc:
+        probe(source, [[10.005, 19.995]])
+    assert exc.value.code == "SOURCE_UNAVAILABLE"
 
 
 @pytest.mark.asyncio

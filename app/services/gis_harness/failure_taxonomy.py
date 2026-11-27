@@ -302,9 +302,14 @@ class RemediationLedger:
             return self._counts[key][0]
 
     def attempts(self, key: Tuple[str, str, str]) -> int:
+        now = time.monotonic()
         with self._lock:
             entry = self._counts.get(key)
-            return int(entry[0]) if entry else 0
+            # 与 record() 同 TTL 衰减：过期计数必须读作 0，否则陈旧非零
+            # attempts 会让 remediation_for 提前 abort_with_disclosure。
+            if entry is None or now - entry[1] > self._ttl:
+                return 0
+            return int(entry[0])
 
     def reset(self, key: Optional[Tuple[str, str, str]] = None) -> None:
         with self._lock:

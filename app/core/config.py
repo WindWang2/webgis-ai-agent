@@ -543,11 +543,18 @@ class Settings(BaseSettings):
                     )
             # CONFIG-01：生产环境禁止 sqlite —— 文件型 DB 无并发/无 HA，且
             # 默认 ./data/webgis.db 在容器内不可靠。必须用 Postgres。
-            if not self.DATABASE_URL.startswith(("postgresql://", "postgres://")):
+            # 显式驱动形态（postgresql+psycopg2:// / postgresql+asyncpg:// 等）
+            # 由 _to_sync_url/_to_async_url 支持，生产门禁同样接受。
+            _db_scheme = self.DATABASE_URL.split("://", 1)[0]
+            if not (
+                _db_scheme in ("postgresql", "postgres")
+                or _db_scheme.startswith("postgresql+")
+            ):
                 raise RuntimeError(
                     "DATABASE_URL must use PostgreSQL in production "
-                    "(e.g. postgresql://user:pass@host/db). "
-                    f"Current value does not start with postgresql:// or postgres://: "
+                    "(e.g. postgresql://user:pass@host/db; a +driver suffix "
+                    "such as postgresql+asyncpg:// is allowed). "
+                    f"Current value does not use a postgresql scheme: "
                     f"'{self.DATABASE_URL[:60]}...'."
                 )
             # audit ISSUE-037（#1349）：DATABASE_URL 内嵌密码为 change_me*
@@ -648,6 +655,7 @@ class Settings(BaseSettings):
         # allow_private 早退，故 LLM_BASE_URL（allow_private=True）路径同样受护。
         _METADATA_IPS = {
             "169.254.169.254",  # AWS / GCP
+            "metadata.google.internal",   # GCP（urlparse().hostname 无尾点）
             "metadata.google.internal.",  # GCP（尾部点保留 FQDN 习惯）
             "169.254.169.254.",   # 带尾点的变体
             "100.100.100.200",    # 阿里云 IMDS

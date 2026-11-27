@@ -68,6 +68,50 @@ def test_emit_chain_once_dedupes_per_stage():
         stack.__exit__(None, None, None)
 
 
+def test_emit_chain_once_concurrent_first_emission_dedupes():
+    """并发首发射同 turn 同阶段只落一条（check-then-act 竞态回归）。
+
+    未修复实现里 chain.first() 与 registry.record() 分属不同锁区间，
+    多线程可同时通过去重检查而重复记录；惰性建链窗口同样如此。
+    """
+    import contextvars
+    import sys
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _concurrent_emit(precreate: bool) -> tuple[int, int]:
+        turn_id, stack = _bind_turn()
+        try:
+            if precreate:
+                assert emit_chain(Stage.USER_INTENT, query="seed") is True
+            n = 16
+            barrier = threading.Barrier(n)
+            contexts = [contextvars.copy_context() for _ in range(n)]
+
+            def _emit(copied):
+                barrier.wait()
+                return copied.run(
+                    emit_chain_once, Stage.TOOL_CALLS, tool="parallel")
+
+            with ThreadPoolExecutor(max_workers=n) as pool:
+                results = list(pool.map(_emit, contexts))
+            d = _drain_chain(turn_id)
+            recorded = [s for s in d["stages"] if s["stage"] == "TOOL_CALLS"]
+            return sum(1 for r in results if r), len(recorded)
+        finally:
+            stack.__exit__(None, None, None)
+
+    old_interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)  # 放大 check-then-act 窗口
+    try:
+        for precreate in (False, True):
+            emitted, recorded = _concurrent_emit(precreate)
+            assert emitted == 1, f"precreate={precreate}: {emitted} won"
+            assert recorded == 1, f"precreate={precreate}: {recorded} records"
+    finally:
+        sys.setswitchinterval(old_interval)
+
+
 def test_planner_emits_intent_to_workflow_stages():
     """规划路径发射阶段 1-6（USER_INTENT → SELECTED_WORKFLOW）。"""
     from app.services.gis_harness.intent import resolve_map_request_intent

@@ -231,3 +231,91 @@ def test_v8_end_to_end_versioned_lakehouse(v8_env, tmp_path):
         assert descriptor.source_id == a.data_object_id
         assert descriptor.crs is None  # payload 未声明 → 诚实 None
         assert descriptor.metadata["version_id"] == v1.version_id
+
+
+def test_workflow_bridge_redacts_parameters_at_projection_boundary(
+    v8_env, monkeypatch,
+):
+    """P1 security：bridge docstring 承诺 parameters 经 redact，实现却把
+    artifact metadata_json 的 tool_args 原样 dict() 交给 commit_version。
+
+    registry 侧 ``_bounded_provenance`` 的兜底脱敏不替代本模块的投影
+    契约 —— 本测试在桥边界（commit_version 入口）锁脱敏口径。
+    """
+    from sqlalchemy import select
+
+    from app.models.db_model import User
+    from app.models.lakehouse_datasets import LakehouseDatasetVersion
+    from app.models.project import Artifact, Project
+    from app.services.lakehouse import dataset_registry as reg
+    from app.services.lakehouse.data_object import (
+        normalize_owner_scope,
+        publish_data_object,
+    )
+    from app.services.lakehouse.workflow_bridge import (
+        commit_dataset_version_from_artifact,
+    )
+
+    session = "sess-bridge-redact"
+    obj = publish_data_object(
+        {"dem.bin": b"bridge-redact"}, kind="cog_raster",
+        owner_scope=normalize_owner_scope(session_id=session),
+    ).data_object_id
+    project_id = "proj_bridge_redact"
+    with SessionLocal() as db:
+        db.merge(User(
+            id="u_bridge", username="u_bridge", email="u_bridge@example.com",
+            password_hash="x", role="viewer", is_active=True,
+        ))
+        db.merge(Project(id=project_id, name="bridge", owner_id="u_bridge"))
+        db.flush()
+        db.add(Artifact(
+            project_id=project_id, name="ndvi", artifact_type="raster",
+            storage_ref=obj,
+            metadata_json={
+                "step_id": "step-ndvi", "tool_name": "ndvi.compute",
+                "tool_args": {
+                    "api_token": "sekret", "window": 3,
+                    "geojson": {"type": "Point", "coordinates": [0, 0]},
+                },
+            },
+        ))
+        db.commit()
+        artifact_id = db.execute(
+            select(Artifact.id).where(Artifact.project_id == project_id)
+        ).scalar_one()
+
+    with SessionLocal() as db:
+        row, _ = reg.create_dataset(
+            db, name="bridge-dem", description="redact", session_id=session)
+        db.commit()
+        captured: dict = {}
+        real_commit = reg.commit_version
+
+        def _capture_commit(_db, _row, **kwargs):
+            captured.update(kwargs.get("provenance") or {})
+            return real_commit(_db, _row, **kwargs)
+
+        monkeypatch.setattr(reg, "commit_version", _capture_commit)
+        result, obj_used = commit_dataset_version_from_artifact(
+            db, row, artifact_id=artifact_id,
+        )
+        db.commit()
+        assert obj_used == obj
+        # 桥边界即脱敏：密钥 → [REDACTED]，大 payload 键整体 dropped，
+        # 普通标量原样（registry 兜底脱敏看不到这一层）。
+        params = captured["parameters"]
+        assert params["api_token"] == "[REDACTED]"
+        assert params["window"] == 3
+        assert "geojson" not in params
+        assert captured["algorithm"] == "ndvi.compute"
+        assert captured["workflow_step"] == "step-ndvi"
+        # 端到端再锁一次：密钥绝不入 provenance_json。
+        import json as _json
+
+        vrow = db.execute(
+            select(LakehouseDatasetVersion).where(
+                LakehouseDatasetVersion.version_id == result.version_id,
+            )
+        ).scalar_one()
+        assert "sekret" not in _json.dumps(vrow.provenance_json)

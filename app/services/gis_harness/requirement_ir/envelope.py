@@ -204,7 +204,7 @@ def _record_telemetry(
 def _prune_emitted(ledger: ClarificationLedger, keep: set) -> None:
     """已答/已豁免的 context_key 移出记账（有界 + 不再抑制后续合法新问）。"""
     stale = [k for k in ledger.emitted if k not in keep]
-    for key in stale[: max(0, len(ledger.emitted) - MAX_LEDGER_EMITTED)]:
+    for key in stale:
         ledger.emitted.pop(key, None)
 
 
@@ -316,7 +316,7 @@ async def _collect_turn_clarification_unlocked(
     # 两任务可能撞同一 context_key（如都是 aoi_unresolved 且 ctx 规范值
     # 相同）——旧任务的发射记账会把新任务的 blocking 问题永久抑制。
     # 只信任与当前文档同源的记账条目。
-    doc_prefix = f"clar-{doc.document_id}-"
+    doc_prefix = f"clar-{doc.document_id}-"[:64]
     for key in [k for k, v in ledger.emitted.items()
                 if not str(v).startswith(doc_prefix)]:
         ledger.emitted.pop(key, None)

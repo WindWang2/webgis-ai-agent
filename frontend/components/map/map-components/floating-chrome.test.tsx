@@ -15,6 +15,11 @@ vi.mock('@/lib/mapspec/component-mutation', async (importOriginal) => {
   return { ...actual, commitComponentPatch: vi.fn(() => Promise.resolve()) };
 });
 
+const viewportState = vi.hoisted(() => ({ small: false }));
+vi.mock('@/lib/hooks/use-small-viewport', () => ({
+  useSmallViewport: () => viewportState.small,
+}));
+
 import { FloatingChrome } from './floating-chrome';
 import { commitComponentPatch, setComponentPlacementOverride } from '@/lib/mapspec/component-mutation';
 import type { MapSpecComponent } from '@/lib/mapspec-compiler/types';
@@ -59,6 +64,7 @@ function renderChrome(component: MapSpecComponent = FLOATING_COMP) {
 
 beforeEach(() => {
   commitMock.mockClear();
+  viewportState.small = false;
   setComponentPlacementOverride('comp-1', null);
 });
 
@@ -192,6 +198,28 @@ describe('FloatingChrome — 标题栏操作', () => {
     );
   });
 
+  it('小视口派生折叠时点「展开」生效：显式 collapsed=false 覆盖视口建议', async () => {
+    viewportState.small = true;
+    renderChrome({
+      id: 'comp-1',
+      type: 'chart_panel',
+      enabled: true,
+      placement: { mode: 'anchor', anchor: 'top-left', collapsed: true },
+    });
+    expect(screen.queryByText('面板内容')).toBeNull();
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: '展开面板' }));
+    });
+    expect(commitMock).toHaveBeenCalledWith(
+      'comp-1',
+      expect.objectContaining({
+        placement: expect.objectContaining({ collapsed: false }),
+      }),
+    );
+    // 修复前：smallViewport 仍用 || 强制折叠，展开点击无效。
+    await waitFor(() => expect(screen.getByText('面板内容')).toBeInTheDocument());
+  });
+
   it('隐藏：提交 enabled=false', () => {
     renderChrome();
     act(() => {
@@ -210,5 +238,35 @@ describe('FloatingChrome — 标题栏操作', () => {
       'comp-1',
       expect.objectContaining({ placement: { mode: 'anchor', anchor: 'top-left' } }),
     );
+  });
+});
+
+describe('FloatingChrome — 键盘去抖提交', () => {
+  it('500ms 窗口内折叠：陈旧键盘 placement 不后到提交（不把 collapsed 回滚）', () => {
+    vi.useFakeTimers();
+    try {
+      renderChrome();
+      const titleBar = screen.getByTestId('fc-test-title-bar');
+      // 键盘移动：乐观 override 即时生效，durable 提交按 500ms 静默去抖。
+      act(() => {
+        fireEvent.keyDown(titleBar, { key: 'ArrowRight' });
+      });
+      expect(commitMock).not.toHaveBeenCalled();
+      // 去抖窗口内点折叠（一次 durable 提交）。
+      act(() => {
+        fireEvent.click(screen.getByRole('button', { name: '折叠面板' }));
+      });
+      // 修复前：陈旧键盘 placement 的定时器未清，500ms 后到 POST → 折叠被回滚。
+      act(() => {
+        vi.advanceTimersByTime(600);
+      });
+      expect(commitMock).toHaveBeenCalledTimes(1);
+      expect(commitMock).toHaveBeenCalledWith(
+        'comp-1',
+        expect.objectContaining({ placement: expect.objectContaining({ collapsed: true }) }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

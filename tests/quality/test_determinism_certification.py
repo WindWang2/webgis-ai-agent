@@ -139,3 +139,21 @@ def test_certification_table_current():
     content = generate()
     assert DEFAULT_OUT.exists()
     assert DEFAULT_OUT.read_text(encoding="utf-8") == content
+
+
+def test_unknown_seed_policy_is_visible_in_certification_md(monkeypatch):
+    """P3 review：_POLICY_CLASS 之外的 seed policy 不得在认证文档中消失。"""
+    from app.lib.quality import determinism
+
+    row = {
+        "id": "algo.mystery",
+        "deterministic": False,
+        "random_seed_policy": "mystery-policy",
+        "class": "unknown-policy",
+        "scientific_status": "EXPERIMENTAL",
+    }
+    monkeypatch.setattr(determinism, "algorithm_determinism_rows", lambda: [row])
+    content = determinism.render_determinism_md()
+    assert "| unknown-policy | 1 |" in content
+    assert "algo.mystery" in content
+    assert "| total | 1 |" in content

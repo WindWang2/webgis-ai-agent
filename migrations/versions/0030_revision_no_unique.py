@@ -11,8 +11,8 @@ Round-1 review fix（DATA-ARCH MINOR）：并发不同内容修订读到同一 h
 additive，无数据改写（重复行**重编号**而非删除 —— 修订是 append-only 证据）：
 
 - dedup-guard 先行：同 ``(artifact_id, revision_no)`` 组内按
-  ``created_at, id`` 保留最早一行，其余依次 bump 到该 artifact 的下一个
-  空闲号（唯一索引才建得起来，且行数守恒）；
+  ``created_at NULLS LAST, id`` 保留最早一行，其余依次 bump 到该 artifact 的
+  下一个空闲号（唯一索引才建得起来，且行数守恒）；
 - SQLite：普通 ``CREATE UNIQUE INDEX`` 即可（无 batch table 重建需求），
   存在性守卫保证重入；PG 同款守卫等价 ``IF NOT EXISTS``。
 
@@ -50,7 +50,9 @@ def _dedup_revision_numbers(bind) -> int:
     """
     rows = bind.execute(sa.text(
         "SELECT id, artifact_id, revision_no FROM artifact_revisions "
-        "ORDER BY artifact_id, revision_no, created_at, id"
+        # 显式 NULLS LAST：PG 的 ASC 默认 NULLS LAST，SQLite 默认 NULLS FIRST
+        # ——不写死则「保留最早一行」在两个后端选中不同的行。
+        "ORDER BY artifact_id, revision_no, created_at NULLS LAST, id"
     )).fetchall()
     seen: dict = {}
     fixed = 0

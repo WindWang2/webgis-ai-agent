@@ -124,6 +124,17 @@ class TestFalsePassGuards:
         by_slot = {s.slot: s.status for s in rep.slots}
         assert by_slot["data_coverage"] == "fail"
 
+    @pytest.mark.parametrize("status", [None, "", "resolved", "unknown"])
+    def test_data_role_missing_or_out_of_vocab_status_never_pass(self, status):
+        """缺 status / 词表外状态 = 无证据 → not_evaluated，绝不升级 pass。"""
+        role = {"role": "schools", "required": True}
+        if status is not None:
+            role["status"] = status
+        rep = _reconcile(chapter={"workflow_contract": {"roles": [role]}})
+        by_slot = {s.slot: s.status for s in rep.slots}
+        assert by_slot["data_coverage"] == "not_evaluated"
+        assert rep.overall != "pass"
+
     def test_qualification_blocked_fails_coverage_with_reason(self):
         rep = _reconcile(chapter={"workflow_contract": {"roles": [
             {"role": "schools", "required": True, "status": "bound"},

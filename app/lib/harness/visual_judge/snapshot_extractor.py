@@ -199,12 +199,6 @@ class SnapshotExtractor:
             pre_screen = _grayscale_pre_screen(img)
         finally:
             img.close()
-        if min(width, height) < self.min_edge:
-            raise SnapshotError(
-                "image_too_small", f"{width}x{height} < min edge {self.min_edge}")
-        if max(width, height) > self.max_edge:
-            raise SnapshotError(
-                "image_oversized", f"{width}x{height} > max edge {self.max_edge}")
         return MapSnapshot(
             image_sha256=hashlib.sha256(data).hexdigest(),
             width=width,

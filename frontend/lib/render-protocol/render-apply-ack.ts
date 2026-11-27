@@ -264,11 +264,11 @@ export function buildRenderApplyAck({
   // 只能 pending（诚实缺席），绝不虚构 failed。
   const hasMountedBasis = !!mountedComponentIds && mountedComponentIds.size > 0;
   for (const comp of spec?.layout?.components ?? []) {
+    if (!comp || comp.enabled === false) continue;
     if (components.length >= MAX_ACK_COMPONENTS) {
       discardedComponents += 1;
       continue;
     }
-    if (!comp || comp.enabled === false) continue;
     const cid = String(comp.id || '');
     if (!cid) continue;
     const mounted = mountedComponentIds?.has(cid) ?? false;
@@ -373,7 +373,8 @@ export function buildRenderApplyAck({
   const status: ApplyAckStatus =
     failedCount > 0
       ? (appliedCount > 0 ? 'partial' : 'failed')
-      : (pendingCount > 0 || skippedCount > 0 || discarded > 0 || sourceStaleCount > 0
+      : (pendingCount > 0 || skippedCount > 0 || discarded > 0
+          || discardedComponents > 0 || sourceStaleCount > 0
           ? 'partial'
           : 'applied');
   // reconcile 报错 = apply 管线本身异常（applied spec 可能是旧一轮的
