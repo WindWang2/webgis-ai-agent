@@ -15,3 +15,6 @@ R2 | 修复清单：closure 无修订图回退缺失；_fields_from_features 不
 R2 | 契约层回归：adr/alembic/import-boundaries/ci-local-gate 44 passed；Pi surface 18 passed；api-docs drift → 再生成后 22 passed | pytest 实测 | 通过 | 基线既有失败甄别
 R2 | 基线甄别（stash 验证）：tool_meta_contract 2 项、tsc live-spec TS2353、debt ratchet、dependency bounds 均为干净 master 既有 | stash + 复跑 | 记录 BASELINE | 性能基线
 R2 | 性能基线：3×1000 要素包全程 <0.5s（解析 0.01/物化+ZIP 0.35/审读+解包 0.00/注册 0.09）| pytest -m perf 实测 | 首轮基线建立 | R1 审查
+R3 | R1 独立审查启动（general-purpose 审阅代理逐行 diff，非作者身份）| 代理运行中 | — | 等待发现清单
+R3 | 远端复核：origin/master 无漂移（f34cb69d）；新 PR #2292（02 线）与本文三个共享文件（main.py/tools 注册/i18n 注册）均为 additive 一行式，无逻辑冲突 | gh pr view + comm 交集 | 记录 PR 正文 | R1 修复
+R3 | 前置自查修复：UploadRecord 词表无 parquet/png 诚实标签 → 拒载披露（此前误标 csv/geotiff）+ 负例锁定；i18n key 完整性失败甄别为 chat 命名空间基线既有（本分支 chat.json 与 master 零差异）| pytest 80 passed | 通过 | R1 修复
