@@ -46,7 +46,8 @@ trip session cap，测试未跟上实现）。**测试陈旧**，与本线 WP3 �
 
 | 项 | 结果 | 归因 |
 |---|---|---|
-| PI_JOURNEY_E2E=1 pytest tests/integration/test_pi_g37_session_model_journeys.py | 首跑 boot 超时（app/bridge 90s 未就绪）；doctor 六域 PASS + 真实 RPC fixture 全绿 → 疑环境负载；重试中 | 归因进行中（重试结果回填） |
+| PI_JOURNEY_E2E=1 pytest tests/integration/test_pi_g37_session_model_journeys.py（默认 env） | 两次确定性 boot 失败（app/bridge 90s 未就绪，99.5s） | **master 预存 P1 缺陷**：app 启动即死于 runtime manifest 严格校验 —— 14 个 dangling capability_id（webgis_diagram_symbol_* → map_design；webgis_scenario_* → gis_scenario_harness；webgis_*_paper_scale_generalization → cartography_paper_scale_*），全部来自 #2274/#2275/#2287 已合并线，CapabilityRegistry 无对应声明（原始分支 worktree 同样无声明 → 引入即悬空，#2288 整合遗漏）。复现：本 worktree 直接 boot probe（`RuntimeError: Compiled GIS Runtime Manifest has fatal issues`）；这些模块与 origin/master **零 diff** → master 同样失败。**不修**（04/05 线能力语义域，边界纪律）；journey 证据改用文档化降级开关 `GIS_MANIFEST_STRICT=0`（runtime_manifest.py:645）+ PR 正文显著披露 |
+| PI_JOURNEY_E2E=1 … GIS_MANIFEST_STRICT=0 | （运行中，结果回填） | — |
 | 前端全量 vitest | 50 failed / 6394 passed | 干净主 worktree 同失败（map-panel.cartography-race 14/14 同红）→ master 预存，非本线 |
 
 ## 资源纪律记录
