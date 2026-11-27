@@ -215,3 +215,29 @@
   `test_pi_stub_llm_journeys.py` 等）。
 - **`notices.*`**：TUI display 设置，宿主 settings.json 投影不写该键，
   无消费需求（不接入）。
+
+## 7. 运行策略与资源闭环（goal-pi-adaptive-execution，2026-11-27）
+
+> 基线 f34cb69dd（#2289 后）；上游 ls-remote 实查最新 tag 仍为 **v1.6.1**
+> （`ef4a1cfc`，无 prerelease/draft/新 tag）→ **gitlink 不动**（WP5 裁定，
+> 无升级面）。本节记录宿主对 v1.6.1 既有能力的**新增消费**（协议面零变更）。
+
+- **`after_provider_response`（v1.6.1 C24）消费升级**：扩展侧 stderr 行
+  升级为结构化 `[webgis-tools][provider-obs] status/retry_after` 格式，
+  宿主 `pi_rpc_client.parse_provider_observation`（纯解析、有界）→
+  `set_provider_observation_sink` 注入 → 桥回写路由健康表
+  （`model_runtime/health`，与 ChatEngine observe_outcome 同一权威）。
+  该事件在 RPC stdout 协议上不存在（rpc-mode 只转发 AgentSessionEvent），
+  stderr 是唯一宿主可达通道 —— 不新增协议面/HTTP 面。
+- **`auto_retry_start/end` 事件（v1.5.0 起）消费升级**：attempt 计数 +
+  文本分类兜底健康回写 + 重试恢复成功回写；attempt 数随
+  `chat_turn_runtime.provider_retry_attempts`（迁移 g5201）持久化。
+- **`get_session_stats` RPC（vendor 既有，宿主首次消费）**：会话 usage
+  对账锚点（agent-session.ts 的 sessionManager 条目聚合 = 当前 vendor
+  会话；`_isolate_vendor_session` 保证与 GIS 会话一一对应，无跨 owner
+  泄漏）。经 `GET /chat/sessions/{id}/runtime` 有界投影，不可达时如实
+  `available=false`。
+- **model per turn 边界事实**：vendor `prompt` 无 per-request model 字段
+  （rpc-types.ts）、auto-retry 沿用同模型（`_prepareRetry` continue）——
+  宿主模型切换只在 turn 边界（`apply_session_model` 现有安全点），不做
+  mid-turn 透明重发（WP2 安全点裁定）。
