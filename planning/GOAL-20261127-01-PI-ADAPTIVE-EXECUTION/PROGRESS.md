@@ -36,5 +36,20 @@
   （0 泄漏/0 越序，p50=53ms p95=88ms）；governor 全包 209 passed ✅
 - 安全负例 5 项 passed（解析注入/有界洪水/列宽/白名单）✅
 
-## 轮 3（进行中）：journey 回归归因 + R1/R2 + 终验交付
+## 轮 3（2026-11-28）：归因 + R1/R2 + 终验交付
+
+- master 预存缺陷定性：app 启动 strict manifest 失败（14 dangling
+  capability_id，#2288 整合遗漏；模块与 master 零 diff 证明预存）→
+  不扩线，journey 以文档化开关降级运行 + PR 披露
+- G37 journey「回归」归因：**主 Agent 并发跑两个 journey 的隔离违规**
+  （共享 .pi/agent/models.json）——三向对照证明无代码回归
+  （分支策略开启 35.03s / 关闭 37.52s / 干净 master 39.39s，全 PASS）
+- R1 独立审查（子代理，非作者）：1×P1 + 4×P2 + 8×P3 → 10 项修复 +
+  3 项记录性披露（REVIEW_R1.md）；R1 期间引入的 self. 缺陷被既有
+  g37 settle 测试捕获并修复（commit 30c14613e）
+- R2 复审：R1 关闭证据逐项复核 + 关键门修复后重跑（fixture 5 passed /
+  G37 journey 35.51s PASS / affected 114 + bridge+governor 281 passed）
+  + 基线冲突复核（master 未动、分支为后代、0 开放 PR、diff --check 干净、
+  vendor pin 零 diff）→ REVIEW_R2.md 结论：可交付
+- 交付：单 PR 创建（base master）
 

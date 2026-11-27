@@ -97,5 +97,16 @@ feat(pi-gis): Pi 运行策略与 Provider 服务质量闭环——健康感知�
   （沿用既有 ADR 0301 语境，新增文档只落 compat matrix §7 与 planning）。
 
 ## R1 / R2
-- R1 独立审查：（结果回填）
-- R2 复审：（结果回填）
+- **R1 独立审查**（非作者子代理，逐行 + vendor 源码交叉）：1×P1 + 4×P2
+  + 8×P3 → 全部 P0/P1/P2 修复（vendor stats 绑定校验+白名单投影、双通道
+  健康惩罚去重、归属锚复位、恒真断言、非流式 attempt 链同构、governor
+  回流幂等标志、route codes 整条取舍等）；3 项记录性披露（进程级健康
+  快照跨租户计数等）。REVIEW_R1.md。
+- **R2 复审**：R1 关闭证据逐项复核；关键门修复后重跑全绿（fixture 矩阵
+  5 passed / G37 journey 35.51s PASS / affected 114 + bridge+governor
+  281 passed）；基线冲突复核（master 未动、0 开放 PR、vendor pin 零 diff）。
+  REVIEW_R2.md。
+- 审查过程透明记录：R1 期间曾引入 `_bounded_route_codes` 缺 `self.` 缺陷，
+  被既有 g37 settle 测试捕获 → 修复回绿（测试链价值实证）；早期 journey
+  「失败」经三向对照定性为主 Agent 并发跑两个 journey 的共享
+  `.pi/agent` 隔离违规，非代码回归（串行纪律已入台账）。
