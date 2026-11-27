@@ -152,3 +152,71 @@ class TestProjectIsolation:
         assert "import_project_id" not in sig.parameters
         assert "overwrite" not in sig.parameters
         assert "target_project_id" not in sig.parameters
+
+
+class TestFormatHonesty:
+    def _pkg_with_table_payload(self, table_name: str) -> Path:
+        import hashlib
+
+        rows_bytes = json.dumps({"rows": [{"a": 1}]},
+                                ensure_ascii=False).encode("utf-8")
+        digest = hashlib.sha256(rows_bytes).hexdigest()
+        entry = {
+            "format": pc.PACKAGE_FORMAT, "format_version": 1,
+            "package_id": f"pkg-{'9' * 32}",
+            "created_at": "2026-11-28T00:00:00Z",
+            "project": {"name": "fmt"},
+            "reproduction": {"level": "view_only"},
+            "datasets": [{
+                "logical_id": "ds-t", "name": "t",
+                "classification": "embedded",
+                "crs": "EPSG:4326",
+                "payload": {"path": f"standard/tables/ds-t{table_name}",
+                            "sha256": digest,
+                            "bytes": len(rows_bytes)},
+            }],
+            "workflows": [], "artifacts": [], "maps": [],
+            "files": [{"path": f"standard/tables/ds-t{table_name}",
+                       "sha256": digest,
+                       "bytes": len(rows_bytes), "mime": "text/csv"}],
+            "disclosure": {"not_included": [], "external_links": [],
+                           "unsupported": []},
+            "fidelity_receipt": {"datasets": [], "writer_versions": {}},
+        }
+        import io
+        import zipfile
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr(pc.MANIFEST_PATH,
+                        json.dumps(entry, ensure_ascii=False))
+            zf.writestr(f"standard/tables/ds-t{table_name}", rows_bytes)
+        p = Path(str(settings.DATA_DIR)) / f"fmt{table_name}.zip"
+        p.write_bytes(buf.getvalue())
+        return p
+
+    def test_parquet_dataset_not_falsely_labeled_csv(self):
+        """UploadRecord.format 词表无 parquet —— 注册路径拒载，不伪造 csv。"""
+        from app.core.database import SessionLocal
+
+        from app.services.project_exchange.importer import _register_dataset
+
+        dataset_entry = pc.ManifestDataset(
+            logical_id="ds-t", name="t", classification="embedded",
+            crs="EPSG:4326",
+            payload=pc.DatasetPayloadRef(
+                path="standard/tables/ds-t.parquet",
+                sha256="0" * 64, bytes=16))
+        created_files: list = []
+        staging = Path(str(settings.DATA_DIR))
+        (staging / "standard" / "tables").mkdir(parents=True, exist_ok=True)
+        (staging / "standard" / "tables" / "ds-t.parquet").write_bytes(
+            b"PAR1stub")
+
+        with SessionLocal() as db:
+            result = _register_dataset(
+                db, "proj-fmt", type("M", (), {"package_id": "pkg-x"})(),
+                dataset_entry, staging,
+                DeliveryActor(user_id=_OWNER), created_files)
+        assert result is None  # parquet 拒载（诚实），绝不伪造 csv 标签
+        assert created_files == []  # 未写任何 upload 文件

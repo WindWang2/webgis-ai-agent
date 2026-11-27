@@ -752,12 +752,14 @@ def _write_upload_file(
         bbox = entry.bbox
     else:
         ext = src.suffix.lower()
-        if ext not in (".tif", ".tiff", ".csv", ".geojson", ".parquet", ".png"):
+        # UploadRecord.format 词表只有 geojson/shapefile/geotiff/csv/gpkg/kml
+        # —— parquet/png 在此词表无诚实标签，宁可拒载披露也不伪造格式。
+        if ext not in (".tif", ".tiff", ".csv", ".geojson"):
             return None, None, {}
         payload_bytes = src.read_bytes()
         file_type = "raster" if ext in (".tif", ".tiff", ".png") else "vector"
         fmt = {".tif": "geotiff", ".tiff": "geotiff", ".csv": "csv",
-               ".geojson": "geojson", ".parquet": "csv", ".png": "geotiff"}[ext]
+               ".geojson": "geojson"}[ext]
         feature_count = entry.feature_count or 0
         geometry_type = "raster" if file_type == "raster" else (
             entry.geometry_type or "")
