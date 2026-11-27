@@ -74,15 +74,24 @@ def share_code_matches(publication: MapPublication, presented: str) -> bool:
     return hmac.compare_digest(stored.encode("utf-8"), presented.encode("utf-8"))
 
 
-async def limit_publication_read(request: Request, *, scope: str = "publication-read") -> None:
-    """读者侧 per-IP 限流依赖（share 元数据/地图/数据端点共用）。
+async def limit_publication_read(
+    request: Request,
+    *,
+    scope: str = "publication-data",
+    max_requests: int = 600,
+    window_seconds: int = 60,
+) -> None:
+    """读者侧 per-IP 限流依赖（R1 P3-15 分桶）。
 
-    瓦片/要素突发阈值高于元数据端点（地图一屏会拉多层数据）。
-    Redis 限流器缺席时 fail-open（与全局限流同语义）。
+    - ``publication-meta``（doc/map）：120/min —— 纯浏览语义；
+    - ``publication-data``（层数据/要素/统计）：600/min —— 地图一屏会拉
+      多层数据的突发（与 layer_data 面同量级）。
+    共享 NAT 出口不再被单桶 240 卡死。Redis 限流器缺席时 fail-open
+    （与全局限流同语义）。
     """
     address = client_ip_from(request)
     limiter = await get_rate_limiter()
-    if not await limiter.is_allowed(f"{scope}:{address}", 240, 60):
+    if not await limiter.is_allowed(f"{scope}:{address}", max_requests, window_seconds):
         raise HTTPException(
             status_code=429,
             detail="Too many publication requests",
@@ -90,7 +99,13 @@ async def limit_publication_read(request: Request, *, scope: str = "publication-
         )
 
 
+async def limit_publication_meta(request: Request) -> None:
+    """元数据端点限流（doc/map；120/min）。"""
+    await limit_publication_read(request, scope="publication-meta", max_requests=120, window_seconds=60)
+
+
 __all__ = [
+    "limit_publication_meta",
     "mint_share_code",
     "share_expiry",
     "share_expired",

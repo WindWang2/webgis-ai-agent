@@ -331,8 +331,12 @@ def main() -> None:
         status, body = http("GET", f"/api/v1/publications/shared/{code}/map")
         assert status == 200
         reader_spec = body["data"]["spec"]
-        assert reader_spec["sources"]["schools"]["url"].endswith(
+        # R1 P2-4：源按层重写（publication:{layer_id} → 各自白名单产物）
+        assert reader_spec["sources"]["publication:lyr-schools"]["url"].endswith(
             f"/shared/{code}/layers/lyr-schools/data")
+        assert reader_spec["sources"]["publication:lyr-districts"]["url"].endswith(
+            f"/shared/{code}/layers/lyr-districts/data")
+        assert "schools" not in reader_spec["sources"]  # 原始 ref 源不透传
         assert "internal_budget" not in json.dumps(reader_spec)
 
         status, body = http("GET", f"/api/v1/publications/shared/{code}/layers/lyr-schools/data")

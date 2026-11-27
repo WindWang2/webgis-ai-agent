@@ -55,7 +55,7 @@ def write_layer_artifact(publication_id: str, layer_id: str, fc: Dict[str, Any])
 
     path = layer_artifact_path(publication_id, layer_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    body = json.dumps(fc, ensure_ascii=False, separators=(",", ":"))
+    body = json.dumps(fc, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(body, encoding="utf-8")
     os.replace(tmp, path)
@@ -85,7 +85,7 @@ def write_snapshot_file(publication_id: str, snapshot_doc: Dict[str, Any]) -> No
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(
-        json.dumps(snapshot_doc, ensure_ascii=False, separators=(",", ":")),
+        json.dumps(snapshot_doc, ensure_ascii=False, separators=(",", ":"), allow_nan=False),
         encoding="utf-8",
     )
     os.replace(tmp, path)
@@ -185,10 +185,35 @@ async def transition_status(
     expected: tuple[str, ...],
     target: str,
 ) -> bool:
-    """CAS 状态迁移（行级乐观锁语义：仅当当前 status ∈ expected 时落 target）。"""
+    """CAS 状态迁移（行级乐观锁语义：仅当当前 status ∈ expected 时落 target）。
+
+    R1 P3-5：作者面路径同样走 DB 级条件 UPDATE（0 行更新 = 并发已被迁移，
+    返回 False），与 executor 的发布 CAS 同一并发语义。
+    """
     if publication.status not in expected or target not in (
         PUBLICATION_STATUS_DRAFT, PUBLICATION_STATUS_PUBLISHED, PUBLICATION_STATUS_REVOKED
     ):
+        return False
+    from sqlalchemy import update
+
+    values: dict = {"status": target}
+    if target == PUBLICATION_STATUS_PUBLISHED:
+        values["published_at"] = utcnow_naive()
+    if target == PUBLICATION_STATUS_REVOKED:
+        # 撤销终态：断链 + 盖撤销时刻（published_at 历史保留）。
+        values["revoked_at"] = utcnow_naive()
+        values["share_code"] = None
+        values["share_expires_at"] = None
+    result = await db.execute(
+        update(MapPublication)
+        .where(
+            MapPublication.id == publication.id,
+            MapPublication.status.in_(expected),
+        )
+        .values(**values)
+    )
+    await db.commit()
+    if result.rowcount == 0:
         return False
     publication.status = target
     if target == PUBLICATION_STATUS_PUBLISHED:
@@ -198,8 +223,21 @@ async def transition_status(
         # 撤销即断链（读者侧立即 404，与 report revoke 同语义）。
         publication.share_code = None
         publication.share_expires_at = None
-    await db.commit()
+        # R1 P3-16：撤销终态清产物目录（best-effort；磁盘无界增长防线）。
+        _remove_publication_artifacts(publication.id)
     return True
+
+
+def _remove_publication_artifacts(publication_id: str) -> None:
+    """撤销终态的产物清理（同步小目录 rmtree；失败不影响状态迁移）。"""
+    import shutil
+
+    try:
+        dir_path = publication_dir(publication_id)
+        if dir_path.is_dir():
+            shutil.rmtree(dir_path, ignore_errors=True)
+    except (OSError, ValueError):
+        pass
 
 
 def validate_access_policy(policy: str) -> bool:

@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import asyncio
 
+import json
+
 import pytest
 
 from tests.unit.publication.conftest import (
@@ -85,10 +87,15 @@ async def test_publish_flow_and_reader_journey(world, monkeypatch):
         resp = await client.get(f"/api/v1/publications/shared/{code}/map")
         assert resp.status_code == 200
         reader_spec = resp.json()["data"]["spec"]
-        assert reader_spec["sources"]["schools"]["url"].endswith(
+        # R1 P2-4：源按层重写（publication:{layer_id} → 各自白名单产物）
+        assert reader_spec["sources"]["publication:lyr-schools"]["url"].endswith(
             f"/shared/{code}/layers/lyr-schools/data"
         )
-        assert "ref_id" not in reader_spec["sources"]["schools"]
+        assert reader_spec["sources"]["publication:lyr-districts"]["url"].endswith(
+            f"/shared/{code}/layers/lyr-districts/data"
+        )
+        assert "schools" not in reader_spec["sources"]  # 原始 ref 源不透传
+        assert "ref_id" not in json.dumps(reader_spec["sources"])
 
         # 层数据：物化 GeoJSON 不含白名单外字段（写时投影）
         resp = await client.get(f"/api/v1/publications/shared/{code}/layers/lyr-schools/data")

@@ -178,7 +178,7 @@ def register_publication_tools(registry: ToolRegistry) -> None:
             "status": "planned",
             "plan": summary,
             "meta_proposal": meta.model_dump(mode="json"),
-            "alt_text_proposal": alt_text or planned["plan"].get("accessibility_hint") or "",
+            "alt_text_proposal": alt_text,
             "publish_blockers": publish_blockers,
             "next_step": (
                 "作者确认计划后在工作台创建草稿并显式发布（publication_draft 仅创建私有草稿）"
@@ -332,10 +332,13 @@ def register_publication_tools(registry: ToolRegistry) -> None:
         if not publication_id:
             return {"error": "publication_id 必填", "code": "invalid_args"}
 
+        from app.services.jobs.context import current_origin as _current_origin
+
         async def _validate():
             from sqlalchemy import select
 
             from app.models.map_publication import MapPublication
+            from app.services.publication.service import _owns
 
             async with AsyncSessionLocal() as db:
                 result = await db.execute(
@@ -344,6 +347,26 @@ def register_publication_tools(registry: ToolRegistry) -> None:
                 row = result.scalar_one_or_none()
                 if row is None:
                     return None
+                # R1 P2-2：作者面纪律与 REST 同语义 —— 归属不一致（含匿名
+                # origin fail-closed）不给跨 owner 状态/QA 泄露面。
+                # 归属链：三元组匹配 或 运行时会话绑定 == 行会话
+                # （与 verify_session_owner 的会话归属语义一致）。
+                _origin = _current_origin()
+                # 运行时会话绑定（registry dispatch / Pi RPC 链）与 jobs origin 双链取证。
+                from app.lib.runtime.context import current_runtime_context as _cur_rt
+
+                _bound_session = getattr(_cur_rt(), "session_id", None) or getattr(
+                    _origin, "session_id", None
+                )
+                if not (
+                    (_bound_session and _bound_session == row.session_id)
+                    or _owns(
+                        row,
+                        getattr(_origin, "owner_id", None),
+                        getattr(_origin, "owner_token", None),
+                    )
+                ):
+                    return {"code": "access_denied"}
                 hard = publish_blockers(row.snapshot or {})
                 lic = license_blocker_if_missing(
                     PublicationMeta(**(row.snapshot or {}).get("meta", {}))
@@ -379,4 +402,6 @@ def register_publication_tools(registry: ToolRegistry) -> None:
             return {"error": f"{type(exc).__name__}: {exc}", "code": "validate_failed"}
         if verdict is None:
             return {"error": "发布不存在", "code": "publication_not_found"}
+        if verdict.get("code") == "access_denied":
+            return {"error": "无权校验该发布（归属不符）", "code": "access_denied"}
         return {"status": "validated", **verdict}

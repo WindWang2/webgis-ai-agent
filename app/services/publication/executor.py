@@ -33,6 +33,8 @@ def materialize_publication(publication_id: str) -> Dict[str, Any]:
 
     返回 {status, publication_id, layers: {layer_id: bytes}, total_bytes}。
     """
+    from sqlalchemy import update as sqlalchemy_update
+
     from app.core.async_runner import run_sync
     from app.tools._utils import db_session
 
@@ -86,6 +88,7 @@ def materialize_publication(publication_id: str) -> Dict[str, Any]:
 
     total_bytes = 0
     written: Dict[str, int] = {}
+    counts: Dict[str, int] = {}
     for lyr in targets:
         layer_id = str(lyr.get("layer_id", ""))
         source_id = str(lyr.get("source_id", ""))
@@ -106,6 +109,17 @@ def materialize_publication(publication_id: str) -> Dict[str, Any]:
                 (blocker.reason.value if blocker else "projection_failed"),
                 f"层 {layer_id} 投影失败：{blocker.message if blocker else '未知'}",
             )
+        # R1 P3-10：物化与冻结快照的一致性核对 —— draft 后 ref 数据若被编辑，
+        # 要素数与 reader doc 分母漂移 = 科学语义不诚实，typed 失败（作者重出草稿）。
+        actual_count = len(projected.get("features") or [])
+        frozen_count = int(lyr.get("feature_count") or 0)
+        if actual_count != frozen_count:
+            raise PublicationMaterializeError(
+                "snapshot_data_drift",
+                f"层 {layer_id} 物化要素数 {actual_count} 与冻结快照 {frozen_count} 不一致"
+                "（数据在草稿后被编辑）—— 请重新创建草稿",
+            )
+        counts[layer_id] = actual_count
         size = pub_store.write_layer_artifact(publication_id, layer_id, projected)
         written[layer_id] = size
         total_bytes += size
@@ -118,21 +132,45 @@ def materialize_publication(publication_id: str) -> Dict[str, Any]:
     # 产物快照文件（巡检/恢复）+ 发布 CAS（draft→published；发布事务终点）。
     pub_store.write_snapshot_file(publication_id, snapshot)
 
+    # R1 P2-3：发布门在 CAS 单点（发布事务内 fail-closed）—— 不依赖提交期
+    # 路由检查（retry/未来第二提交面都必须过这道门）。
+
+    hard = [
+        b for b in (snapshot.get("blockers") or [])
+        if isinstance(b, dict) and b.get("reason") in (
+            "license_unknown", "snapshot_budget_exceeded", "mapspec_invalid",
+        )
+    ]
+    if not (snapshot.get("meta") or {}).get("license"):
+        hard.append({"reason": "license_unknown", "message": "发布许可未声明"})
+    if hard:
+        raise PublicationMaterializeError(
+            str(hard[0].get("reason") or "publish_blocked"),
+            f"发布门阻断（物化前复查）：{hard[0].get('message')}",
+        )
+
+    # R1 P3-5：DB 级 CAS（UPDATE … WHERE status IN expected）—— 消除
+    # 并发 revoke × in-flight publish 的复活窗口（0 行更新即放弃）。
     with db_session() as db:
-        row = db.get(MapPublication, publication_id)
-        if row is None:
-            raise PublicationMaterializeError("publication_not_found", "发布行已消失")
-        if row.status != PUBLICATION_STATUS_DRAFT:
+        moved = db.execute(
+            sqlalchemy_update(MapPublication)
+            .where(
+                MapPublication.id == publication_id,
+                MapPublication.status == PUBLICATION_STATUS_DRAFT,
+            )
+            .values(
+                status="published",
+                materialized=1,
+                published_at=utcnow_naive(),
+            )
+        )
+        db.commit()
+        if moved.rowcount == 0:
             # 并发/重放：已 published/revoked —— 不回退、不重复 CAS。
             logger.info(
-                "[publication] publish CAS skipped job publication_id=%s status=%s",
-                publication_id, row.status,
+                "[publication] publish CAS skipped publication_id=%s (not draft)",
+                publication_id,
             )
-        else:
-            row.materialized = 1
-            row.status = "published"
-            row.published_at = utcnow_naive()
-            db.commit()
 
     return {
         "status": "published",

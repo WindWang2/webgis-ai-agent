@@ -201,9 +201,11 @@ FORBIDDEN_SNAPSHOT_KEYS: Tuple[str, ...] = (
     "user_notes",
 )
 
-#: 绝对路径形态（内部部署路径不得进入读者面）。
+#: 绝对路径形态（内部部署路径不得进入读者面；含 file:// 变体与 Windows 盘符）。
 _ABSOLUTE_PATH_RE = re.compile(
     r"(?:^|[\"'\s:\[\(])/(?:home|Users|root|var|tmp|opt|srv|data)/[A-Za-z0-9_./-]+"
+    r"|file:///[A-Za-z0-9_./-]+"
+    r"|[A-Za-z]:\\(?:[A-Za-z0-9_.\\-]+)"
 )
 
 

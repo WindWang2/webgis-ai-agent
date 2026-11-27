@@ -53,7 +53,12 @@ def snapshot_document_of(publication) -> Optional[PublicationSnapshotDocument]:
 def build_reader_map_spec(
     snapshot: PublicationSnapshotDocument, *, share_code: str
 ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
-    """冻结 spec → 读者 map spec（源重写 + 阻断层剔除 + 编辑面剥离）。
+    """冻结 spec → 读者 map spec（源按层重写 + 阻断层剔除 + 编辑面剥离）。
+
+    R1 P2-4：源重写按**层**展开 —— MapSpec 允许多层共享一个 source 且各层
+    字段白名单不同；共享源若指向同一产物 URL 会让兄弟层渲染错误的字段集。
+    每个可投影层获得独立 source 条目（publication:{layer_id} → 自己的
+    白名单产物），layer.source 随之改指。
 
     返回 (reader_spec, degradations)：degradation 记录读者可见的降级
     （被剔除的层/源），诚实呈现 —— 不静默。
@@ -62,60 +67,59 @@ def build_reader_map_spec(
     degradations: List[Dict[str, Any]] = []
     sources = spec.get("sources") if isinstance(spec.get("sources"), dict) else {}
 
-    materialized_source_ids = {
-        lyr.source_id for lyr in snapshot.layers if lyr.data_mode == DataMode.materialized
+    materialized_layers = [
+        lyr for lyr in snapshot.layers if lyr.data_mode == DataMode.materialized
+    ]
+    materialized_layer_ids = {lyr.layer_id for lyr in materialized_layers}
+    source_meta = {
+        lyr.source_id: sources.get(lyr.source_id)
+        for lyr in materialized_layers
+        if isinstance(sources.get(lyr.source_id), dict)
     }
-    materialized_layer_ids = {lyr.layer_id for lyr in snapshot.layers}
 
-    # 源重写：可投影层源 → 读者数据端点；其余源剔除并降级披露。
-    for source_key in list(sources.keys()):
-        entry = sources.get(source_key)
-        if not isinstance(entry, dict):
-            continue
-        if source_key in materialized_source_ids:
-            layer_id = _layer_for_source(snapshot, source_key)
-            sources[source_key] = {
-                "type": "geojson",
-                "name": entry.get("name") or source_key,
-                "attribution": entry.get("attribution") or "",
-                "url": f"/api/v1/publications/shared/{share_code}/layers/{layer_id}/data",
-            }
-        else:
-            # 不可投影源（含底图瓦片类）：整个剔除 —— 读者地图不出现
-            # 需要会话凭证或无法验证许可的数据通道。
-            del sources[source_key]
+    # 源重写：可投影层 → 每层独立 reader source（自己的白名单产物 URL）；
+    # 其余源（不可投影/底图瓦片类）剔除并降级披露。
+    next_sources: Dict[str, Any] = {}
+    for lyr in materialized_layers:
+        entry = source_meta.get(lyr.source_id) or {}
+        next_sources[f"publication:{lyr.layer_id}"] = {
+            "type": "geojson",
+            "name": entry.get("name") or lyr.source_id,
+            "attribution": entry.get("attribution") or "",
+            "url": f"/api/v1/publications/shared/{share_code}/layers/{lyr.layer_id}/data",
+        }
+    for source_key, entry in sources.items():
+        if source_key not in {lyr.source_id for lyr in materialized_layers}:
             degradations.append({
                 "kind": "source_dropped",
                 "source_id": str(source_key),
                 "message": "该数据源不在发布投影范围内（需会话凭证或无法验证许可），已从读者地图剔除",
             })
+    spec["sources"] = next_sources
 
     # 层剔除：非 materialized 层不进读者面（阻断已在 snapshot.blockers 披露）。
     layers = spec.get("layers")
     if isinstance(layers, list):
-        spec["layers"] = [
-            lyr for lyr in layers
-            if isinstance(lyr, dict) and lyr.get("id") in materialized_layer_ids
-        ]
-        dropped = [str(lyr.get("id")) for lyr in layers
-                   if isinstance(lyr, dict) and lyr.get("id") not in materialized_layer_ids]
-        for layer_id in dropped:
-            degradations.append({
-                "kind": "layer_dropped",
-                "layer_id": layer_id,
-                "message": "该层无法安全投影发布，未包含在读者地图中",
-            })
+        kept = []
+        for lyr in layers:
+            if not isinstance(lyr, dict):
+                continue
+            layer_id = lyr.get("id")
+            if layer_id in materialized_layer_ids:
+                # 指向该层独立的 reader source（R1 P2-4：共享源不再错配）。
+                lyr["source"] = f"publication:{layer_id}"
+                kept.append(lyr)
+            else:
+                degradations.append({
+                    "kind": "layer_dropped",
+                    "layer_id": str(layer_id),
+                    "message": "该层无法安全投影发布，未包含在读者地图中",
+                })
+        spec["layers"] = kept
 
     for key in _READER_SPEC_STRIP_KEYS:
         spec.pop(key, None)
     return spec, degradations
-
-
-def _layer_for_source(snapshot: PublicationSnapshotDocument, source_id: str) -> Optional[str]:
-    for lyr in snapshot.layers:
-        if lyr.source_id == source_id:
-            return lyr.layer_id
-    return None
 
 
 def reader_doc(snapshot: PublicationSnapshotDocument) -> Dict[str, Any]:
@@ -139,7 +143,10 @@ def reader_doc(snapshot: PublicationSnapshotDocument) -> Dict[str, Any]:
                 "feature_count": lyr.feature_count,
                 "reader_visibility_allowed": lyr.reader_visibility_allowed,
             }
+            # R1 P3-14：只输出 materialized 层 —— 未物化层（阻断）已在
+            # blockers 披露；数据表/统计面只对可投影层有意义。
             for lyr in snapshot.layers
+            if lyr.data_mode == DataMode.materialized
         ],
         "blockers": [b.model_dump(mode="json") for b in snapshot.blockers],
         "accessibility": snapshot.accessibility,

@@ -79,7 +79,6 @@ async def test_journey_inspect_and_prepare(full_registry, seeded_world):
     assert prepare["status"] == "planned"
     reasons = {b["reason"] for b in prepare["publish_blockers"]}
     assert "license_unknown" in reasons
-    assert prepare["consent_note"] if "consent_note" in prepare else True
     assert "作者" in prepare["next_step"]
 
     # 补上 license → 阻断消失

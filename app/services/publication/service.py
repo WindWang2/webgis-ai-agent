@@ -15,6 +15,7 @@ import logging
 import uuid
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.lib.cartography.accessibility_manifest import build_accessibility_manifest
@@ -349,6 +350,12 @@ async def create_draft(
             raise PublicationRequestError(
                 "publication_not_found", "基础发布版本不存在", status_code=404
             )
+        # R1 P2-1：谱系挂靠必须归属一致 —— 不得把他人产品当作 base 继承
+        # meta（license/署名）或向他人 product_id 追加版本。
+        if not _owns(base, creator_id, owner_token):
+            raise PublicationRequestError(
+                "access_denied", "基础发布版本归属与当前作者不符", status_code=403
+            )
         product_id = base.product_id
         version = await pub_store.next_version_for_product(db, product_id)
         # meta 继承：未显式给的键沿用上一版本（作者少打字，语义显式）。
@@ -362,16 +369,22 @@ async def create_draft(
         meta = _resolve_meta(spec, meta_params)
 
     plan = planned["plan"]
-    document, fingerprint, blockers = build_publication_snapshot(
-        spec=spec,
-        plan=plan,
-        hydrated=planned["hydrated"],
-        meta=meta,
-        product_id=product_id,
-        version=version,
-        alt_text=alt_text,
-        palette=palette,
-    )
+    try:
+        document, fingerprint, blockers = build_publication_snapshot(
+            spec=spec,
+            plan=plan,
+            hydrated=planned["hydrated"],
+            meta=meta,
+            product_id=product_id,
+            version=version,
+            alt_text=alt_text,
+            palette=palette,
+        )
+    except ValueError as exc:
+        # R1 P3-8：红线扫描违例（键名/路径形态）→ typed 422，而非裸 500。
+        raise PublicationRequestError(
+            "snapshot_forbidden_content", f"快照红线违例：{exc}", status_code=422
+        ) from exc
     hard = [b for b in blockers if b.reason in {
         PublicationBlockerReason.MAPSPEC_INVALID,
         PublicationBlockerReason.SNAPSHOT_BUDGET_EXCEEDED,
@@ -386,7 +399,7 @@ async def create_draft(
     row = MapPublication(
         id=uuid.uuid4().hex,
         product_id=product_id,
-        version=version,
+        version=version,  # 并发同产品由 uq 约束兜底（下方 IntegrityError 重试）
         session_id=session_id,
         title=meta.title,
         status=PUBLICATION_STATUS_DRAFT,
@@ -403,7 +416,54 @@ async def create_draft(
         owner_token=owner_token,
     )
     db.add(row)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # R1 P3-9：同产品并发 create_draft 撞 uq(product_id, version)
+        # → 取新版本号重试一次（读-增-写竞态的兜底）。
+        await db.rollback()
+        version = await pub_store.next_version_for_product(db, product_id)
+        merged_meta = meta.model_dump(mode="json")
+        try:
+            document, fingerprint, _ = build_publication_snapshot(
+                spec=spec,
+                plan=plan,
+                hydrated=planned["hydrated"],
+                meta=meta,
+                product_id=product_id,
+                version=version,
+                alt_text=alt_text,
+                palette=palette,
+            )
+        except ValueError as exc:
+            raise PublicationRequestError(
+                "snapshot_forbidden_content", f"快照红线违例：{exc}", status_code=422
+            ) from exc
+        document = document.model_copy(
+            update={
+                "version": version,
+                "snapshot_fingerprint": fingerprint,
+                "meta": type(meta)(**merged_meta),
+            }
+        )
+        row = MapPublication(
+            id=uuid.uuid4().hex,
+            product_id=product_id,
+            version=version,
+            session_id=session_id,
+            title=meta.title,
+            status=PUBLICATION_STATUS_DRAFT,
+            access_policy="private",
+            spec_fingerprint=canonical_fingerprint(spec),
+            spec_revision=plan.get("spec_revision"),
+            snapshot=document.model_dump(mode="json"),
+            materialized=0,
+            creator_id=creator_id,
+            org_id=org_id,
+            owner_token=owner_token,
+        )
+        db.add(row)
+        await db.commit()
     return row
 
 

@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
+import re
 from typing import Any, Dict, List, Optional, Set
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -44,6 +46,7 @@ from app.services.feature_pages import (
 from app.services.publication import reader as pub_reader
 from app.services.publication import store as pub_store
 from app.services.publication.access import (
+    limit_publication_meta,
     limit_publication_read,
 )
 from app.services.publication.contract import DataMode
@@ -78,6 +81,7 @@ def _json_body(data: Any) -> str:
         ApiResponse.ok(data=data).model_dump(mode="json"),
         ensure_ascii=False,
         separators=(",", ":"),
+        allow_nan=False,  # R1 P3-7：NaN/Inf 不产出非法 JSON（fail-loud）
     )
 
 
@@ -330,7 +334,7 @@ async def _resolve_reader(db: AsyncSession, share_code: str):
     return publication
 
 
-@router.get("/shared/{share_code}", dependencies=[Depends(limit_publication_read)])
+@router.get("/shared/{share_code}", dependencies=[Depends(limit_publication_meta)])
 async def get_shared_publication(
     share_code: str,
     db: AsyncSession = Depends(get_async_db),
@@ -347,7 +351,7 @@ async def get_shared_publication(
     )
 
 
-@router.get("/shared/{share_code}/map", dependencies=[Depends(limit_publication_read)])
+@router.get("/shared/{share_code}/map", dependencies=[Depends(limit_publication_meta)])
 async def get_shared_publication_map(
     share_code: str,
     db: AsyncSession = Depends(get_async_db),
@@ -370,10 +374,16 @@ async def get_shared_publication_map(
     )
 
 
+_LAYER_ID_RE = re.compile(r"^[A-Za-z0-9_\-.]{1,200}$")
+
+
 def _reader_layer_context(
     snapshot, publication, layer_id: str
 ):
-    """读者层校验：层必须在快照且 materialized。"""
+    """读者层校验：形态 → 快照在册 → materialized → 产物可用。"""
+    # R1 P3-12：非法形态与"层不在册"同语义 404（不落到产物读的 503）。
+    if not _LAYER_ID_RE.fullmatch(layer_id or ""):
+        raise HTTPException(status_code=404, detail="layer not available")
     layer = snapshot.layer_by_id(layer_id)
     if layer is None or layer.data_mode != DataMode.materialized:
         raise HTTPException(status_code=404, detail="layer not available")
@@ -550,7 +560,10 @@ async def get_shared_summary(
     from app.services.feature_pages import evaluate_where
     from app.services.publication.projection import bbox_intersects, bbox_of_geometry
 
-    stats: Dict[str, Any] = {"count": 0, "sum": None, "min": None, "max": None, "null_count": 0}
+    stats: Dict[str, Any] = {
+        "count": 0, "sum": None, "min": None, "max": None,
+        "null_count": 0, "non_numeric_count": 0,
+    }
     values: List[float] = []
     for feature in features if isinstance(features, list) else []:
         if not isinstance(feature, dict):
@@ -568,8 +581,14 @@ async def get_shared_summary(
             stats["null_count"] += 1
             continue
         if isinstance(value, bool) or not isinstance(value, (int, float)):
+            stats["non_numeric_count"] += 1
             continue
-        values.append(float(value))
+        numeric = float(value)
+        if not math.isfinite(numeric):
+            # R1 P3-7：NaN/Inf 不进数值统计（防 NaN 字面量进 JSON 响应）。
+            stats["non_numeric_count"] += 1
+            continue
+        values.append(numeric)
     if values:
         stats["count"] = len(values)
         stats["sum"] = sum(values)
@@ -588,7 +607,8 @@ async def get_shared_summary(
             "total_features": layer.feature_count,
             "matching_features": matching,
             "numeric_count": stats["count"],
-            "null_or_non_numeric": stats["null_count"],
+            "null_count": stats["null_count"],
+            "non_numeric_count": stats["non_numeric_count"],
             "bbox": list(window_bbox) if window_bbox else None,
             "where": where_ast,
             "note": "count/min/max/sum 基于当前筛选（bbox+where）；非数值与缺失值计入 null_or_non_numeric，不进数值统计",
