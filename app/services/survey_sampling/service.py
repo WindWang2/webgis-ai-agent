@@ -21,12 +21,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from app.lib.gis.scientific_errors import (
-    DegenerateData,
-    EstimationNotEvaluable as _LibNotEvaluable,
-)
+from app.lib.gis.scientific_errors import DegenerateData
 from app.lib.gis.scientific_errors import InsufficientSamples as _LibInsufficient
 from app.lib.survey_sampling import estimation as est_lib
+from app.lib.survey_sampling.estimation import (
+    EstimationNotEvaluable as _LibNotEvaluable,
+)
 from app.lib.survey_sampling import frame as frame_lib
 from app.lib.survey_sampling import selection as sel_lib
 from app.lib.survey_sampling.design import (

@@ -41,6 +41,14 @@ class ToolSurfaceLike(Protocol):
 # 关键：宁严勿宽。误激活只是多发了几个工具 schema (轻量 token 损失)，
 # 漏激活会导致 LLM 在该领域无可用工具直接放弃。
 DOMAIN_KEYWORDS: dict[str, list[str]] = {
+    # GOAL-20261127-03：概率抽样调查与精度核查（survey_sampling 域）
+    "survey_sampling": [
+        "概率抽样", "抽样调查", "抽样框", "精度核查", "精度评估",
+        "误差矩阵", "面积估计", "总体精度", "user's accuracy",
+        "producer's accuracy", "核查点", "参考标签", "盲标",
+        "survey", "stratified sampling", "error matrix",
+        "area estimate", "accuracy assessment",
+    ],
     # 中国本地 GIS 数据源（高德/百度/天地图，15 工具：含 11 chinese_maps + 本地行政/POI）
     "chinese": [
         "高德", "百度", "天地图", "腾讯地图", "amap", "baidu", "tianditu",

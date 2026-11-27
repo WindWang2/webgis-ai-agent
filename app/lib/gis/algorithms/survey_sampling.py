@@ -160,27 +160,6 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
                 required=False,
                 description="总体精度目标标准误（Eq.13 反推总量）",
             ),
-            ParameterSpec(
-                name="seed",
-                type="integer",
-                required=False,
-                default=42,
-                description="随机种子（选样可复现）",
-            ),
-            ParameterSpec(
-                name="backup_per_stratum",
-                type="integer",
-                required=False,
-                default=0,
-                description="每层预抽替补数（非响应顶替，原因披露）",
-            ),
-            ParameterSpec(
-                name="max_nonresponse_rate",
-                type="number",
-                required=False,
-                default=0.2,
-                description="非响应/顶替率上限（超出拒绝总体推断）",
-            ),
-        ],
+                                            ],
     ),
 ]
