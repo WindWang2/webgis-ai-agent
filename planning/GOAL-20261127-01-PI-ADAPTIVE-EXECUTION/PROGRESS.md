@@ -17,4 +17,24 @@
 - 2 个 Explore 子代理在跑：A=调用图+vendor 事件语义；B=路由/治理权威消费矩阵
 - 下一步：等子代理报告 → DEDUP_MATRIX 定稿 → S2 实现开写
 
-## 轮 2（占位）：S2 WP2 实现
+## 轮 2（2026-11-27）：WP1 定稿 + WP2/WP3/WP4/WP5 实现
+
+- 两个 Explore 子代理报告落稿 → DEDUP_MATRIX 定稿（B1–B10 缺口）✅
+- S2a+S2b 提交 b87030971：candidate_models 候选池 + turn_strategy +
+  session_model_service 接线（inherit_routed 状态、strategy_codes 有界
+  SSE）；单测 11 项 + G37 回归 49 passed ✅
+- S2c 提交 62c5502c0：provider-obs 结构化 stderr 通道（extension/
+  parse/sink）+ 桥接健康表回写 + auto_retry 兜底 + 真实 RPC fixture 门
+  F1/F2（四链证据）✅ vendor contract 18 passed ✅ 相关单测 155 passed ✅
+- S3 提交 2327fc88e：migration g5201（单 head）+ attempt 链三列 +
+  governor record_output_tokens 真实 usage 回流（B4）+ budget 投影修复
+  （B6）+ 陈旧 governor 测试对齐；单测 30 passed ✅
+- S4+S5a 提交 1ffde6470：GET /sessions/{id}/runtime 聚合投影（健康白名单
+  + vendor session_stats 对账 D6）+ 前端预算/运行事实/双语 + 故障矩阵
+  F3 500/F4 401/F5 stream-cut ✅ tsc/eslint 干净 ✅
+- WP5 压测：pool soak 2 workers/4 sessions/40 turns 不变量 PASS
+  （0 泄漏/0 越序，p50=53ms p95=88ms）；governor 全包 209 passed ✅
+- 安全负例 5 项 passed（解析注入/有界洪水/列宽/白名单）✅
+
+## 轮 3（进行中）：journey 回归归因 + R1/R2 + 终验交付
+
