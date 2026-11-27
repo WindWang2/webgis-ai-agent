@@ -84,3 +84,9 @@
 
 - origin/master 仍 f34cb69dd，本分支无分歧；开放 PR #2290（零交集）/#2291（5 个共享注册文件追加行，无逻辑冲突）
 - 终验回归 192 passed；R1/R2 全闭环；git diff --check 干净；冲突标记扫描干净
+
+## 交付（2026-11-28）
+
+- 分支已推送: zcode/goal-moving-object-events-20261127（16 commits, origin/master f34cb69dd 无分歧）
+- **PR 已创建: https://github.com/WindWang2/webgis-ai-agent/pull/2292**（base master）
+- 完成定义核对: 必过旅程 1-4 真实跑通（tests/unit/moving_object/test_journeys.py）；五工作包代码+测试+可见入口（REST/Pi/UI 三面）；R1×14 项与 R2×6 项无未解决 P0/P1/P2；master 与其他 worktree/分支零改动；未自动合并、未删任何分支/worktree
