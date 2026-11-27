@@ -83,13 +83,14 @@ def register_publication_tools(registry: ToolRegistry) -> None:
         session = _verified_session(session_id)
         if not session:
             return {"error": "session_id 未通过归属校验", "code": "session_forbidden"}
+        from app.core.async_runner import run_sync
         from app.services.publication.service import (
             PublicationRequestError,
             plan_publication_from_session,
         )
 
         try:
-            planned = plan_publication_from_session(session)
+            planned = run_sync(plan_publication_from_session(session))
         except PublicationRequestError as exc:
             return {"error": exc.message, "code": exc.reason}
         return {"status": "inspected", **_plan_summary(planned["plan"])}
@@ -153,12 +154,14 @@ def register_publication_tools(registry: ToolRegistry) -> None:
         )
         from app.services.publication.contract import PublicationMeta
 
+        from app.core.async_runner import run_sync
+
         try:
-            planned = plan_publication_from_session(
+            planned = run_sync(plan_publication_from_session(
                 session,
                 selected_layer_ids=selected_layer_ids,
                 field_whitelists=field_whitelists,
-            )
+            ))
         except PublicationRequestError as exc:
             return {"error": exc.message, "code": exc.reason}
         summary = _plan_summary(planned["plan"])
@@ -349,7 +352,7 @@ def register_publication_tools(registry: ToolRegistry) -> None:
                     hard.append(lic)
                 return {
                     "publication_id": row.id,
-                    "status": row.status,
+                    "row_status": row.status,
                     "access_policy": row.access_policy,
                     "version": row.version,
                     "materialized": bool(row.materialized),
@@ -361,9 +364,9 @@ def register_publication_tools(registry: ToolRegistry) -> None:
                     ],
                     "qa": (row.snapshot or {}).get("qa") or {},
                     "accessibility_complete": bool((row.snapshot or {}).get("accessibility", {}).get("complete")),
-                    "can_publish": (
-                        row.status == "draft" and not hard and bool(row.materialized)
-                    ),
+                    # 物化由发布 job 承担（durable）；草稿级可发布性只看
+                    # 硬阻断（license/预算/schema）。
+                    "can_publish": row.status == "draft" and not hard,
                     "consent_boundary": (
                         "发布（confirm）与链接签发必须由作者在工作台/REST 显式操作；"
                         "Agent 不能代行对外可见副作用"

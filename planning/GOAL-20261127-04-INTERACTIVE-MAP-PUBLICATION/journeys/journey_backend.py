@@ -178,16 +178,20 @@ def phase_a_seed() -> str:
                     ),
                 ),
             )
-            await engine_mut.apply_mutation(
-                SESSION_ID, SetLayoutIntent())
-            # 标题进 layout（SetLayoutIntent 词面里 title 归 layout doc）
-            from app.services.session_data import session_data_manager
+            # 标题走生产写路径：title 组件（前端 commitStudioText 同语义的
+            # 组件突变；直写 layout.title 不是生产载体）。
+            from app.services.mapspec.intents import PatchComponentIntent
 
-            spec = await session_data_manager.get_map_state(SESSION_ID)
-            mapspec = spec.get("mapspec") or {}
-            mapspec.setdefault("layout", {})["title"] = "区县学校分布专题图"
-            await session_data_manager.set_map_state_fields(
-                SESSION_ID, {"mapspec": mapspec})
+            await engine_mut.apply_mutation(
+                SESSION_ID,
+                PatchComponentIntent(
+                    component_id="title",
+                    component_type="title",
+                    enabled=True,
+                    options={"text": "区县学校分布专题图"},
+                    upsert=True,
+                ),
+            )
         await engine.dispose()
         return owner_token
 
@@ -397,6 +401,22 @@ def main() -> None:
         assert v2["spec_fingerprint"] == fp_v1  # 数据未变 → 指纹一致（可复现）
         evidence["v2"] = {"id": v2["id"], "version": v2["version"]}
         evidence["snapshot_v1_immutable"] = snap_v1
+
+        # v2 显式发布 + 签发链接（留给浏览器旅程用；v1 已撤销验证过 404）
+        status, body = http("POST", f"/api/v1/publications/{v2['id']}/publish",
+                            token=owner_token, body={"confirm": True})
+        assert status == 200, (status, body)
+        status, body = http("GET", f"/api/v1/publications/{v2['id']}", token=owner_token)
+        assert body["data"]["status"] == "published"
+        status, body = http("POST", f"/api/v1/publications/{v2['id']}/link",
+                            token=owner_token, body={"ttl_days": 7})
+        assert status == 200, (status, body)
+        live_code = body["data"]["share_code"]
+        status, body = http("GET", f"/api/v1/publications/shared/{live_code}")
+        assert status == 200
+        evidence["v2_share_code"] = live_code
+        SCRATCH.joinpath("share_code.txt").write_text(
+            json.dumps({"code": live_code}), encoding="utf-8")
 
         print(json.dumps({"ok": True, "evidence": evidence}, ensure_ascii=False, indent=2))
     finally:
