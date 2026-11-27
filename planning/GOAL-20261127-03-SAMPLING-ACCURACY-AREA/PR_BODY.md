@@ -66,7 +66,10 @@ not_evaluated），不把描述性准确率伪装成总体精度。
   god_modules×4；ruff 26 处；GIS_MANIFEST_STRICT=0 先例用于全 app 路由测试；
 - Playwright e2e 未新建：双入口语义已由 Pi dispatch 真跑 + REST TestClient
   + 面板 vitest 覆盖；
-- real_services/browser lanes 未跑（CI nightly 专属）。
+- real_services/browser lanes 未跑（CI nightly 专属）；
+- 数据交付 CSV 导出通道未额外接线：核查表经 owner-scoped REST/records
+  JSONL 与 estimate artifact（publish_json_artifact）可读，跨域导出
+  （data_delivery parquet）留作后续增量（避免 endgame 扩张）。
 
 ## 迁移 / 兼容 / 回退
 - 无 DB 迁移（调查状态走 DATA_DIR 原子 JSON/JSONL + revision CAS，
