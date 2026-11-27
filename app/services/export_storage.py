@@ -1,7 +1,6 @@
 """Neutral export bytes/owner-receipt persistence shared by routes and services.
 
-Authorization and signed URLs remain with the callers. This module does not
-import API code or infer a principal: it persists the already validated owner.
+Callers authorize the principal before persisting an owner or issuing a URL.
 The optional cache arguments preserve private route-fixture compatibility;
 production callers share the same bounded cache and call-time export root.
 """
@@ -18,6 +17,15 @@ from app.services import export_paths
 
 EXPORT_OWNERS: OrderedDict[str, str] = OrderedDict()
 EXPORT_OWNERS_MAX = 2048
+
+
+def export_download_url(filename: str, principal: str) -> str:
+    path = f"/api/v1/export/download/{filename}"
+    if principal.startswith("session:"):
+        from app.core.signing import sign_path
+        exp, sig = sign_path(path, ttl_seconds=3600)
+        return f"{path}?exp={exp}&sig={sig}"
+    return path
 
 
 def remember_export_owner(

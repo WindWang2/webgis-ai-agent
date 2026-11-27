@@ -19,11 +19,15 @@ import logging
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Response
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import get_current_user_optional
+from app.core.database import get_async_db
 from app.models.db_model import Conversation
 from app.schemas.chat_schema import (
     ChartArtifactResponse,
     PlanConfirmRequest,
+    SessionGeneratedFilesResponse,
     SessionMapStateResponse,
     SessionPlanStepView,
     SessionPlanViewResponse,
@@ -33,6 +37,22 @@ from app.services.auth_history_bridge import get_owner_token, require_owned_sess
 from app.services.session_plan import load_session_plan
 
 router = APIRouter()  # tags/前缀由挂载方（chat.router）提供，避免 include 时重复
+
+
+@router.get("/sessions/{session_id}/generated-files", response_model=SessionGeneratedFilesResponse)
+async def get_session_generated_files(
+    session_id: str,
+    response: Response,
+    _conv: Conversation = Depends(require_owned_session),
+    user: dict = Depends(get_current_user_optional),
+    db: AsyncSession = Depends(get_async_db),
+    owner_token: Optional[str] = Depends(get_owner_token),
+) -> SessionGeneratedFilesResponse:
+    """List the exports, reports and data deliveries available to the session owner."""
+    from app.services.session_generated_files import list_generated_files
+
+    response.headers["Cache-Control"] = "private, no-store"
+    return SessionGeneratedFilesResponse(items=await list_generated_files(db, session_id, user, owner_token))
 
 
 @router.get("/sessions/{session_id}/map-state", response_model=SessionMapStateResponse)

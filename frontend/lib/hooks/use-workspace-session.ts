@@ -249,6 +249,9 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       resetClientSeq();
       // 审计 F38：之前 setSessionId(sid) 在 fetch 完成后才调，期间 sessionIdRef
       // 仍是旧值 -> 若用户在窗口内点 send，消息会发到旧 session。改为同步先 set。
+      // The file panel reads links from the transcript. Retire it together
+      // with the old session's credentials while the new history is in flight.
+      if (sessionIdRef.current !== sid) useChatStore.getState().clearMessages();
       setSessionId(sid);
       sessionIdRef.current = sid;
       // #736: reset the MapSpec cursor SYNCHRONOUSLY on switch — previously

@@ -3,7 +3,7 @@
 import { memo, useState, useRef, useEffect, useCallback, useMemo, type KeyboardEvent } from 'react';
 import dynamic from 'next/dynamic';
 import {
-  ArrowUpRight, Blend, CheckCircle2, CircleDot, Grid2X2, ImagePlus, MapPin,
+  ArrowUpRight, Blend, CheckCircle2, CircleDot, FolderOpen, Grid2X2, ImagePlus, MapPin,
   RotateCcw, Send, Sparkles, Square,
 } from 'lucide-react';
 import type { AiStatus } from '@/lib/store/hud-types';
@@ -43,6 +43,7 @@ import { useLocale, useT } from '@/lib/i18n/useT';
 // demand instead of riding the / first-load bundle; the tiny pure adapter stays
 // static so chart message rendering logic is unchanged.
 const MiniMd = dynamic(() => import('@/components/chat/mini-md'), { ssr: false });
+const GeneratedFilesPanel = dynamic(() => import('@/components/chat/generated-files-panel').then((m) => m.GeneratedFilesPanel));
 const ChartRenderer = dynamic(
   () => import('@/components/chat/chart-renderer').then((m) => ({ default: m.ChartRenderer })),
   { ssr: false }
@@ -456,7 +457,13 @@ const t = useT();
 });
 
 export function ChatTab({ messages, aiStatus, onSend, onCancel, onPlanAction, onClarificationSubmit, onFeatureEditDecision, onClarificationRefresh, onRuntimeInteractionSubmit, onTurnMessage, turnActive, sessionId, agentRuntime, ownerToken, sessionPlan }: ChatTabProps) {
-const t = useT();
+  const t = useT();
+  const [filesOpen, setFilesOpen] = useState(false);
+  const filesButton = useRef<HTMLButtonElement>(null);
+  const closeFiles = useCallback(() => {
+    setFilesOpen(false);
+    requestAnimationFrame(() => filesButton.current?.focus());
+  }, []);
   const [configuredRuntime, setConfiguredRuntime] = useState<AgentRuntime | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -485,6 +492,7 @@ const t = useT();
   const clearPendingChatInjection = useHudStore((s) => s.clearPendingChatInjection);
   useEffect(() => {
     if (pendingInjection === null) return;
+    setFilesOpen(false);
     setInput((prev) =>
       prev.trim() ? `${prev}\n\n${pendingInjection}` : pendingInjection,
     );
@@ -522,6 +530,7 @@ const t = useT();
     if (!sessionId || messages.length === 0) return;
     const target = consumePendingLocate(sessionId);
     if (target === null || target >= messages.length) return;
+    setFilesOpen(false);
     setLocateIndex(target);
     const t = setTimeout(() => {
       const el = scrollRef.current?.querySelector<HTMLElement>(
@@ -610,15 +619,19 @@ const t = useT();
     onSend(lastUserMessage);
   }, [lastUserMessage, isBusy, onSend]);
 
-  return (
-    <div className="flex flex-col h-full">
-      {runtime && (
-        <div className="shrink-0 border-b border-edge-subtle px-panel py-1.5">
-          <p className="text-meta tracking-wide text-ink-muted" data-testid="agent-runtime-badge">
+  const conversation = (
+    <div className={filesOpen ? 'hidden' : 'flex h-full flex-col'}>
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-edge-subtle px-panel">
+        {runtime && (
+          <p className="min-w-0 truncate text-meta tracking-wide text-ink-muted" data-testid="agent-runtime-badge">
             {agentRuntimeLabel(runtime)}
           </p>
-        </div>
-      )}
+        )}
+        <button ref={filesButton} type="button" onClick={() => setFilesOpen(true)}
+          className="ml-auto inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-md px-2 text-meta font-medium text-ink-secondary hover:bg-surface-hover hover:text-ink focus-visible:ring-2 focus-visible:ring-status-accent">
+          <FolderOpen size={15} aria-hidden /> {t('chat.generatedFiles.title')}
+        </button>
+      </div>
       {/* SessionPlan 面板（Pi 路径，#1047）：会话级只读水合卡。无信封 / 拉取
           失败时整卡隐藏 —— ChatEngine 兜底会话的侧边栏与今天完全一致。
           #1048：sessionPlan（useSessionPlan.view）提供时由流式增量驱动。 */}
@@ -819,6 +832,20 @@ const t = useT();
         </div>
       </div>
     </div>
+  );
+
+  return (
+    <>
+      {filesOpen && (
+        <GeneratedFilesPanel
+          sessionId={sessionId ?? null}
+          ownerToken={ownerToken}
+          messages={messages}
+          onBack={closeFiles}
+        />
+      )}
+      {conversation}
+    </>
   );
 }
 

@@ -820,6 +820,7 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/chat/sessions/{session_id}/rotate-owner-token` | Rotate Session Owner Token | RotateOwnerTokenResponse |
 | `GET` | `/api/v1/chat/tools` | List Tools | ToolsListResponse |
 | `POST` | `/api/v1/chat/tools/execute` | Execute Tool Direct | ToolExecuteResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/generated-files` | Get Session Generated Files | SessionGeneratedFilesResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/chart-artifacts/{ref_id}` | Get Session Chart Artifact | ChartArtifactResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/table-artifacts/{ref_id}` | Get Session Table Artifact | TableArtifactResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/plan` | Get Session Plan | SessionPlanViewResponse |
@@ -1671,6 +1672,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `DELETE` | `/api/v1/temporal-media/jobs/{job_id}` | Cancel Job | object |
 | `GET` | `/api/v1/temporal-media/jobs/{job_id}/result` | Get Job Result | object |
 
-_端点总数：789（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：790（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->

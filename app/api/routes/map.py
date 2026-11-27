@@ -111,13 +111,7 @@ async def _export_principal(user: dict, session_id: Optional[str], token: Option
     return f"session:{session_id}"
 
 
-def _export_download_url(filename: str, principal: str) -> str:
-    path = f"/api/v1/export/download/{filename}"
-    if principal.startswith("session:"):
-        from app.core.signing import sign_path
-        exp, sig = sign_path(path, ttl_seconds=3600)
-        return f"{path}?exp={exp}&sig={sig}"
-    return path
+_export_download_url = export_storage.export_download_url
 
 
 def _set_export_owner(filename: str, user_id: str) -> None:
