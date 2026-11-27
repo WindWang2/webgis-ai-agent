@@ -48,8 +48,9 @@ not_evaluated），不把描述性准确率伪装成总体精度。
   capabilities/__init__.py、method_references.py（+olofsson2014）。
 
 ## 测试与性能（实测）
-- 52/52 调查域测试全绿：手算 oracle 11、覆盖模拟 2、设计 12、选样 6、
-  抽样框 7、必过旅程 4、参考闭环 3、Pi 工具 2、REST 2、性能 2；
+- 61/61 调查域测试全绿（R2 审查员亲跑复核）：手算 oracle 11、覆盖模拟 2、
+  设计 12、选样 6、抽样框 7、必过旅程 4、参考闭环 3、Pi 工具 2、REST 2、
+  性能 2、R1 回归 9；前端 vitest 5/5 面板 + 228/228（i18n/layout/store）；
 - 必过旅程 1-4 全部真实跑通（合成数据、无 mock 被测语义）；
 - 性能（实测打印进 test_survey_perf.py stdout）：1e6 像元 frame=0.06s、
   draw=14ms、estimate=0.4ms、峰值 RSS+3MB；4e10-cell 守卫拒绝 0.1ms；
@@ -85,10 +86,16 @@ not_evaluated），不把描述性准确率伪装成总体精度。
 - 全部新增文件 + 6 处共享文件加性接线；回退 = revert 本分支即可，
   无数据格式耦合。
 
-## R1 / R2
-- REVIEW_R1.md：独立审查员（非实现作者）从 Olofsson 定义手推对照 +
-  权限/并发/诚实性/回归清单，P0-P2 修复记录；
-- R2：重读最新 diff、复跑关键 journey 与契约层、冲突检查见下方"合并顺序"。
+## R1 / R2（REVIEW_R1.md 完整存档）
+- **R1**：独立审查员（非实现作者）从 Olofsson 定义手推全部公式 + 自写
+  4000 次 MC 独立验证（OA/UA/PA SE/SD 0.98–1.01、覆盖 0.94–0.95）——
+  **数学零缺陷**；工程面 1×P0（前端组件漏提交）+ 1×P1（digest/estimate_id
+  路径注入跨 owner 读取）+ 6×P2（负 fpc 假 SE/版本竞态/CAS 可绕过/分配超
+  小层/导入裸异常/盲标可逆向/空 scope fail-open）+ 12×P3。
+- **修复**：ddbbb7f26（P0-P2 全修 + 6×P3 + 9 项回归测试）；
+- **R2**：审查员自写探针逐条复验关闭证据（含 10 并发写探针验证
+  append_and_bump 原子性）+ 亲跑 61/61 + 基线未动核查 → **GO 放行**；
+  5 项非阻断建议已在 eb52ab21e 落地。
 
 ## 合并顺序与冲突边界
 - 执行时本地在研分支：zcode/goal-pi-adaptive-execution-20261127（01 线）、
