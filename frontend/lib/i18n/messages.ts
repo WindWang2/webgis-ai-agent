@@ -48,6 +48,7 @@ import zhTopology from '@/messages/zh-CN/topology.json'
 import zhTopologyEditing from '@/messages/zh-CN/topologyEditing.json'
 import zhMarket from '@/messages/zh-CN/market.json'
 import zhFlow from '@/messages/zh-CN/flow.json'
+import zhPublication from '@/messages/zh-CN/publication.json'
 import zhDataDelivery from '@/messages/zh-CN/dataDelivery.json'
 import zhDataJoin from '@/messages/zh-CN/dataJoin.json'
 import zhDataFusion from '@/messages/zh-CN/dataFusion.json'
@@ -102,6 +103,7 @@ import enTopology from '@/messages/en-US/topology.json'
 import enTopologyEditing from '@/messages/en-US/topologyEditing.json'
 import enMarket from '@/messages/en-US/market.json'
 import enFlow from '@/messages/en-US/flow.json'
+import enPublication from '@/messages/en-US/publication.json'
 import enDataDelivery from '@/messages/en-US/dataDelivery.json'
 import enDataJoin from '@/messages/en-US/dataJoin.json'
 import enDataFusion from '@/messages/en-US/dataFusion.json'
@@ -147,6 +149,7 @@ export interface AppMessages {
   compositionAssets: typeof zhCompositionAssets
   dataPreparation: typeof zhDataPreparation
   flow: typeof zhFlow
+  publication: typeof zhPublication
   dataDelivery: typeof zhDataDelivery
   dataJoin: typeof zhDataJoin
   dataFusion: typeof zhDataFusion
@@ -218,6 +221,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     modelops: zhModelops,
     market: zhMarket,
     flow: zhFlow,
+    publication: zhPublication,
     modelBuilder: zhModelBuilder,
   },
   'en-US': {
@@ -272,6 +276,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     modelops: enModelops as unknown as AppMessages['modelops'],
     market: enMarket as unknown as AppMessages['market'],
     flow: enFlow as unknown as AppMessages['flow'],
+    publication: enPublication as unknown as AppMessages['publication'],
     modelBuilder: enModelBuilder as unknown as AppMessages['modelBuilder'],
   },
 }
