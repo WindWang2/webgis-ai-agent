@@ -137,6 +137,9 @@ from app.models.coordinate_operations import (  # noqa: F401 — 模型注册 + 
     CoordinateOperationPlan,
     CoordinateOperationRun,
 )
+from app.models.map_publication import (  # noqa: F401 — 模型注册 + 再导出（04 线·只读发布）
+    MapPublication,
+)
 
 __all__ = [
     "TurnEventRow",
@@ -200,4 +203,5 @@ __all__ = [
     "CartoIntentEvidence",
     "CartoFeedbackSignal",
     "CartoRecipeAffinity",
+    "MapPublication",
 ]
