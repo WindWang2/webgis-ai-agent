@@ -130,6 +130,7 @@ class GetEstimateArgs(BaseModel):
 def register_survey_sampling_tools(registry: ToolRegistry):
 
     @tool(registry, name="survey_frame_preview",
+          capabilities=["survey_sampling"],
           args_model=FramePreviewArgs,
           description="从分类栅格构建概率抽样框：各层（地图类别）有效像元数、"
                       "等面积核查后的层面积、框 digest（冻结可复现）。经纬度/"
@@ -191,6 +192,7 @@ def register_survey_sampling_tools(registry: ToolRegistry):
                                     "classes": len(class_dict)})
 
     @tool(registry, name="survey_design_preview",
+          capabilities=["survey_sampling"],
           args_model=DesignPreviewArgs,
           description="抽样设计预览（无副作用）：等额/比例/Neyman 分配、"
                       "目标 SE 反推总量（Olofsson Eq.13）、每层样本量与"
@@ -226,6 +228,7 @@ def register_survey_sampling_tools(registry: ToolRegistry):
                                     "n_total": preview["n_total"]})
 
     @tool(registry, name="survey_create_design",
+          capabilities=["survey_sampling"],
           args_model=CreateDesignArgs,
           description="创建调查：冻结设计快照（digest 不可变）并按 seed "
                       "可复现选样（含预抽替补）。返回 survey_id 与每层样本量。"
@@ -266,6 +269,7 @@ def register_survey_sampling_tools(registry: ToolRegistry):
         }
 
     @tool(registry, name="survey_samples",
+          capabilities=["survey_sampling"],
           args_model=SamplesArgs,
           description="拉取调查样本点清单（GeoJSON，可上图）：坐标、层内"
                       "序位、纳入概率；盲标视图不含预测类。含已完成核查"
@@ -311,6 +315,7 @@ def register_survey_sampling_tools(registry: ToolRegistry):
         }
 
     @tool(registry, name="survey_record_reference",
+          capabilities=["survey_sampling"],
           args_model=RecordReferenceArgs,
           description="记录一条独立参考观测（盲标；append-only 版本化）。"
                       "状态词表：labelled（须带 reference_class）|"
@@ -346,6 +351,7 @@ def register_survey_sampling_tools(registry: ToolRegistry):
         }
 
     @tool(registry, name="survey_progress",
+          capabilities=["survey_sampling"],
           args_model=ProgressArgs,
           description="调查进度：每层计划/主样本/已标注/非响应/响应率；"
                       "无参考数据时只显示待核查计划（不产生估计）",
@@ -375,6 +381,7 @@ def register_survey_sampling_tools(registry: ToolRegistry):
         }
 
     @tool(registry, name="survey_estimate",
+          capabilities=["survey_sampling"],
           args_model=EstimateArgs,
           description="设计一致估计：加权误差矩阵、OA/UA/PA、各类面积与 "
                       "95% CI（Olofsson 2014）。源漂移/类字典漂移 → stale "
@@ -410,6 +417,7 @@ def register_survey_sampling_tools(registry: ToolRegistry):
                                     "survey_id": args.survey_id})
 
     @tool(registry, name="survey_get_estimate",
+          capabilities=["survey_sampling"],
           args_model=GetEstimateArgs,
           description="读取已保存的估计结果（最新或指定 estimate_id）",
           tier=2, domains=["survey_sampling"], cost="light",

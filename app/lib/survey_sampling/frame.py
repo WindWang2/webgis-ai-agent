@@ -314,9 +314,10 @@ def build_frame(
         "frame_version": "survey-frame/1.0.0",
         "source": {
             "uri": str(reader.uri) if hasattr(reader, "uri") else "",
-            "content_fingerprint": (
-                meta.content_fingerprint
-                if hasattr(meta, "content_fingerprint") else None),
+            #: reader 平面内容指纹（RasterMetadata.fingerprint，32 hex）；
+            #: 源变更检测（估计 stale 语义）的事实源。注意 RasterSource 的
+            #: content_fingerprint 是同 digest 的 16 hex 截断（前缀比较）。
+            "content_fingerprint": str(meta.fingerprint) if meta.fingerprint else None,
             "width": width, "height": height,
             "dtype": str(meta.dtype), "band": int(band),
             "nodata": nd,

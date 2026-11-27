@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from app.lib.cancellation import OperationCancelled
 from app.lib.gis.scientific_errors import DegenerateData
 from app.lib.gis.scientific_errors import InsufficientSamples as _LibInsufficient
 from app.lib.survey_sampling import estimation as est_lib
@@ -119,6 +120,8 @@ async def build_survey_frame(
             )
     except SurveySamplingError:
         raise
+    except OperationCancelled:
+        raise  # 取消终态语义：不得包装成 SURVEY_FAILED（J4 契约）
     except Exception as exc:                          # noqa: BLE001
         raise _map_lib_error(exc) from exc
     payload = dict(frame.payload)
@@ -130,12 +133,18 @@ async def build_survey_frame(
 def _find_frame_by_source(
     owner_scope: Dict[str, str], source: Any,
 ) -> Optional[Dict[str, Any]]:
-    """同源（uri+fingerprint）幂等：已有冻结框直接复用。"""
+    """同源（uri+fingerprint）幂等：已有冻结框直接复用。
+
+    指纹前缀比较：RasterSource.content_fingerprint（16 hex）是
+    RasterMetadata.fingerprint（32 hex）的严格前缀。
+    """
     for payload in store.list_frame_payloads(owner_scope):
         src = payload.get("source") or {}
-        if (src.get("content_fingerprint")
-                and src.get("content_fingerprint") == source.content_fingerprint
-                and src.get("uri") == source.path):
+        fp = src.get("content_fingerprint")
+        if (fp and src.get("uri") == source.path
+                and (fp == source.content_fingerprint
+                     or (source.content_fingerprint
+                         and fp.startswith(source.content_fingerprint)))):
             return payload
     return None
 
@@ -707,7 +716,9 @@ def _assemble_counts(
     - 响应缺口（无替补可顶）超上限 ⇒ 同上。
     """
     strata = [s.stratum_id for s in design.strata]
-    ref_classes = _class_names(design.class_dictionary_version)
+    # 列序 = 行序（层==地图类；矩阵行列同序，消费者无需映射。
+    # 集合相等已由 StratifiedCounts 强制——字典漂移在此处 typed 阻断）
+    ref_classes = list(strata)
     H = len(strata)
     R = len(ref_classes)
     ref_index = {c: k for k, c in enumerate(ref_classes)}
