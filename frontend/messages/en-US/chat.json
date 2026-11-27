@@ -449,8 +449,15 @@
       "degraded_inherit": "degraded inherit (unverified)",
       "failed": "failed",
       "budget_rejected": "budget rejected",
-      "pending": "pending"
-    }
+      "pending": "pending",
+      "inherit_routed": "routed fallback (inherit)"
+    },
+    "budget": "Budget",
+    "budgetUnlimited": "no budget cap",
+    "runtimeAttempts": "provider retries ×{n}",
+    "runtimeFailure": "last failure: {kind}",
+    "runtimeRoute": "route: {codes}",
+    "budgetRemaining": "remaining {n}"
   },
   "turnReceipt": {
     "toggleLabel": "Materials this turn",

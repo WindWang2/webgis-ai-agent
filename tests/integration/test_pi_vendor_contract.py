@@ -167,9 +167,22 @@ const srv = http.createServer((req, res) => {
     const reqIdx = requests.length;
     // ADR-0301 WP5 / C24：429×2 → 第三次成功（vendor auto-retry 观测面）。
     // always-429：重试耗尽的诚实失败分支（auto_retry_end success=false）。
+    // GOAL-20261127-01（WP5 故障矩阵）：always-500 / always-401 / stream-cut。
     if (mode === 'always-429') {
       res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '0' });
       res.end(JSON.stringify({ error: { message: 'rate limited (stub)', type: 'rate_limit_error' } }));
+      return;
+    }
+    if (mode === 'always-500') {
+      res.writeHead(500, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: 'backend exploded (stub)', type: 'server_error' } }));
+      return;
+    }
+    if (mode === 'always-401') {
+      // 不盲重试语义的证据源：认证失败即使 vendor 决定不重试，也必须诚实
+      // 终态 + 宿主健康观测（kind=unknown 词表——401 无自愈等待意义）。
+      res.writeHead(401, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: 'invalid api key (stub)', type: 'authentication_error' } }));
       return;
     }
     if (mode === 'provider-fail-then-succeed' && reqIdx <= 2) {
@@ -213,6 +226,14 @@ const srv = http.createServer((req, res) => {
     }
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     const sse = (o) => res.write(`data: ${JSON.stringify(o)}\n\n`);
+    // stream-cut：发一半后毁流（传输层断流）→ vendor 侧 MALFORMED/TIMEOUT
+    // 分类证据源（宿主 classify_retry_error_text 的 timeout 词表对应）。
+    if (mode === 'stream-cut') {
+      sse({ id: 'c' + reqIdx, object: 'chat.completion.chunk', created: 1, model: 'stub',
+        choices: [{ index: 0, delta: { content: 'partial' } }] });
+      setTimeout(() => { res.destroy(); }, 50);
+      return;
+    }
     const id = 'c' + reqIdx;
     const firstDelayS = Number(process.env.STUB_DELAY_FIRST_S || 0);
     if (firstDelayS > 0 && reqIdx === 1) { await new Promise((r) => setTimeout(r, firstDelayS * 1000)); }

@@ -182,3 +182,76 @@ def test_provider_fixture_exhaustion_chain(make_harness):
     assert all(f.stop_reason == "error" for f in facts), facts
     assert all(f.cost_total_micro_usd is None and f.cost_from_provider is not True
                for f in facts), facts
+
+
+def test_provider_fixture_500_matrix(make_harness):
+    """F3：5xx → classify=provider_unavailable → 健康表退避计数（可重试类）。"""
+    from app.services.chat.model_runtime.health import get_llm_provider_health
+    from app.services.chat.model_runtime.provider import classify_status_failure
+
+    harness = make_harness(mode="always-500")
+    result = harness.run_turn("fixture 500 matrix turn")
+    events = _C._events(result)
+
+    obs = _parse_obs_lines(result.get("providerEvents"))
+    assert obs and all(o["status"] == 500 for o in obs), obs
+    settled = [e for e in events if e.get("type") == "agent_settled"]
+    assert len(settled) == 1, settled  # 恰一次终态（不挂死）
+
+    health = get_llm_provider_health()
+    health.reset()
+    try:
+        for o in obs:
+            failure = classify_status_failure(o["status"])
+            assert failure.value == "provider_unavailable", failure
+            health.record_failure("webgis", "m-fixture", kind=failure.value)
+        snap = health.snapshot()["webgis/m-fixture"]
+        assert snap["consecutive_failures"] == len(obs)  # 5xx 进退避计数
+        assert snap["last_failure_kind"] == "provider_unavailable"
+    finally:
+        health.reset()
+
+
+def test_provider_fixture_401_no_blind_retry_signal(make_harness):
+    """F4：401 —— 观测面如实记录（宿主 classify=unknown 词表）；turn 恰一次
+    终态。重试策略权在 vendor（不盲重试的语义由 vendor 决定），宿主只保证
+    信号不丢、不伪造成功。"""
+    from app.services.chat.model_runtime.health import get_llm_provider_health
+    from app.services.chat.model_runtime.provider import classify_status_failure
+
+    harness = make_harness(mode="always-401")
+    result = harness.run_turn("fixture 401 matrix turn")
+    events = _C._events(result)
+
+    obs = _parse_obs_lines(result.get("providerEvents"))
+    assert obs and all(o["status"] == 401 for o in obs), obs
+    settled = [e for e in events if e.get("type") == "agent_settled"]
+    assert len(settled) == 1, settled
+    # 401 无 usage 冒充：assistant message_end（若在）必须 stop_reason=error
+    facts = [f for f in _extract_usage_fact(events) if f.kind == "assistant"]
+    assert all(f.stop_reason == "error" for f in facts), facts
+
+    health = get_llm_provider_health()
+    health.reset()
+    try:
+        failure = classify_status_failure(401)
+        health.record_failure("webgis", "m-fixture", kind=failure.value)
+        snap = health.snapshot()["webgis/m-fixture"]
+        assert snap["last_failure_kind"] == failure.value  # unknown（诚实词表）
+        assert snap["rate_limited_recently"] is False
+    finally:
+        health.reset()
+
+
+def test_provider_fixture_stream_cut(make_harness):
+    """F5：流中断 → turn 诚实终态（不伪成功）；事件流恰一次 settled。"""
+    harness = make_harness(mode="stream-cut")
+    result = harness.run_turn("fixture stream cut turn")
+    events = _C._events(result)
+    settled = [e for e in events if e.get("type") == "agent_settled"]
+    assert len(settled) == 1, settled  # 恰一次终态（恢复/失败由 vendor 判定）
+    # 恢复成功 → auto_retry_end success；未恢复 → success=false finalError。
+    # 两种都合法；锁定「不挂死、不伪造」：
+    ends = [e for e in events if e.get("type") == "auto_retry_end"]
+    if ends:
+        assert isinstance(ends[-1].get("success"), bool), ends[-1]
