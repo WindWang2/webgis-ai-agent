@@ -1,46 +1,47 @@
 {
-  "bivariate_class_field_default": "__biv_class",
-  "bivariate_matrix_sizes": [
-    2,
-    3
-  ],
-  "component_abi_version": 1,
-  "contract": "carto_ir_manifest.v1",
-  "data_binding_field_types": [
-    "number",
-    "string",
-    "boolean",
-    "date"
-  ],
-  "default_mapspec_version": "1.0",
-  "description": "C11 CartoIR 契约词表双向漂移闸：backend pytest 断言本文件 ≡ mapspec_schema 常量，frontend vitest 断言本文件 ≡ lib/carto-ir/contract-manifest.ts 常量。任一侧改词表不更新本文件即红。",
-  "latest_mapspec_version": "2.2",
-  "mapspec_versions": [
-    "1.0",
-    "1.1",
-    "1.2",
-    "1.3",
-    "1.4",
-    "1.5",
-    "1.6",
-    "1.7",
-    "1.8",
-    "1.9",
-    "1.10",
-    "2.0",
-    "2.1",
-    "2.2"
-  ],
-  "representation_modes": [
-    "raw",
-    "point_cluster",
-    "visual_heatmap",
-    "aggregate_grid",
-    "generalized",
-    "hidden"
-  ],
-  "visibility_hint_keys": [
-    "street_detail_minzoom",
-    "admin_boundary_detail"
-  ]
+ "bivariate_class_field_default": "__biv_class",
+ "bivariate_matrix_sizes": [
+  2,
+  3
+ ],
+ "component_abi_version": 1,
+ "contract": "carto_ir_manifest.v1",
+ "data_binding_field_types": [
+  "number",
+  "string",
+  "boolean",
+  "date"
+ ],
+ "default_mapspec_version": "1.0",
+ "description": "C11 CartoIR 契约词表双向漂移闸：backend pytest 断言本文件 ≡ mapspec_schema 常量，frontend vitest 断言本文件 ≡ lib/carto-ir/contract-manifest.ts 常量。任一侧改词表不更新本文件即红。",
+ "latest_mapspec_version": "2.3",
+ "mapspec_versions": [
+  "1.0",
+  "1.1",
+  "1.2",
+  "1.3",
+  "1.4",
+  "1.5",
+  "1.6",
+  "1.7",
+  "1.8",
+  "1.9",
+  "1.10",
+  "2.0",
+  "2.1",
+  "2.2",
+  "2.3"
+ ],
+ "representation_modes": [
+  "raw",
+  "point_cluster",
+  "visual_heatmap",
+  "aggregate_grid",
+  "generalized",
+  "hidden"
+ ],
+ "visibility_hint_keys": [
+  "street_detail_minzoom",
+  "admin_boundary_detail"
+ ]
 }
