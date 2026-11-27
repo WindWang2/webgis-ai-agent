@@ -1232,6 +1232,9 @@ app.include_router(linked_exploration_routes.router, prefix="/api/v1", tags=["�
 # G47：Dorling 圆面积 cartogram 作者工作台（独立 router；UI 与 Pi 共用同一 service）
 from app.api.routes import cartogram_authoring as g47_routes  # noqa: E402
 app.include_router(g47_routes.router, prefix="/api/v1", tags=["Dorling 圆面积 cartogram 工作台"])
+# GOAL-20261126-04：地理锚定统计图符工作台（独立 router；UI 与 Pi 共用同一 service）
+from app.api.routes import diagram_symbols as diagram_symbol_routes  # noqa: E402
+app.include_router(diagram_symbol_routes.router, prefix="/api/v1", tags=["地理锚定统计图符工作台"])
 # 02 任务：方法实验工作台（独立 router；UI 与 Pi 工具共用同一 service——
 # compile/run/evaluate/adopt 全链零分叉）
 from app.api.routes import method_experiment as method_experiment_routes  # noqa: E402

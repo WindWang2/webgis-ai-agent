@@ -197,6 +197,25 @@ from app.services.mapspec_svg_chrome_layout import (
     render_authored_text_block as _render_authored_text_block,
 )
 
+# ── 2.2 additive（GOAL-20261126-04）：diagram_symbol 图符 oracle 消费面 ──
+# 权威形状 = app/lib/cartography/diagram_symbols（contracts 尺度 + geometry
+# 几何 + qualification 资格 + layout 布局）；本编译器只是消费方，禁止自算
+# 半径/角度/长度（golden parity 与 live GL custom layer 同源）。
+from app.lib.cartography.diagram_symbols import (  # noqa: E402
+    DIAGRAM_SYMBOL_KINDS as _DIAGRAM_SYMBOL_KINDS,
+    DEFAULT_MAX_GLYPHS as _DIAGRAM_MAX_GLYPHS,
+    DiagramSymbolError as _DiagramSymbolError,
+    build_glyph_geometry as _diagram_build_glyph_geometry,
+    compute_glyph_scale as _diagram_compute_glyph_scale,
+    glyph_bound_radius as _diagram_glyph_bound_radius,
+    normalize_size_policy as _diagram_normalize_size_policy,
+    qualify_features as _diagram_qualify_features,
+    solve_diagram_symbol_layout as _diagram_solve_layout,
+)
+from app.lib.cartography.palettes import (  # noqa: E402
+    resolve_palette_colors as _diagram_palette_colors,
+)
+
 logger = logging.getLogger(__name__)
 
 #: 单图层特征数上限默认值（spec.thresholds.maxFeatures 缺省时）。
@@ -1235,6 +1254,356 @@ def _flow_direction_anchors(
     return anchors[:4]
 
 
+# ══ 2.2 additive（GOAL-20261126-04）：diagram_symbol 图符 SVG 渲染 ══
+# 角度约定冻结（oracle geometry.py）：0° = 12 点钟、顺时针为正。SVG y-down
+# 坐标系下"屏幕顺时针" = 弧指令 sweep-flag 1；点变换 x = cx + r·sin(θ)、
+# y = cy − r·cos(θ)。glyph-local px @1x × dpi_scale 进画布（与 circle 半径
+# 同一 DPI 纪律）；oracle 已按 GEOMETRY_DECIMALS=3 量化，本端不再二次量化，
+# 只按孪生统一的 _fmt_num 输出几何属性。
+
+
+def _diagram_glyph_point(
+    cx: float, cy: float, r: float, angle_deg: float,
+) -> Tuple[float, float]:
+    """oracle 角度（0°=12 点钟顺时针）→ SVG y-down 平面点。"""
+    rad = _math.radians(angle_deg)
+    return cx + r * _math.sin(rad), cy - r * _math.cos(rad)
+
+
+def _diagram_slice_path(
+    cx: float, cy: float, r: float, start_deg: float, end_deg: float,
+) -> str:
+    """组成比例扇形 path：``M 圆心 L 弧起 A 弧止 Z``（span>180 → large-arc 1）。
+
+    span≈360° 的整圆扇区在弧指令下起=终点退化 → 两个半圆弧（同一 path
+    图元，渲染器逐位确定）；零角/零半径返回空串（调用方按 oracle 会计
+    计数跳过，不画垃圾）。
+    """
+    span = end_deg - start_deg
+    if span <= 0.0 or r <= 0.0:
+        return ""
+    sx, sy = _diagram_glyph_point(cx, cy, r, start_deg)
+    ex, ey = _diagram_glyph_point(cx, cy, r, end_deg)
+    if span >= 359.999:
+        mx, my = _diagram_glyph_point(cx, cy, r, start_deg + 180.0)
+        rr = _fmt_num(r)
+        return (
+            f"M {_fmt_num(cx)},{_fmt_num(cy)} L {_fmt_num(sx)},{_fmt_num(sy)} "
+            f"A {rr} {rr} 0 1 1 {_fmt_num(mx)},{_fmt_num(my)} "
+            f"A {rr} {rr} 0 1 1 {_fmt_num(sx)},{_fmt_num(sy)} Z"
+        )
+    large = 1 if span > 180.0 else 0
+    return (
+        f"M {_fmt_num(cx)},{_fmt_num(cy)} L {_fmt_num(sx)},{_fmt_num(sy)} "
+        f"A {_fmt_num(r)} {_fmt_num(r)} 0 {large} 1 {_fmt_num(ex)},{_fmt_num(ey)} Z"
+    )
+
+
+def _diagram_donut_slice_path(
+    cx: float, cy: float, r_out: float, r_in: float,
+    start_deg: float, end_deg: float,
+) -> str:
+    """环形扇带 path：外弧顺时针（sweep 1）→ 内弧逆时针（sweep 0）闭合。
+
+    单轮廓环带（不用 evenodd 双环），渲染语义与 GL 环带 strip 同构。
+    """
+    span = end_deg - start_deg
+    if span <= 0.0 or r_out <= 0.0 or r_in <= 0.0:
+        return ""
+    osx, osy = _diagram_glyph_point(cx, cy, r_out, start_deg)
+    oex, oey = _diagram_glyph_point(cx, cy, r_out, end_deg)
+    iex, iey = _diagram_glyph_point(cx, cy, r_in, end_deg)
+    isx, isy = _diagram_glyph_point(cx, cy, r_in, start_deg)
+    large = 1 if span > 180.0 else 0
+    if span >= 359.999:
+        omx, omy = _diagram_glyph_point(cx, cy, r_out, start_deg + 180.0)
+        imx, imy = _diagram_glyph_point(cx, cy, r_in, start_deg + 180.0)
+        ro, ri = _fmt_num(r_out), _fmt_num(r_in)
+        return (
+            f"M {_fmt_num(osx)},{_fmt_num(osy)} "
+            f"A {ro} {ro} 0 1 1 {_fmt_num(omx)},{_fmt_num(omy)} "
+            f"A {ro} {ro} 0 1 1 {_fmt_num(osx)},{_fmt_num(osy)} "
+            f"L {_fmt_num(isx)},{_fmt_num(isy)} "
+            f"A {ri} {ri} 0 1 0 {_fmt_num(imx)},{_fmt_num(imy)} "
+            f"A {ri} {ri} 0 1 0 {_fmt_num(isx)},{_fmt_num(isy)} Z"
+        )
+    return (
+        f"M {_fmt_num(osx)},{_fmt_num(osy)} "
+        f"A {_fmt_num(r_out)} {_fmt_num(r_out)} 0 {large} 1 {_fmt_num(oex)},{_fmt_num(oey)} "
+        f"L {_fmt_num(iex)},{_fmt_num(iey)} "
+        f"A {_fmt_num(r_in)} {_fmt_num(r_in)} 0 {large} 0 {_fmt_num(isx)},{_fmt_num(isy)} Z"
+    )
+
+
+def _diagram_oracle_num(v: Any) -> str:
+    """oracle 量化值（3 位小数）→ 有界字符串（data-* 会计/对账面）。
+
+    几何属性走孪生统一 ``_fmt_num``（2 位）；oracle 数值（radius_px 等）
+    是 golden 对账事实，保真 3 位输出。
+    """
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return "0"
+    if not _math.isfinite(f):
+        return "0"
+    s = f"{f:.3f}"
+    if "." in s:
+        s = s.rstrip("0").rstrip(".")
+    return "0" if s in ("", "-0") else s
+
+
+def _diagram_count(v: Any) -> int:
+    """有界会计计数（非整数输入按 0 —— 会计面不造假）。"""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return 0
+    return int(v) if _math.isfinite(float(v)) and v >= 0 else 0
+
+
+def _diagram_disclosure_detail(code: str, message: str) -> str:
+    """图符降级披露的 detail（typed code 保留原文；整体有界防响应放大）。"""
+    return f"diagram_symbol:{code}:{message}"[:160]
+
+
+def _render_diagram_symbol_layer_svg(
+    block: Dict[str, Any],
+    features: List[Any],
+    project: Any,
+    dpi_scale: float,
+    layer_id: Any,
+    emit_diag: Any,
+) -> str:
+    """``diagram_symbol`` 块 → 图符 SVG 片段（无异常逃出渲染循环）。
+
+    诚实纪律（与 oracle 域同源）：
+    - 几何/尺度/资格/布局全部消费 diagram_symbols oracle；渲染端零自算；
+    - 资格/几何/布局 typed 错误 → ``chart_ref_unavailable`` 披露（词表内
+      最接近的既有码：图符引用的数据在导出时不可用 → 图符未进入导出件），
+      detail 携带 ``diagram_symbol:<code>:<message>``（有界）；
+    - 布局证据（collision/budget/small/blocked 省略计数）以 data-* 属性进
+      图面 —— 会计在产物里，不在日志里；被避让图符不绘制、其值绝不并入
+      其他图符。
+    """
+    kind = str(block.get("kind") or "")
+    if kind not in _DIAGRAM_SYMBOL_KINDS:
+        # 词汇表外 kind：typed 披露 + 图符不绘制（诚实降级，非静默消失）。
+        emit_diag(
+            "chart_ref_unavailable",
+            detail=_diagram_disclosure_detail("UNKNOWN_KIND", f"kind={kind!r}"),
+            layer_id=layer_id,
+        )
+        return ""
+    try:
+        categories = [str(c) for c in block.get("categories") or []]
+        fields = [str(f) for f in block.get("fields") or []]
+        missing_policy = str(block.get("missing_policy") or "omit")
+        id_field = str(block.get("id_field") or "id")
+        unit = block.get("unit")
+        units = {f: str(unit) for f in fields} if unit is not None else None
+        sp_raw = block.get("size_policy")
+        size_policy = _diagram_normalize_size_policy(
+            kind, dict(sp_raw) if isinstance(sp_raw, dict) else {})
+        qualified = _diagram_qualify_features(
+            features, kind=kind, categories=categories, fields=fields,
+            missing_policy=missing_policy, units=units, id_field=id_field,
+        )
+        scale = _diagram_compute_glyph_scale(kind, qualified["values"], size_policy)
+        layout = str(block.get("layout") or "stacked")
+        geometries = [
+            _diagram_build_glyph_geometry(kind, row, scale, size_policy, layout=layout)
+            for row in qualified["values"]
+        ]
+        bound_radii = [_diagram_glyph_bound_radius(g) for g in geometries]
+        # review A#3：qualification 会剔除"全类别缺失"要素行 → 布局输入
+        # 必须按 glyph_feature_ids 重排对齐（与 service/_features_qualified_order
+        # 及前端孪生同构），否则等长卫兵整层拒绝。
+        fid_order = {
+            str(fid): feat for feat, fid in
+            ((f, (f.get("id") if isinstance(f, dict) and f.get("id") is not None
+                  else (f.get("properties") or {}).get(id_field)))
+             for f in features)
+            if fid is not None
+        }
+        features_aligned = [
+            fid_order[str(fid)] for fid in qualified["glyph_feature_ids"]
+            if str(fid) in fid_order
+        ]
+        plan = _diagram_solve_layout(
+            features_aligned, qualified, bound_radii,
+            # 无界图符数量拒绝：max_glyphs 硬帽显式进布局政策（超帽 →
+            # omitted_budget 会计，不画）。
+            layout_policy={"max_glyphs": _DIAGRAM_MAX_GLYPHS},
+        )
+    except _DiagramSymbolError as exc:
+        emit_diag(
+            "chart_ref_unavailable",
+            detail=_diagram_disclosure_detail(exc.code, exc.message),
+            layer_id=layer_id,
+        )
+        return ""
+    except Exception:  # noqa: BLE001 - 图符分支绝不击穿渲染循环（有痕降级）
+        emit_diag(
+            "chart_ref_unavailable",
+            detail=_diagram_disclosure_detail("RENDER_FAILED", "internal"),
+            layer_id=layer_id,
+        )
+        return ""
+
+    evidence = plan.get("evidence") or {}
+    if _diagram_count(evidence.get("blocked")) > 0:
+        # 锚定阻塞（几何缺失/无效/越界）→ 沿用词表既有坐标披露码留痕；
+        # 计数细节在层组 data-blocked 属性（双通道，不只日志）。
+        emit_diag(
+            "layer_coordinates_invalid",
+            detail=f"diagram_symbol blocked={_diagram_count(evidence.get('blocked'))}",
+            layer_id=layer_id,
+        )
+
+    geo_by_fid: Dict[str, Dict[str, Any]] = {}
+    for fid, geometry in zip(qualified["glyph_feature_ids"], geometries):
+        geo_by_fid[str(fid)] = geometry
+
+    palette_id = block.get("palette_id")
+    palette = _diagram_palette_colors(
+        palette_id if isinstance(palette_id, str) and palette_id else "Set1")
+    slot_of_cat = {c: i for i, c in enumerate(categories)}
+
+    def _slot_color(cat: str) -> str:
+        # color_slot = 类别序索引；超出色板库存循环使用（图例侧同口径披露）。
+        return palette[slot_of_cat.get(cat, 0) % len(palette)]
+
+    parts: List[str] = []
+    for planned in plan.get("glyphs") or []:
+        if not isinstance(planned, dict):
+            continue
+        fid = str(planned.get("feature_id") or "")
+        geometry = geo_by_fid.get(fid)
+        position = planned.get("position")
+        if not isinstance(geometry, dict) or \
+                not isinstance(position, (list, tuple)) or len(position) < 2:
+            continue
+        try:
+            lon_p, lat_p = float(position[0]), float(position[1])
+            cx, cy = (float(v) for v in project([lon_p, lat_p]))
+        except (TypeError, ValueError, IndexError):
+            continue
+
+        g_attrs = [
+            'data-diagram-symbol="1"',
+            f'data-kind="{_escape_svg_attr(kind)}"',
+            f'data-feature-id="{_escape_svg_attr(fid)}"',
+            f'data-priority-rank="{_diagram_count(planned.get("priority_rank"))}"',
+        ]
+        if planned.get("leader_line"):
+            g_attrs.append('data-leader-line="true"')
+        body: List[str] = []
+        # 引线（位移超阈值）：细线从绘制位置回指真实锚点（读者必须知道
+        # 符号被挪过 —— layout plan 的 leader_line 事实，逐字消费）。
+        if planned.get("leader_line"):
+            anchor = planned.get("anchor")
+            if isinstance(anchor, (list, tuple)) and len(anchor) >= 2:
+                try:
+                    ax, ay = (float(v) for v in project(
+                        [float(anchor[0]), float(anchor[1])]))
+                    body.append(
+                        f'<line x1="{_fmt_num(cx)}" y1="{_fmt_num(cy)}" '
+                        f'x2="{_fmt_num(ax)}" y2="{_fmt_num(ay)}" '
+                        f'stroke="#475569" stroke-width="{_fmt_num(dpi_scale)}" />'
+                    )
+                except (TypeError, ValueError):
+                    pass
+
+        g_kind = str(geometry.get("kind"))
+        if g_kind in ("composition_pie", "composition_donut"):
+            radius = _safe_float(geometry.get("radius_px"), 0.0) * dpi_scale
+            inner = _safe_float(geometry.get("inner_radius_px"), 0.0) * dpi_scale
+            g_attrs.append(
+                f'data-radius-px="{_diagram_oracle_num(geometry.get("radius_px"))}"')
+            g_attrs.append(
+                f'data-zero-slices="{_diagram_count(geometry.get("zero_slices"))}"')
+            for sl in geometry.get("slices") or []:
+                if not isinstance(sl, dict):
+                    continue
+                start = _safe_float(sl.get("start_angle_deg"), 0.0)
+                end = _safe_float(sl.get("end_angle_deg"), 0.0)
+                # 零角扇区不绘制（share=0；会计已在 data-zero-slices）。
+                if end - start <= 0.0:
+                    continue
+                d = (
+                    _diagram_donut_slice_path(cx, cy, radius, inner, start, end)
+                    if g_kind == "composition_donut"
+                    else _diagram_slice_path(cx, cy, radius, start, end)
+                )
+                if not d:
+                    continue
+                cat = str(sl.get("category") or "")
+                body.append(
+                    f'<path d="{d}" fill="{_escape_svg_attr(_slot_color(cat))}" '
+                    f'data-category="{_escape_svg_attr(cat)}" '
+                    f'data-value="{_diagram_oracle_num(sl.get("value"))}" />'
+                )
+        elif g_kind == "series_bars":
+            g_attrs.append(
+                f'data-zero-values="{_diagram_count(geometry.get("zero_values"))}"')
+            for seg in geometry.get("segments") or []:
+                if not isinstance(seg, dict):
+                    continue
+                x0 = _safe_float(seg.get("x0"), 0.0)
+                x1 = _safe_float(seg.get("x1"), 0.0)
+                y0 = _safe_float(seg.get("y0"), 0.0)
+                y1 = _safe_float(seg.get("y1"), 0.0)
+                # 零值段零长度不绘制（会计在 data-zero-values）；glyph-local
+                # y 轴向上 → SVG y-down：rect y = cy − y1·s（基线 y=0 翻折）。
+                if x1 - x0 <= 0.0 or y1 - y0 <= 0.0:
+                    continue
+                cat = str(seg.get("category") or "")
+                body.append(
+                    f'<rect x="{_fmt_num(cx + x0 * dpi_scale)}" '
+                    f'y="{_fmt_num(cy - y1 * dpi_scale)}" '
+                    f'width="{_fmt_num((x1 - x0) * dpi_scale)}" '
+                    f'height="{_fmt_num((y1 - y0) * dpi_scale)}" '
+                    f'fill="{_escape_svg_attr(_slot_color(cat))}" '
+                    f'data-category="{_escape_svg_attr(cat)}" '
+                    f'data-value="{_diagram_oracle_num(seg.get("value"))}" />'
+                )
+        elif g_kind == "segmented_proportional":
+            g_attrs.append(
+                f'data-zero-segments="{_diagram_count(geometry.get("zero_segments"))}"')
+            for seg in geometry.get("segments") or []:
+                if not isinstance(seg, dict):
+                    continue
+                r_seg = _safe_float(seg.get("radius_px"), 0.0) * dpi_scale
+                start = _safe_float(seg.get("start_angle_deg"), 0.0)
+                end = _safe_float(seg.get("end_angle_deg"), 0.0)
+                # 零值 → 半径 0（不可见；会计在 data-zero-segments）。
+                if r_seg <= 0.0 or end - start <= 0.0:
+                    continue
+                d = _diagram_slice_path(cx, cy, r_seg, start, end)
+                if not d:
+                    continue
+                cat = str(seg.get("category") or "")
+                body.append(
+                    f'<path d="{d}" fill="{_escape_svg_attr(_slot_color(cat))}" '
+                    f'data-category="{_escape_svg_attr(cat)}" '
+                    f'data-value="{_diagram_oracle_num(seg.get("value"))}" />'
+                )
+
+        parts.append(f'<g {" ".join(g_attrs)}>\n' + "".join(body) + "</g>\n")
+
+    layer_attrs = (
+        '<g data-diagram-symbol-layer="1"'
+        f' data-kind="{_escape_svg_attr(kind)}"'
+        f' data-placed="{_diagram_count(evidence.get("placed"))}"'
+        f' data-omitted-collision="{_diagram_count(evidence.get("omitted_collision"))}"'
+        f' data-omitted-budget="{_diagram_count(evidence.get("omitted_budget"))}"'
+        f' data-omitted-small="{_diagram_count(evidence.get("omitted_small"))}"'
+        f' data-blocked="{_diagram_count(evidence.get("blocked"))}"'
+        f' data-layout-digest="{_escape_svg_attr(str(plan.get("digest") or ""))}"'
+        '>\n'
+    )
+    return layer_attrs + "".join(parts) + "</g>\n"
+
+
 def compile_mapspec_to_svg(
     mapspec: Dict[str, Any],
     target_dpi: int = 300,
@@ -2029,6 +2398,22 @@ def compile_mapspec_to_svg_detailed(
                         truncated_features = True
                         _emit_diag("features_truncated", detail=str(cap), layer_id=_lid)
 
+                    # ── 2.2 additive（GOAL-20261126-04）：diagram_symbol
+                    # 图符分支。块缺席 → 本段零开销、层走既有 paint 路径
+                    # （存量 spec 行为逐字节不变）。块在场 → 几何/尺度/资格/
+                    # 布局全部消费 diagram_symbols oracle（与 live GL custom
+                    # layer 同一布局计划 —— golden parity）；此处只计算片段，
+                    # 逐要素 paint 循环结束后置顶拼接（live custom layer 叠
+                    # 在 base 层之上 —— SVG 文档序同语义）。typed 失败路径
+                    # 返回空串 + 结构化披露，绝不输出半个图符。
+                    _diagram_block = layer.get("diagram_symbol")
+                    _diagram_svg = ""
+                    if isinstance(_diagram_block, dict) and _diagram_block:
+                        _diagram_svg = _render_diagram_symbol_layer_svg(
+                            _diagram_block, features, project, dpi_scale,
+                            _lid, _emit_diag,
+                        )
+
                     invalid_coordinates_diagnosed = False
                     for feat in features:
                         if not isinstance(feat, dict):
@@ -2625,6 +3010,12 @@ def compile_mapspec_to_svg_detailed(
                         # （各分支的守卫 continue 会跳过本计数，语义正确）。
                         if len(elements_svg) > n_svg_before:
                             feature_count += 1
+
+                    if _diagram_svg:
+                        # 图符置顶：live GL custom layer 叠在 base paint 之上
+                        # —— SVG 文档序后者在上，同序（图符不参与 feature_count
+                        # 语义：其计数/会计在层组 data-* 属性里）。
+                        elements_svg += _diagram_svg
 
                     # G16 geometry_v1：线/面边界逐段墨迹障碍（每层一次，
                     # 实际 paint 宽；长线降采样段 AABB + 视口预筛在抽取

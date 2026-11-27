@@ -185,6 +185,9 @@ _TOOL_MODULES = [
     ("app.tools.temporal_media_tools", "register_temporal_media_tools"),
     # G41：双变量矩阵 / 估计值+可靠性双通道作者工作台（独立模块防并发冲突）
     ("app.tools.bivariate_reliability_tools", "register_bivariate_reliability_tools"),
+    # GOAL-20261126-04：地理锚定统计图符三工具（inspect/plan/apply；独立模块
+    # 防并发冲突；apply 走 diagram_symbol_authoring 单一 CAS 写面）
+    ("app.tools.diagram_symbol_tools", "register_diagram_symbol_tools"),
     # G37：会话模型运行配置只读工具面（目录/状态/预算；独立模块防并发冲突；
     # 只读，绝不升级权限 —— 选择变化只来自用户经正式 API 的请求）
     ("app.tools.session_model_tools", "register_session_model_tools"),

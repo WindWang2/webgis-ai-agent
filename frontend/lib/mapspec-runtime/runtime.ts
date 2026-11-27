@@ -42,6 +42,11 @@ import {
   recordRecompileFallback,
 } from "@/lib/utils/perf-counters";
 import { recordSymbolLawEvidence } from "@/lib/map-kit/symbol-law";
+// GOAL-20261126-04：地理锚定统计图符 live 渲染（custom layer 接线全在 integration）
+import {
+  attachDiagramSymbolLayer,
+  detachDiagramSymbolLayer,
+} from "@/lib/mapkit-diagram-symbols/integration";
 import { recordSceneEvidence, recordTileMiss, resetTileMiss } from "@/lib/mapspec-runtime/adapter";
 import { checkMapSpecVersion } from "@/lib/carto-ir/version";
 import { resolveLayerVisibility } from "@/lib/carto-ir/visibility";
@@ -1544,6 +1549,50 @@ export class MapSpecRuntime {
       devOnly.warn(`[MapSpecRuntime] addLayer failed for ${layer.id}:`, err);
       this.lastError = `add_layer_failed:${layer.id}`;
     }
+
+    // GOAL-20261126-04：地理锚定统计图符（diagram_symbol 2.2 additive）。
+    // 块缺席 → 确保无残留 glyph 层；块存在 → base 层落定后 best-effort 挂
+    // custom layer；oracle/源要素失败只披露（recordSymbolLawEvidence），
+    // 永不抑制 base 层（图符是叠加表达，不是 base 的替代）。
+    this.attachDiagramSymbolIfBound(layer, spec);
+  }
+
+  /** GOAL-20261126-04：diagram_symbol 块 → 图符 custom layer（attach/detach）。 */
+  private attachDiagramSymbolIfBound(layer: MapSpecLayer, spec?: MapSpec): void {
+    const block = (layer as { diagram_symbol?: unknown }).diagram_symbol;
+    if (!block || typeof block !== "object") {
+      detachDiagramSymbolLayer(this.map, layer.id);
+      return;
+    }
+    try {
+      const sources = (spec?.sources ?? {}) as Record<string, { inlineData?: unknown }>;
+      const rawSource = sources[layer.source];
+      const sourceData = rawSource && typeof rawSource.inlineData === "object" && rawSource.inlineData !== null
+        ? (rawSource.inlineData as { features?: unknown[] })
+        : null;
+      const result = attachDiagramSymbolLayer(this.map, layer as never, sourceData);
+      if (result.ok) {
+        recordSymbolLawEvidence("diagram-symbol-attached", {
+          count: result.count,
+          placed: (result.evidence as { placed?: number }).placed,
+          omitted_collision: (result.evidence as { omitted_collision?: number }).omitted_collision,
+          omitted_budget: (result.evidence as { omitted_budget?: number }).omitted_budget,
+          blocked: (result.evidence as { blocked?: number }).blocked,
+        }, layer.id);
+      } else {
+        recordSymbolLawEvidence("diagram-symbol-unavailable", {
+          reason: result.code,
+          detail: result.message.slice(0, 160),
+        }, layer.id);
+      }
+    } catch (err) {
+      // oracle typed 拒绝（负值/非有限/零总量/极端跨度）→ 整层披露（与后端
+      // SVG twin 同语义），base 层照常已应用。
+      recordSymbolLawEvidence("diagram-symbol-unavailable", {
+        reason: "oracle_error",
+        detail: String(err instanceof Error ? err.message : err).slice(0, 160),
+      }, layer.id);
+    }
   }
 
   /**
@@ -1704,6 +1753,8 @@ export class MapSpecRuntime {
 
   private removeLayerSafe(id: string): void {
     recordLayerRemove();
+    // GOAL-20261126-04：图符 custom layer 与主层同生命周期。
+    try { detachDiagramSymbolLayer(this.map, id); } catch { /* defensive */ }
     if (this.map.getLayer(id)) {
       try { this.map.removeLayer(id); } catch { /* already gone */ }
     }

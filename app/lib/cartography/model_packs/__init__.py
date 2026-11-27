@@ -10,6 +10,7 @@ from typing import List
 from app.lib.cartography.model_library import MapModel
 from app.lib.cartography.model_packs._base import FRONTEND_RUNTIME_LAYER_TYPES
 from app.lib.cartography.model_packs.decision_analysis import DECISION_ANALYSIS_PACK
+from app.lib.cartography.model_packs.diagram_symbols import DIAGRAM_SYMBOLS_PACK
 from app.lib.cartography.model_packs.point_line import POINT_LINE_PACK
 from app.lib.cartography.model_packs.polygon_statistical import POLYGON_STATISTICAL_PACK
 from app.lib.cartography.model_packs.presentation_views import PRESENTATION_VIEWS_PACK
@@ -22,6 +23,7 @@ MODEL_PACK_MODELS: List[MapModel] = [
     *RASTER_REMOTE_SENSING_PACK,
     *DECISION_ANALYSIS_PACK,
     *PRESENTATION_VIEWS_PACK,
+    *DIAGRAM_SYMBOLS_PACK,
 ]
 
 __all__ = [

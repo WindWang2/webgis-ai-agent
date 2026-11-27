@@ -28,6 +28,8 @@ import SymbolAssetPanel from '@/components/hud/symbol-asset-panel';
 import { BivariateReliabilityPanel } from '@/components/hud/bivariate-reliability-panel';
 // G47：Dorling 圆面积 cartogram 作者工作台（加性挂载；与 Pi 共用同一服务）
 import { DorlingCartogramPanel } from '@/components/hud/dorling-cartogram-panel';
+// GOAL-20261126-04：地理锚定统计图符工作台（加性挂载；与 Pi 共用 diagram_symbol_authoring）
+import { DiagramSymbolPanel } from '@/components/hud/diagram-symbol-panel';
 
 /** 渲染模式 id → 消息键（spec 层型语义见 specPaintPatchFrom）。 */
 const MODE_LABELS: Record<string, string> = {
@@ -46,6 +48,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
   const [showThematicAuthoring, setShowThematicAuthoring] = useState(false);
   const [showBivariateReliability, setShowBivariateReliability] = useState(false);
   const [showDorlingCartogram, setShowDorlingCartogram] = useState(false);
+  const [showDiagramSymbol, setShowDiagramSymbol] = useState(false);
 
   const layer = layers.find((l) => l.id === editingLayerId);
   // audit #840: committed MapSpec 存在时，HUD 层样式不进入 paint
@@ -385,6 +388,23 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
             </button>
             {showDorlingCartogram && (
               <DorlingCartogramPanel layerId={g47VectorLayer.layerId} />
+            )}
+          </div>
+        )}
+        {/* GOAL-20261126-04：地理锚定统计图符（饼/环形/条形/分段比例）；
+            资格与拒绝语义以面板内 inspect/plan 回执为准（geojson 源） */}
+        {g47VectorLayer && (
+          <div>
+            <button
+              type="button"
+              aria-expanded={showDiagramSymbol}
+              onClick={() => setShowDiagramSymbol((v) => !v)}
+              className="w-full text-left text-caption text-status-accent hover:underline focus:outline-none focus:ring-2 focus:ring-status-accent rounded"
+            >
+              {t('diagramSymbol.title')}
+            </button>
+            {showDiagramSymbol && (
+              <DiagramSymbolPanel layerId={g47VectorLayer.layerId} />
             )}
           </div>
         )}

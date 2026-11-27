@@ -85,8 +85,10 @@ Number = Union[StrictInt, StrictFloat]
 #: 产品，存量 spec 行为不变。G15 FrameProductContract.v1）。
 #: 2.1 = G16 要素级标注 authoring（layer.label.authoring +
 #: layout.labels.obstaclePolicy/forbiddenZones，纯 additive optional）。
-KNOWN_VERSIONS: Tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10", "2.0", "2.1")
-LATEST_VERSION = "2.1"
+#: 2.2 = GOAL-20261126-04 地理锚定统计图符（layer.diagram_symbol 可选；
+#: 缺失 = 层走既有表达路径，存量 spec 行为不变）。
+KNOWN_VERSIONS: Tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10", "2.0", "2.1", "2.2")
+LATEST_VERSION = "2.2"
 
 #: 版本缺省口径：lifecycle_engine 既有写入恒带 "1.0"；缺失视为 1.0 并披露。
 DEFAULT_VERSION = "1.0"
@@ -806,6 +808,55 @@ class MapSpecLayerSymbolAsset(_SpecModel):
     prev_paint_snapshot: Optional[Dict[str, Any]] = None
 
 
+class MapSpecDiagramSizePolicy(_SpecModel):
+    """图符尺寸政策（``diagram_symbol.v1``；权威语义 = app/lib/cartography/
+    diagram_symbols/contracts.normalize_size_policy —— 本 schema 只承载，
+    缺省值/上限/互斥校验在归一化器，不在本层重复）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    r_max_px: Optional[float] = None
+    r_min_px: Optional[float] = None
+    inner_radius_ratio: Optional[float] = None
+    total_area_encoding: Optional[bool] = None
+    h_max_px: Optional[float] = None
+    bar_w_px: Optional[float] = None
+    bar_gap_px: Optional[float] = None
+
+
+class MapSpecLayerDiagramSymbol(_SpecModel):
+    """地理锚定统计图符块（``diagram_symbol.v1``，2.2 additive）。
+
+    以地理要素为锚的复合统计图符（组成饼/环形、同量纲多序列条形、
+    等角分段比例符号），与浮动 ``chart_panel`` 组件（屏幕空间 chrome）
+    和 G47 Dorling（示意坐标纸面图）正交。权威形状 =
+    ``app/lib/cartography/diagram_symbols``（contracts 几何 oracle +
+    qualification 资格 + legend 图例同源）；本块只承载（与 symbol_asset
+    同纪律）：缺失 = 层走既有 paint 路径，行为不变。
+
+    wide 数据形状：``fields[i]`` ↔ ``categories[i]`` 一一对应（一个类别
+    一个数值字段）；long 形状由 authoring 服务聚合转 wide 后落块。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["diagram_symbol.v1"] = "diagram_symbol.v1"
+    kind: Literal[
+        "composition_pie",
+        "composition_donut",
+        "series_bars",
+        "segmented_proportional",
+    ]
+    layout: Optional[Literal["stacked", "grouped"]] = None
+    categories: List[StrictStr] = Field(min_length=2, max_length=64)
+    fields: List[StrictStr] = Field(min_length=2, max_length=64)
+    unit: Optional[StrictStr] = None
+    missing_policy: Literal["omit", "block"] = "omit"
+    size_policy: Optional[MapSpecDiagramSizePolicy] = None
+    palette_id: Optional[StrictStr] = None
+    id_field: Optional[StrictStr] = None
+
+
 class MapSpecLayer(_SpecModel):
     """图层。paint/layout/filter 是 MapLibre 开放面（Dict[Any]）；
     ``legend_spec`` 是工具层写入的专题图例标记（开放 dict，推导见
@@ -868,6 +919,10 @@ class MapSpecLayer(_SpecModel):
     #: 缺席 = 层表达走既有 paint 路径，行为不变（schema 只承载，权威形状 =
     #: app/lib/cartography/symbol_asset.py 的规范形 + 归一化器）。
     symbol_asset: Optional[MapSpecLayerSymbolAsset] = None
+    #: 2.2 additive（GOAL-20261126-04）：地理锚定统计图符绑定。缺席 = 层
+    #: 走既有表达路径，行为不变（schema 只承载，权威形状 =
+    #: app/lib/cartography/diagram_symbols 的规范形 + 几何 oracle）。
+    diagram_symbol: Optional[MapSpecLayerDiagramSymbol] = None
 
 
 class MapThresholds(_SpecModel):
@@ -1553,6 +1608,8 @@ SCHEMA_EXPORT_MODELS: Tuple[Tuple[str, type], ...] = (
     ("MapSpecLayerSymbolAssetCategoryRule", MapSpecLayerSymbolAssetCategoryRule),
     ("MapSpecLayerSymbolAssetCategoryBinding", MapSpecLayerSymbolAssetCategoryBinding),
     ("MapSpecLayerSymbolAsset", MapSpecLayerSymbolAsset),
+    ("MapSpecDiagramSizePolicy", MapSpecDiagramSizePolicy),
+    ("MapSpecLayerDiagramSymbol", MapSpecLayerDiagramSymbol),
     ("MapSpecRepresentationWindow", MapSpecRepresentationWindow),
     ("MapSpecLayerRepresentation", MapSpecLayerRepresentation),
     ("MapSpecLayerLabel", MapSpecLayerLabel),
@@ -1698,6 +1755,10 @@ _UPGRADERS: Dict[Tuple[str, str], Callable[[Dict[str, Any]], Dict[str, Any]]] = 
     # .authoring + layout.labels.obstaclePolicy/forbiddenZones；缺失 =
     # 既有自动标注语义，存量 spec 行为逐字节不变）。
     ("2.0", "2.1"): lambda doc: doc,
+    # 2.2 相对 2.1 纯 additive（GOAL-20261126-04 地理锚定统计图符：
+    # layer.diagram_symbol 可选；缺失 = 层走既有表达路径，存量 spec
+    # 行为逐字节不变）。
+    ("2.1", "2.2"): lambda doc: doc,
 }
 
 
