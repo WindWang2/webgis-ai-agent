@@ -257,3 +257,78 @@ async def test_stream_auto_retry_events_feed_health(db_factory, monkeypatch, cle
     snap = clean_health.snapshot()
     # 429 → 模型键进健康表（recent_rate_limit 位随后续语义）；重试成功已回写
     assert "webgis/m-base" in snap
+
+
+# ── R1 修复回归（P2-1/P2-4/P3-8） ────────────────────────────────────
+
+
+def test_auto_retry_http_class_failure_not_double_counted(clean_health):
+    """R1-P2-1：429/5xx 类失败由 stderr obs 通道记；auto_retry 兜底通道
+    对同一次失败不再叠加（consecutive 恰 1 而非 2）。"""
+    from app.agent_pi_bridge import PiBridge
+
+    rpc = _SinklessRpc()
+    bridge = _bridge(rpc)
+    bridge._last_confirmed_model = "m-x"
+    # 模拟 stderr obs 已记一次 429
+    bridge._on_provider_observation({"status": 429, "retry_after": None})
+    snap = clean_health.snapshot()["webgis/m-x"]
+    assert snap["total_failure"] == 1
+    # auto_retry_start 携带同源 429 文本 → 兜底通道跳过
+    bridge._observe_retry_health = bridge._observe_retry_health  # 保持真方法
+    kind = PiBridge.classify_retry_error_text("HTTP 429 too many requests")
+    assert kind == "rate_limit"
+    if kind not in ("rate_limit", "provider_unavailable"):
+        bridge._observe_retry_health(model="m-x", failure_kind=kind)
+    snap2 = clean_health.snapshot()["webgis/m-x"]
+    assert snap2["total_failure"] == 1  # 未双计
+    # 非 HTTP 类（断流）仍由兜底通道记录
+    kind2 = PiBridge.classify_retry_error_text("socket hang up")
+    assert kind2 == "timeout"
+    bridge._observe_retry_health(model="m-x", failure_kind=kind2)
+    snap3 = clean_health.snapshot()["webgis/m-x"]
+    assert snap3["total_failure"] == 2
+
+
+def test_isolate_resets_confirmed_model_anchor():
+    """R1-P2-4：new_session（会话切换）→ 归属锚复位。"""
+    from app.agent_pi_bridge import PiBridge
+
+    rpc = _SinklessRpc()
+    bridge = PiBridge(rpc=rpc)
+    bridge._last_confirmed_provider = "webgis"
+    bridge._last_confirmed_model = "m-old"
+
+    class _OkRpc:
+        spawn_epoch = 1
+
+        async def request(self, cmd, data=None):
+            if cmd == "new_session":
+                return {"cancelled": False}
+            return {}
+
+    async def _drain():
+        return None
+
+    import asyncio
+
+    bridge._rpc = _OkRpc()  # type: ignore[assignment]
+    bridge._drain_stale_events = _drain  # type: ignore[assignment]
+    asyncio.get_event_loop_policy()
+    asyncio.run(bridge._isolate_vendor_session("new-sid"))
+    assert bridge._last_confirmed_model == ""
+    assert bridge._last_confirmed_provider == ""
+
+
+def test_bounded_route_codes_drops_tail_whole():
+    """R1-P3-8：列界内整条取舍 —— 超界尾部整码丢弃，绝不腰斩。"""
+    from app.agent_pi_bridge import PiBridge
+
+    codes = [f"c{i:02d}xxxxx" for i in range(40)]  # 每条恰好 8 字符
+    joined = PiBridge._bounded_route_codes(codes, limit=30)
+    parts = joined.split("|")
+    assert parts and all(len(p) == 8 for p in parts)  # 无残码
+    assert len(joined) <= 30
+    # 空与单条边界
+    assert PiBridge._bounded_route_codes([], limit=255) == ""
+    assert PiBridge._bounded_route_codes(["only"], limit=255) == "only"

@@ -69,7 +69,6 @@ def resolve_inherit_target(
     *,
     needs_tools: bool = True,
     context_estimate_tokens: Optional[int] = None,
-    est_output_tokens: Optional[int] = None,
 ):
     """继承默认 → 健康感知目录内选择（纯函数式外观，无 IO）。
 

@@ -272,6 +272,12 @@ async def get_session_usage(
 #: vendor session_stats 对账 RPC 的有界预算（诊断路径；超时 → 如实降级披露）。
 _RUNTIME_VENDOR_STATS_TIMEOUT_S = 3.0
 
+#: vendor session_stats 白名单（R1-P1-1/P2-2：路径与内部会话 id 不出 API 面）。
+_VENDOR_STATS_FIELDS = (
+    "userMessages", "assistantMessages", "toolCalls", "toolResults",
+    "totalMessages", "tokens", "cost", "contextUsage",
+)
+
 #: 健康快照投影的白名单字段（有界，无内容存储语义）。
 _HEALTH_SNAPSHOT_FIELDS = (
     "available", "cooldown_remaining_s", "consecutive_failures",
@@ -313,14 +319,32 @@ async def get_session_runtime(
         from app.agent_pi_bridge import get_pi_bridge
 
         bridge = await get_pi_bridge(session_id=session_id)
-        state = await asyncio.wait_for(
-            bridge.rpc.request("get_session_stats", {}),
-            timeout=_RUNTIME_VENDOR_STATS_TIMEOUT_S,
-        )
-        if isinstance(state, dict):
-            vendor_stats = {"available": True, "stats": state}
+        # R1-P1-1：RPC 无 session 参数，vendor stats 是 **worker 当前绑定的
+        # vendor 会话** 统计。共享 worker 上请求他人会话/有活动 turn 时必须
+        # 拒答（available=false），绝不把别的 owner 会话的用量当对账块返回。
+        bound = getattr(bridge, "_bound_gis_session_id", None)
+        active = getattr(bridge, "_active_turn_sid", None)
+        if bound != session_id:
+            vendor_stats = {"available": False, "reason": "session_not_bound"}
+        elif active not in (None, session_id):
+            vendor_stats = {"available": False, "reason": "worker_busy"}
         else:
-            vendor_stats = {"available": False, "reason": "unreadable_payload"}
+            state = await asyncio.wait_for(
+                bridge.rpc.request("get_session_stats", {}),
+                timeout=_RUNTIME_VENDOR_STATS_TIMEOUT_S,
+            )
+            if isinstance(state, dict):
+                # R1-P2-2：白名单投影 —— sessionFile（服务器绝对路径）与
+                # vendor sessionId 不出 API 面。
+                vendor_stats = {
+                    "available": True,
+                    "stats": {
+                        k: state[k] for k in _VENDOR_STATS_FIELDS
+                        if isinstance(state.get(k), (int, float, str, dict))
+                    },
+                }
+            else:
+                vendor_stats = {"available": False, "reason": "unreadable_payload"}
     except Exception as exc:  # noqa: BLE001 — 诚实降级（超时/桥缺席/RPC 失败）
         vendor_stats = {"available": False, "reason": type(exc).__name__[:40]}
 

@@ -47,11 +47,13 @@ trip session cap，测试未跟上实现）。**测试陈旧**，与本线 WP3 �
 | 项 | 结果 | 归因 |
 |---|---|---|
 | PI_JOURNEY_E2E=1 pytest tests/integration/test_pi_g37_session_model_journeys.py（默认 env） | 两次确定性 boot 失败（app/bridge 90s 未就绪，99.5s） | **master 预存 P1 缺陷**：app 启动即死于 runtime manifest 严格校验 —— 14 个 dangling capability_id（webgis_diagram_symbol_* → map_design；webgis_scenario_* → gis_scenario_harness；webgis_*_paper_scale_generalization → cartography_paper_scale_*），全部来自 #2274/#2275/#2287 已合并线，CapabilityRegistry 无对应声明（原始分支 worktree 同样无声明 → 引入即悬空，#2288 整合遗漏）。复现：本 worktree 直接 boot probe（`RuntimeError: Compiled GIS Runtime Manifest has fatal issues`）；这些模块与 origin/master **零 diff** → master 同样失败。**不修**（04/05 线能力语义域，边界纪律）；journey 证据改用文档化降级开关 `GIS_MANIFEST_STRICT=0`（runtime_manifest.py:645）+ PR 正文显著披露 |
-| PI_JOURNEY_E2E=1 … GIS_MANIFEST_STRICT=0 | （运行中，结果回填） | — |
+| PI_JOURNEY_E2E=1 … GIS_MANIFEST_STRICT=0（G37 全栈 journey，**串行**单跑） | 分支策略开启：**1 passed（35.03s）**；kill-switch 关闭：1 passed（37.52s）；干净 master detached worktree 对照：1 passed（39.39s） | ✅ 三向对照全绿。早前「失败」为**主 Agent 测试隔离违规**（同 worktree 并发跑两个 journey，共用 .pi/agent/models.json，stub-journeys 的 LLM_MODEL=stub-model 覆盖 g37 目录）——非代码回归；journey 一律串行（纪律记录） |
+| PI_JOURNEY_E2E=1 … stub-LLM journeys（#2283 时代全栈门） | 1 failed（app 级 journey 断言：map_intent_ok=False 等，35.08s） | ⚠️ 与 #2283 REVIEW 披露的预存失败同族（base 即红）；受 GIS_MANIFEST_STRICT 缺陷降级运行影响；如实披露不扩线 |
 | 前端全量 vitest | 50 failed / 6394 passed | 干净主 worktree 同失败（map-panel.cartography-race 14/14 同红）→ master 预存，非本线 |
 
 ## 资源纪律记录
 
 - 本 worktree .venv（uv，python 3.12，requirements.lock + dev）；frontend pnpm --frozen-lockfile
+- **journey 串行纪律**（R1 期间实证）：同一 worktree 的全栈 journey 绝不并发 —— 共享 `REPO_ROOT/.pi/agent`（models.json/settings.json 写读）会互相覆盖 spawn 目录
 - 测试并发：默认串行 + OMP/OPENBLAS=2；vendor build 单进程；未使用全局缓存清理
 - 端口：mock provider/stub/uvicorn 均 OS 分配随机端口；无固定端口占用

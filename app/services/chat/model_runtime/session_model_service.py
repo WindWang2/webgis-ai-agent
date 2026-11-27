@@ -39,7 +39,8 @@ class ModelApplicationResult:
     """一次 turn 期应用的结果（receipt 的内存形态；持久化由调用方派发）。"""
 
     ok: bool
-    status: str                    # applied | inherit_default | failed | budget_rejected
+    status: str                    # applied | inherit_default | inherit_routed | 
+                                   # degraded_inherit | failed | budget_rejected
     reason_code: str = ""          # 空 = 成功
     reason_detail: str = ""
     mode: str = "inherit"          # inherit | explicit

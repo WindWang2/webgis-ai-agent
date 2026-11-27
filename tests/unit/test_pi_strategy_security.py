@@ -12,9 +12,12 @@ from app.services.chat.pi_rpc_client import parse_provider_observation
 
 
 def test_observation_parse_rejects_injection_shapes():
-    # 零宽字符 / 控制字符注入
+    # 零宽字符掺入：解析按真实行为断言（\u200b 非 \s，数值字段仍可解析
+    # —— 行来源是宿主自有扩展且字段为整数化值，容忍不构成注入面；
+    # 此处锁定该行为而非恒真）。
     assert parse_provider_observation(
-        "[webgis-tools][provider-obs] status=429\u200b retry_after=1") is None or True
+        "[webgis-tools][provider-obs] status=429\u200b retry_after=1"
+    ) == {"status": 429, "retry_after": None}
     # 伪造前缀 + 越界 status
     assert parse_provider_observation(
         "[webgis-tools][provider-obs] status=9999") is None
@@ -85,5 +88,15 @@ def test_health_table_bounded_against_model_flood():
 def test_runtime_projection_health_fields_whitelisted():
     from app.api.routes.session_model_views import _HEALTH_SNAPSHOT_FIELDS
 
-    forbidden = {"prompt", "messages", "api_key", "base_url", "path", "stack"}
+    forbidden = {"prompt", "messages", "api_key", "base_url", "path", "stack",
+                 "sessionFile", "sessionId", "session_file", "session_id"}
     assert not (set(_HEALTH_SNAPSHOT_FIELDS) & forbidden)
+
+
+def test_runtime_vendor_stats_fields_exclude_paths():
+    """R1-P1-1/P2-2：vendor stats 白名单不得含路径/内部会话 id 字段。"""
+    from app.api.routes.session_model_views import _VENDOR_STATS_FIELDS
+
+    assert "sessionFile" not in _VENDOR_STATS_FIELDS
+    assert "sessionId" not in _VENDOR_STATS_FIELDS
+    assert "tokens" in _VENDOR_STATS_FIELDS and "totalMessages" in _VENDOR_STATS_FIELDS

@@ -210,6 +210,9 @@ class TurnUsageCollector:
         self.facts: List[MessageUsageFact] = []
         self.write_failures = 0
         self.expected_records = 0
+        # R1-P3-4：governor output 回流一次性标志 —— persist 幂等（upsert）
+        # 但 governor 累加不幂等；重复 finalize 同一 collector 不得双计。
+        self.governor_feedback_done = False
         # review-P3：同 turn 内同一 message 的重复投递去重（vendor 每条消息
         # 带唯一 timestamp；缺席时不去重 —— DB 唯一约束兜底跨 persist 场景）。
         self._seen_message_ts: set = set()
@@ -415,13 +418,14 @@ async def persist_turn_records(
         # WP3（B4）：结算成功 → 真实 output tokens 回流 governor session 账本
         #（此前 governor 只收组装估算；真实数是预算/背压的事实源）。fail-open：
         # governor 缺席/异常绝不影响账本主事务（已提交）。
-        if finalize:
+        if finalize and not collector.governor_feedback_done:
             try:
                 from app.services.governor.governor import get_governor
 
                 get_governor().ledger.record_output_tokens(
                     collector.session_id, collector.turn_id, totals["output"],
                 )
+                collector.governor_feedback_done = True
             except Exception:  # noqa: BLE001 — 回流是增值面
                 logger.debug(
                     "[usage-ledger] governor output-token feedback failed "
