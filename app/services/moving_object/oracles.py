@@ -296,8 +296,12 @@ def bus_route_oracle(
     for bus in truth_entities:
         clock = t + timedelta(minutes=3 * truth_entities.index(bus))
         lon0, lat0 = stops_lonlat[0]
-        # approach stop 0: 600 m over 150 s (~14.4 km/h, 30 s sampling)
-        clock = _emit_leg(feats, bus, clock, lon0, lat0, 90.0, 600.0,
+        # Approach stop 0 from 600 m WEST, driving east into the stop
+        # (~14.4 km/h, 30 s sampling) — no teleport, contiguous track.
+        from pyproj import Geod as _G
+        _g = _G(ellps="WGS84")
+        wx, wy, _ = _g.fwd(lon0, lat0, 270.0, 600.0)
+        clock = _emit_leg(feats, bus, clock, wx, wy, 90.0, 600.0,
                           cruise_leg_s // 2, rng)
         for stop_idx in range(3):
             slon, slat = stops_lonlat[stop_idx]

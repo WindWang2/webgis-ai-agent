@@ -13,8 +13,8 @@ Modules are pure domain (no I/O, no stores) unless stated otherwise:
 - ``dwell``      — radius+duration dwell detection with evidence
 - ``quality``    — diagnostics separated from cleaning suggestions
 - ``events``     — region enter/exit/cross/dwell/unknown events with
-                   sampling-interval honesty (inferred intervals are labeled)
-- ``aggregate``  — entity/region level event summaries with honest denominators
+                   sampling-interval honesty (inferred intervals are labeled),
+                   plus entity/region level summaries with honest denominators
 - ``service``    — orchestration seam shared by the tool face and REST API
 - ``oracles``    — deterministic synthetic trajectory generators (tests)
 """

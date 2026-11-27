@@ -53,7 +53,9 @@ def compute_speed_domain(
         if isinstance(s, (int, float)) and not isinstance(s, bool)
         and s == s and 0 <= s
     )
-    if len(speeds) < 2:
+    if len(set(speeds)) < 2:
+        # Fewer than two DISTINCT measured speeds: a gradient over a
+        # fabricated epsilon range would lie about the actual spread.
         return ([speeds[0], speeds[0]] if speeds else [0.0, 0.0]), True
     def _pct(q: float) -> float:
         idx = min(len(speeds) - 1, max(0, int(round(q * (len(speeds) - 1)))))
@@ -103,7 +105,7 @@ def build_map_fragment(product: Dict[str, Any], config: Dict[str, Any]) -> Dict[
         "min": domain[0] if constant else 0.0,
         "max": domain[1],
         "palette_colors": [palette[0]] if constant else [palette[0], palette[-1]],
-        "title": "轨迹平均速度（km/h，段间观测估计；灰=零历时段/缺失）",
+        "title": "轨迹平均速度（km/h，段间观测区间估计；零历时段不画线）",
         "unit": "km/h",
         "fixed_domain": False,
         "note": (

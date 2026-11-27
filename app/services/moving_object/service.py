@@ -22,11 +22,12 @@ import copy
 import hashlib
 import json
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from app.services.moving_object.builder import (
+    SegmentCapExceeded,
     TrajectoryBuild,
     build_entity_trajectories,
     trajectory_line_features,
@@ -40,6 +41,7 @@ from app.services.moving_object.contracts import (
 )
 from app.services.moving_object.dwell import detect_dwells, dwell_point_features
 from app.services.moving_object.events import (
+    RegionGeometryError,
     event_features,
     load_regions,
     analyze_region_events,
@@ -67,11 +69,6 @@ class TrajectoryServiceError(ValueError):
         self.code = code
 
 
-class TrajectoryProductStale(TrajectoryServiceError):
-    def __init__(self, message: str = "source moved on") -> None:
-        super().__init__("TRAJECTORY_SOURCE_STALE", message)
-
-
 class TrajectoryProductConfig(BaseModel):
     """Declarative configuration for one trajectory product build."""
 
@@ -82,8 +79,7 @@ class TrajectoryProductConfig(BaseModel):
     time_field: str = "timestamp"
     source_row_field: Optional[str] = None
     assumed_timezone: str = "UTC"
-    duplicate_time_policy: str = "keep_all"       # keep_all|keep_first|keep_last
-    sort_policy: str = "time_asc"                 # time_asc|keep_input
+    duplicate_time_policy: Literal["keep_all", "keep_first", "keep_last"] = "keep_all"
     # segmentation
     max_gap_s: float = Field(3600.0, gt=0)
     max_speed_kmh: float = Field(300.0, gt=0)
@@ -98,7 +94,7 @@ class TrajectoryProductConfig(BaseModel):
     regions_ref: Optional[str] = Field(None, max_length=160,
                                        json_schema_extra={"ref_cursor": True})
     region_id_field: str = "region_id"
-    boundary_rule: str = "closed"                 # closed|open
+    boundary_rule: Literal["closed", "open"] = "closed"
     detect_cross: bool = True
     region_dwell_min_s: float = Field(60.0, gt=0)
     detect_region_dwell: bool = True
@@ -120,8 +116,7 @@ class TrajectoryProductConfig(BaseModel):
             source_row_field=self.source_row_field,
             source_crs="EPSG:4326",
             assumed_timezone=self.assumed_timezone,
-            duplicate_time_policy=self.duplicate_time_policy,  # type: ignore[arg-type]
-            sort_policy=self.sort_policy,  # type: ignore[arg-type]
+            duplicate_time_policy=self.duplicate_time_policy,
         )
 
     def seg_config(self) -> "object":
@@ -149,7 +144,7 @@ class TrajectoryProductConfig(BaseModel):
         return RegionEventConfig(
             regions_ref=self.regions_ref,
             region_id_field=self.region_id_field,
-            boundary_rule=self.boundary_rule,  # type: ignore[arg-type]
+            boundary_rule=self.boundary_rule,
             detect_cross=self.detect_cross,
             detect_dwell=self.detect_region_dwell,
             min_dwell_s=self.region_dwell_min_s,
@@ -192,8 +187,13 @@ def _fingerprint(obj: Any) -> str:
     return "sha256:" + hashlib.sha256(blob.encode()).hexdigest()[:32]
 
 
-def _family_id(source_key: str) -> str:
-    return f"{FAMILY_PREFIX}_{source_key.split(':')[-1][:12]}"
+def _family_id(source_ref: str, entity_id_field: str, time_field: str,
+               regions_ref: Optional[str]) -> str:
+    """Stable binding identity (G21 discipline): one trajectory family per
+    (dataset binding + regions binding). Config/window iterations REPLACE
+    the family on apply instead of stacking layer families."""
+    binding = f"{source_ref}|{entity_id_field}|{time_field}|{regions_ref or ''}"
+    return f"{FAMILY_PREFIX}_{_fingerprint(binding).split(':')[-1][:12]}"
 
 
 def _cache_alias(kind: str, key: str) -> str:
@@ -221,8 +221,24 @@ def _apply_window(feats: List[Dict[str, Any]], cfg: TrajectoryProductConfig) -> 
     from zoneinfo import ZoneInfo
 
     tz = ZoneInfo(cfg.assumed_timezone)
-    start = parse_event_time(cfg.time_start, tz)[0] if cfg.time_start else None
-    end = parse_event_time(cfg.time_end, tz)[0] if cfg.time_end else None
+    if cfg.time_start:
+        start = parse_event_time(cfg.time_start, tz)[0]
+        if start is None:
+            raise TrajectoryServiceError(
+                "TRAJECTORY_WINDOW_INVALID",
+                f"time_start {cfg.time_start!r} is not a parseable instant",
+            )
+    else:
+        start = None
+    if cfg.time_end:
+        end = parse_event_time(cfg.time_end, tz)[0]
+        if end is None:
+            raise TrajectoryServiceError(
+                "TRAJECTORY_WINDOW_INVALID",
+                f"time_end {cfg.time_end!r} is not a parseable instant",
+            )
+    else:
+        end = None
     kept: List[Dict[str, Any]] = []
     for f in feats:
         props = f.get("properties") or {}
@@ -305,9 +321,15 @@ async def preview_trajectory_product(
     feats = _filter_entities(_extract_features(payload), config.entity_filter)
     feats = _apply_window(feats, config)
     source_revision = int(descriptor.get("content_revision") or 0)
-    source_key = _fingerprint({"feats": feats, "revision": source_revision})
-    full_key = _fingerprint({"source": source_key, "config": config.model_dump(mode="json"),
-                             "regions_revision": regions_revision})
+    # Serializing 500k-row feature lists is CPU-bound: keep it off the loop.
+    def _keys() -> Tuple[str, str]:
+        source_key = _fingerprint({"feats": feats, "revision": source_revision})
+        full_key = _fingerprint({
+            "source": source_key, "config": config.model_dump(mode="json"),
+            "regions_revision": regions_revision,
+        })
+        return source_key, full_key
+    source_key, full_key = await asyncio.to_thread(_keys)
     full_alias = _cache_alias("preview", full_key)
     cached_ref = await session_data_manager.resolve_alias(session_id, full_alias)
     if cached_ref != full_alias:
@@ -316,10 +338,23 @@ async def preview_trajectory_product(
                 and cached.get("fingerprint") == full_key:
             return await _envelope(session_id, cached, cache_hit="preview")
 
-    product, line_fc, dwell_fc, event_fc = await asyncio.to_thread(
-        _build_product_payload, feats, config, source_ref, source_revision,
-        source_key, full_key, regions_fc,
+    family_id = _family_id(
+        source_ref, config.entity_id_field, config.time_field, config.regions_ref
     )
+    try:
+        product, line_fc, dwell_fc, event_fc = await asyncio.to_thread(
+            _build_product_payload, feats, config, source_ref, source_revision,
+            source_key, full_key, regions_fc, family_id,
+        )
+    except RegionGeometryError as e:
+        # must precede MovingObjectError (subclass)
+        raise TrajectoryServiceError("TRAJECTORY_REGION_INVALID", str(e)) from e
+    except SegmentCapExceeded as e:
+        raise TrajectoryServiceError("TRAJECTORY_SCALE_EXCEEDED", str(e)) from e
+    except MovingObjectError as e:
+        raise TrajectoryServiceError("TRAJECTORY_SCALE_EXCEEDED", str(e)) from e
+    except ValidationError as e:
+        raise TrajectoryServiceError("TRAJECTORY_INPUT_INVALID", str(e)) from e
     product = await _store_product(session_id, product, line_fc, dwell_fc, event_fc)
     await session_data_manager.set_alias(session_id, product["product_ref"], full_alias)
     return await _envelope(session_id, product, cache_hit="miss")
@@ -333,6 +368,7 @@ def _build_product_payload(
     source_key: str,
     full_key: str,
     regions_fc: Optional[Dict[str, Any]] = None,
+    family_id: Optional[str] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
     """Pure-CPU product assembly (runs inside asyncio.to_thread)."""
     try:
@@ -382,7 +418,9 @@ def _build_product_payload(
     now = datetime.now(timezone.utc).isoformat()
     product: Dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
-        "family_id": _family_id(source_key),
+        "family_id": family_id or _family_id(
+            source_ref, config.entity_id_field, config.time_field,
+            config.regions_ref),
         "source_ref": source_ref,
         "source_revision": source_revision,
         "source_fingerprint": source_key,
@@ -631,7 +669,10 @@ async def query_trajectory_product(
         events = (product.get("events") or {}).get("sample_events", [])
         if entity_id:
             events = [e for e in events if e.get("entity_id") == entity_id]
+        n_total = int((product.get("events") or {}).get(
+            "summary", {}).get("n_events") or 0)
         return {"success": True, "kind": "event", "entity_id": entity_id,
+                "total_is_sample": len(events) < n_total,
                 "page": _page(events)}
     raise TrajectoryServiceError(
         "TRAJECTORY_QUERY_KIND_INVALID",

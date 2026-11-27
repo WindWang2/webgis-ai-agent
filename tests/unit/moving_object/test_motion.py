@@ -90,7 +90,7 @@ def test_coincident_points_zero_distance_and_bearing_guard() -> None:
     # must NOT expose it — undefined bearing → None.
     a = ObsPoint("A", T0, 10.0, 10.0, "r0", 0)
     b_ = ObsPoint("A", T0, 10.0, 10.0, "r1", 1)
-    dt_s, dist_m, speed, bearing = interval_motion(a, b_, 0.0)
+    dt_s, dist_m, speed, bearing = interval_motion(a, b_)
     assert dt_s == 0.0 and dist_m == 0.0
     assert speed is None and bearing is None
 

@@ -339,14 +339,18 @@ export function findAppliedTrajectory(spec: MapSpec | null | undefined): Applied
   return null;
 }
 
-/** 由已应用 layer.trajectory 恢复可编辑配置（缺失键保留缺省）。 */
+/**
+ * 由已应用 layer.trajectory 恢复**表达层**可编辑项（样式宽度/方向/色板/
+ * 数据源/时区）。分析阈值（分段/驻留参数）不在 trajectory 契约块内——
+ * 后端不持久化 config 全量（R1 审查：读取不存在的键会把阈值静默重置为
+ * 缺省）；用户改阈值需重新 build，不假装从图层恢复。
+ */
 export function trajectoryConfigFromApplied(
   trajectory: MapSpecLayerTrajectory,
 ): TrajectoryProductConfig {
   const encoding = (trajectory.encoding ?? {}) as Record<string, unknown>;
   const num = (v: unknown): number | undefined =>
     typeof v === 'number' && Number.isFinite(v) ? v : undefined;
-  const config = (trajectory as unknown as { config?: Record<string, unknown> }).config ?? {};
   return defaultTrajectoryConfig({
     dataset: trajectory.source_ref,
     assumed_timezone:
@@ -359,9 +363,6 @@ export function trajectoryConfigFromApplied(
       ? (encoding['palette'] as string[])
       : null,
     product_id: null,
-    ...Object.fromEntries(
-      Object.entries(config).filter(([k]) => k in defaultTrajectoryConfig()),
-    ) as Partial<TrajectoryProductConfig>,
   });
 }
 

@@ -200,8 +200,10 @@ async def test_journey_2_two_regions_window_inference_and_visibility():
         applied_b.get("error_code"), applied_b.get("error_msg"),
         applied_b.get("message"))
     layer_ids_b = [ly["id"] for ly in applied_b["mapspec"]["layers"]]
-    # B 家族图层在（A/B 家族 id 不同——数据窗不同但 family 相同: family=源 hash）
-    assert any(lid.startswith("traj-") for lid in layer_ids_b)
+    # 家族=稳定绑定身份（dataset+字段+regions）：换窗重应用原子替换同族——
+    # A 的图层族被 B 的同族替换（无堆叠）。
+    assert f"traj-{built_a['family_id']}-lines" in layer_ids_b, layer_ids_b
+    assert built_a["family_id"] == built_b["family_id"]
     await session_data_manager.clear_session(sid)
 
 

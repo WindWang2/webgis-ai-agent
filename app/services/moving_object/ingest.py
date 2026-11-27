@@ -234,18 +234,11 @@ def ingest_point_collection(
     diag.entity_count = len(entity_ids)
 
     if out:
-        # Count input-order inversions BEFORE any sorting (the count
-        # describes the user's data, not our output).
+        # Count input-order inversions BEFORE sorting (the count describes
+        # the user's data, not our output), then order canonically —
+        # (time, input position): stable, and never index-as-identity.
         diag.out_of_order_rows = _count_out_of_order(out)
-        # Ordering (stable, tie-broken by input order).
-        if cfg.sort_policy.value == "time_asc":
-            out.sort(key=lambda p: (p.t, p.order))
-        else:
-            if diag.out_of_order_rows:
-                notes.append(
-                    f"keep_input order trusted: {diag.out_of_order_rows} "
-                    "out-of-order adjacent pairs detected (not sorted)"
-                )
+        out.sort(key=lambda p: (p.t, p.order))
 
         # Duplicate-time policy (adjacent equal times within one entity).
         diag.duplicate_time_pairs = _apply_duplicate_policy(out, cfg)

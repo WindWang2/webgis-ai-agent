@@ -9,7 +9,6 @@ from app.services.moving_object.contracts import (
     DuplicateTimePolicy,
     IngestConfig,
     MovingObjectError,
-    SortPolicy,
 )
 from app.services.moving_object.ingest import (
     group_by_entity,
@@ -52,16 +51,16 @@ def test_ingest_sorts_stably_by_time_then_input_order() -> None:
     assert pair[0].order < pair[1].order
 
 
-def test_ingest_keep_input_policy_discloses_out_of_order() -> None:
+def test_input_order_inversions_counted_then_sorted_canonically() -> None:
+    # Canonical ordering is unconditional; input inversions are counted and
+    # disclosed (never trusted, never silently hidden).
     fc = _fc(
         _feat("A", "2026-01-01T00:02:00Z", 2, 0),
         _feat("A", "2026-01-01T00:00:00Z", 0, 0),
     )
-    pts, diag = ingest_point_collection(fc["features"], IngestConfig(
-        sort_policy=SortPolicy.KEEP_INPUT,
-    ))
+    pts, diag = ingest_point_collection(fc["features"], IngestConfig())
     assert diag.out_of_order_rows == 1
-    assert any("keep_input" in n for n in diag.notes)
+    assert pts[0].t < pts[1].t
 
 
 def test_duplicate_time_policy_keep_first_and_last() -> None:

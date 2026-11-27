@@ -190,7 +190,7 @@ def build_entity_trajectories(
             cumulative += run_len
             seg_idx += 1
             total_segments += 1
-            if total_segments > MAX_TRAJECTORY_SEGMENTS:
+            if total_segments >= MAX_TRAJECTORY_SEGMENTS:
                 raise SegmentCapExceeded(
                     f"trajectory segments exceed hard cap "
                     f"{MAX_TRAJECTORY_SEGMENTS}; narrow the time window or "
@@ -222,7 +222,7 @@ def _run_intervals(
     out: List[MotionInterval] = []
     cumulative = cumulative_before_m
     for a, b in zip(run, run[1:]):
-        dt_s, distance_m, speed_kmh, bearing_deg = interval_motion(a, b, cumulative)
+        dt_s, distance_m, speed_kmh, bearing_deg = interval_motion(a, b)
         cumulative += distance_m
         out.append(MotionInterval(
             entity_id=entity_id,
@@ -257,6 +257,10 @@ def trajectory_line_features(
         feats.extend(_entity_line_features(entity_id, build))
         if len(feats) >= max_features:
             break
+    # Zero-path segments (all fixes coincident in space) draw nothing and
+    # carry no motion: exclude them for real (counted in product stats).
+    feats = [f for f in feats
+             if (f["properties"].get("path_length_m") or 0) > 0.0]
     return feats[:max_features]
 
 

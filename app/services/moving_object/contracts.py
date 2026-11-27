@@ -58,18 +58,13 @@ class DuplicateTimePolicy(str, Enum):
     KEEP_LAST = "keep_last"        # stable: higher source order wins
 
 
-class SortPolicy(str, Enum):
-    """Ordering inside one entity. Always stable, tie-broken by source order."""
-
-    TIME_ASC = "time_asc"          # canonical: sort by (time, source_row_order)
-    KEEP_INPUT = "keep_input"      # trust input order; out-of-order disclosed
-
-
 class IngestConfig(BaseModel):
     """Point-table ingestion contract (WP1).
 
     The input is a GeoJSON FeatureCollection of Point features (or a ref to
-    one). Identity/time fields are read from feature properties.
+    one). Identity/time fields are read from feature properties. Observations
+    are ALWAYS canonically ordered by (time, input position) — input-order
+    inversions are counted and disclosed, never trusted downstream.
     """
 
     entity_id_field: str = Field("entity_id", min_length=1, max_length=64)
@@ -81,7 +76,6 @@ class IngestConfig(BaseModel):
     #: IANA zone applied to naive timestamps only ("UTC" keeps UTC semantics).
     assumed_timezone: str = Field("UTC", max_length=64)
     duplicate_time_policy: DuplicateTimePolicy = DuplicateTimePolicy.KEEP_ALL
-    sort_policy: SortPolicy = SortPolicy.TIME_ASC
     source_crs: str = Field("EPSG:4326", max_length=64)
 
     @field_validator("source_crs")
@@ -129,11 +123,18 @@ class DwellConfig(BaseModel):
     of the run's first fix lasting >= ``min_dwell_s`` with at least
     ``min_points`` fixes. Radius is geodesic meters; this is an explicit,
     verifiable threshold method (not clustering).
+
+    ``max_gap_s`` bounds unverifiable presence: a run is SPLIT when two
+    consecutive fixes are more than ``max_gap_s`` apart, so a reported
+    dwell duration never silently spans an unobserved gap (arrival and
+    departure inside a gap remain interval semantics, not measured
+    presence).
     """
 
     radius_m: float = Field(50.0, gt=0, le=10_000)
     min_dwell_s: float = Field(120.0, gt=0, le=86400 * 30)
     min_points: int = Field(3, ge=2, le=10_000)
+    max_gap_s: float = Field(3600.0, gt=0, le=86400 * 366)
 
 
 class RegionEventConfig(BaseModel):
@@ -157,6 +158,9 @@ class RegionEventConfig(BaseModel):
     #: >= min_dwell_s (event-level dwell, distinct from fix-level dwell).
     detect_dwell: bool = True
     min_dwell_s: float = Field(60.0, gt=0, le=86400 * 30)
+    #: A region dwell span is split when consecutive inside fixes are more
+    #: than max_gap_s apart (same unverifiable-presence bound as WP2).
+    dwell_max_gap_s: float = Field(3600.0, gt=0, le=86400 * 366)
 
 
 class TimeWindow(BaseModel):

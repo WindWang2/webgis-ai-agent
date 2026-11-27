@@ -439,9 +439,6 @@ export function TrajectoryPanel() {
                   className="mt-0.5 w-full rounded-md border border-edge-subtle bg-surface-sunken px-2 py-1.5 text-body text-ink"
                 >
                   <option value="">{t('movingObject.drillPlaceholder')}</option>
-                  {inspect && Object.keys(inspect.fields).includes(config.entity_id_field)
-                    ? null
-                    : null}
                   {(preview.quality?.top_entities ?? []).map((row) => {
                     const eid = String(row.entity_id ?? '');
                     return <option key={eid} value={eid}>{eid}</option>;

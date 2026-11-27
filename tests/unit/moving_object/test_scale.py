@@ -14,7 +14,7 @@ from __future__ import annotations
 import random
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 
 from pyproj import Geod
 

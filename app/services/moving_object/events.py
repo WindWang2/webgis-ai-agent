@@ -90,6 +90,7 @@ class RegionSet:
     interiors: List[BaseGeometry] = field(default_factory=list)  # prepared (open rule)
     shifted: List[List[BaseGeometry]] = field(default_factory=list)
     _bounds: List[List[Tuple[float, float, float, float]]] = field(default_factory=list)
+    _tree: Optional[STRtree] = None
     boundary_rule: str = "closed"
     notes: List[str] = field(default_factory=list)
 
@@ -136,7 +137,7 @@ class RegionSet:
             target = self.geoms[region_idx] if rule == "closed" else (
                 self.interiors[region_idx]
             )
-            if target.is_empty:
+            if target is None or target.is_empty:
                 continue
             line = LineString([(la, lat_a), (lb, lat_b)])
             if shp_intersects(target, line):
@@ -199,13 +200,17 @@ def load_regions(
             )
         _reject_dateline_extent(rid, geom)
 
-        interior = geom.difference(geom.boundary)
+        interior = (
+            geom.difference(geom.boundary)
+            if cfg.boundary_rule == "open" else None
+        )
 
         out.ids.append(rid)
         out.geoms.append(geom)
         prepare(out.geoms[-1])
         out.interiors.append(interior)
-        prepare(out.interiors[-1])
+        if interior is not None:
+            prepare(out.interiors[-1])
         out.shifted.append([
             geom if off == 0.0 else shapely.affinity.translate(geom, xoff=off)
             for off in _LON_FRAMES
@@ -218,6 +223,7 @@ def load_regions(
             ) for g in out.shifted[-1]
         ])
 
+    out._tree = STRtree(out.geoms) if out.geoms else None
     out.notes.append(
         f"boundary_rule={cfg.boundary_rule}: a fix exactly on the region "
         "boundary counts as "
@@ -256,6 +262,8 @@ class EventAnalysis:
     notes: List[str] = field(default_factory=list)
     #: (entity_id, region_id) -> {entity inside-fix counts} for denominators
     inside_fixes: Dict[Tuple[str, str], int] = field(default_factory=dict)
+    #: (entity_id, region_id) -> predicate-failure count (per-row honesty)
+    unknown_by_pair: Dict[Tuple[str, str], int] = field(default_factory=dict)
     entity_ids: List[str] = field(default_factory=list)
     region_ids: List[str] = field(default_factory=list)
 
@@ -394,33 +402,49 @@ def _walk_pair(
         nonlocal inside_run, seq
         if inside_run:
             if cfg.detect_dwell:
-                duration = (inside_run[-1].t - inside_run[0].t).total_seconds()
-                if duration >= cfg.min_dwell_s:
-                    seq += 1
-                    analysis.events.append(RegionEventModel(
-                        entity_id=entity_id,
-                        region_id=rid,
-                        event_type="dwell",
-                        t_exact=inside_run[0].t.isoformat(),
-                        t_interval_start=inside_run[0].t.isoformat(),
-                        t_interval_end=inside_run[-1].t.isoformat(),
-                        inferred=False,
-                        lon=inside_run[0].lon,
-                        lat=inside_run[0].lat,
-                        from_row=inside_run[0].source_row_id,
-                        to_row=inside_run[-1].source_row_id,
-                        sequence=seq,
-                    ))
+                # Unverifiable-presence bound: only merge consecutive inside
+                # fixes whose gaps stay within dwell_max_gap_s.
+                spans = [[inside_run[0]]]
+                for a, b in zip(inside_run, inside_run[1:]):
+                    if (b.t - a.t).total_seconds() <= cfg.dwell_max_gap_s:
+                        spans[-1].append(b)
+                    else:
+                        spans.append([b])
+                for span in spans:
+                    duration = (span[-1].t - span[0].t).total_seconds()
+                    _emit_region_dwell_span(span, duration)
             inside_run = []
+
+    def _emit_region_dwell_span(span, duration) -> None:
+        nonlocal seq
+        if True:
+            if duration >= cfg.min_dwell_s:
+                        seq += 1
+                        analysis.events.append(RegionEventModel(
+                            entity_id=entity_id,
+                            region_id=rid,
+                            event_type="dwell",
+                            t_exact=span[0].t.isoformat(),
+                            t_interval_start=span[0].t.isoformat(),
+                            t_interval_end=span[-1].t.isoformat(),
+                            inferred=False,
+                            lon=span[0].lon,
+                            lat=span[0].lat,
+                            from_row=span[0].source_row_id,
+                            to_row=span[-1].source_row_id,
+                            sequence=seq,
+                        ))
 
     for cur in stream:
         try:
             is_inside = regions.inside(ridx, cur.lon, cur.lat)
         except Exception:
-            # Predicate failure: count as unknown and keep the last known
-            # state/fix — the next evaluated fix forms a wider (honest)
-            # bracket that still contains the true transition.
+            # Predicate failure: count as unknown (attributed to this
+            # entity×region pair) and keep the last known state/fix — the
+            # next evaluated fix forms a wider (honest) bracket.
             analysis.unknown_intervals += 1
+            key_u = (entity_id, rid)
+            analysis.unknown_by_pair[key_u] = analysis.unknown_by_pair.get(key_u, 0) + 1
             continue
 
         if is_inside:
@@ -499,6 +523,8 @@ def _walk_pair(
                     )
                 except Exception:
                     analysis.unknown_intervals += 1
+                    key_u = (entity_id, rid)
+                    analysis.unknown_by_pair[key_u] = analysis.unknown_by_pair.get(key_u, 0) + 1
                     reached = False
                 if reached:
                     seq += 1
@@ -550,7 +576,6 @@ def region_summaries(
             "enter": 0, "exit": 0, "cross": 0,
             "dwell": 0, "dwell_s": 0.0, "inside_fixes": 0, "unknown": 0,
         })
-        row["entities"].add(ev.entity_id)
         row[ev.event_type] = row.get(ev.event_type, 0) + 1
         if ev.event_type == "dwell":
             t0_s = ev.t_interval_start or ev.t_exact
@@ -566,16 +591,23 @@ def region_summaries(
             "enter": 0, "exit": 0, "cross": 0,
             "dwell": 0, "dwell_s": 0.0, "inside_fixes": 0, "unknown": 0,
         })
-        row["entities"].add(entity_id)
         row["inside_entities"].add(entity_id)
         row["inside_fixes"] += n
+
+    for (entity_id, rid), n in analysis.unknown_by_pair.items():
+        row = per_region.setdefault(rid, {
+            "entities": set(), "inside_entities": set(),
+            "enter": 0, "exit": 0, "cross": 0,
+            "dwell": 0, "dwell_s": 0.0, "inside_fixes": 0, "unknown": 0,
+        })
+        row["unknown"] = row.get("unknown", 0) + n
 
     rows: List[RegionSummaryRow] = []
     for rid in sorted(per_region.keys()):
         row = per_region[rid]
         rows.append(RegionSummaryRow(
             region_id=rid,
-            n_entities=len(row["entities"]),
+            n_entities=len(row["inside_entities"]),
             n_enter=row.get("enter", 0),
             n_exit=row.get("exit", 0),
             n_cross=row.get("cross", 0),
@@ -587,7 +619,7 @@ def region_summaries(
             entities_zero_hit=max(
                 0, n_analyzed - len(row["inside_entities"])
             ),
-            unknown_intervals=analysis.unknown_intervals,
+            unknown_intervals=row.get("unknown", 0),
         ))
     return rows
 
@@ -596,16 +628,15 @@ def event_features(
     events: List[RegionEventModel],
     max_features: int = 5000,
 ) -> List[Dict]:
-    """GeoJSON Point features for enter/exit/cross map markers (bounded)."""
+    """GeoJSON Point features for enter/exit map markers (bounded).
+
+    Cross events carry no observed fix position — they are filtered out
+    BEFORE the bound so they can never crowd out positioned markers."""
     feats: List[Dict] = []
-    for ev in events[:max_features]:
-        coords = None
-        if ev.lon is not None and ev.lat is not None:
-            coords = [ev.lon, ev.lat]
-        elif ev.event_type == "cross":
-            coords = None  # crossing markers have no observed fix position
-        if coords is None:
-            continue
+    positioned = [ev for ev in events
+                  if ev.lon is not None and ev.lat is not None]
+    for ev in positioned[:max_features]:
+        coords = [ev.lon, ev.lat]
         feats.append({
             "type": "Feature",
             "geometry": {"type": "Point", "coordinates": coords},

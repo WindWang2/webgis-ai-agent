@@ -18,7 +18,7 @@ and a scientific_evidence block per algorithm descriptor.
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -54,8 +54,8 @@ class TrajectoryBuildArgs(BaseModel):
     source_row_field: Optional[str] = Field(None, max_length=64,
                                             description="稳定源行身份字段（缺省派生 row:<input position>）")
     assumed_timezone: str = Field("UTC", max_length=64)
-    duplicate_time_policy: str = Field("keep_all", description="keep_all|keep_first|keep_last")
-    sort_policy: str = Field("time_asc", description="time_asc|keep_input")
+    duplicate_time_policy: Literal["keep_all", "keep_first", "keep_last"] = Field(
+        "keep_all", description="重复时刻对的保留策略（keep_all 保留并披露退化区间）")
     max_gap_s: float = Field(3600.0, gt=0, description="段断点：最大时间间隙（秒）")
     max_speed_kmh: float = Field(300.0, gt=0, description="段断点：最大观测间速度（km/h）")
     max_jump_m: float = Field(50000.0, gt=0, description="段断点：最大位置跳变（米）")
@@ -105,7 +105,6 @@ def _config_from_args(a: TrajectoryBuildArgs) -> TrajectoryProductConfig:
         source_row_field=a.source_row_field,
         assumed_timezone=a.assumed_timezone,
         duplicate_time_policy=a.duplicate_time_policy,
-        sort_policy=a.sort_policy,
         max_gap_s=a.max_gap_s,
         max_speed_kmh=a.max_speed_kmh,
         max_jump_m=a.max_jump_m,
@@ -234,7 +233,6 @@ def register_moving_object_tools(registry: ToolRegistry) -> None:
         source_row_field: Optional[str] = None,
         assumed_timezone: str = "UTC",
         duplicate_time_policy: str = "keep_all",
-        sort_policy: str = "time_asc",
         max_gap_s: float = 3600.0,
         max_speed_kmh: float = 300.0,
         max_jump_m: float = 50000.0,
@@ -265,7 +263,6 @@ def register_moving_object_tools(registry: ToolRegistry) -> None:
             source_row_field=source_row_field,
             assumed_timezone=assumed_timezone,
             duplicate_time_policy=duplicate_time_policy,
-            sort_policy=sort_policy,
             max_gap_s=max_gap_s,
             max_speed_kmh=max_speed_kmh,
             max_jump_m=max_jump_m,

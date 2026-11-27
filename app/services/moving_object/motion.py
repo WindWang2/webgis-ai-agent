@@ -43,7 +43,7 @@ def geodesic_bearing_deg(lon1: float, lat1: float, lon2: float, lat2: float) -> 
 
 
 def interval_motion(
-    a: ObsPoint, b: ObsPoint, cumulative_before_m: float
+    a: ObsPoint, b: ObsPoint
 ) -> Tuple[float, float, Optional[float], Optional[float]]:
     """Compute (dt_s, distance_m, speed_kmh, bearing_deg) for one interval.
 
@@ -75,7 +75,7 @@ def build_intervals(
     out: List[MotionInterval] = []
     cumulative = 0.0
     for a, b in zip(points, points[1:]):
-        dt_s, distance_m, speed_kmh, bearing_deg = interval_motion(a, b, cumulative)
+        dt_s, distance_m, speed_kmh, bearing_deg = interval_motion(a, b)
         cumulative += distance_m
         out.append(MotionInterval(
             entity_id=entity_id,

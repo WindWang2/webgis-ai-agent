@@ -12,7 +12,10 @@ near-misses are disclosed via diagnostics rather than merged.
 Honesty rules:
 - Sparse sampling / GPS drift can *split* one physical stop into adjacent
   dwells; results carry a note saying split behavior follows the thresholds
-  (no auto-merging across gaps — a gap break is a data fact).
+  (no auto-merging).
+- ``max_gap_s`` bounds unverifiable presence: a run is split when two
+  consecutive fixes are more than ``max_gap_s`` apart, so a reported dwell
+  duration never silently spans an unobserved gap.
 - The dwell instant range is exact at observation granularity: ``t_start`` /
   ``t_end`` are the first/last fix times of the run (arrival/departure
   between fixes is an interval, covered by region-event semantics in WP3).
@@ -71,7 +74,7 @@ def detect_dwells(
     for entity_id in sorted(by_entity.keys()):
         stream = by_entity[entity_id]
         dwell_index = 0
-        runs = _split_runs(stream, cfg.radius_m)
+        runs = _split_runs(stream, cfg.radius_m, cfg.max_gap_s)
         build.diagnostics.total_runs += len(runs)
         for run in runs:
             if build.diagnostics.longest_run_points < len(run):
@@ -116,19 +119,28 @@ def detect_dwells(
     return build
 
 
-def _split_runs(stream: List[ObsPoint], radius_m: float) -> List[List[ObsPoint]]:
-    """Split one entity's stream into maximal anchor-radius runs (O(n))."""
+def _split_runs(
+    stream: List[ObsPoint], radius_m: float, max_gap_s: float
+) -> List[List[ObsPoint]]:
+    """Split one entity's stream into maximal anchor-radius runs (O(n)).
+
+    A run also breaks when the inter-fix gap exceeds ``max_gap_s`` —
+    presence across an unobserved gap is never silently merged into one
+    measured duration."""
     runs: List[List[ObsPoint]] = []
     current: List[ObsPoint] = [stream[0]]
     anchor = stream[0]
+    prev_t = stream[0].t
     for p in stream[1:]:
+        gap_broken = (p.t - prev_t).total_seconds() > max_gap_s
         d = geodesic_distance_m(anchor.lon, anchor.lat, p.lon, p.lat)
-        if d <= radius_m:
+        if not gap_broken and d <= radius_m:
             current.append(p)
         else:
             runs.append(current)
             current = [p]
             anchor = p
+        prev_t = p.t
     runs.append(current)
     return runs
 
