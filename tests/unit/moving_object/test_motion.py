@@ -353,7 +353,9 @@ def test_cleaning_proposal_is_preview_only() -> None:
     )
     assert prop.rows_dropped_low_accuracy == 3
     assert prop.rows_dropped_duplicates == 1
-    assert prop.accepted_after == 1
+    # all rows carry accuracy 30 > 20 → distinct-row union drops all 3
+    assert prop.accepted_after == 0
+    assert prop.accepted_before == 3
     assert "NEW ref" in " ".join(prop.notes)
     # preview did NOT mutate the caller's points
     assert len(pts) == 3
