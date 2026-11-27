@@ -36,6 +36,7 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.coord_transform": "transformation",
     "app.tools.dasymetric_tools": "analysis",       # 面插值重分配（量守恒分析）
     "app.tools.data_discovery": "inspection",           # 目录/画像/lineage 只读发现
+    "app.tools.task_data_supply_tools": "data_access",  # GOAL-02 任务供给（发现/覆盖/计划只读+受控物化）
     "app.tools.data_fabric_tools": "data_access",
     # GOAL-02：服务发现只读面（inspect_data_service）+ 受控读取/物化（读 =
     # data_access；瓦片上图名字覆盖 map_mutation 在模块内声明）。

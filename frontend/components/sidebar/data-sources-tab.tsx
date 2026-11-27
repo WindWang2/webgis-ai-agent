@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Crosshair, Database, FileCheck2, FlaskConical, Inbox, Layers, SearchX, Sigma, Table2, TerminalSquare, Link2 } from 'lucide-react';
+import { Crosshair, Database, FileCheck2, FlaskConical, Inbox, Layers, PackageSearch, SearchX, Sigma, Table2, TerminalSquare, Link2 } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useToastStore } from '@/components/ui/toast';
 import { useQueryConsoleStore } from '@/lib/hooks/use-query-console';
@@ -38,6 +38,7 @@ import { PrepareFlow } from './data-preparation/prepare-flow';
 import { DataDeliveryDialog } from '@/components/data-delivery/delivery-dialog';
 import type { DeliverySourceRef } from '@/lib/api/data-delivery';
 import { FieldComputePanel } from './data-preparation/field-compute-panel';
+import { TaskSupplyPanel } from './data-sources/task-supply-panel';
 import { RasterSamplingPanel } from './raster-sampling/raster-sampling-panel';
 import { GeoreferencingWorkbenchPanel } from '../georeferencing/GeoreferencingWorkbenchPanel';
 
@@ -46,10 +47,10 @@ import { GeoreferencingWorkbenchPanel } from '../georeferencing/GeoreferencingWo
 export { CATALOG_SEARCH_DEBOUNCE_MS } from './data-sources/use-spatial-catalog';
 
 /** 数据工作台子页签（V2 / ADR-0094：目录 → 数据源 → 数据集 → 查询计划）。 */
-type DataSubTab = 'catalog' | 'sources' | 'dataset' | 'explain' | 'prepare';
+type DataSubTab = 'catalog' | 'sources' | 'dataset' | 'explain' | 'prepare' | 'supply';
 
 /** 子页签顺序即渲染顺序（V4 tablist 键盘导航用）。空间目录保持默认首页签。 */
-const SUBTABS: DataSubTab[] = ['catalog', 'sources', 'dataset', 'explain', 'prepare'];
+const SUBTABS: DataSubTab[] = ['catalog', 'sources', 'dataset', 'explain', 'prepare', 'supply'];
 
 /** sync 后的增量 diff 通知（V2 / ADR-0094 §9：added/updated/removed + warnings）。 */
 interface SyncNotice {
@@ -459,6 +460,7 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
           {renderSubTabButton('dataset', t('sidebar.ds.dataset'), Table2)}
           {renderSubTabButton('explain', t('sidebar.explain.planTitle'), Sigma)}
           {renderSubTabButton('prepare', t('dataPreparation.subtab'), FlaskConical)}
+          {renderSubTabButton('supply', t('taskSupply.subtab'), PackageSearch)}
         </div>
         {/* ADR-0147：高级查询控制台入口（写 SQL 的用户直达，不必经 chat）。
             tablist 内只放 tab（APG），入口按钮置于 tablist 兄弟位。 */}
@@ -675,6 +677,17 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
           <FieldComputePanel sessionId={sessionId} ownerToken={ownerToken} />
           <RasterSamplingPanel sessionId={sessionId} ownerToken={ownerToken} />
           <GeoreferencingWorkbenchPanel sessionId={sessionId} ownerToken={ownerToken} />
+        </div>
+      )}
+      {/* GOAL-20261126-02：任务数据供给（覆盖/缺口 → 受预算供给计划 → 批准执行） */}
+      {activeSubTab === 'supply' && (
+        <div
+          role="tabpanel"
+          id="data-subtab-panel-supply"
+          aria-labelledby="data-subtab-supply"
+          className="flex min-h-0 flex-1 flex-col overflow-y-auto"
+        >
+          <TaskSupplyPanel sessionId={sessionId} ownerToken={ownerToken} />
         </div>
       )}
       {activeSubTab === 'explain' && (

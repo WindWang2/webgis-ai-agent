@@ -11215,6 +11215,25 @@
     "title": "ExecuteIn",
     "type": "object"
    },
+   "ExecuteParams": {
+    "description": "已批准执行（显式 approved；可选只执行部分角色）。",
+    "properties": {
+     "approved": {
+      "default": false,
+      "title": "Approved",
+      "type": "boolean"
+     },
+     "roles": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Roles",
+      "type": "array"
+     }
+    },
+    "title": "ExecuteParams",
+    "type": "object"
+   },
    "ExecutePlanIn": {
     "properties": {
      "background": {
@@ -29505,6 +29524,87 @@
      "kind"
     ],
     "title": "ScenarioLockRequest",
+    "type": "object"
+   },
+   "ScopeParams": {
+    "description": "任务范围 + 角色需求（工具面同参数语义）。",
+    "properties": {
+     "bbox": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "number"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Bbox"
+     },
+     "budget_max_bytes": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Budget Max Bytes"
+     },
+     "choices": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "title": "Choices",
+      "type": "object"
+     },
+     "keyword": {
+      "default": "",
+      "maxLength": 64,
+      "title": "Keyword",
+      "type": "string"
+     },
+     "place": {
+      "default": "",
+      "maxLength": 128,
+      "title": "Place",
+      "type": "string"
+     },
+     "roles": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Roles",
+      "type": "array"
+     },
+     "session_id": {
+      "maxLength": 128,
+      "minLength": 8,
+      "title": "Session Id",
+      "type": "string"
+     },
+     "time_range": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Time Range"
+     }
+    },
+    "required": [
+     "session_id"
+    ],
+    "title": "ScopeParams",
     "type": "object"
    },
    "SearchRequest": {
@@ -84790,6 +84890,304 @@
     "tags": [
      "StoryMap",
      "StoryMap"
+    ]
+   }
+  },
+  "/api/v1/task-data-supply/coverage": {
+   "post": {
+    "description": "任务需求 × 候选 → 覆盖矩阵（四层分离 + 缺口原因码，有界）。",
+    "operationId": "compare_task_coverage_api_v1_task_data_supply_coverage_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ScopeParams"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Compare Task Coverage Api V1 Task Data Supply Coverage Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Compare Task Coverage",
+    "tags": [
+     "任务数据供给工作台"
+    ]
+   }
+  },
+  "/api/v1/task-data-supply/plans": {
+   "post": {
+    "description": "覆盖结论 → 受预算供给计划（存会话 store；requires_confirmation\n状态与替代方案显式可见）。",
+    "operationId": "create_supply_plan_api_v1_task_data_supply_plans_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ScopeParams"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Create Supply Plan Api V1 Task Data Supply Plans Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Create Supply Plan",
+    "tags": [
+     "任务数据供给工作台"
+    ]
+   }
+  },
+  "/api/v1/task-data-supply/plans/{plan_id}": {
+   "get": {
+    "description": "计划状态查询（owner 严格隔离：跨会话 404，不泄漏存在性）。",
+    "operationId": "get_supply_plan_api_v1_task_data_supply_plans__plan_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "plan_id",
+      "required": true,
+      "schema": {
+       "title": "Plan Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "maxLength": 128,
+       "minLength": 8,
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Supply Plan Api V1 Task Data Supply Plans  Plan Id  Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Supply Plan",
+    "tags": [
+     "任务数据供给工作台"
+    ]
+   }
+  },
+  "/api/v1/task-data-supply/plans/{plan_id}/execute": {
+   "post": {
+    "description": "执行已批准步骤：acquire 走既有 MaterializationService（ref 铸造）；\n未批准/需确认/跨会话 → 类型化拒绝。",
+    "operationId": "execute_supply_plan_api_v1_task_data_supply_plans__plan_id__execute_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "plan_id",
+      "required": true,
+      "schema": {
+       "title": "Plan Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "maxLength": 128,
+       "minLength": 8,
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ExecuteParams"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Execute Supply Plan Api V1 Task Data Supply Plans  Plan Id  Execute Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Execute Supply Plan",
+    "tags": [
+     "任务数据供给工作台"
     ]
    }
   },
