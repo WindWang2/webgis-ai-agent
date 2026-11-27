@@ -814,4 +814,10 @@ def survey_detail(
 
 
 def list_surveys(owner_scope: Dict[str, str]) -> List[Dict[str, Any]]:
-    return store.list_surveys(owner_scope)
+    """调查清单（design 文档归一化：survey_id = design_id）。"""
+    out = []
+    for doc in store.list_surveys(owner_scope):
+        doc = dict(doc)
+        doc.setdefault("survey_id", doc.get("design_id", ""))
+        out.append(doc)
+    return out

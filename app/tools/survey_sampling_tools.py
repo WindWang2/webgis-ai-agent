@@ -144,9 +144,12 @@ def register_survey_sampling_tools(registry: ToolRegistry):
           result_size_policy="bounded",
           crs_semantics="source_preserve",
           failure_modes=("invalid_args", "missing_data", "unsupported_crs"))
-    async def survey_frame_preview(args: FramePreviewArgs) -> dict:
+    async def survey_frame_preview(
+        source_ref: str, class_dictionary: Dict[str, str],
+        band: int = 1, session_id: Optional[str] = None,
+    ) -> dict:
         class_dict: Dict[int, str] = {}
-        for k, v in (args.class_dictionary or {}).items():
+        for k, v in (class_dictionary or {}).items():
             try:
                 class_dict[int(k)] = str(v)
             except (TypeError, ValueError):
@@ -155,9 +158,9 @@ def register_survey_sampling_tools(registry: ToolRegistry):
                                   "integer class code"}
         try:
             payload = await service.build_survey_frame(
-                _sid(args.session_id), None,
-                {"session_id": _sid(args.session_id)},
-                source_ref=args.source_ref, band=args.band,
+                _sid(session_id), None,
+                {"session_id": _sid(session_id)},
+                source_ref=source_ref, band=band,
                 class_dictionary=class_dict, trusted_dispatch=True)
         except SurveySamplingError as exc:
             return _typed_error(exc)
@@ -188,7 +191,7 @@ def register_survey_sampling_tools(registry: ToolRegistry):
         return _attach_evidence(out, "survey.frame_build",
                                 tool_name="survey_frame_preview",
                                 parameters_applied={
-                                    "band": args.band,
+                                    "band": band,
                                     "classes": len(class_dict)})
 
     @tool(registry, name="survey_design_preview",
@@ -205,17 +208,23 @@ def register_survey_sampling_tools(registry: ToolRegistry):
           result_size_policy="inline_small",
           crs_semantics="crs_free",
           failure_modes=("invalid_args",))
-    async def survey_design_preview(args: DesignPreviewArgs) -> dict:
+    async def survey_design_preview(
+        frame_digest: str, strategy: str = "equal",
+        n_total: Optional[int] = None,
+        target_se_oa: Optional[float] = None,
+        prior_precision: Optional[Dict[str, float]] = None,
+        session_id: Optional[str] = None,
+    ) -> dict:
         try:
             preview = service.preview_allocation(
-                {"session_id": _sid(args.session_id)}, args.frame_digest,
-                strategy=args.strategy, n_total=args.n_total,
-                target_se_oa=args.target_se_oa,
-                prior_precision=args.prior_precision)
+                {"session_id": _sid(session_id)}, frame_digest,
+                strategy=strategy, n_total=n_total,
+                target_se_oa=target_se_oa,
+                prior_precision=prior_precision)
         except SurveySamplingError as exc:
             return _typed_error(exc)
         out = {"success": True,
-               "summary": (f"建议分配（{args.strategy}）：总计 "
+               "summary": (f"建议分配（{strategy}）：总计 "
                            f"{preview['n_total']} 个样本。"
                            + ("；".join(f"{s['warnings'][:2]}"
                                         for s in [preview]) if preview.get(
@@ -224,7 +233,7 @@ def register_survey_sampling_tools(registry: ToolRegistry):
         return _attach_evidence(out, "survey.design_preview",
                                 tool_name="survey_design_preview",
                                 parameters_applied={
-                                    "strategy": args.strategy,
+                                    "strategy": strategy,
                                     "n_total": preview["n_total"]})
 
     @tool(registry, name="survey_create_design",
@@ -242,18 +251,28 @@ def register_survey_sampling_tools(registry: ToolRegistry):
           result_size_policy="inline_small",
           crs_semantics="crs_free",
           failure_modes=("invalid_args", "stale_frame"))
-    async def survey_create_design(args: CreateDesignArgs) -> dict:
+    async def survey_create_design(
+        frame_digest: str, objective: str,
+        target_time: str = "", strategy: str = "equal",
+        n_total: Optional[int] = None,
+        target_se_oa: Optional[float] = None,
+        prior_precision: Optional[Dict[str, float]] = None,
+        seed: int = 42, backup_per_stratum: int = 0,
+        blind_labelling: bool = True,
+        max_nonresponse_rate: float = 0.2, notes: str = "",
+        session_id: Optional[str] = None,
+    ) -> dict:
         try:
             result = await service.create_survey(
-                {"session_id": _sid(args.session_id)}, args.frame_digest,
-                objective=args.objective, target_time=args.target_time,
-                strategy=args.strategy, n_total=args.n_total,
-                target_se_oa=args.target_se_oa,
-                prior_precision=args.prior_precision, seed=args.seed,
-                backup_per_stratum=args.backup_per_stratum,
-                blind_labelling=args.blind_labelling,
-                max_nonresponse_rate=args.max_nonresponse_rate,
-                notes=args.notes)
+                {"session_id": _sid(session_id)}, frame_digest,
+                objective=objective, target_time=target_time,
+                strategy=strategy, n_total=n_total,
+                target_se_oa=target_se_oa,
+                prior_precision=prior_precision, seed=seed,
+                backup_per_stratum=backup_per_stratum,
+                blind_labelling=blind_labelling,
+                max_nonresponse_rate=max_nonresponse_rate,
+                notes=notes)
         except SurveySamplingError as exc:
             return _typed_error(exc)
         return {
@@ -282,14 +301,17 @@ def register_survey_sampling_tools(registry: ToolRegistry):
           result_size_policy="bounded",
           crs_semantics="wgs84_output",
           failure_modes=("missing_data",))
-    async def survey_samples(args: SamplesArgs) -> dict:
+    async def survey_samples(
+        survey_id: str, limit: int = _MAX_TOOL_SAMPLES,
+        blind: bool = True, session_id: Optional[str] = None,
+    ) -> dict:
         try:
             doc = service.survey_detail(
-                {"session_id": _sid(args.session_id)}, args.survey_id,
-                blind=args.blind)
+                {"session_id": _sid(session_id)}, survey_id,
+                blind=blind)
         except SurveySamplingError as exc:
             return _typed_error(exc)
-        samples = doc.get("samples", [])[: args.limit]
+        samples = doc.get("samples", [])[:limit]
         features = [
             {"type": "Feature",
              "geometry": {"type": "Point",
@@ -306,12 +328,12 @@ def register_survey_sampling_tools(registry: ToolRegistry):
         return {
             "success": True,
             "summary": (f"{len(features)} 个核查点"
-                        f"（盲标={'是' if args.blind else '否'}，"
+                        f"（盲标={'是' if blind else '否'}，"
                         f"总计 {doc.get('sample_count', 0)}）——"
                         "GeoJSON 已输出供地图加载"),
             "geojson": fc,
-            "blind": bool(args.blind),
-            "survey_id": args.survey_id,
+            "blind": bool(blind),
+            "survey_id": survey_id,
         }
 
     @tool(registry, name="survey_record_reference",
@@ -329,24 +351,32 @@ def register_survey_sampling_tools(registry: ToolRegistry):
           result_size_policy="inline_small",
           crs_semantics="crs_free",
           failure_modes=("invalid_args", "revision_conflict"))
-    async def survey_record_reference(args: RecordReferenceArgs) -> dict:
+    async def survey_record_reference(
+        survey_id: str, sample_id: str, status: str,
+        reference_class: Optional[str] = None,
+        evidence_type: str = "field_visit",
+        evidence_note: str = "", quality: str = "medium",
+        interpreter: str = "", observed_at: str = "", note: str = "",
+        expected_revision: Optional[int] = None,
+        session_id: Optional[str] = None,
+    ) -> dict:
         try:
             result = await service.record_reference(
-                {"session_id": _sid(args.session_id)}, args.survey_id,
-                sample_id=args.sample_id, status=args.status,
-                reference_class=args.reference_class,
-                evidence_type=args.evidence_type,
-                evidence_note=args.evidence_note, quality=args.quality,
-                interpreter=args.interpreter, observed_at=args.observed_at,
-                note=args.note, actor="agent:survey_record_reference",
-                expected_revision=args.expected_revision)
+                {"session_id": _sid(session_id)}, survey_id,
+                sample_id=sample_id, status=status,
+                reference_class=reference_class,
+                evidence_type=evidence_type,
+                evidence_note=evidence_note, quality=quality,
+                interpreter=interpreter, observed_at=observed_at,
+                note=note, actor="agent:survey_record_reference",
+                expected_revision=expected_revision)
         except SurveySamplingError as exc:
             return _typed_error(exc)
         # 盲标：响应不含 stratum/预测类
         return {
             "success": True,
-            "summary": (f"记录 {args.sample_id} v{result['version']} "
-                        f"（{args.status}）；revision={result['revision']}"),
+            "summary": (f"记录 {sample_id} v{result['version']} "
+                        f"（{status}）；revision={result['revision']}"),
             **result,
         }
 
@@ -363,10 +393,12 @@ def register_survey_sampling_tools(registry: ToolRegistry):
           result_size_policy="inline_small",
           crs_semantics="crs_free",
           failure_modes=("missing_data",))
-    async def survey_progress(args: ProgressArgs) -> dict:
+    async def survey_progress(
+        survey_id: str, session_id: Optional[str] = None,
+    ) -> dict:
         try:
             progress = service.survey_progress(
-                {"session_id": _sid(args.session_id)}, args.survey_id)
+                {"session_id": _sid(session_id)}, survey_id)
         except SurveySamplingError as exc:
             return _typed_error(exc)
         est_note = ("可以估计" if progress["can_estimate"]
@@ -394,10 +426,12 @@ def register_survey_sampling_tools(registry: ToolRegistry):
           result_size_policy="bounded",
           crs_semantics="crs_free",
           failure_modes=("invalid_args", "stale_source", "not_evaluable"))
-    async def survey_estimate(args: EstimateArgs) -> dict:
+    async def survey_estimate(
+        survey_id: str, session_id: Optional[str] = None,
+    ) -> dict:
         try:
             payload = await service.estimate_survey(
-                {"session_id": _sid(args.session_id)}, args.survey_id,
+                {"session_id": _sid(session_id)}, survey_id,
                 actor="agent:survey_estimate")
         except SurveySamplingError as exc:
             return _typed_error(exc)
@@ -414,7 +448,7 @@ def register_survey_sampling_tools(registry: ToolRegistry):
         return _attach_evidence(out, "survey.stratified_estimate",
                                 tool_name="survey_estimate",
                                 parameters_applied={
-                                    "survey_id": args.survey_id})
+                                    "survey_id": survey_id})
 
     @tool(registry, name="survey_get_estimate",
           capabilities=["survey_sampling"],
@@ -428,18 +462,20 @@ def register_survey_sampling_tools(registry: ToolRegistry):
           result_size_policy="bounded",
           crs_semantics="crs_free",
           failure_modes=("missing_data",))
-    async def survey_get_estimate(args: GetEstimateArgs) -> dict:
+    async def survey_get_estimate(
+        survey_id: str, estimate_id: str = "",
+        session_id: Optional[str] = None,
+    ) -> dict:
         from app.services.survey_sampling import store
 
-        scope = {"session_id": _sid(args.session_id)}
-        if args.estimate_id:
-            payload = store.get_estimate(scope, args.survey_id,
-                                         args.estimate_id)
+        scope = {"session_id": _sid(session_id)}
+        if estimate_id:
+            payload = store.get_estimate(scope, survey_id, estimate_id)
             if payload is None:
                 return {"success": False, "code": "SURVEY_NOT_FOUND",
-                        "detail": f"estimate {args.estimate_id} not found"}
+                        "detail": f"estimate {estimate_id} not found"}
             return {"success": True, **payload}
-        estimates = store.list_estimates(scope, args.survey_id)
+        estimates = store.list_estimates(scope, survey_id)
         if not estimates:
             return {"success": False, "code": "SURVEY_NOT_FOUND",
                     "detail": "no estimates yet — run survey_estimate first"}
