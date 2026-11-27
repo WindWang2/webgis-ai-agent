@@ -72,3 +72,10 @@
 - cartography 全目录: 4073 passed / 5 failed（全部为 pristine master 既有，逐一对照核实）
 - 前端: 16 vitest 绿；typecheck 仅剩 master 既有 live-spec tiles；全量 50 失败经 master parity worktree 核实为基线
 - diff: 67 files, +7914/-74; git diff --check 干净
+
+## R1 闭环（2026-11-28）
+
+- R1 审查（独立子代理）：科学核心 sound；2×P1 + 4×P2 + ~14×P3
+- 全部修复于 commit 1c103c518，新增 test_r1_closures.py 11 用例，J2 强化家族替换断言
+- 修复后复验: moving_object 89 passed；契约族 125 passed；conformance fail 14=master 基线；前端 16 passed；typecheck/eslint 新代码清洁
+- R2 复核子代理已启动（finding→closed 核验 + 修复无新问题 + 旅程重跑）
