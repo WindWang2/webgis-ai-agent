@@ -30,7 +30,15 @@ _MAX_TOOL_SAMPLES = 200
 
 
 def _sid(session_id: Optional[str]) -> str:
-    return _resolve_session_id(session_id) or ""
+    """会话解析（fail-closed；R1 P2-6：无上下文不得落共享空 scope）。"""
+    resolved = _resolve_session_id(session_id)
+    if not resolved:
+        raise SurveySamplingError(
+            "UNAUTHORIZED",
+            "no verified session context — tool cannot resolve the caller "
+            "session (fail closed)",
+            status_code=403)
+    return resolved
 
 
 def _typed_error(exc: Exception) -> Dict[str, Any]:

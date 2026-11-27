@@ -166,7 +166,10 @@ class StratifiedEstimate:
     def as_dict(self) -> Dict[str, Any]:
         return {
             "status": self.status,
-            "limitations": list(self.limitations)[:32],
+            "limitations": (
+                list(self.limitations[:32])
+                + ([f"…and {len(self.limitations) - 32} more"]
+                   if len(self.limitations) > 32 else [])),
             "strata": list(self.strata),
             "ref_classes": list(self.ref_classes),
             "matrix": _jsonable(self.matrix),
@@ -238,6 +241,24 @@ class StratifiedCounts:
                 correction_hint="rebuild the sampling frame; weights derive "
                                 "from stratum areas",
             )
+        # 响应量不得超过层总体、总体须 ≥1（R1 P2-1：负 fpc 会产 NaN/假 0）
+        n_resp = self.counts.sum(axis=1)
+        if np.any(np.asarray(self.N) < 1):
+            raise DegenerateData(
+                "stratum population N_h must be ≥1 for every stratum "
+                f"(got {self.N.tolist()})",
+                correction_hint="rebuild the frame; N_h derives from valid "
+                                "pixel counts",
+            )
+        if np.any(n_resp > np.asarray(self.N)):
+            bad = [f"{self.strata[h]}:{int(n_resp[h])}>{self.N[h]:.0f}"
+                   for h in np.where(n_resp > np.asarray(self.N))[0][:8]]
+            raise DegenerateData(
+                "responded samples exceed stratum population (n_resp > N_h) "
+                f"for {bad} — analysis set is inconsistent with the frame",
+                correction_hint="check samples.json against the frozen frame; "
+                                "n_resp comes from responded labels only",
+            )
         # 层名集合 == 参考字典集合（帧不变式：空类已拒 ⇒ 每个字典类都是层；
         # 集合不等 = 类字典漂移 → 阻断统计，goal WP3）
         if set(self.strata) != set(self.ref_classes):
@@ -261,6 +282,14 @@ def _v_of(n_h: int, N_h: float, p: float) -> Optional[float]:
     if n_h < 2:
         return None
     fpc = 1.0 - float(n_h) / float(N_h) if N_h > 0 else 0.0
+    if fpc < 0.0:
+        # n_h>N_h（R1 P2-1）：上游 __post_init__ 已挡；此处防御性拒绝
+        raise DegenerateData(
+            f"finite population correction negative (n_h={n_h} > N_h={N_h}) "
+            "— analysis set exceeds the frozen frame",
+            correction_hint="reconcile samples with the frame before "
+                            "estimating",
+        )
     return fpc * p * (1.0 - p) / (n_h - 1)
 
 
@@ -395,12 +424,22 @@ def stratified_estimate(
     #: 不可估（忽略未知质量的层不是估计而是伪造）
     any_zero = (len(zero_strata) > 0 or len(skipped_strata) > 0
                 or status == STATUS_NOT_EVALUATED)
+    #: 不可估 reason 按真实诱因分发（R1 P3-1：机器可读短语不再误导排障）
+    if skipped_strata:
+        not_eval_reason = ("allocation skipped strata (n_planned=0) — "
+                           "zero coverage map classes")
+    elif exceeded:
+        not_eval_reason = ("nonresponse/substitution exceeds the declared "
+                           "design maximum — selection mechanism violated")
+    elif zero_strata:
+        not_eval_reason = _NOT_EVAL_NO_RESPONSE.reason
+    else:
+        not_eval_reason = _NOT_EVAL_NO_RESPONSE.reason
 
     # ── OA = Σ_h W_h q_h ────────────────────────────────────────
     if any_zero:
-        overall = MetricValue(_NOT_EVAL_NO_RESPONSE.estimate,
-                              None, None, None, evaluable=False,
-                              reason=_NOT_EVAL_NO_RESPONSE.reason)
+        overall = MetricValue(None, None, None, None, evaluable=False,
+                              reason=not_eval_reason)
     else:
         est = float(np.dot(W, q_h))
         var_terms: List[Optional[float]] = []
@@ -430,7 +469,7 @@ def stratified_estimate(
         if any_zero:
             area_fraction[cname] = MetricValue(
                 None, None, None, None, evaluable=False,
-                reason=_NOT_EVAL_NO_RESPONSE.reason)
+                reason=not_eval_reason)
         else:
             est_b = float(np.dot(W, col_frac_h[:, j]))
             var_terms_b: List[Optional[float]] = []
@@ -442,10 +481,17 @@ def stratified_estimate(
         # PA_j：分子只由层 s_row（=地图类 cname 的层）贡献，分母为全层列和
         s_row = strata.index(cname)
         if n_resp[s_row] == 0:
-            producer_accuracy[cname] = _NOT_EVAL_ZERO_ROW
+            producer_accuracy[cname] = MetricValue(
+                None, None, None, None, evaluable=False,
+                reason=not_eval_reason if cname in zero_strata
+                else _NOT_EVAL_ZERO_ROW.reason)
             continue
-        if area_fraction[cname].estimate is None or not area_fraction[cname].evaluable:
-            producer_accuracy[cname] = _NOT_EVAL_NO_VARIANCE
+        if (area_fraction[cname].estimate is None
+                or not area_fraction[cname].evaluable):
+            producer_accuracy[cname] = MetricValue(
+                None, None, None, None, evaluable=False,
+                reason=(not_eval_reason if any_zero
+                        else _NOT_EVAL_NO_VARIANCE.reason))
             continue
         a_est = float(W[s_row] * q_h[s_row])
         b_est = float(area_fraction[cname].estimate)

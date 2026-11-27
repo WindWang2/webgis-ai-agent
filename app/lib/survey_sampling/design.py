@@ -239,16 +239,45 @@ def preview_sample_size(
     else:  # pragma: no cover — Literal 保护
         raise ValueError(f"unknown allocation strategy {strategy!r}")
 
+    # 逐层封顶：n_h 不得超过 N_h（小层不可能容纳超额分配；R1 P2-3/P3-3）
+    n_by_id = {s.stratum_id: s.N_units for s in strata}
+    overflow_total = 0
+    for sid, n in list(alloc.items()):
+        if n > n_by_id[sid]:
+            overflow_total += n - n_by_id[sid]
+            alloc[sid] = n_by_id[sid]
+    if overflow_total:
+        warnings.append(
+            f"allocation exceeded stratum population for small strata; "
+            f"capped at N_h and {overflow_total} samples redistributed "
+            "proportionally to uncapped strata")
+        # 溢出预算按未封顶层的权重比例再分配（仍不越 N_h；分配不完则披露）
+        uncapped = [s for s in strata
+                    if alloc[s.stratum_id] < s.N_units]
+        if uncapped:
+            room_total = sum(s.N_units - alloc[s.stratum_id]
+                             for s in uncapped)
+            give = min(overflow_total, room_total)
+            w_sum = sum(design_weights([s])[0] for s in uncapped)
+            extra = _largest_remainder(
+                uncapped, np.array(
+                    [give * (design_weights([s])[0] / w_sum)
+                     for s in uncapped]))
+            for sid, n in extra.items():
+                cap = n_by_id[sid] - alloc[sid]
+                alloc[sid] += min(n, cap)
+
     # 硬下限（预算允许时抬到方差可估；超出预算披露）
     for sid in list(alloc):
         if alloc[sid] < MIN_N_PER_STRATUM_HARD:
             shortfall = MIN_N_PER_STRATUM_HARD - alloc[sid]
-            if sum(alloc.values()) + shortfall <= sum(s.N_units for s in strata):
+            if alloc[sid] + shortfall <= n_by_id[sid]:
                 alloc[sid] = MIN_N_PER_STRATUM_HARD
             else:
                 warnings.append(
                     f"stratum {sid} below hard minimum "
-                    f"{MIN_N_PER_STRATUM_HARD} (budget exhausted)")
+                    f"{MIN_N_PER_STRATUM_HARD} (population N_h="
+                    f"{n_by_id[sid]} too small for SRS variance)")
     # 建议值披露（不静默抬高——预算裁决权在用户）
     thin = [sid for sid, n in alloc.items()
             if n < MIN_N_PER_STRATUM_RECOMMENDED]

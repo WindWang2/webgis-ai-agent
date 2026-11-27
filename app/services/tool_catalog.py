@@ -46,7 +46,7 @@ DOMAIN_KEYWORDS: dict[str, list[str]] = {
         "概率抽样", "抽样调查", "抽样框", "精度核查", "精度评估",
         "误差矩阵", "面积估计", "总体精度", "user's accuracy",
         "producer's accuracy", "核查点", "参考标签", "盲标",
-        "survey", "stratified sampling", "error matrix",
+        "survey_sampling", "stratified sampling", "error matrix",
         "area estimate", "accuracy assessment",
     ],
     # 中国本地 GIS 数据源（高德/百度/天地图，15 工具：含 11 chinese_maps + 本地行政/POI）

@@ -14,6 +14,7 @@ Pi 工具与 REST/UI 两条入口共用本服务（同权限、同状态、同�
 from __future__ import annotations
 
 import logging
+import math
 import time
 import uuid
 from typing import Any, Dict, List, Optional
@@ -42,6 +43,7 @@ from app.services.survey_sampling.contracts import (
     MAX_RECORD_BATCH,
     MAX_SAMPLES_PER_SURVEY,
     MAX_STRATA,
+    MAX_SURVEYS_PER_SCOPE,
     NON_USABLE_STATUSES,
     REC_LABELLED,
     RECORD_STATUSES,
@@ -222,6 +224,14 @@ async def create_survey(
     notes: str = "",
 ) -> Dict[str, Any]:
     """创建调查：冻结设计（digest 不可变快照）→ 立即选样（幂等）。"""
+    existing = store.list_surveys(owner_scope)
+    if len(existing) >= MAX_SURVEYS_PER_SCOPE:
+        raise SurveySamplingError(
+            "BUDGET_EXCEEDED",
+            f"surveys per owner scope capped at {MAX_SURVEYS_PER_SCOPE} "
+            f"(have {len(existing)})",
+            status_code=413,
+            correction_hint="close out or archive old surveys first")
     payload = store.get_frame_payload(owner_scope, frame_digest)
     if payload is None:
         raise SurveySamplingError(
@@ -241,7 +251,8 @@ async def create_survey(
             status_code=413,
             correction_hint="reduce n_total or backup_per_stratum")
     survey_id = uuid.uuid4().hex[:16]
-    design = SurveyDesign(
+    try:
+        design = SurveyDesign(
         design_id=survey_id,
         design_type="stratified_srs",
         frame_ref=frame_digest,
@@ -260,6 +271,14 @@ async def create_survey(
         notes=notes,
         blind_labelling=bool(blind_labelling),
     ).with_digest()
+    except (ValueError, _LibInsufficient) as exc:
+        raise SurveySamplingError(
+            "INVALID_DESIGN",
+            f"allocation infeasible for the frozen frame: {exc}",
+            field="allocation",
+            correction_hint="reduce n_total/backup_per_stratum or preview "
+                            "with per-stratum caps (strata with small N_h "
+                            "cannot absorb large allocations)")
     store.save_survey_document(owner_scope, survey_id, "design.json",
                                _design_to_payload(design, preview))
     samples = _draw_for_survey(owner_scope, survey_id, design, payload)
@@ -268,7 +287,8 @@ async def create_survey(
         {"survey_id": survey_id, "design_digest": design.digest,
          "drawn_at": time.time(), "samples": [s.as_dict() for s in samples]})
     await store.bump_revision(owner_scope, survey_id, None,
-                              note="create_survey")
+                              note="create_survey",
+                              allow_missing_state=True)
     return {
         "survey_id": survey_id,
         "design_digest": design.digest,
@@ -378,12 +398,11 @@ async def record_reference(
     samples_doc = store.get_survey_document(owner_scope, survey_id,
                                             "samples.json") or {}
     stratum_id = _sample_stratum(samples_doc, sample_id)
-    version = _next_version(owner_scope, survey_id, sample_id)
     from app.services.survey_sampling.contracts import ReferenceRecord
 
     rec = ReferenceRecord(
         survey_id=survey_id, sample_id=sample_id, stratum_id=stratum_id,
-        status=status, reference_class=reference_class, version=version,
+        status=status, reference_class=reference_class, version=0,
         evidence_type=evidence_type, evidence_note=evidence_note,
         quality=quality, interpreter=interpreter, observed_at=observed_at,
         note=note, actor=actor)
@@ -403,9 +422,11 @@ async def record_reference(
                 "dictionary — adjudicate against the design's dictionary or "
                 "create a new survey",
                 field="reference_class")
-    await store.append_records(owner_scope, survey_id, [rec.model_dump()])
-    new_revision = await store.bump_revision(
-        owner_scope, survey_id, expected_revision, note=f"record {sample_id}")
+    # 单一临界区：CAS → 版本分配 → 追加 → revision 推进（R1 P2-2）
+    assigned, new_revision = await store.append_and_bump(
+        owner_scope, survey_id, [rec.model_dump()],
+        expected_revision=expected_revision, note=f"record {sample_id}")
+    version = int(assigned[0]["version"])
     return {
         "recorded": True,
         "sample_id": sample_id,
@@ -434,16 +455,6 @@ def _sample_stratum(samples_doc: Dict[str, Any], sample_id: str) -> str:
     raise SurveySamplingError(
         "SAMPLE_NOT_FOUND", f"sample {sample_id} not found in this survey",
         status_code=404)
-
-
-def _next_version(
-    owner_scope: Dict[str, str], survey_id: str, sample_id: str,
-) -> int:
-    max_v = 0
-    for rec in store.load_records(owner_scope, survey_id):
-        if rec.get("sample_id") == sample_id:
-            max_v = max(max_v, int(rec.get("version", 0)))
-    return max_v + 1
 
 
 async def import_records(
@@ -475,7 +486,7 @@ async def import_records(
     appended: List[Dict[str, Any]] = []
     skipped_same = 0
     conflicts = 0
-    for row in rows:
+    for row_index, row in enumerate(rows):
         sid = str(row.get("sample_id") or "")
         if sid not in known_ids:
             raise SurveySamplingError(
@@ -501,8 +512,7 @@ async def import_records(
             conflicts += 1
             appended.append(_import_row(survey_id, sid, known_ids[sid],
                                         "disputed", None, row, actor,
-                                        _next_version(owner_scope, survey_id,
-                                                      sid)))
+                                        row_index))
             continue
         if status == REC_LABELLED and rclass is None:
             raise SurveySamplingError(
@@ -510,14 +520,19 @@ async def import_records(
                 f"import row {sid}: status labelled requires reference_class",
                 field="rows")
         appended.append(_import_row(survey_id, sid, known_ids[sid], status,
-                                    rclass, row, actor,
-                                    _next_version(owner_scope, survey_id, sid)))
+                                    rclass, row, actor, row_index))
+    assigned: List[Dict[str, Any]] = []
+    new_revision = 0
     if appended:
-        await store.append_records(owner_scope, survey_id, appended)
-    new_revision = await store.bump_revision(
-        owner_scope, survey_id, expected_revision, note="import_records")
+        # 单一临界区（R1 P2-2）：CAS → 版本 → 追加 → revision
+        assigned, new_revision = await store.append_and_bump(
+            owner_scope, survey_id, appended,
+            expected_revision=expected_revision, note="import_records")
+    else:
+        new_revision = await store.bump_revision(
+            owner_scope, survey_id, expected_revision, note="import_records")
     return {
-        "imported": len(appended),
+        "imported": len(assigned),
         "skipped_same": skipped_same,
         "conflicts_disputed": conflicts,
         "revision": new_revision,
@@ -527,13 +542,15 @@ async def import_records(
 def _import_row(
     survey_id: str, sample_id: str, stratum_id: str, status: str,
     reference_class: Optional[str], row: Dict[str, Any], actor: str,
-    version: int,
+    row_index: int,
 ) -> Dict[str, Any]:
+    """构造导入记录（version=0 占位；锁内分配）。校验失败 typed 包装
+    （R1 P2-4：与 record_reference 同 typed 口径，不再裸 ValueError）。"""
     from app.services.survey_sampling.contracts import ReferenceRecord
 
     rec = ReferenceRecord(
         survey_id=survey_id, sample_id=sample_id, stratum_id=stratum_id,
-        status=status, reference_class=reference_class, version=version,
+        status=status, reference_class=reference_class, version=0,
         evidence_type=str(row.get("evidence_type") or "existing_survey"),
         evidence_note=str(row.get("evidence_note") or ""),
         quality=str(row.get("quality") or "medium"),
@@ -541,7 +558,13 @@ def _import_row(
         observed_at=str(row.get("observed_at") or ""),
         note=str(row.get("note") or "")[:280],
         actor=actor)
-    rec.model_validate_strict()
+    try:
+        rec.model_validate_strict()
+    except ValueError as exc:
+        raise SurveySamplingError(
+            "RECORD_INVALID",
+            f"import row {row_index} (sample {sample_id}): {exc}",
+            field="rows") from exc
     return rec.model_dump()
 
 
@@ -631,6 +654,11 @@ async def estimate_survey(
             "FRAME_NOT_FOUND",
             f"frame {design.frame_ref} missing for survey {survey_id}",
             status_code=404)
+    if not (math.isfinite(design.total_area) and design.total_area > 0):
+        raise SurveySamplingError(
+            "INVALID_DESIGN",
+            f"frame total_area {design.total_area!r} is not positive/finite",
+            field="total_area")
     _verify_source_current(owner_scope, survey_id, frame_payload)
 
     samples_doc = store.get_survey_document(owner_scope, survey_id,
@@ -642,7 +670,7 @@ async def estimate_survey(
             counts, total_area=float(design.total_area))
     except _LibNotEvaluable as exc:
         raise _map_lib_error(exc) from exc
-    estimate_id = uuid.uuid4().hex[:12]
+    estimate_id = uuid.uuid4().hex[:16]
     payload = result.as_dict()
     payload.update({
         "estimate_id": estimate_id,
@@ -806,6 +834,13 @@ def survey_detail(
         "revision": store.get_revision(owner_scope, survey_id),
         "estimates": store.list_estimates(owner_scope, survey_id),
     })
+    if is_blind:
+        # R1 P2-5 披露：sample_id = uuid5(digest|stratum|unit_index) 对
+        # 持有 design digest 者可枚举逆向——盲标依赖流程纪律，非密码学保证
+        doc["blind_note"] = (
+            "blind view hides stratum_id/unit_index; sample_id is "
+            "derivably uuid5(design_digest|stratum|unit_index) — blinding "
+            "relies on process discipline, not cryptographic secrecy")
     return doc
 
 

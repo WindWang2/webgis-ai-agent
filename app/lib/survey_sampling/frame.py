@@ -333,6 +333,9 @@ def build_frame(
         "pixel_area_spread": round(spread, 9),
         "pixel_area_tolerance": tolerance,
         "excluded": excluded,
+        #: 选样复现性披露（R1 P3-9）：rng 为 numpy PCG64，Generator 流
+        #: 不承诺跨大版本冻结——记录生成环境版本供重抽时核对
+        "numpy_version": np.__version__,
     }
     frame = SurveyFrame(
         payload=payload, index_arrays=index_arrays,

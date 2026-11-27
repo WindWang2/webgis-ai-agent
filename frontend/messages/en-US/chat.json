@@ -365,7 +365,7 @@
     "noData": "No data",
     "figureAria": "{type} chart {title}",
     "figurePoints": "{count} data points.",
-    "figureTopValues": "Top values: {detail}",
+    "figureTopValues": "Top {n} values: {detail}",
     "rankingListAria": "Ranking list {title}",
     "untitled": "Untitled chart"
   },

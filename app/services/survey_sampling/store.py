@@ -40,7 +40,7 @@ def _storage_root() -> Path:
 
 
 def owner_dir(owner_scope: Dict[str, str]) -> Path:
-    """owner_scope（恰好一维 session_id/project_id）→ 存储目录。"""
+    """owner_scope（恰好一维、值非空）→ 存储目录（fail-closed）。"""
     keys = sorted(owner_scope.items())
     if len(keys) != 1 or keys[0][0] not in ("session_id", "project_id"):
         raise SurveySamplingError(
@@ -48,7 +48,28 @@ def owner_dir(owner_scope: Dict[str, str]) -> Path:
             "owner_scope must be exactly one of session_id/project_id",
             status_code=403)
     kind, value = keys[0]
+    if not value:
+        raise SurveySamplingError(
+            "UNAUTHORIZED",
+            f"owner_scope.{kind} must be non-empty",
+            status_code=403)
     return _storage_root() / f"{kind}-{value}"
+
+
+import re as _re
+
+#: 合法 digest/estimate_id：hex 16..64（uuid4 hex16 / sha256 hex64 覆盖）
+_SAFE_ID_RE = _re.compile(r"^[0-9a-f]{16,64}$")
+
+
+def _safe_id(value: str, what: str) -> str:
+    """digest/estimate_id 白名单（防路径注入/跨 owner 读取，R1 P1-1）。"""
+    if not _SAFE_ID_RE.match(value or ""):
+        raise SurveySamplingError(
+            "SURVEY_NOT_FOUND",
+            f"invalid {what} (expected 16..64 hex chars)",
+            status_code=404)
+    return value
 
 
 def _atomic_write_json(path: Path, payload: Dict[str, Any]) -> None:
@@ -95,6 +116,7 @@ def save_frame_payload(owner_scope: Dict[str, str], payload: Dict[str, Any]) -> 
 
 
 def get_frame_payload(owner_scope: Dict[str, str], digest: str) -> Optional[Dict[str, Any]]:
+    _safe_id(str(digest), "frame_digest")     # R1 P1-1：路径注入阻断
     return _read_json(owner_dir(owner_scope) / "frames" / f"{digest}.json")
 
 
@@ -170,18 +192,135 @@ def load_records(owner_scope: Dict[str, str], survey_id: str) -> List[Dict[str, 
     return out
 
 
+async def append_and_assign_versions(
+    owner_scope: Dict[str, str], survey_id: str,
+    rows: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """追加记录并在**同一把锁内**分配版本号（R1 P2-2：版本竞态消除）。
+
+    ``rows`` 携带除 ``version`` 外的全部字段；返回带分配版本的副本
+    （append-only 顺序 = 调用顺序）。
+    """
+    async with _survey_lock(survey_id):
+        def _append() -> List[Dict[str, Any]]:
+            max_versions: Dict[str, int] = {}
+            for rec in load_records(owner_scope, survey_id):
+                sid = str(rec.get("sample_id"))
+                max_versions[sid] = max(max_versions.get(sid, 0),
+                                        int(rec.get("version", 0)))
+            assigned: List[Dict[str, Any]] = []
+            path = _survey_dir(owner_scope, survey_id) / "records.jsonl"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "a", encoding="utf-8") as f:
+                for row in rows:
+                    sid = str(row.get("sample_id"))
+                    version = max_versions.get(sid, 0) + 1
+                    max_versions[sid] = version
+                    rec = dict(row)
+                    rec["version"] = version
+                    assigned.append(rec)
+                    f.write(json.dumps(rec, ensure_ascii=False,
+                                       separators=(",", ":")) + "\n")
+            return assigned
+        return await asyncio.to_thread(_append)
+
+
+async def append_and_bump(
+    owner_scope: Dict[str, str], survey_id: str,
+    rows: List[Dict[str, Any]], *,
+    expected_revision: Optional[int],
+    note: str = "",
+    allow_missing_state: bool = False,
+) -> tuple:
+    """单一临界区：CAS 校验 → 版本分配 → 追加 → revision 推进。
+
+    R1 P2-2：此前 CAS 在 append 之后——校验失败会留下"已落库但 revision
+    未推进"的孤儿记录。本函数保证要么全部生效、要么全部不发生。
+    返回 (assigned_rows, new_revision)。
+    """
+    async with _survey_lock(survey_id):
+        def _atomic() -> tuple:
+            path = _survey_dir(owner_scope, survey_id) / "state.json"
+            state = _read_json(path) or {}
+            current = int(state.get("revision", 0))
+            if expected_revision is None:
+                if current != 0 and not allow_missing_state:
+                    raise SurveySamplingError(
+                        "SURVEY_REVISION_CONFLICT",
+                        "expected_revision is required once the survey "
+                        f"exists (current revision {current})",
+                        status_code=409,
+                        details={"current_revision": current},
+                        correction_hint="GET the survey state first, then "
+                                        "retry with the fresh "
+                                        "expected_revision")
+            elif expected_revision != current:
+                raise SurveySamplingError(
+                    "SURVEY_REVISION_CONFLICT",
+                    f"expected_revision {expected_revision} != current "
+                    f"{current} — reload the survey and re-apply",
+                    status_code=409,
+                    details={"current_revision": current},
+                    correction_hint="GET the survey state first, then "
+                                    "retry with the fresh expected_revision")
+            # CAS 通过 → 版本分配 + 追加
+            max_versions: Dict[str, int] = {}
+            for rec in load_records(owner_scope, survey_id):
+                sid = str(rec.get("sample_id"))
+                max_versions[sid] = max(max_versions.get(sid, 0),
+                                        int(rec.get("version", 0)))
+            assigned: List[Dict[str, Any]] = []
+            rec_path = _survey_dir(owner_scope, survey_id) / "records.jsonl"
+            rec_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(rec_path, "a", encoding="utf-8") as f:
+                for row in rows:
+                    sid = str(row.get("sample_id"))
+                    version = max_versions.get(sid, 0) + 1
+                    max_versions[sid] = version
+                    rec = dict(row)
+                    rec["version"] = version
+                    assigned.append(rec)
+                    f.write(json.dumps(rec, ensure_ascii=False,
+                                       separators=(",", ":")) + "\n")
+            new_revision = current + 1
+            _atomic_write_json(path, {
+                "revision": new_revision,
+                "updated_at": time.time(),
+                "note": note,
+            })
+            return assigned, new_revision
+        return await asyncio.to_thread(_atomic)
+
+
 async def bump_revision(
     owner_scope: Dict[str, str], survey_id: str,
     expected_revision: Optional[int], *,
     note: str = "",
+    allow_missing_state: bool = False,
 ) -> int:
-    """CAS revision 推进（expected=None 仅首次创建允许）。"""
+    """CAS revision 推进（锁内读-比-写原子临界区）。
+
+    ``expected_revision=None`` **只在 revision==0（尚无任何推进）时合法**
+    ——既有调查必须携带真实 expected（R1 P2-2：省略即绕过 CAS 的
+    fail-open 缺口）。``allow_missing_state=True`` 供创建路径使用。
+    """
     async with _survey_lock(survey_id):
         def _bump() -> int:
             path = _survey_dir(owner_scope, survey_id) / "state.json"
             state = _read_json(path) or {}
             current = int(state.get("revision", 0))
-            if expected_revision is not None and expected_revision != current:
+            if expected_revision is None:
+                if current != 0 and not allow_missing_state:
+                    raise SurveySamplingError(
+                        "SURVEY_REVISION_CONFLICT",
+                        "expected_revision is required once the survey "
+                        f"exists (current revision {current})",
+                        status_code=409,
+                        details={"current_revision": current},
+                        correction_hint="GET the survey state first, then "
+                                        "retry with the fresh "
+                                        "expected_revision")
+            elif expected_revision != current:
                 raise SurveySamplingError(
                     "SURVEY_REVISION_CONFLICT",
                     f"expected_revision {expected_revision} != current "
@@ -209,6 +348,7 @@ def save_estimate(
     owner_scope: Dict[str, str], survey_id: str,
     estimate_id: str, payload: Dict[str, Any],
 ) -> None:
+    _safe_id(str(estimate_id), "estimate_id")
     path = (_survey_dir(owner_scope, survey_id) / "estimates"
             / f"{estimate_id}.json")
     _atomic_write_json(path, payload)
@@ -217,6 +357,7 @@ def save_estimate(
 def get_estimate(
     owner_scope: Dict[str, str], survey_id: str, estimate_id: str,
 ) -> Optional[Dict[str, Any]]:
+    _safe_id(str(estimate_id), "estimate_id")
     return _read_json(_survey_dir(owner_scope, survey_id) / "estimates"
                       / f"{estimate_id}.json")
 
