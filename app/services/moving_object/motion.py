@@ -5,8 +5,8 @@ All quantities are *interval estimates between two consecutive observations*:
   degrees are never treated as meters; antimeridian crossings are exact.
 - dt: UTC instant difference; ``dt_s == 0`` (duplicate-time pair kept by
   policy) yields ``speed=None`` + ``degenerate=True`` — no fake zero, no inf.
-- negative dt cannot occur post-ingest (canonical sort); ``keep_input`` mode
-  re-sorts defensively before entering this layer (builder guarantees).
+- negative dt cannot occur post-ingest (canonical sort is unconditional;
+  the builder re-sorts defensively before entering this layer).
 
 Performance: pyproj.Geod.inv is a C call (~0.7µs); 100k segments ≈ 0.1s.
 No O(n²) passes anywhere.

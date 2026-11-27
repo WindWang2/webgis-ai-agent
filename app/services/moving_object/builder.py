@@ -158,7 +158,8 @@ def build_entity_trajectories(
     build = TrajectoryBuild()
     if not points:
         return build
-    # Defensive canonical re-sort (keep_input mode / direct callers).
+    # Defensive canonical re-sort (ingest already sorts; direct callers
+    # may hand over unsorted streams).
     pts = sorted(points, key=lambda p: (p.t, p.order))
 
     total_segments = 0

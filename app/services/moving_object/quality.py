@@ -65,7 +65,6 @@ class CleaningOperation(str):
     DROP_LOW_ACCURACY = "drop_low_accuracy"      # accuracy_m > threshold
     DEDUP_KEEP_FIRST = "dedup_keep_first"        # duplicate policy switch
     DEDUP_KEEP_LAST = "dedup_keep_last"
-    SORT_CANONICAL = "sort_canonical"            # keep_input -> time_asc
 
 
 class CleaningProposalConfig(BaseModel):
@@ -73,7 +72,6 @@ class CleaningProposalConfig(BaseModel):
     duplicate_time_policy: Optional[str] = Field(
         None, description="keep_first | keep_last (switch from current)"
     )
-    force_canonical_sort: bool = False
 
 
 class CleaningProposal(BaseModel):
@@ -243,13 +241,6 @@ def propose_cleaning(
                     if len(dropped_rows) < MAX_PREVIEW_FEATURES:
                         dropped_rows.append(b.source_row_id)
 
-    rows_reorder = 0
-    if proposal_cfg.force_canonical_sort and (
-        current_cfg.sort_policy.value != "time_asc"
-    ):
-        operations.append(CleaningOperation.SORT_CANONICAL)
-        rows_reorder = ingest_diag.out_of_order_rows
-
     notes: List[str] = []
     if proposal_cfg.drop_accuracy_above_m is not None and (
         ingest_diag.accepted and dropped_low_accuracy == 0
@@ -268,7 +259,7 @@ def propose_cleaning(
         operations=operations,
         rows_dropped_low_accuracy=dropped_low_accuracy,
         rows_dropped_duplicates=dropped_duplicates,
-        rows_reorder_flagged=rows_reorder,
+        rows_reorder_flagged=0,
         # Distinct-row accounting: operations may overlap on the same row.
         accepted_after=ingest_diag.accepted - len(dropped_keys),
         accepted_before=ingest_diag.accepted,

@@ -23,7 +23,6 @@ export interface TrajectoryProductConfig {
   source_row_field?: string | null;
   assumed_timezone: string;
   duplicate_time_policy: 'keep_all' | 'keep_first' | 'keep_last';
-  sort_policy: 'time_asc' | 'keep_input';
   max_gap_s: number;
   max_speed_kmh: number;
   max_jump_m: number;
@@ -58,7 +57,6 @@ export function defaultTrajectoryConfig(
     source_row_field: null,
     assumed_timezone: 'UTC',
     duplicate_time_policy: 'keep_all',
-    sort_policy: 'time_asc',
     max_gap_s: 3600,
     max_speed_kmh: 300,
     max_jump_m: 50000,

@@ -14,9 +14,9 @@ Time semantics:
 - epoch seconds/milliseconds are UTC by definition.
 - dates (no time component) are midnight in ``assumed_timezone``.
 
-Ordering: canonical ``time_asc`` sorts by (time, input order) — stable, and
-never uses the array index as identity. ``keep_input`` trusts input order
-and counts out-of-order rows for disclosure.
+Ordering: canonical sort by (time, input position) — stable, and never uses
+the array index as identity; input-order inversions are counted and
+disclosed before sorting.
 
 Duplicate times: policy per ``DuplicateTimePolicy``; ``keep_all`` keeps both
 and the resulting zero-dt interval is marked degenerate downstream (no fake
