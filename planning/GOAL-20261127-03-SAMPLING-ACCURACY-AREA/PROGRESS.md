@@ -70,3 +70,10 @@
 ## R2
 
 - 复审代理进行中（同一独立审查员，有 R1 上下文）。
+
+## 交付（2026-11-28）
+
+- 分支已推送：zcode/goal-probability-sampling-map-accuracy-20261127
+  （17 commits，base f34cb69dd 未移动，工作树干净）
+- **PR 已创建：#2291**（base master，61 文件 +9447/−60）
+- 状态：R2 GO；未自动合并；worktree/分支保留
