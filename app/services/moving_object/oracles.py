@@ -296,7 +296,7 @@ def bus_route_oracle(
     for bus in truth_entities:
         clock = t + timedelta(minutes=3 * truth_entities.index(bus))
         lon0, lat0 = stops_lonlat[0]
-        # approach stop 0
+        # approach stop 0: 600 m over 150 s (~14.4 km/h, 30 s sampling)
         clock = _emit_leg(feats, bus, clock, lon0, lat0, 90.0, 600.0,
                           cruise_leg_s // 2, rng)
         for stop_idx in range(3):
@@ -306,18 +306,27 @@ def bus_route_oracle(
             if stop_idx < 2:
                 clock = _emit_leg(feats, bus, clock, slon, slat, 90.0,
                                   leg_m, cruise_leg_s, rng)
+    # Truth derived from the emission parameters (30 s sampling):
+    # approach leg 150 s → 6 fixes; 3 dwells × 7 fixes; 2 cruise legs
+    # 300 s → 11 fixes each. Per bus = 6 + 21 + 22 = 49.
+    approach_fixes = cruise_leg_s // 2 // 30 + 1
+    cruise_fixes = cruise_leg_s // 30 + 1
+    dwell_fixes = dwell_duration_s // 30 + 1
     truth = {
         "entities": truth_entities,
-        "dwells_per_entity": 3,  # stops are dwells (approach stop counts)
-        "n_points_per_entity": 2 + 3 * (6 + 6),
+        "dwells_per_entity": 3,
+        "n_points_per_entity": approach_fixes + 3 * dwell_fixes
+        + 2 * cruise_fixes,
     }
     return _fc(feats), truth
 
 
-def _emit_leg(feats, bus, clock, lon, lat, az, dist_m, n_steps, rng):
-    """Emit a moving leg: n_steps+1 fixes at true geodesic offsets."""
+def _emit_leg(feats, bus, clock, lon, lat, az, dist_m, total_s, rng):
+    """Emit a moving leg: fixes every 30 s over ``total_s`` at realistic
+    speed (dist_m / total_s) — one fix + one per 30 s step."""
     from datetime import timedelta
     step_s = 30
+    n_steps = max(1, int(total_s // step_s))
     step_m = dist_m / n_steps
     lon_c, lat_c = lon, lat
     for i in range(n_steps + 1):

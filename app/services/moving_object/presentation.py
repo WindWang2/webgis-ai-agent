@@ -113,6 +113,18 @@ def build_map_fragment(product: Dict[str, Any], config: Dict[str, Any]) -> Dict[
         "time_window": None,
     }
 
+    # Constant (degenerate) domain → flat paint: interpolate stops must be
+    # strictly increasing, so a [v, v] domain would fail MapSpec validation
+    # (and a fabricated epsilon range would lie about the actual spread).
+    if constant:
+        line_paint: Dict[str, Any] = {
+            "line-color": {"method": "constant", "value": palette[0]},
+            "line-width": {"method": "constant", "value": width_range[0]},
+            "line-opacity": 0.9,
+        }
+    else:
+        line_paint = _speed_paint(domain, palette, width_range)
+
     trajectory_block = {
         "schema_version": "moving_object_trajectory.v1",
         "product_ref": product.get("product_ref"),
@@ -145,7 +157,7 @@ def build_map_fragment(product: Dict[str, Any], config: Dict[str, Any]) -> Dict[
             "id": f"traj-{family_id}-lines",
             "type": "line",
             "source": f"traj-{family_id}-lines-source",
-            "paint": _speed_paint(domain, palette, width_range),
+            "paint": line_paint,
             "legend_spec": legend_spec,
             "trajectory": trajectory_block,
             "data_binding": {"field": "speed_encoded", "field_type": "number"},
