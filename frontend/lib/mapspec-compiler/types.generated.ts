@@ -224,6 +224,7 @@ export interface MapSpecLayer {
   raster_style?: RasterExpressionSpec;
   symbol_asset?: MapSpecLayerSymbolAsset;
   diagram_symbol?: MapSpecLayerDiagramSymbol;
+  trajectory?: MapSpecLayerTrajectory;
 }
 
 export interface MapSpecLayerFlow {

@@ -87,8 +87,10 @@ Number = Union[StrictInt, StrictFloat]
 #: layout.labels.obstaclePolicy/forbiddenZones，纯 additive optional）。
 #: 2.2 = GOAL-20261126-04 地理锚定统计图符（layer.diagram_symbol 可选；
 #: 缺失 = 层走既有表达路径，存量 spec 行为不变）。
-KNOWN_VERSIONS: Tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10", "2.0", "2.1", "2.2")
-LATEST_VERSION = "2.2"
+#: 2.3 = GOAL-20261127-02 移动对象轨迹产品绑定（layer.trajectory 可选；
+#: 缺失 = 层走既有表达路径，存量 spec 行为不变）。
+KNOWN_VERSIONS: Tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10", "2.0", "2.1", "2.2", "2.3")
+LATEST_VERSION = "2.3"
 
 #: 版本缺省口径：lifecycle_engine 既有写入恒带 "1.0"；缺失视为 1.0 并披露。
 DEFAULT_VERSION = "1.0"
@@ -748,6 +750,23 @@ class MapSpecLayerFlow(_SpecModel):
     time_window: Optional[Dict[str, Any]] = None
     filters: Dict[str, Any] = Field(default_factory=dict)
 
+
+class MapSpecLayerTrajectory(_SpecModel):
+    """Session-owned moving-object trajectory product binding (2.3 additive,
+    GOAL-20261127-02). 缺失 = 非轨迹图层，行为不变。"""
+
+    schema_version: Literal["moving_object_trajectory.v1"]
+    product_ref: StrictStr
+    family_id: StrictStr
+    source_ref: StrictStr
+    source_revision: StrictInt
+    source_fingerprint: StrictStr
+    product_fingerprint: StrictStr
+    stats: Dict[str, Any] = Field(default_factory=dict)
+    encoding: Dict[str, Any] = Field(default_factory=dict)
+    coverage: Dict[str, Any] = Field(default_factory=dict)
+    assumptions: List[StrictStr] = Field(default_factory=list)
+
 class MapSpecLayerSymbolAssetCategoryRule(_SpecModel):
     """类别 → 资产映射的单条规则（typed key；S02：不字符串化合并）。"""
 
@@ -923,6 +942,9 @@ class MapSpecLayer(_SpecModel):
     #: 走既有表达路径，行为不变（schema 只承载，权威形状 =
     #: app/lib/cartography/diagram_symbols 的规范形 + 几何 oracle）。
     diagram_symbol: Optional[MapSpecLayerDiagramSymbol] = None
+    #: 2.3 additive（GOAL-20261127-02）：移动对象轨迹产品绑定。缺席 = 层
+    #: 走既有表达路径，行为不变（权威形状 = MapSpecLayerTrajectory.v1）。
+    trajectory: Optional[MapSpecLayerTrajectory] = None
 
 
 class MapThresholds(_SpecModel):
@@ -1759,6 +1781,10 @@ _UPGRADERS: Dict[Tuple[str, str], Callable[[Dict[str, Any]], Dict[str, Any]]] = 
     # layer.diagram_symbol 可选；缺失 = 层走既有表达路径，存量 spec
     # 行为逐字节不变）。
     ("2.1", "2.2"): lambda doc: doc,
+    # 2.3 相对 2.2 纯 additive（GOAL-20261127-02 移动对象轨迹产品绑定：
+    # layer.trajectory 可选；缺失 = 层走既有表达路径，存量 spec 行为
+    # 逐字节不变）。
+    ("2.2", "2.3"): lambda doc: doc,
 }
 
 
