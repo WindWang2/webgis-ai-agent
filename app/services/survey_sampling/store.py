@@ -158,21 +158,6 @@ def get_survey_document(
     return _read_json(_survey_dir(owner_scope, survey_id) / filename)
 
 
-async def append_records(
-    owner_scope: Dict[str, str], survey_id: str,
-    records: List[Dict[str, Any]],
-) -> None:
-    """调查记录 append-only 追加（进程内锁 + 行级 JSONL）。"""
-    async with _survey_lock(survey_id):
-        def _append() -> None:
-            path = _survey_dir(owner_scope, survey_id) / "records.jsonl"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with open(path, "a", encoding="utf-8") as f:
-                for rec in records:
-                    f.write(json.dumps(rec, ensure_ascii=False,
-                                       separators=(",", ":")) + "\n")
-        await asyncio.to_thread(_append)
-
 
 def load_records(owner_scope: Dict[str, str], survey_id: str) -> List[Dict[str, Any]]:
     path = _survey_dir(owner_scope, survey_id) / "records.jsonl"
@@ -191,38 +176,6 @@ def load_records(owner_scope: Dict[str, str], survey_id: str) -> List[Dict[str, 
                                survey_id)
     return out
 
-
-async def append_and_assign_versions(
-    owner_scope: Dict[str, str], survey_id: str,
-    rows: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
-    """追加记录并在**同一把锁内**分配版本号（R1 P2-2：版本竞态消除）。
-
-    ``rows`` 携带除 ``version`` 外的全部字段；返回带分配版本的副本
-    （append-only 顺序 = 调用顺序）。
-    """
-    async with _survey_lock(survey_id):
-        def _append() -> List[Dict[str, Any]]:
-            max_versions: Dict[str, int] = {}
-            for rec in load_records(owner_scope, survey_id):
-                sid = str(rec.get("sample_id"))
-                max_versions[sid] = max(max_versions.get(sid, 0),
-                                        int(rec.get("version", 0)))
-            assigned: List[Dict[str, Any]] = []
-            path = _survey_dir(owner_scope, survey_id) / "records.jsonl"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with open(path, "a", encoding="utf-8") as f:
-                for row in rows:
-                    sid = str(row.get("sample_id"))
-                    version = max_versions.get(sid, 0) + 1
-                    max_versions[sid] = version
-                    rec = dict(row)
-                    rec["version"] = version
-                    assigned.append(rec)
-                    f.write(json.dumps(rec, ensure_ascii=False,
-                                       separators=(",", ":")) + "\n")
-            return assigned
-        return await asyncio.to_thread(_append)
 
 
 async def append_and_bump(

@@ -668,7 +668,8 @@ async def estimate_survey(
     try:
         result = est_lib.stratified_estimate(
             counts, total_area=float(design.total_area))
-    except _LibNotEvaluable as exc:
+    except (_LibNotEvaluable, DegenerateData) as exc:
+        # DegenerateData 理论路径（R2-P3(e)）：构造期校验已挡，防御性 typed
         raise _map_lib_error(exc) from exc
     estimate_id = uuid.uuid4().hex[:16]
     payload = result.as_dict()

@@ -250,7 +250,7 @@ def preview_sample_size(
         warnings.append(
             f"allocation exceeded stratum population for small strata; "
             f"capped at N_h and {overflow_total} samples redistributed "
-            "proportionally to uncapped strata")
+            "equally among uncapped strata")
         # 溢出预算按未封顶层的权重比例再分配（仍不越 N_h；分配不完则披露）
         uncapped = [s for s in strata
                     if alloc[s.stratum_id] < s.N_units]

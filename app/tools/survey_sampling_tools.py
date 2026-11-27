@@ -332,7 +332,7 @@ def register_survey_sampling_tools(registry: ToolRegistry):
             for s in samples
         ]
         fc = {"type": "FeatureCollection", "features": features}
-        return {
+        out = {
             "success": True,
             "summary": (f"{len(features)} 个核查点"
                         f"（盲标={'是' if blind else '否'}，"
@@ -342,6 +342,9 @@ def register_survey_sampling_tools(registry: ToolRegistry):
             "blind": bool(blind),
             "survey_id": survey_id,
         }
+        if doc.get("blind_note"):
+            out["blind_note"] = doc["blind_note"]   # R2-P3(b)：披露一致性
+        return out
 
     @tool(registry, name="survey_record_reference",
           capabilities=["survey_sampling"],

@@ -71,6 +71,14 @@ not_evaluated），不把描述性准确率伪装成总体精度。
   JSONL 与 estimate artifact（publish_json_artifact）可读，跨域导出
   （data_delivery parquet）留作后续增量（避免 endgame 扩张）。
 
+## 行为变更（客户端可见，R2-P3(g)）
+- 创建调查后，所有记录写入（record_reference / import_records /
+  adjudicate）**必须携带 `expected_revision`**（先 GET survey state 获取）；
+  省略或过期 → 409 SURVEY_REVISION_CONFLICT（此前 None 会被静默放行）。
+  前端面板与 Pi 工具均已按此合同实现。
+- 盲标视图附 `blind_note` 披露（sample_id 为 uuid5 可派生——流程纪律
+  非密码学保证）。
+
 ## 迁移 / 兼容 / 回退
 - 无 DB 迁移（调查状态走 DATA_DIR 原子 JSON/JSONL + revision CAS，
   先例 field_compute receipt / modelops evaluations 目录）；
