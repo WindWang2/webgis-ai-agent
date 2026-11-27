@@ -459,3 +459,16 @@ GET,/health,admin:read,Y,N
 GET,/healthz,public:read,N,N
 GET,/metrics,metrics:read,N,N
 POST,/pi-tools/execute,session:write,N,N
+POST,/api/v1/publications,gis:write,N,Y
+POST,/api/v1/publications/preview,gis:read,N,Y
+GET,/api/v1/publications/sessions/{session_id},gis:read,N,Y
+GET,/api/v1/publications/{publication_id},gis:read,N,Y
+POST,/api/v1/publications/{publication_id}/publish,gis:write,N,Y
+POST,/api/v1/publications/{publication_id}/link,gis:write,N,Y
+DELETE,/api/v1/publications/{publication_id}/link,gis:write,N,Y
+POST,/api/v1/publications/{publication_id}/revoke,gis:write,N,Y
+GET,/api/v1/publications/shared/{share_code},gis:read,N,N
+GET,/api/v1/publications/shared/{share_code}/map,gis:read,N,N
+GET,/api/v1/publications/shared/{share_code}/layers/{layer_id}/data,gis:read,N,N
+GET,/api/v1/publications/shared/{share_code}/layers/{layer_id}/features,gis:read,N,N
+GET,/api/v1/publications/shared/{share_code}/summary,gis:read,N,N

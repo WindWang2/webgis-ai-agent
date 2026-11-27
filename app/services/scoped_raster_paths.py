@@ -14,7 +14,7 @@ def scoped_raster_roots(*, session_id: str | None = None, project_id: str | None
     if bool(session_id) == bool(project_id):
         raise DataFabricSecurityError("raster access requires exactly one owner scope")
     key = str(session_id or project_id)
-    reserved = {"uploads", "projects", "modelops", "content", "blobs", "cache", "exports", "tmp"}
+    reserved = {"uploads", "projects", "modelops", "content", "blobs", "cache", "exports", "tmp", "publications"}
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", key) or key.lower() in reserved:
         raise DataFabricSecurityError("invalid raster owner scope")
     data_root = Path(settings.DATA_DIR).resolve()

@@ -1283,6 +1283,10 @@ app.include_router(jobs_routes.router, prefix="/api/v1", tags=["任务管理"])
 # G30：可执行技能作业工作台（目录/prepare/start/运行回看/预设）。
 app.include_router(skill_job_routes.router, prefix="/api/v1", tags=["技能作业"])
 app.include_router(atlas_jobs_routes.router, prefix="/api/v1", tags=["地图制图"])
+# 04 线（GOAL-20261127-04）：交互式只读地图发布（作者面 UI/Pi 共用 service；
+# 读者面匿名 + share_code + 限流 —— 本产品唯一新增只读读者入口）
+from app.api.routes import publications as publication_routes  # noqa: E402
+app.include_router(publication_routes.router, prefix="/api/v1", tags=["只读地图发布"])
 app.include_router(task.router, prefix="/api/v1", tags=["任务管理"])
 app.include_router(upload.router, prefix="/api/v1", tags=["数据上传"])
 app.include_router(data_preparation_routes.router, prefix="/api/v1", tags=["数据准备"])
