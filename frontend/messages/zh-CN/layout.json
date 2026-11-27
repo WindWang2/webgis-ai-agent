@@ -56,7 +56,8 @@
     "modelops": "ModelOps",
     "ops": "运维",
     "cockpit": "控制台",
-    "model": "建模"
+    "model": "建模",
+    "survey": "精度核查"
   },
   "modes": {
     "explore": "探索",
@@ -89,7 +90,8 @@
       "market": "市场",
       "modelops": "ModelOps",
       "ops": "运维控制台",
-      "model": "模型构建器"
+      "model": "模型构建器",
+      "survey": "精度核查工作台"
     },
     "desc": {
       "chat": "AI 地理智能体",
@@ -105,7 +107,8 @@
       "market": "扩展市场 · 包浏览 · 下载",
       "modelops": "模型注册表 · 本会话运行",
       "ops": "集群 · 计划 · 运行时 · 断路器 · 健康",
-      "model": "可视化 GIS 模型 · 验证 · 发布 · 运行"
+      "model": "可视化 GIS 模型 · 验证 · 发布 · 运行",
+      "survey": "概率抽样调查 · 核查标注 · 精度估计"
     },
     "boundary": {
       "chat": "对话",
@@ -121,7 +124,8 @@
       "ops": "运维",
       "cockpit": "Agent 控制台",
       "market": "市场",
-      "model": "模型构建器"
+      "model": "模型构建器",
+      "survey": "精度核查工作台"
     },
     "resizeAria": "调整面板宽度",
     "resizeTitle": "拖拽调整面板宽度（双击复位）",

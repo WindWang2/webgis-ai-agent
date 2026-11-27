@@ -16,8 +16,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
@@ -28,7 +27,6 @@ from app.lib.survey_sampling import estimation as est_lib
 from app.lib.survey_sampling.estimation import (
     EstimationNotEvaluable as _LibNotEvaluable,
 )
-from app.lib.survey_sampling import frame as frame_lib
 from app.lib.survey_sampling import selection as sel_lib
 from app.lib.survey_sampling.design import (
     MIN_N_PER_STRATUM_HARD,
@@ -37,7 +35,7 @@ from app.lib.survey_sampling.design import (
     design_weights,
     preview_sample_size,
 )
-from app.lib.survey_sampling.frame import build_frame, frame_strata_specs
+from app.lib.survey_sampling.frame import build_frame
 from app.services.survey_sampling import store
 from app.services.survey_sampling.contracts import (
     MAX_CLASS_NAME_CHARS,
@@ -47,9 +45,6 @@ from app.services.survey_sampling.contracts import (
     NON_USABLE_STATUSES,
     REC_LABELLED,
     RECORD_STATUSES,
-    SUB_REASONS,
-    QUALITY_LEVELS,
-    EVIDENCE_TYPES,
     SurveySamplingError,
 )
 
@@ -586,12 +581,13 @@ def survey_progress(owner_scope: Dict[str, str], survey_id: str) -> Dict[str, An
     samples_doc = store.get_survey_document(owner_scope, survey_id,
                                             "samples.json") or {}
     effective = effective_labels(owner_scope, survey_id)
-    per_stratum: Dict[str, Dict[str, int]] = {}
+    per_stratum: Dict[str, Dict[str, Any]] = {}
     for s in samples_doc.get("samples", []):
         sid_h = str(s["stratum_id"])
         bucket = per_stratum.setdefault(sid_h, {
             "planned": 0, "main": 0, "backup": 0,
-            "labelled": 0, "nonusable": 0, "unvisited": 0})
+            "labelled": 0, "nonusable": 0, "unvisited": 0,
+            "response_rate": 0.0})
         if s.get("is_backup"):
             bucket["backup"] += 1
         else:

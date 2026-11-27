@@ -1062,6 +1062,23 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/raster-sampling/results` | Results | RasterSamplingResultsResponse |
 | `POST` | `/api/v1/raster-sampling/plan/{plan_id}/cancel` | Cancel | RasterSamplingCancelResponse |
 
+### 抽样调查
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/api/v1/survey/frame` | Build Frame | SurveyFrameResponse |
+| `GET` | `/api/v1/survey/frames` | List Frames | FrameListResponse |
+| `POST` | `/api/v1/survey/design/preview` | Preview Design | DesignPreviewResponse |
+| `POST` | `/api/v1/survey/create` | Create Survey | SurveyCreateResponse |
+| `GET` | `/api/v1/survey/{survey_id}` | Survey Detail | SurveyDetailResponse |
+| `GET` | `/api/v1/survey/{survey_id}/progress` | Survey Progress | ProgressResponse |
+| `POST` | `/api/v1/survey/{survey_id}/records` | Record Reference | RecordResponse |
+| `POST` | `/api/v1/survey/{survey_id}/records/import` | Import Records | ImportResponse |
+| `POST` | `/api/v1/survey/{survey_id}/adjudicate` | Adjudicate | RecordResponse |
+| `POST` | `/api/v1/survey/{survey_id}/estimate` | Estimate | EstimateResponse |
+| `GET` | `/api/v1/survey/{survey_id}/estimates` | List Estimates | EstimatesListResponse |
+| `GET` | `/api/v1/surveys` | List Surveys | SurveyListResponse |
+
 ### 控制点影像配准 (G48)
 
 | 方法 | 路径 | 说明 | 响应模型 |
@@ -1672,6 +1689,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `DELETE` | `/api/v1/temporal-media/jobs/{job_id}` | Cancel Job | object |
 | `GET` | `/api/v1/temporal-media/jobs/{job_id}/result` | Get Job Result | object |
 
-_端点总数：790（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：802（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->

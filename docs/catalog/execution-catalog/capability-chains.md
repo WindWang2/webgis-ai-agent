@@ -75,6 +75,14 @@
 - status: native；version: 1.0
 - algorithm `cartography.scale.inspect`（priority=10）→ tools: webgis_inspect_map_scale_profile
 
+## cartography_scale_portrayal_apply（多尺度表达策略应用）
+- status: planned；version: 1.0
+- （无 native 算法实现）
+
+## cartography_scale_portrayal_inspect（多尺度表达检查（只读））
+- status: planned；version: 1.0
+- （无 native 算法实现）
+
 ## cartography_scale_preview（多尺度表达计划预览）
 - status: native；version: 1.0
 - algorithm `cartography.scale.preview`（priority=10）→ tools: webgis_preview_scale_representation
@@ -116,6 +124,11 @@
 - output: polygon_feature_set
 - algorithm `geometry.convex_hull`（priority=10；scientific=VALIDATED）→ tools: convex_hull
 
+## coordinate_operations（可审阅坐标操作与派生重投影）
+- status: native；version: 1.0
+- output: feature_collection
+- algorithm `coordinate.operations.reproject`（priority=10）→ tools: webgis_coordop_execute
+
 ## cost_distance_analysis（累积成本面）
 - status: native；version: 1.0
 - input: raster_surface, terrain_surface
@@ -140,6 +153,16 @@
 - status: planned；version: 1.0
 - algorithm `platform.crs_transformation`（priority=50）→ tools: reproject_coordinates, transform_coordinates
 
+## data_fusion_authoring（多源实体融合）
+- status: native；version: 1.0
+- output: feature_collection
+- （无 native 算法实现）
+
+## data_join_authoring（数据关联与空间富集）
+- status: native；version: 1.0
+- output: feature_collection, stats_table
+- algorithm `data.join.authoring`（priority=10）→ tools: webgis_data_join_execute
+
 ## data_preparation（数据集准备）
 - status: native；version: 1.0
 - algorithm `data.prepare`（priority=10）→ tools: prepare_dataset
@@ -152,6 +175,14 @@
 - status: native；version: 1.0
 - output: feature_collection
 - algorithm `data.ingest.pipeline`（priority=10）→ tools: ingest_dataset
+
+## dataset_ingestion（导入批次提交）
+- status: planned；version: 1.0
+- （无 native 算法实现）
+
+## dataset_preparation（导入计划与批次预览）
+- status: planned；version: 1.0
+- （无 native 算法实现）
 
 ## dataset_profiling_quality（数据画像与质量）
 - status: planned；version: 1.0
@@ -181,6 +212,10 @@
 - output: raster_surface
 - algorithm `remote.endmember_vca`（priority=20；scientific=EXPERIMENTAL）→ tools: extract_endmembers_vca
 
+## evidence_map_brief（证据化地图简报）
+- status: planned；version: 1.0
+- algorithm `platform.evidence_map_brief`（priority=50）→ tools: brief_create_draft, brief_inspect_evidence, brief_update_block, brief_preflight, brief_freeze_release, brief_export
+
 ## external_route_planning（外部路径规划）
 - status: native；version: 1.0
 - input: poi_feature_set, point_feature_set
@@ -191,6 +226,30 @@
 - status: native；version: 1.0
 - output: stats_table
 - algorithm `data.federated.chain`（priority=10）→ tools: query_federated_chain
+
+## field_compute（类型化字段计算）
+- status: planned；version: 1.0
+- （无 native 算法实现）
+
+## frame_product_bind（多画幅产品绑定）
+- status: planned；version: 1.0
+- （无 native 算法实现）
+
+## frame_product_plan（多画幅产品计划）
+- status: planned；version: 1.0
+- （无 native 算法实现）
+
+## frame_product_status（多画幅产品状态）
+- status: planned；version: 1.0
+- （无 native 算法实现）
+
+## frame_product_unbind（多画幅产品解绑）
+- status: planned；version: 1.0
+- （无 native 算法实现）
+
+## frame_product_update（多画幅产品更新）
+- status: planned；version: 1.0
+- （无 native 算法实现）
 
 ## general_g（Getis-Ord General G）
 - status: native；version: 1.0
@@ -364,6 +423,11 @@
 - output: line_feature_set
 - algorithm `terrain.least_cost_path`（priority=47；scientific=VALIDATED）→ tools: least_cost_path_analysis
 
+## linked_exploration（多图联合筛选与持久探索视图）
+- status: native；version: 1.0
+- output: stats_table
+- algorithm `data.linked_exploration.preview`（priority=50）→ tools: webgis_exploration_preview
+
 ## local_data_query（本地数据目录与查询）
 - status: planned；version: 1.0
 - algorithm `platform.local_data_query`（priority=50）→ tools: get_local_osm_catalog, get_local_stats_catalog, query_local_osm, query_local_yearbook, query_osm_buildings, query_osm_roads
@@ -411,6 +475,10 @@
 - status: planned；version: 1.0
 - algorithm `platform.map_export_publishing`（priority=50）→ tools: export_batch_maps, export_thematic_map, webgis_cartography_status, webgis_compile_maplibre, webgis_project_init, webgis_runtime_validate, webgis_validate
 
+## map_label_authoring（要素级标注人工控制）
+- status: planned；version: 1.0
+- （无 native 算法实现）
+
 ## map_viewport_control（地图视口控制）
 - status: planned；version: 1.0
 - algorithm `platform.map_viewport_control`（priority=50）→ tools: fly_to_location, set_map_view, reset_map_view, zoom_to_bbox, zoom_to_layer, webgis_view_set
@@ -441,7 +509,7 @@
 - status: native；version: 1.0
 - input: raster_surface
 - output: feature_collection
-- algorithm `model.inference.embedding`（priority=30；scientific=VALIDATED）→ tools: modelops_run_inference, modelops_run_promptable
+- algorithm `model.inference.embedding`（priority=30；scientific=VALIDATED）→ tools: modelops_run_inference, modelops_run_promptable, geoai_embed
 
 ## model_image_segmentation（模型影像分割）
 - status: native；version: 1.0
@@ -512,7 +580,7 @@
 
 ## od_flow_mapping（OD 流向图）
 - status: native；version: 1.0
-- input: line_feature_set, od_matrix, od_table
+- input: line_feature_set, od_table
 - output: line_feature_set
 - algorithm `flow.od_arc_build`（priority=10；scientific=VALIDATED）→ tools: od_flow_edges
 
@@ -531,7 +599,7 @@
 
 ## plan_workflow_orchestration（计划与工作流编排）
 - status: planned；version: 1.0
-- algorithm `platform.plan_workflow_orchestration`（priority=50）→ tools: cancel_execution_run, execute_execution_plan, execute_plan, get_execution_run, get_plan_status, propose_plan, rerun_workflow, save_plan_as_workflow, validate_execution_plan, webgis_action_plan, catalog_discover, catalog_lookup, capability_runtime_status, catalog_conformance, gis_task_classify, gis_method_qualify, gis_method_rank, gis_method_explain, gis_skill_search, gis_skill_detail, gis_skill_replay_check, gis_skill_policy, webgis_analysis_workflow_plan, webgis_analysis_workflow_run, webgis_analysis_workflow_status, webgis_analysis_workflow_recompute
+- algorithm `platform.plan_workflow_orchestration`（priority=50）→ tools: cancel_execution_run, execute_execution_plan, execute_plan, get_execution_run, get_plan_status, propose_plan, rerun_workflow, save_plan_as_workflow, validate_execution_plan, webgis_action_plan, catalog_discover, catalog_lookup, capability_runtime_status, catalog_conformance, gis_task_classify, gis_method_qualify, gis_method_rank, gis_method_explain, gis_skill_search, gis_skill_detail, gis_skill_replay_check, gis_skill_policy, webgis_analysis_workflow_plan, webgis_analysis_workflow_run, webgis_analysis_workflow_status, webgis_analysis_workflow_recompute, gis_skill_job_prepare, gis_skill_job_start, gis_skill_job_status, webgis_requirement_compile, webgis_goal_repair_start, webgis_method_experiment_inspect, webgis_method_experiment_plan, webgis_method_experiment_run, webgis_method_experiment_status, webgis_method_experiment_compare, webgis_method_experiment_adopt
 
 ## poi_query（POI 要素获取）
 - status: native；version: 1.0
@@ -557,6 +625,10 @@
 - output: point_feature_set
 - geometry: point
 - algorithm `profile.spatial.stats`（priority=10；scientific=VALIDATED）→ tools: spatial_stats, webgis_source_profile
+
+## project_source_version_inventory（项目源版本盘点）
+- status: planned；version: 1.0
+- （无 native 算法实现）
 
 ## proximity_buffer（邻近缓冲）
 - status: native；version: 1.0
@@ -620,6 +692,34 @@
 - input: admin_aggregate_table, admin_boundary_set, polygon_feature_set
 - output: admin_aggregate_table
 - algorithm `stats.rate_smoothing`（priority=15；scientific=VALIDATED）→ tools: rate_smoothing
+
+## refresh_atomic_adoption（刷新原子采纳）
+- status: planned；version: 1.0
+- （无 native 算法实现）
+
+## refresh_candidate_discard（刷新候选丢弃）
+- status: planned；version: 1.0
+- （无 native 算法实现）
+
+## refresh_candidate_execution（刷新候选执行）
+- status: planned；version: 1.0
+- （无 native 算法实现）
+
+## refresh_impact_explanation（过期地图解释）
+- status: planned；version: 1.0
+- （无 native 算法实现）
+
+## refresh_impact_preview（刷新影响预览）
+- status: planned；version: 1.0
+- （无 native 算法实现）
+
+## refresh_status_query（刷新状态查询）
+- status: planned；version: 1.0
+- （无 native 算法实现）
+
+## refresh_version_rollback（刷新版本回退）
+- status: planned；version: 1.0
+- （无 native 算法实现）
 
 ## regression_kriging（回归克里金）
 - status: native；version: 1.0
@@ -746,7 +846,7 @@
 - algorithm `network.isochrone.local`（priority=30；scientific=VALIDATED）→ tools: isochrone_network
 - algorithm `network.service_area.multi`（priority=25；scientific=VALIDATED）→ tools: network_service_area
 - algorithm `network.service_area.simple`（priority=20；scientific=EXPERIMENTAL）→ tools: service_area_simple
-- algorithm `network.service_coverage.consistency`（priority=15；scientific=VALIDATED）→ tools: network_service_coverage_consistency
+- algorithm `network.service_coverage.consistency`（priority=35；scientific=VALIDATED）→ tools: network_service_coverage_consistency
 
 ## shortest_path（最短路径）
 - status: native；version: 1.0
@@ -766,6 +866,14 @@
 - output: stats_table
 - geometry: point
 - algorithm `point_pattern.space_time_k`（priority=20；scientific=VALIDATED）→ tools: space_time_k_analysis
+
+## spatial_clustering（空间聚类）
+- status: native；version: 1.0
+- input: poi_feature_set, point_feature_set
+- output: point_feature_set
+- geometry: point
+- algorithm `spatial.cluster.dbscan`（priority=50；scientific=VALIDATED）→ tools: spatial_cluster
+- algorithm `spatial.cluster.kmeans`（priority=50；scientific=VALIDATED）→ tools: spatial_cluster
 
 ## spatial_interaction（空间相互作用）
 - status: native；version: 1.0
@@ -851,6 +959,14 @@
 - input: raster_surface
 - output: raster_surface
 - algorithm `remote.linear_unmixing`（priority=15；scientific=VALIDATED）→ tools: linear_unmixing
+
+## survey_sampling（概率抽样调查）
+- status: native；version: 1.0
+- input: raster_object, stats_table
+- output: point_feature_set, stats_table
+- algorithm `survey.design_preview`（priority=20；scientific=VALIDATED）→ tools: survey_design_preview
+- algorithm `survey.frame_build`（priority=20；scientific=VALIDATED）→ tools: survey_frame_preview
+- algorithm `survey.stratified_estimate`（priority=20；scientific=VALIDATED）→ tools: survey_estimate
 
 ## tasseled_cap_transformation（Tasseled Cap 冠层变换）
 - status: native；version: 1.0
@@ -1028,7 +1144,7 @@
 
 ## thematic_cartography（专题制图与样式）
 - status: planned；version: 1.0
-- algorithm `platform.thematic_cartography`（priority=50）→ tools: apply_layer_style, apply_template, combine_map_theme, control_floating_chart, create_3d_extrusion_map, create_thematic_map, list_templates, webgis_component_update, webgis_layout_set, webgis_map_combine, webgis_layer_upsert, webgis_layer_remove, webgis_map_intent, webgis_map_product, webgis_apply_composition, webgis_discover_components, webgis_plan_component_replace, gis_template_plan, plan_map_scene, set_map_scene, gis_component_query, add_tile_service_layer, set_scene_assets, webgis_compile_map_plan, webgis_map_design_select, webgis_product_edit, webgis_list_composition_template_assets, webgis_save_composition_template
+- algorithm `platform.thematic_cartography`（priority=50）→ tools: apply_layer_style, apply_template, combine_map_theme, control_floating_chart, create_3d_extrusion_map, create_thematic_map, list_templates, webgis_component_update, webgis_layout_set, webgis_map_combine, webgis_layer_upsert, webgis_layer_remove, webgis_map_intent, webgis_map_product, webgis_apply_composition, webgis_discover_components, webgis_plan_component_replace, gis_template_plan, plan_map_scene, set_map_scene, gis_component_query, add_tile_service_layer, set_scene_assets, webgis_compile_map_plan, webgis_map_design_select, webgis_product_edit, webgis_list_composition_template_assets, webgis_save_composition_template, webgis_thematic_style_inspect, webgis_thematic_style_preview, webgis_thematic_style_apply, webgis_bivariate_reliability_inspect, webgis_bivariate_reliability_preview, webgis_bivariate_reliability_apply, webgis_dorling_cartogram_inspect, webgis_dorling_cartogram_plan, webgis_dorling_cartogram_run, webgis_dorling_cartogram_status, webgis_dorling_cartogram_apply, webgis_dorling_cartogram_export
 
 ## traffic_status（实时路况）
 - status: native；version: 1.0
@@ -1086,7 +1202,7 @@
 
 ## workspace_state_inspection（工作空间状态检视）
 - status: native；version: 1.0
-- algorithm `workspace.inspection.readonly`（priority=10）→ tools: describe_workspace, list_workspace_snapshots
+- algorithm `workspace.inspection.readonly`（priority=10）→ tools: describe_workspace, list_workspace_snapshots, describe_artifact, find_artifacts_by_role, get_lineage, list_analysis_assets, list_datasets, search_datasets, list_uploaded_data, get_upload_info, import_batch_inspect, import_batch_receipt, import_commit_status, inventory_layers, field_compute_status
 
 ## zonal_statistics（分区统计）
 - status: native；version: 1.0

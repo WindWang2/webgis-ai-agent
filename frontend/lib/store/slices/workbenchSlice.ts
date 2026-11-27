@@ -41,8 +41,9 @@ export const MODE_TABS: Record<WorkbenchMode, readonly string[]> = {
   // ADR-0142：ops 运维控制台对全部模式可见（尾部追加，居词表尾）。
   // 'cockpit'（Agent 运行控制台）对全部模式可见（尾部追加，居词表尾）。
   // 'model'（可视化 GIS 模型构建器）对全部模式可见（尾部追加，居词表尾）。
+  // 'survey'（概率抽样调查与精度核查）仅 analyze 模式可见（尾部追加，居词表尾）。
   explore: ['chat', 'layers', 'data_sources', 'project', 'tasks', 'lakehouse', 'market', 'modelops', 'ops', 'cockpit', 'model'],
-  analyze: ['chat', 'analysis', 'results', 'layers', 'tasks', 'lakehouse', 'market', 'modelops', 'ops', 'cockpit', 'model'],
+  analyze: ['chat', 'analysis', 'results', 'layers', 'tasks', 'lakehouse', 'market', 'modelops', 'ops', 'cockpit', 'model', 'survey'],
   compose: ['chat', 'components', 'export_layout', 'exports', 'layers', 'market', 'modelops', 'ops', 'cockpit', 'model'],
 };
 

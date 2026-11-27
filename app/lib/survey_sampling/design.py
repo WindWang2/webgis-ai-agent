@@ -18,7 +18,7 @@ v1 仅交付**数学上可证**的设计类型：``stratified_srs``（按地图�
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, Optional
 
 import numpy as np

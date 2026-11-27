@@ -1,7 +1,6 @@
 """可复现选样测试（WP2 selection）。"""
 from __future__ import annotations
 
-import numpy as np
 import pytest
 
 from app.lib.survey_sampling.design import SurveyDesign, StratumSpec

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -114,7 +114,7 @@ def to_wgs84(crs: str, x: float, y: float) -> Tuple[float, float]:
 def _pixel_geodesic_areas(
     transform: Sequence[float], crs: str,
     width: int, height: int,
-) -> Tuple[float, float, float]:
+) -> Tuple[float, float]:
     """跨框采样像元测地面积 → (均值, max/min−1 相对变化)。
 
     像元四角 → WGS84 → Geod.polygon_area_perimeter（椭球面积）。

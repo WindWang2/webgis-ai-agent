@@ -126,8 +126,6 @@ def test_journey1_full_loop_hand_check(survey_env):
 
 async def _samples_via_tool_path(scope, survey_id):
     """工具面 survey_samples 同一 service 出口（地图引用一致性）。"""
-    from app.tools.survey_sampling_tools import SamplesArgs
-    from app.tools import survey_sampling_tools as tools_mod
 
     # 直接调用工具实现（绕过 registry 装饰器闭包——工具经注册一致性另测）
     doc = service.survey_detail(scope, survey_id, blind=True)
@@ -190,7 +188,7 @@ def test_journey2_stale_and_redesign_keeps_history(survey_env):
     ref_id2 = None
     from app.services.session_data import session_data_manager
 
-    ref_id2 = await_err = _run(session_data_manager.store(
+    ref_id2 = _run(session_data_manager.store(
         "sess-survey-journey",
         {"kind": "numeric_raster", "file_path": cls_path},
         prefix="raster"))
@@ -235,7 +233,7 @@ def test_journey3_dual_entry_same_service_and_user_authority(survey_env):
     assert res_agent["revision"] == res_ui["revision"] + 1
 
     # 用户修改自己的记录（版本递增，旧版保留）
-    res_fix = _run(service.record_reference(
+    _run(service.record_reference(
         scope, survey_id, sample_id=mains[0]["sample_id"],
         status="labelled", reference_class="crop",
         evidence_type="field_visit", actor="user",

@@ -34,6 +34,7 @@ import {
   Workflow,
   Store,
   Cpu,
+  Target,
   Maximize2,
   Minimize2,
 } from 'lucide-react';
@@ -67,6 +68,7 @@ import { AgentOpsCockpit } from '@/components/cockpit/agent-ops-cockpit';
 import { MarketTab } from '@/components/sidebar/market/market-tab';
 import { ModelOpsTab } from '@/components/sidebar/modelops/modelops-tab';
 import { ModelBuilderTab } from '@/components/model-builder/model-builder-tab';
+import { SamplingAccuracyPanel } from '@/components/sidebar/sampling-accuracy/sampling-accuracy-panel';
 import { PanelErrorBoundary } from '@/components/layout/panel-error-boundary';
 import { BottomSheet } from '@/components/layout/bottom-sheet';
 import type { LayoutMode } from '@/lib/hooks/use-layout-mode';
@@ -166,6 +168,8 @@ const PANEL_META: Record<string, PanelMeta> = {
   // V9（ADR-0145）：智能资产面板（append-only 注册行）。
   market: { icon: Store },
   modelops: { icon: Cpu },
+  // 概率抽样调查与精度核查工作台（append-only 注册行）。
+  survey: { icon: Target },
 };
 
 export function ContextPanel({
@@ -662,6 +666,12 @@ export function ContextPanel({
         {activeTab === 'model' && (
           <PanelErrorBoundary label={t('panel.boundary.model')}>
             <ModelBuilderTab ownerToken={ownerToken} />
+          </PanelErrorBoundary>
+        )}
+        {/* 概率抽样调查与精度核查工作台（建框→设计→创建→核查→估计）。 */}
+        {activeTab === 'survey' && (
+          <PanelErrorBoundary label={t('panel.boundary.survey')}>
+            <SamplingAccuracyPanel sessionId={sessionId} ownerToken={ownerToken} />
           </PanelErrorBoundary>
         )}
       </div>

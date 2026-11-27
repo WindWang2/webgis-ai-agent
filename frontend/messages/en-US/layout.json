@@ -56,7 +56,8 @@
     "modelops": "ModelOps",
     "ops": "Ops",
     "cockpit": "Cockpit",
-    "model": "Models"
+    "model": "Models",
+    "survey": "Accuracy"
   },
   "modes": {
     "explore": "Explore",
@@ -89,7 +90,8 @@
       "market": "Market",
       "modelops": "ModelOps",
       "ops": "Ops console",
-      "model": "Model Builder"
+      "model": "Model Builder",
+      "survey": "Accuracy Workbench"
     },
     "desc": {
       "chat": "AI geospatial agent",
@@ -105,7 +107,8 @@
       "market": "Extension market · browse · download",
       "modelops": "Model registry · in-session runs",
       "ops": "Cluster · Plans · Runtime · Breakers · Health",
-      "model": "Visual GIS models · validate · publish · run"
+      "model": "Visual GIS models · validate · publish · run",
+      "survey": "Probability survey · verification labelling · accuracy estimation"
     },
     "boundary": {
       "chat": "Chat",
@@ -121,7 +124,8 @@
       "ops": "Ops",
       "cockpit": "Agent Cockpit",
       "market": "Market",
-      "model": "Model Builder"
+      "model": "Model Builder",
+      "survey": "Accuracy Workbench"
     },
     "resizeAria": "Resize panel",
     "resizeTitle": "Drag to resize panel (double-click to reset)",
