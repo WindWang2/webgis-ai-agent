@@ -77,23 +77,34 @@ class RegionGeometryError(MovingObjectError):
 
 @dataclass
 class RegionSet:
-    """Validated, prepared regions in three longitude frames."""
+    """Validated, prepared regions in three longitude frames.
+
+    ``_bounds[idx]`` holds (minx, miny, maxx, maxy) per frame for the
+    O(1) pre-filter inside ``inside``/``segment_reaches`` — prepared
+    predicates are correct but not free, and trajectory walks evaluate
+    them once per (fix × region × frame).
+    """
 
     ids: List[str] = field(default_factory=list)
     geoms: List[BaseGeometry] = field(default_factory=list)      # prepared
     interiors: List[BaseGeometry] = field(default_factory=list)  # prepared (open rule)
     shifted: List[List[BaseGeometry]] = field(default_factory=list)
+    _bounds: List[List[Tuple[float, float, float, float]]] = field(default_factory=list)
     boundary_rule: str = "closed"
     notes: List[str] = field(default_factory=list)
 
+    def _bbox_hit(self, region_idx: int, frame_idx: int, x: float, y: float) -> bool:
+        minx, miny, maxx, maxy = self._bounds[region_idx][frame_idx]
+        return minx <= x <= maxx and miny <= y <= maxy
+
     def inside(self, region_idx: int, lon: float, lat: float) -> bool:
         """Active-rule inside test for one fix across lon frames."""
-        pt = Point(lon, lat)
         rule = self.boundary_rule
         for frame_idx, off in enumerate(_LON_FRAMES):
-            geom = self.shifted[region_idx][frame_idx]
-            if geom.is_empty:
+            if not self._bbox_hit(region_idx, frame_idx, lon, lat):
                 continue
+            pt = Point(lon, lat)
+            geom = self.shifted[region_idx][frame_idx]
             if rule == "closed":
                 if shp_covers(geom, pt):
                     return True
@@ -112,18 +123,23 @@ class RegionSet:
             lon_b -= 360.0
         elif d < -180.0:
             lon_b += 360.0
-        line = LineString([(lon_a, lat_a), (lon_b, lat_b)])
         rule = self.boundary_rule
-        for off in _LON_FRAMES:
+        for frame_idx, off in enumerate(_LON_FRAMES):
+            # Segment bbox (in this frame) vs region bbox: O(1) reject.
+            la = lon_a + off
+            lb = lon_b + off
+            sx0, sx1 = (la, lb) if la <= lb else (lb, la)
+            sy0, sy1 = (lat_a, lat_b) if lat_a <= lat_b else (lat_b, lat_a)
+            minx, miny, maxx, maxy = self._bounds[region_idx][frame_idx]
+            if sx1 < minx or sx0 > maxx or sy1 < miny or sy0 > maxy:
+                continue
             target = self.geoms[region_idx] if rule == "closed" else (
                 self.interiors[region_idx]
             )
             if target.is_empty:
                 continue
-            test = line if off == 0.0 else shapely.affinity.translate(
-                line, xoff=off
-            )
-            if shp_intersects(target, test):
+            line = LineString([(la, lat_a), (lb, lat_b)])
+            if shp_intersects(target, line):
                 return True
         return False
 
@@ -196,6 +212,11 @@ def load_regions(
         ])
         for g in out.shifted[-1]:
             prepare(g)
+        out._bounds.append([
+            (
+                g.bounds if not g.is_empty else (0.0, 0.0, -1.0, -1.0)
+            ) for g in out.shifted[-1]
+        ])
 
     out.notes.append(
         f"boundary_rule={cfg.boundary_rule}: a fix exactly on the region "
