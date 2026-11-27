@@ -21,6 +21,7 @@ from app.schemas.report_schema import (  # noqa: F401 - 模块属性保持（tes
 from app.models.api_response import ApiResponse, ErrCode
 from app.models.report import Report
 from app.services.report_service import recover_interrupted_report, ReportService, REPORT_DIR, serialize_report as _serialize_report, file_ext as _file_ext
+from app.services.report_service import validate_report_path as _validate_file_path
 from app.services.mapspec_store import mapspec_store
 from app.api.report_sharing import limit_public_report_access, public_report_projection
 
@@ -30,16 +31,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/reports", tags=["报告生成"])
 
 ALLOWED_FORMATS = {"pdf", "html", "markdown", "md"}
-
-
-# ── Schemas ──────────────────────────────────────────────────────────
-
-
-def _validate_file_path(file_path: str, allowed_dir: str) -> bool:
-    """Ensure file_path resolves within allowed_dir (prevents traversal)."""
-    resolved = os.path.realpath(file_path)
-    root = os.path.realpath(allowed_dir)
-    return resolved == root or resolved.startswith(root + os.sep)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────

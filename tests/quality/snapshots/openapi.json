@@ -14450,6 +14450,63 @@
     "title": "GenerateReportRequest",
     "type": "object"
    },
+   "GeneratedFileItem": {
+    "properties": {
+     "created_at": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Created At"
+     },
+     "download_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Download Url"
+     },
+     "format": {
+      "title": "Format",
+      "type": "string"
+     },
+     "id": {
+      "title": "Id",
+      "type": "string"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "source": {
+      "enum": [
+       "export",
+       "report",
+       "delivery"
+      ],
+      "title": "Source",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "name",
+     "format",
+     "source",
+     "created_at",
+     "download_url"
+    ],
+    "title": "GeneratedFileItem",
+    "type": "object"
+   },
    "GeoJSONExportRequest": {
     "description": "POST /export/geojson 请求体。",
     "examples": [
@@ -30213,6 +30270,22 @@
      }
     },
     "title": "SessionFeaturePageResponse",
+    "type": "object"
+   },
+   "SessionGeneratedFilesResponse": {
+    "properties": {
+     "items": {
+      "items": {
+       "$ref": "#/components/schemas/GeneratedFileItem"
+      },
+      "title": "Items",
+      "type": "array"
+     }
+    },
+    "required": [
+     "items"
+    ],
+    "title": "SessionGeneratedFilesResponse",
     "type": "object"
    },
    "SessionListResponse": {
@@ -47889,6 +47962,71 @@
      }
     ],
     "summary": "Query Flow",
+    "tags": [
+     "AI对话",
+     "对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/generated-files": {
+   "get": {
+    "description": "List the exports, reports and data deliveries available to the session owner.",
+    "operationId": "get_session_generated_files_api_v1_chat_sessions__session_id__generated_files_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SessionGeneratedFilesResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Session Generated Files",
     "tags": [
      "AI对话",
      "对话"

@@ -23,11 +23,12 @@ function isProtectedPath(path: string): boolean {
     return false;
   }
   // /api/v1/export/download/{filename}
-  if (path.startsWith('/api/v1/export/download/')) return true;
+  if (/^\/api\/v1\/export\/download\/[^/]+$/.test(path)) return true;
   // /api/v1/reports/{id}/download
   if (/^\/api\/v1\/reports\/[^/]+\/download$/.test(path)) return true;
   // /api/v1/georeferencing/artifacts/{id}/download
   if (/^\/api\/v1\/georeferencing\/artifacts\/[^/]+\/download$/.test(path)) return true;
+  if (/^\/api\/v1\/data-delivery\/jobs\/[^/]+\/download$/.test(path)) return true;
   return false;
 }
 
@@ -63,15 +64,17 @@ export function filenameFromUrl(url: string): string {
  */
 export async function downloadWithAuth(
   url: string,
-  options: ApiFetchOptions & { filename?: string } = {},
+  options: ApiFetchOptions & { filename?: string; fallbackFilename?: string } = {},
 ): Promise<void> {
   // apiFetchBlob's buildRequest prepends API_BASE — hand it the origin-
   // relative path, never the absolute URL (double-prefix bug).
   const path = toApiPath(url);
   const { blob, filename: dispositionName } = await apiFetchBlob(path, options);
+  options.signal?.throwIfAborted();
   const finalName =
     options.filename ??
     dispositionName ??
+    options.fallbackFilename ??
     filenameFromUrl(url);
   triggerBlobDownload(blob, finalName);
 }

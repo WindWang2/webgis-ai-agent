@@ -500,6 +500,10 @@
   "receipt": "null|object",
   "verdict": "string"
  },
+ "GET /api/v1/chat/sessions/{session_id}/generated-files": {
+  "__model__": "SessionGeneratedFilesResponse",
+  "items": "array<GeneratedFileItem>"
+ },
  "GET /api/v1/chat/sessions/{session_id}/interaction-events/projection": {
   "__model__": "InteractionProjectionResponse",
   "projection": "object",

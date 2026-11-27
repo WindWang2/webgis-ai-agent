@@ -2,7 +2,7 @@
 报告生成服务 - 从会话历史生成 PDF/HTML/Markdown 报告
 使用 Jinja2 模板渲染 HTML，WeasyPrint 转换为 PDF
 """
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from app.services.data_fabric.security import DataFabricSecurity, DataFabricSecurityError, make_safe_session
 import asyncio
 import functools
@@ -122,6 +122,17 @@ def file_ext(fmt: str) -> str:
     return fmt
 
 
+def validate_report_path(file_path: str, allowed_dir: str) -> bool:
+    """Ensure file_path resolves within the report directory."""
+    resolved = os.path.realpath(file_path)
+    root = os.path.realpath(allowed_dir)
+    return resolved == root or resolved.startswith(root + os.sep)
+
+
+def report_download_url(report_id: str) -> str:
+    return f"/api/v1/reports/{quote(report_id, safe='')}/download"
+
+
 def serialize_report(r: Report) -> dict:
     return {
         "id": r.id,
@@ -136,7 +147,7 @@ def serialize_report(r: Report) -> dict:
         ),
         "error_message": r.error_message,
         "created_at": r.created_at.isoformat() if r.created_at else None,
-        "download_url": f"/api/v1/reports/{r.id}/download" if r.status == "completed" else None,
+        "download_url": report_download_url(r.id) if r.status == "completed" else None,
     }
 
 

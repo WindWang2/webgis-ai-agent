@@ -1199,8 +1199,19 @@ async def list_delivery_jobs(
                                    limit)
 
 
+async def list_completed_session_deliveries(
+    actor: DeliveryActor, session_id: str,
+) -> List[DeliveryJobView]:
+    from fastapi.concurrency import run_in_threadpool
+
+    return await run_in_threadpool(
+        _list_delivery_jobs_sync, actor, None, None, completed_session=session_id,
+    )
+
+
 def _list_delivery_jobs_sync(
-    actor: DeliveryActor, project_id: Optional[str], limit: int,
+    actor: DeliveryActor, project_id: Optional[str], limit: Optional[int],
+    *, completed_session: Optional[str] = None,
 ) -> List[DeliveryJobView]:
     from sqlalchemy import exists as sa_exists
     from sqlalchemy import or_ as sa_or
@@ -1257,8 +1268,11 @@ def _list_delivery_jobs_sync(
     )
     if project_id:
         stmt = stmt.where(AnalysisTask.project_id == project_id)
-    stmt = stmt.order_by(
-        AnalysisTask.created_at.desc()).limit(max(1, min(limit, 200)))
+    if completed_session is not None:
+        stmt = stmt.where(AnalysisTask.session_id == completed_session, AnalysisTask.status == "completed")
+    stmt = stmt.order_by(AnalysisTask.created_at.desc())
+    if limit is not None:
+        stmt = stmt.limit(max(1, min(limit, 200)))
     with SessionLocal() as db:
         rows = db.execute(stmt).scalars().all()
         views = []
@@ -1269,7 +1283,12 @@ def _list_delivery_jobs_sync(
                 continue
             # 行已在手且授权通过 —— 复用同一 ORM 行构造视图，避免每行再开
             # 会话/重跑授权（200 行约 600 次查询的 N+1）。
-            views.append(_job_view_from_record(record))
+            try:
+                views.append(_job_view_from_record(record))
+            except DeliveryError:
+                if completed_session is None:
+                    raise
+                logger.warning("Skipping delivery job %s with invalid receipt", record.id)
         return views
 
 

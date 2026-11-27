@@ -185,7 +185,7 @@ describe('downloadWithAuth', () => {
     vi.spyOn(document.body, 'removeChild').mockImplementation(((a: any) => a) as any);
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
 
-    await downloadWithAuth(exportUrl('fallback.png'));
+    await downloadWithAuth(exportUrl('fallback.png'), { fallbackFilename: 'display-name.png' });
     expect(downloadAttr).toBe('server-name.pdf');
     vi.restoreAllMocks();
   });
@@ -193,6 +193,19 @@ describe('downloadWithAuth', () => {
   it('propagates transport errors (401 → caller surfaces login requirement)', async () => {
     apiFetchBlobMock.mockRejectedValue(new Error('401'));
     await expect(downloadWithAuth(exportUrl('x.png'))).rejects.toThrow('401');
+  });
+
+  it('does not start a browser save if the session changed while reading the file', async () => {
+    const controller = new AbortController();
+    apiFetchBlobMock.mockImplementationOnce(async () => {
+      controller.abort();
+      return { blob: new Blob(['data']), filename: 'old-session.csv' };
+    });
+    const create = vi.spyOn(URL, 'createObjectURL');
+    await expect(downloadWithAuth(exportUrl('old.csv'), { signal: controller.signal }))
+      .rejects.toMatchObject({ name: 'AbortError' });
+    expect(create).not.toHaveBeenCalled();
+    create.mockRestore();
   });
 });
 

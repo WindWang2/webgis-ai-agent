@@ -672,6 +672,19 @@ class SessionMapStateResponse(BaseModel):
     map_state: Optional[dict[str, Any]] = None
 
 
+class GeneratedFileItem(BaseModel):
+    id: str
+    name: str
+    format: str
+    source: Literal["export", "report", "delivery"]
+    created_at: float | None
+    download_url: str | None
+
+
+class SessionGeneratedFilesResponse(BaseModel):
+    items: list[GeneratedFileItem]
+
+
 class ChartArtifactResponse(BaseModel):
     """GET /chat/sessions/{session_id}/chart-artifacts/{ref_id} 响应。"""
 
