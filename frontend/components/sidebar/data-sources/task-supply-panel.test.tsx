@@ -9,7 +9,7 @@
  * 与 raster-sampling-panel.test.tsx 同款：API/useT mock（键直回确定性
  * translator；i18n 键完整性由 key-completeness 测试锁）。
  */
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TaskSupplyPanel } from './task-supply-panel';
@@ -208,5 +208,35 @@ describe('TaskSupplyPanel', () => {
     });
     fireEvent.click(screen.getByTestId('tds-run-coverage'));
     await waitFor(() => expect(screen.getByTestId('tds-error')).toBeTruthy());
+  });
+
+  it('keeps the budget and pending choices across overlapping replans, restoring confirmed choices on failure', async () => {
+    const initial = makePlan();
+    initial.steps[0].user_choice = 'keep_gap';
+    initial.steps.push({ ...initial.steps[0], role: 'population', user_choice: '' });
+    const plan = { ...initial, budget_max_bytes: 8000 };
+    let resolveFirst!: (value: unknown) => void;
+    mockCreatePlan
+      .mockResolvedValueOnce({ plan })
+      .mockReturnValueOnce(new Promise((resolve) => { resolveFirst = resolve; }))
+      .mockRejectedValueOnce(new Error('replan failed'));
+
+    render(<TaskSupplyPanel sessionId="sess-1" />);
+    fireEvent.change(screen.getByTestId('tds-place'), { target: { value: '成都' } });
+    fireEvent.click(screen.getByTestId('tds-create-plan'));
+    await screen.findAllByTestId('tds-step');
+    const choices = (role: string) => document.querySelectorAll<HTMLInputElement>(`input[name="tds-choice-${role}"]`);
+    fireEvent.click(choices('subject')[1]);
+    fireEvent.click(choices('population')[0]);
+    expect(mockCreatePlan.mock.lastCall?.[0]).toMatchObject({
+      budget_max_bytes: 8000,
+      choices: { subject: 'shrink_scope', population: 'keep_gap' },
+    });
+    await screen.findByTestId('tds-error');
+    expect(choices('subject')[0]).toBeChecked();
+    expect(choices('population')[0]).not.toBeChecked();
+
+    await act(async () => resolveFirst({ plan: { ...plan, state: 'ready' } }));
+    expect(screen.getByTestId('tds-execute')).toBeDisabled();
   });
 });

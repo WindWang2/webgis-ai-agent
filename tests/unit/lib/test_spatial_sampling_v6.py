@@ -166,7 +166,6 @@ def test_random_points_total_guard_rejects_n_times_polygons():
     单面封顶（_validate_n 的 1e6）不约束乘积：1e6 × 1000 面 = 1e9 点，
     旧实现会在任何守卫前把 collected_x 等 Python list 推到数十 GB。
     """
-    from app.lib.geo_analysis.spatial_sampling import _MAX_TOTAL_SAMPLES
 
     fc = _grid_fc(1, 5)                        # 5 个多边形
     # 单面 n 合法（≤1e6）但乘积 5×1e6 = 5M > 4M → 总量守卫先拒绝

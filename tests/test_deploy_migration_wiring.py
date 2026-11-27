@@ -747,7 +747,7 @@ def test_0033_upgrade_adds_checks_to_pre_existing_tables(tmp_path, monkeypatch):
     table_name → TypeError。触发条件：三张表已由 create_all（旧模型，无
     CHECK）自举在场，0033 只能走 batch 补约束。
     """
-    from sqlalchemy import create_engine, inspect, text
+    from sqlalchemy import create_engine, inspect
 
     from alembic import command
     from alembic.migration import MigrationContext
@@ -873,7 +873,7 @@ def test_0106_upgrade_replaces_constraint_backed_unique(tmp_path, monkeypatch):
     整段跳过 —— 约束留着、表达式索引建不出来，「全局默认名全局唯一」静默
     失效（同名全局行可插入多行）。
     """
-    from sqlalchemy import create_engine, inspect, text
+    from sqlalchemy import create_engine, inspect
     from sqlalchemy.exc import IntegrityError
 
     from alembic import command

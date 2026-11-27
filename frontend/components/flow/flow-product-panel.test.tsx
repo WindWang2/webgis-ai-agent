@@ -138,7 +138,7 @@ const PREVIEW = {
     ],
   },
   mapspec_revision: 7,
-};
+} satisfies FlowPreviewResponse;
 
 const EDGE_GEO = {
   type: 'FeatureCollection',

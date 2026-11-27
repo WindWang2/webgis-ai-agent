@@ -9,7 +9,6 @@ import asyncio
 import hashlib
 import json
 import os
-import tempfile
 import threading
 import time
 from types import SimpleNamespace

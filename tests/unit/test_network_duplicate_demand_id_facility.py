@@ -9,7 +9,6 @@ Fix: candidates are grouped by the per-demand index (unique by construction);
 the demand_id is still what lands on ``route.origin_id`` /
 ``route.destination_id`` and in ``unmatched_demand_ids``.
 """
-import pytest
 
 from app.services.network.facility import NetworkClosestFacilityService
 from app.services.network.graph_builder import NetworkGraphBuilder

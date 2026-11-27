@@ -214,9 +214,6 @@ class TestScientificUnitOracles:
         """mean/median/min/max 的量纲随被统计字段而定（DEM 高程均值=m）
         —— 声明面不得虚构 expected_unit=unitless + satisfied（fail-open）。
         """
-        from app.services.gis_harness.execution_compiler.units import (
-            statistic_semantics,
-        )
 
         for stat in ("mean", "median", "min", "max"):
             semantics, unit, denom = statistic_semantics(stat)

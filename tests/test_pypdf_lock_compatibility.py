@@ -22,5 +22,5 @@ def test_pdf_lock_satisfies_declared_security_and_runtime_floor(filename):
     requirement = _pypdf_requirement(filename)
     locked = next(iter(_pypdf_requirement("requirements.lock").specifier)).version
     assert Version(locked) in requirement.specifier
-    assert Version("7.0.1") in requirement.specifier
-    assert Version("6.21.4") not in requirement.specifier
+    assert Version("7.1.1") in requirement.specifier
+    assert Version("7.1.0") not in requirement.specifier

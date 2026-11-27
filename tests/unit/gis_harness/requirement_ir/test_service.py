@@ -207,7 +207,7 @@ class TestReviewP2Fixes:
             "intent": base.intent.model_copy(update={"locks": [lock]})})
         restored = service._restore_user_fields(carried, {}, 2)
         assert not any(
-            l.scope == "scene_camera" for l in restored.intent.locks)
+            item.scope == "scene_camera" for item in restored.intent.locks)
 
     def test_valued_camera_lock_survives_carry(self):
         """对照：该轴确有用户值时锁必须存活（user-wins 不回退）。"""
@@ -228,8 +228,8 @@ class TestReviewP2Fixes:
         restored = service._restore_user_fields(
             carried, {"scene.camera_pitch": (45.0, prov)}, 2)
         assert restored.intent.scene.camera_pitch == 45.0
-        assert any(l.scope == "scene_camera" and l.value == "pitch"
-                   for l in restored.intent.locks)
+        assert any(item.scope == "scene_camera" and item.value == "pitch"
+                   for item in restored.intent.locks)
 
     def test_rejected_patch_does_not_truncate_remaining_diff(self, monkeypatch):
         """反证：edit 轮任一 patch 被拒（非 CAS）后，其余 patch 不得全部

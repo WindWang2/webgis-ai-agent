@@ -13,7 +13,6 @@ from scripts.gen_science_oracles import (
     build_regression,
     build_science_v5,
     case,
-    write_domain,
 )
 
 NETWORK = build_network()

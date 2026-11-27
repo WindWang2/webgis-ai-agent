@@ -512,7 +512,7 @@ def test_v4_selfheal_respects_width_unit_capacity():
                     for i, z in enumerate(zones)]
     participants.append(_p4("thin", "legend", "top-left", optional=True))
     sol = solve_layout_v4(participants, page_profile="viewport", zone_capacity=caps)
-    loads: Dict[str, int] = {}
+    loads: dict[str, int] = {}
     for p in sol.placements:
         loads[p.zone] = loads.get(p.zone, 0) + p.width_units
     assert all(load <= 2 for load in loads.values()), f"超容: {loads}"

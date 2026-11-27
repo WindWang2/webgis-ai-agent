@@ -14,9 +14,7 @@ from app.lib.gis.dataset_descriptor import SourceRef
 from app.services.data_preparation.executor import (
     ExecError,
     PreparationReceipt,
-    _append_receipt_sync,
     _exec_lock,
-    _load_receipts_sync,
     apply_steps,
     dry_run,
     execute_plan,

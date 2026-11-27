@@ -1,7 +1,7 @@
 """MissionBridge 回归测试：session 解析口径 / 最近 mission 选择。"""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.models.mission import GISMissionRow
 from app.services.mission_runtime.service import MissionRuntimeService
@@ -26,7 +26,7 @@ class _StepClock:
     """每次调用前进 1s——制造严格递增的 updated_at。"""
 
     def __init__(self) -> None:
-        self._now = datetime(2026, 1, 1, 0, 0, 0)
+        self._now = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
     def __call__(self) -> datetime:
         self._now += timedelta(seconds=1)

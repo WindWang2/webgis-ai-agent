@@ -8,7 +8,7 @@
  * 只读覆盖预览不写当前制图地图；采用/执行走既有 revision/确认通道。
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   compareTaskCoverage,
@@ -66,11 +66,16 @@ export function TaskSupplyPanel({ sessionId, ownerToken }: TaskSupplyPanelProps)
     Array<{ role: string; evaluations: CoverageEvaluation[]; unknown_reasons: string[] }>
   >([]);
   const [plan, setPlan] = useState<SupplyPlan | null>(null);
+  const [pendingChoices, setPendingChoices] = useState<Record<string, string> | null>(null);
+  const choiceRequest = useRef(0);
   const [busy, setBusy] = useState<'coverage' | 'plan' | 'execute' | null>(null);
   const [error, setError] = useState('');
 
   // P3-7C（R1 评审 C）：会话切换时重置计划与覆盖视图，防旧会话残留
   useEffect(() => {
+    choiceRequest.current++;
+    setPendingChoices(null);
+    setBusy(null);
     setPlan(null);
     setCoverageRoles([]);
     setError('');
@@ -125,47 +130,35 @@ export function TaskSupplyPanel({ sessionId, ownerToken }: TaskSupplyPanelProps)
   }, [_scope, budget, ownerToken, sessionId, t]);
 
   const chooseAlternative = useCallback(
-    (role: string, kind: string) => {
-      // P2-4C（R1 评审 C）：函数式读最新 state 收集全部已决策——
-      // 多角色快速连点不丢先前选择；失败回滚乐观状态
-      let prevPlan: SupplyPlan | null = null;
-      const nextChoices: Record<string, string> = {};
-      setPlan((prev) => {
-        prevPlan = prev;
-        for (const s of prev?.steps ?? []) {
-          if (s.user_choice) nextChoices[s.role] = s.user_choice;
-        }
-        nextChoices[role] = kind;
-        return {
-          ...(prev ?? plan)!,
-          steps: (prev?.steps ?? []).map((s) =>
-            s.role === role ? { ...s, user_choice: kind } : s,
-          ),
-        };
-      });
+    async (role: string, kind: string) => {
+      if (!plan) return;
+      const nextChoices = {
+        ...Object.fromEntries(plan.steps.filter((step) => step.user_choice).map((step) => [step.role, step.user_choice])),
+        ...pendingChoices,
+        [role]: kind,
+      };
+      const request = ++choiceRequest.current;
+      setPendingChoices(nextChoices);
       setError('');
       setBusy('plan');
-      createSupplyPlan(
-        {
-          ..._scope(),
-          budget_max_bytes: prevPlan?.budget_max_bytes ?? null,
-          choices: nextChoices,
-        },
-        { ownerToken },
-      )
-        .then((out) => setPlan(out.plan))
-        .catch((err) => {
-          // 失败回滚：还原该角色的乐观决策（不静默残留假状态）
-          setPlan((cur) => cur ? {
-            ...cur,
-            steps: cur.steps.map((s) =>
-              s.role === role ? { ...s, user_choice: '' } : s),
-          } : cur);
+      try {
+        const out = await createSupplyPlan(
+          { ..._scope(), budget_max_bytes: plan.budget_max_bytes, choices: nextChoices },
+          { ownerToken },
+        );
+        if (request === choiceRequest.current) setPlan(out.plan);
+      } catch (err) {
+        if (request === choiceRequest.current) {
           setError(`${t('errorPrefix')}: ${describeApiError(err, t('errorPrefix'))}`);
-        })
-        .finally(() => setBusy(null));
+        }
+      } finally {
+        if (request === choiceRequest.current) {
+          setPendingChoices(null);
+          setBusy(null);
+        }
+      }
     },
-    [_scope, ownerToken, plan, t],
+    [_scope, ownerToken, pendingChoices, plan, t],
   );
 
   const runExecute = useCallback(async () => {
@@ -327,7 +320,7 @@ export function TaskSupplyPanel({ sessionId, ownerToken }: TaskSupplyPanelProps)
                       <input
                         type="radio"
                         name={`tds-choice-${s.role}`}
-                        checked={s.user_choice === a.kind}
+                        checked={(pendingChoices?.[s.role] ?? s.user_choice) === a.kind}
                         onChange={() => chooseAlternative(s.role, a.kind)}
                       />
                       <span>{a.kind}: {a.note}</span>

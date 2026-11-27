@@ -9,7 +9,7 @@ module owns the Python side: invoke it, parse its JSON report, compute the
 5-dimension eval score, and persist report.json.
 """
 import asyncio
-import fcntl
+import errno
 import json
 import logging
 import os
@@ -96,9 +96,18 @@ async def _acquire_runtime_file_lock(session_id: str) -> int:
   try:
     while True:
       try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if os.name == "nt":
+          import msvcrt
+          # Windows allows a byte-range lock past EOF on an empty sidecar.
+          os.lseek(fd, 0, os.SEEK_SET)
+          msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        else:
+          import fcntl
+          fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         return fd
-      except BlockingIOError:
+      except OSError as exc:
+        if exc.errno not in (errno.EACCES, errno.EAGAIN):
+          raise
         await asyncio.sleep(0.05)
   except BaseException:
     os.close(fd)

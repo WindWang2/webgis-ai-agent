@@ -16,6 +16,7 @@ from app.extensions_platform.broker import CapabilityBroker, BrokerLimits
 from app.extensions_platform.diagnostics import DiagnosticCode, has_errors
 from app.extensions_platform.host import ExtensionHost, HostPolicy
 from app.extensions_platform.permissions import Permission, PermissionGrantSet
+from app.extensions_platform.worker.client import WorkerProcess
 from app.extensions_platform.worker.spawn import (
     DEFAULT_MAX_CPU_SECONDS,
     DEFAULT_MAX_MEMORY_MB,
@@ -206,7 +207,6 @@ class TestBrokerDeathTypedCrash:
     def test_worker_death_during_broker_write_is_typed_crash(self, tmp_path):
         """m-4：worker 在 broker 应答写回期间死亡 → WORKER_CRASHED（进
         崩溃计数路径），而非裸 BrokenPipeError。"""
-        from app.extensions_platform.worker.client import WorkerProcess
 
         pack = tmp_path / "acme.pack.dir"
         pack.mkdir()
@@ -251,7 +251,6 @@ class TestWorkerClientLockDiscipline:
     """
 
     def _worker(self, tmp_path) -> "WorkerProcess":
-        from app.extensions_platform.worker.client import WorkerProcess
 
         pack = tmp_path / "acme.pack.dir"
         pack.mkdir(exist_ok=True)

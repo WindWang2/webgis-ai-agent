@@ -347,7 +347,7 @@ async def test_geojson_ref_with_stray_raster_facts_is_hydrated_not_passed():
     """ref:geojson-* 是 FC 产物：即使 envelope.raster 夹带白名单事实，
     step: 输入也必须水合为载荷而不是把 ref 字符串当参数。"""
     from app.services.gis_harness.analysis_workflows.contracts import (
-        AnalysisArtifactEnvelope, AnalysisStepSpec,
+        AnalysisArtifactEnvelope,
     )
 
     fc = {"type": "FeatureCollection", "features": []}
