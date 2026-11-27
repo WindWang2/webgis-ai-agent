@@ -709,6 +709,8 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 |---|---|---|---|
 | `POST` | `/api/v1/linked-exploration/inspect` | Inspect Source | object |
 | `POST` | `/api/v1/linked-exploration/preview` | Preview Conditions | object |
+| `POST` | `/api/v1/linked-exploration/plan-preview` | Preview Plan | object |
+| `POST` | `/api/v1/linked-exploration/drill` | Drill Plan | object |
 | `GET` | `/api/v1/linked-exploration/views` | List Views | object |
 | `POST` | `/api/v1/linked-exploration/views` | Save View | object |
 | `GET` | `/api/v1/linked-exploration/views/{view_id}` | Get View | object |
@@ -730,6 +732,14 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/cartogram/sessions/{session_id}/layouts` | Layouts | CartogramLayoutListResponse |
 | `GET` | `/api/v1/cartogram/sessions/{session_id}/layouts/{layout_ref}` | Layout Detail | CartogramLayoutDetailResponse |
 | `GET` | `/api/v1/cartogram/sessions/{session_id}/layouts/{layout_ref}/export` | Layout Export | object |
+
+### 地理锚定统计图符工作台
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/diagram-symbols/sessions/{session_id}/layers/{layer_id}/inspect` | Inspect | object |
+| `POST` | `/api/v1/diagram-symbols/sessions/{session_id}/layers/{layer_id}/plan` | Plan | object |
+| `POST` | `/api/v1/diagram-symbols/sessions/{session_id}/layers/{layer_id}/apply` | Apply | object |
 
 ### 方法实验工作台
 
@@ -1661,6 +1671,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `DELETE` | `/api/v1/temporal-media/jobs/{job_id}` | Cancel Job | object |
 | `GET` | `/api/v1/temporal-media/jobs/{job_id}/result` | Get Job Result | object |
 
-_端点总数：784（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：789（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->

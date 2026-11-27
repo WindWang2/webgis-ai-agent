@@ -661,6 +661,7 @@
       "type": "string"
      },
      "success": {
+      "default": true,
       "title": "Success",
       "type": "boolean"
      }
@@ -8657,6 +8658,7 @@
     "type": "object"
    },
    "DatasetAttach": {
+    "additionalProperties": false,
     "properties": {
      "crs": {
       "default": "EPSG:4326",
@@ -10782,6 +10784,7 @@
         "items": {
          "type": "string"
         },
+        "maxItems": 200,
         "type": "array"
        },
        {
@@ -11189,6 +11192,7 @@
     "type": "object"
    },
    "ExecuteIn": {
+    "additionalProperties": false,
     "properties": {
      "background": {
       "default": false,
@@ -11444,6 +11448,7 @@
        },
        "type": "object"
       },
+      "maxItems": 16,
       "title": "Lineage Inputs",
       "type": "array"
      },
@@ -12423,7 +12428,7 @@
      },
      "created_at": {
       "title": "Created At",
-      "type": "string"
+      "type": "number"
      },
      "has_approval": {
       "default": false,
@@ -12481,7 +12486,7 @@
      },
      "updated_at": {
       "title": "Updated At",
-      "type": "string"
+      "type": "number"
      }
     },
     "required": [
@@ -14408,6 +14413,7 @@
     "type": "object"
    },
    "GenerateReportRequest": {
+    "additionalProperties": false,
     "description": "POST /reports 请求体。",
     "examples": [
      {
@@ -22092,6 +22098,7 @@
     "type": "object"
    },
    "PlanCreateIn": {
+    "additionalProperties": false,
     "properties": {
      "distance_mode": {
       "default": "geodesic",
@@ -22110,6 +22117,7 @@
      },
      "lines_ref": {
       "default": "",
+      "maxLength": 128,
       "title": "Lines Ref",
       "type": "string"
      },
@@ -22135,6 +22143,7 @@
      },
      "points_ref": {
       "default": "",
+      "maxLength": 128,
       "title": "Points Ref",
       "type": "string"
      },
@@ -22318,6 +22327,30 @@
       "additionalProperties": true,
       "title": "Plan",
       "type": "object"
+     },
+     "selection_ref": {
+      "anyOf": [
+       {
+        "maxLength": 32,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Selection Ref"
+     },
+     "selection_source_id": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Selection Source Id"
      }
     },
     "required": [
@@ -22380,6 +22413,7 @@
     "type": "object"
    },
    "PlanReviseIn": {
+    "additionalProperties": false,
     "properties": {
      "distance_mode": {
       "default": "",
@@ -22852,6 +22886,7 @@
     "type": "object"
    },
    "PreviewIn": {
+    "additionalProperties": false,
     "properties": {
      "expected_revision": {
       "anyOf": [
@@ -23847,6 +23882,7 @@
     "type": "object"
    },
    "ProjectCreate": {
+    "additionalProperties": false,
     "properties": {
      "description": {
       "anyOf": [
@@ -24152,6 +24188,7 @@
     "type": "object"
    },
    "ProjectUpdate": {
+    "additionalProperties": false,
     "properties": {
      "description": {
       "anyOf": [
@@ -29759,6 +29796,7 @@
     "type": "object"
    },
    "SelectionIn": {
+    "additionalProperties": false,
     "properties": {
      "handle": {
       "maxLength": 128,
@@ -31166,6 +31204,7 @@
          "additionalProperties": true,
          "type": "object"
         },
+        "maxItems": 128,
         "type": "array"
        },
        {
@@ -31181,6 +31220,7 @@
          "additionalProperties": true,
          "type": "object"
         },
+        "maxItems": 64,
         "type": "array"
        },
        {
@@ -31201,6 +31241,7 @@
          "additionalProperties": true,
          "type": "object"
         },
+        "maxItems": 200,
         "type": "array"
        },
        {
@@ -32891,6 +32932,7 @@
      "artifact_id": {
       "anyOf": [
        {
+        "maxLength": 128,
         "type": "string"
        },
        {
@@ -32900,13 +32942,20 @@
       "title": "Artifact Id"
      },
      "kind": {
-      "description": "session_ref | fabric_parquet | project_artifact",
+      "description": "session_ref | fabric_parquet | project_artifact | table_rows",
+      "enum": [
+       "session_ref",
+       "fabric_parquet",
+       "project_artifact",
+       "table_rows"
+      ],
       "title": "Kind",
       "type": "string"
      },
      "project_id": {
       "anyOf": [
        {
+        "maxLength": 128,
         "type": "string"
        },
        {
@@ -32918,6 +32967,7 @@
      "ref": {
       "anyOf": [
        {
+        "maxLength": 256,
         "type": "string"
        },
        {
@@ -32940,6 +32990,7 @@
      "session_id": {
       "anyOf": [
        {
+        "maxLength": 128,
         "type": "string"
        },
        {
@@ -32951,6 +33002,7 @@
      "table_ref": {
       "anyOf": [
        {
+        "maxLength": 256,
         "type": "string"
        },
        {
@@ -32967,11 +33019,13 @@
     "type": "object"
    },
    "SourceSpecIn": {
+    "additionalProperties": false,
     "properties": {
      "band_labels": {
       "additionalProperties": {
        "type": "string"
       },
+      "maxProperties": 16,
       "title": "Band Labels",
       "type": "object"
      },
@@ -32979,6 +33033,7 @@
       "additionalProperties": {
        "type": "string"
       },
+      "maxProperties": 16,
       "title": "Band Semantics",
       "type": "object"
      },
@@ -32986,6 +33041,7 @@
       "additionalProperties": {
        "type": "string"
       },
+      "maxProperties": 16,
       "title": "Band Units",
       "type": "object"
      },
@@ -32993,6 +33049,7 @@
       "items": {
        "type": "integer"
       },
+      "maxItems": 8,
       "title": "Bands",
       "type": "array"
      },
@@ -33105,11 +33162,14 @@
     "properties": {
      "auto_threshold": {
       "default": 0.7,
+      "maximum": 1.0,
+      "minimum": 0.0,
       "title": "Auto Threshold",
       "type": "number"
      },
      "expected_data_type": {
       "default": "poi_list",
+      "maxLength": 64,
       "title": "Expected Data Type",
       "type": "string"
      },
@@ -33122,6 +33182,7 @@
      "session_id": {
       "anyOf": [
        {
+        "maxLength": 128,
         "type": "string"
        },
        {
@@ -33134,6 +33195,7 @@
       "items": {
        "type": "string"
       },
+      "maxItems": 16,
       "title": "Source Hint",
       "type": "array"
      }
@@ -33337,6 +33399,7 @@
     "type": "object"
    },
    "StoryCompileRequest": {
+    "additionalProperties": false,
     "description": "POST /storymap/compile 请求体。\n\n`session_id` 为预留的会话溯源字段（无状态编译不校验所有权；会话路径\n走 /storymap/sessions/{id}/compile 挂 require_owned_session）。",
     "properties": {
      "messages": {
@@ -33346,6 +33409,7 @@
          "additionalProperties": true,
          "type": "object"
         },
+        "maxItems": 200,
         "type": "array"
        },
        {
@@ -36563,6 +36627,7 @@
     "type": "object"
    },
    "WorkflowCreate": {
+    "additionalProperties": false,
     "properties": {
      "created_from_session": {
       "anyOf": [
@@ -37952,6 +38017,88 @@
      "expected_revision"
     ],
     "title": "UpdatePlanBody",
+    "type": "object"
+   },
+   "app__api__routes__diagram_symbols__ApplyBody": {
+    "properties": {
+     "block": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "diagram_symbol.v1 块；null=解绑恢复既有表达",
+      "title": "Block"
+     },
+     "expected_revision": {
+      "anyOf": [
+       {
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Expected Revision"
+     },
+     "mode": {
+      "default": "preview",
+      "description": "preview | commit",
+      "title": "Mode",
+      "type": "string"
+     },
+     "note": {
+      "default": "",
+      "maxLength": 500,
+      "title": "Note",
+      "type": "string"
+     },
+     "operation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Operation Id"
+     }
+    },
+    "title": "ApplyBody",
+    "type": "object"
+   },
+   "app__api__routes__diagram_symbols__PlanBody": {
+    "properties": {
+     "block": {
+      "additionalProperties": true,
+      "description": "diagram_symbol.v1 块",
+      "title": "Block",
+      "type": "object"
+     },
+     "layout_policy": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Layout Policy"
+     }
+    },
+    "required": [
+     "block"
+    ],
+    "title": "PlanBody",
     "type": "object"
    },
    "app__api__routes__linked_exploration__ApplyBody": {
@@ -62654,6 +62801,239 @@
     "tags": [
      "制图设计规范",
      "制图设计规范"
+    ]
+   }
+  },
+  "/api/v1/diagram-symbols/sessions/{session_id}/layers/{layer_id}/apply": {
+   "post": {
+    "operationId": "apply_api_v1_diagram_symbols_sessions__session_id__layers__layer_id__apply_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "layer_id",
+      "required": true,
+      "schema": {
+       "title": "Layer Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/app__api__routes__diagram_symbols__ApplyBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Apply",
+    "tags": [
+     "地理锚定统计图符工作台",
+     "地理锚定统计图符 GOAL-20261126-04"
+    ]
+   }
+  },
+  "/api/v1/diagram-symbols/sessions/{session_id}/layers/{layer_id}/inspect": {
+   "get": {
+    "operationId": "inspect_api_v1_diagram_symbols_sessions__session_id__layers__layer_id__inspect_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "layer_id",
+      "required": true,
+      "schema": {
+       "title": "Layer Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Inspect",
+    "tags": [
+     "地理锚定统计图符工作台",
+     "地理锚定统计图符 GOAL-20261126-04"
+    ]
+   }
+  },
+  "/api/v1/diagram-symbols/sessions/{session_id}/layers/{layer_id}/plan": {
+   "post": {
+    "operationId": "plan_api_v1_diagram_symbols_sessions__session_id__layers__layer_id__plan_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "layer_id",
+      "required": true,
+      "schema": {
+       "title": "Layer Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/app__api__routes__diagram_symbols__PlanBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Plan",
+    "tags": [
+     "地理锚定统计图符工作台",
+     "地理锚定统计图符 GOAL-20261126-04"
     ]
    }
   },

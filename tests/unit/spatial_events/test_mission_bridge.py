@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+from app.lib.runtime.clock import to_db_utc
 from app.models.mission import GISMissionRow
 from app.services.mission_runtime.service import MissionRuntimeService
 from app.services.mission_runtime.store import MissionStore
@@ -26,7 +27,7 @@ class _StepClock:
     """每次调用前进 1s——制造严格递增的 updated_at。"""
 
     def __init__(self) -> None:
-        self._now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        self._now = to_db_utc(datetime(2026, 1, 1, tzinfo=timezone.utc))
 
     def __call__(self) -> datetime:
         self._now += timedelta(seconds=1)

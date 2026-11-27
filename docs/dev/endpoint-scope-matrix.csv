@@ -143,6 +143,9 @@ GET,/api/v1/data-quality/reports,gis:read,N,Y
 POST,/api/v1/data-quality/reports,gis:write,N,Y
 GET,/api/v1/data-quality/reports/{report_id},gis:read,N,Y
 GET,/api/v1/data-quality/rules,gis:read,N,Y
+POST,/api/v1/diagram-symbols/sessions/{session_id}/layers/{layer_id}/apply,gis:write,N,N
+GET,/api/v1/diagram-symbols/sessions/{session_id}/layers/{layer_id}/inspect,gis:read,N,N
+POST,/api/v1/diagram-symbols/sessions/{session_id}/layers/{layer_id}/plan,gis:write,N,N
 POST,/api/v1/explorer/abort/{task_id},gis:write,N,Y
 POST,/api/v1/explorer/start,gis:write,N,Y
 GET,/api/v1/explorer/status/{task_id},gis:read,N,Y
@@ -239,6 +242,8 @@ GET,/api/v1/layers/data/{ref_id}/terrain-tiles/{z}/{x}/{y}.png,gis:read,N,N
 GET,/api/v1/layers/data/{ref_id}/tiles/{z}/{x}/{y}.mvt,gis:read,N,N
 GET,/api/v1/layers/descriptor/{ref_id},gis:read,N,N
 GET,/api/v1/layers/terrain-sources,gis:read,N,N
+POST,/api/v1/linked-exploration/drill,gis:write,N,N
+POST,/api/v1/linked-exploration/plan-preview,gis:write,N,N
 GET,/api/v1/local-data/admin/children,gis:read,N,N
 GET,/api/v1/local-data/admin/{level}/boundary,gis:read,N,N
 GET,/api/v1/local-data/osm/catalog,gis:read,N,Y
@@ -344,6 +349,10 @@ POST,/api/v1/storymap/export,session:write,N,Y
 POST,/api/v1/storymap/sessions/{session_id}/compile,session:write,N,N
 GET,/api/v1/storymap/sessions/{session_id}/spec,session:read,N,N
 POST,/api/v1/storymap/sessions/{session_id}/spec,session:write,N,N
+POST,/api/v1/task-data-supply/coverage,gis:write,N,Y
+POST,/api/v1/task-data-supply/plans,gis:write,N,Y
+GET,/api/v1/task-data-supply/plans/{plan_id},gis:read,N,Y
+POST,/api/v1/task-data-supply/plans/{plan_id}/execute,gis:write,N,Y
 GET,/api/v1/tasks,jobs:read,N,N
 GET,/api/v1/tasks/jobs,jobs:read,N,Y
 DELETE,/api/v1/tasks/jobs/{job_id},jobs:write,N,Y
