@@ -23,7 +23,7 @@ app/services/moving_object/README 或 docs/adr/0306-*.md  # ADR
 
 - **数据面**：轨迹点/派生线/事件表按 fetch-on-demand ref 存放（沿 od_table_ref 的 ref_cursor 模式 + artifact/durable blob store），LLM 只见有界摘要与样本。
 - **MapSpec**：新增 trajectory 图层表达（MapSpec additive 合同），速度/时间编码沿 #2266 流向样式模式；事件标记用点样式。
-- **前端**：`frontend/src/` 新增轨迹分析面板（沿既有分析面板模式），地图↔列表↔时间轴联动复用 #2285 传播键/selection 语义。
+- **前端**（Next.js App Router：`frontend/app|components|lib`）：新增轨迹工作台面板（沿 `frontend/components/flow/flow-product-panel.tsx` 挂载于 `map-studio-tab.tsx` 的模式；网络边界隔离在 `frontend/lib/moving-object/`），地图↔列表↔时间轴联动复用 `lib/selection/selection-store.ts` 发布/订阅与 `lib/temporal-map/linkage.ts` 时窗语义。
 - **Pi**：工具注册沿 `register_moving_object_tools(registry)` + `app/tools/__init__.py` + `categories.py`；能力/证据沿现有科学证据挂载。
 - **不动**：vendor/pi、temporal engine 既有面（只读复用）、OD/拓扑/发布/工程包。
 
