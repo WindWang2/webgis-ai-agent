@@ -27,9 +27,21 @@
 - #2289 会话文件面板（消费新产物的既有入口）
 - `project_bundle` / `project_package` / `project_import` / `workspace_bundle` 关键词在 master 零命中（同义实现深查见 DEDUP_MATRIX）
 
-## 基线遗留/非本任务缺陷
+## 基线遗留/非本任务缺陷（stash 干净基线验证，均不掩盖不扩张）
 
-（启动基线测试后回填）
+- tests/test_tool_meta_contract.py::test_extension_example_names_exist / test_extension_routes_distribution_before_status_pull —— 干净 master 复现（index.mjs 内容面）
+- frontend tsconfig.test.json：lib/mapspec/live-spec.test.ts(129,70) TS2353 —— 干净 master 复现
+- frontend test/i18n/key-completeness.test.ts：chat.chart.figureTopValues 占位符 zh/en 不一致 —— 本分支与 master 在 chat.json 零差异（git diff 空）
+- scripts/debt_ratchet.py：registry.py / remote_sensing.py god_modules 棘轮漂移（本分支未触碰两文件）
+- scripts/check_dependency_bounds.py：pandas/sqlalchemy 上界收紧要求（master 既有）
+
+## 共机 stash 事故记录（2026-11-28，已完全恢复）
+
+仓库共享 stash 列表中存在其他任务遗留的 stash（codex/all-issues-deep-review，2026-11-06）。
+一次 `git stash pop`（本意弹本任务 WIP，实际无本任务条目、误弹 stash@{0}）造成大量 UU 冲突。
+处置：本任务工作当时已全部提交 → `git reset --hard HEAD` 恢复；pop 因冲突未 drop，
+对方 stash 完好保留；pop 物化的 58 个外来 .claude/skills 实体目录已清理；跟踪符号链接完好。
+教训：共享仓库 stash 列表跨分支/worktree 共享，pop 前必须核对 stash@{0} 归属。
 
 ## 引用快照命令
 
