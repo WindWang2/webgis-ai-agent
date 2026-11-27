@@ -1546,6 +1546,22 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/briefs/shared/{share_code}` | Shared Brief Info | object |
 | `GET` | `/api/v1/briefs/shared/{share_code}/view` | Shared Brief View | object |
 
+### Project Exchange / 工程包交换
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/project-exchange/exports/{package_id}/receipt` | Export Receipt | ExportStatusResponse |
+| `GET` | `/api/v1/project-exchange/jobs/{job_id}/export-receipt` | Export Receipt By Job | ExportStatusResponse |
+| `GET` | `/api/v1/project-exchange/jobs/{job_id}/import-receipt` | Import Receipt By Job | ImportStatusResponse |
+| `POST` | `/api/v1/project-exchange/packages/upload` | Upload Project Package | PackageUploadResponse |
+| `POST` | `/api/v1/project-exchange/imports/inspect` | Import Inspect | ImportInspectResponse |
+| `POST` | `/api/v1/project-exchange/imports/plan` | Import Plan | ImportPlanResponse |
+| `POST` | `/api/v1/project-exchange/imports` | Submit Import Route | ImportSubmitResponse |
+| `GET` | `/api/v1/project-exchange/imports/{import_id}/receipt` | Import Receipt | ImportStatusResponse |
+| `POST` | `/api/v1/projects/{project_id}/exchange/inspect` | Inspect Project Exchange | ExchangeInspectionResponse |
+| `POST` | `/api/v1/projects/{project_id}/exchange/plan` | Plan Project Exchange | ExchangePlanResponse |
+| `POST` | `/api/v1/projects/{project_id}/exchange/export` | Export Project Package | ExportSubmitResponse |
+
 ### PI工具
 
 | 方法 | 路径 | 说明 | 响应模型 |
@@ -1672,6 +1688,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `DELETE` | `/api/v1/temporal-media/jobs/{job_id}` | Cancel Job | object |
 | `GET` | `/api/v1/temporal-media/jobs/{job_id}/result` | Get Job Result | object |
 
-_端点总数：790（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：801（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->

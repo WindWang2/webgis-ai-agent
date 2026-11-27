@@ -298,7 +298,10 @@ def read_project_closure(
     revision_by_workflow = _current_revisions(db, [str(w.id) for w in wf_rows])
     for row in wf_rows:
         revision = revision_by_workflow.get(str(row.id))
-        graph = _bounded_json(revision.graph_spec if revision else None)
+        # 无已发布修订（草稿态）时回退到可变行的 graph_spec —— 闭包反映
+        # 工作流的当前实况；此时无不可变指纹（诚实空串）。
+        graph = _bounded_json(
+            revision.graph_spec if revision is not None else row.graph_spec)
         node = WorkflowNode(
             workflow_id=str(row.id),
             name=row.name or "",

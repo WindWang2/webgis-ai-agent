@@ -280,7 +280,7 @@ def register_project_exchange_tools(registry: ToolRegistry) -> None:
         },
         execution_policy="async",
         side_effect="state_mutation",
-        data_mutations=["project_write", "dataset_write", "artifact_write"],
+        data_mutations=["upload", "artifact_write"],
         network=False,
         deterministic=False,
         latency_class="slow",

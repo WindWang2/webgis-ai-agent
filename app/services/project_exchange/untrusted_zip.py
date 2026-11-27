@@ -18,7 +18,7 @@ import unicodedata
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set
 
 from app.services.project_exchange import contracts as pc
 
@@ -198,7 +198,6 @@ def _max_package_bytes() -> int:
 
 def _safe_relpath(name: str, seen: Set[str]) -> str:
     """归一化条目路径并做全部静态防线（返回 staging 内相对 POSIX 路径）。"""
-    import os
 
     if "\x00" in name:
         raise pc.PackageError(pc.ERR_PATH_UNSAFE, "条目名含 NUL")

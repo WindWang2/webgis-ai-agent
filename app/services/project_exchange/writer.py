@@ -21,7 +21,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from app.services.data_delivery import contracts as dl_contracts
 from app.services.data_delivery.writers import (
-    CSVWriter, GeoJSONWriter, PyogrioWriter, WriterContext,
+    CSVWriter, PyogrioWriter, WriterContext,
 )
 from app.services.project_exchange import contracts as pc
 
@@ -46,6 +46,9 @@ def _fields_from_features(features: List[Dict[str, Any]]) -> List[str]:
     seen: Dict[str, None] = {}
     for f in features[:50]:
         props = f.get("properties")
+        if not isinstance(props, dict):
+            # 纯行形态（rows payload / 表格产物）：行本身就是属性字典。
+            props = f if isinstance(f, dict) else {}
         if isinstance(props, dict):
             for k in props.keys():
                 if len(seen) >= MAX_FIELDS:
@@ -311,13 +314,11 @@ class PackageMaterializer:
         detail: Dict[str, Any] = {"byte_identical": byte_identical,
                                   "sha256": digest}
         crs_after = ""
-        shape_after = None
         try:
             import rasterio
 
             with rasterio.open(str(target)) as src:
                 crs_after = str(src.crs) if src.crs else ""
-                shape_after = [src.height, src.width]
                 detail["nodata"] = src.nodata
         except Exception as e:  # noqa: BLE001 — PNG 等非 GDAL 栅格按字节等价判定
             detail["rasterio_note"] = str(e)[:200]

@@ -369,7 +369,6 @@ def _execute_export_sync(
     try:
         mat = PackageMaterializer(staging)
         dataset_entries: List[pc.ManifestDataset] = []
-        gpkg_member_ids: List[str] = []
         counts = {c: 0 for c in pc.CLASSIFICATIONS}
 
         total_ds = len(closure.datasets)
@@ -399,14 +398,26 @@ def _execute_export_sync(
                 origin_id=node.dataset_id[:255],
             )
             payload = outcome.payload
-            if outcome.classification == pc.CLASS_EMBEDDED and payload is not None:
+            classification = outcome.classification
+            # 零行表格不可物化为 CSV（无 schema 可写）→ 诚实降级为
+            # unsupported + 披露，不失败整包（零要素矢量有诚实空图层通道）。
+            if (classification == pc.CLASS_EMBEDDED and payload is not None
+                    and payload.kind == "rows"
+                    and not ((payload.data or {}).get("rows"))):
+                classification = pc.CLASS_UNSUPPORTED
+                payload = None
+                closure.disclosure.append({
+                    "kind": "dataset", "name": entry.name,
+                    "reason": "零行表格无法物化（无字段可写）"})
+            entry.classification = classification
+            if classification == pc.CLASS_EMBEDDED and payload is not None:
                 entry.payload = _materialize_dataset(
                     mat, lid, node, payload, cancel_check)
-            elif outcome.classification == pc.CLASS_EXTERNAL_REFERENCE:
+            elif classification == pc.CLASS_EXTERNAL_REFERENCE:
                 entry.external = pc.ExternalRef(
                     uri=node.source_ref[:4096] if node.source_ref.startswith("http") else "",
                     reason=(outcome.reason or node.reason)[:4000])
-            counts[outcome.classification] += 1
+            counts[classification] += 1
             dataset_entries.append(entry)
             if idx % 5 == 0:
                 progress(20 + int(40 * (idx + 1) / max(1, total_ds)),
@@ -425,7 +436,20 @@ def _execute_export_sync(
         fidelity_entries, writer_versions = mat.verify_materialized()
 
         disclosure = pc.Disclosure(**_disclosure_payload(closure, resolved, counts))
-        progress(85, "文件台账")
+        # 人可读披露文件（manifest.disclosure 的镜像；缺席=无缺口）
+        disclosure_lines = ["# 包内不可携带内容披露", ""]
+        for bucket, label in (
+                (disclosure.not_included, "未包含"),
+                (disclosure.external_links, "外部引用（不随包携带）"),
+                (disclosure.unsupported, "不支持物化")):
+            for item in bucket:
+                disclosure_lines.append(
+                    f"- [{label}] {item.kind} · {item.name}: {item.reason}")
+        if not any((disclosure.not_included, disclosure.external_links,
+                    disclosure.unsupported)):
+            disclosure_lines.append("- 无缺口：全部依赖随包携带。")
+        mat.write_disclosure_md(disclosure_lines)
+        progress(82, "文件台账")
         file_entries = mat.inventory()
         total_bytes = mat.total_bytes()
         if total_bytes > max_package_bytes():

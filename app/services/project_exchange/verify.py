@@ -11,9 +11,8 @@
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from app.services.project_exchange import contracts as pc
 
@@ -25,7 +24,7 @@ def verify_import(manifest: pc.PackageManifest, mapping, staging: Path
     from sqlalchemy import select as sa_select
 
     from app.models.project import (
-        Artifact, MapProductVersion, ProjectDataset, Workflow, WorkflowRevision,
+        MapProductVersion, ProjectDataset, Workflow, WorkflowRevision,
     )
 
     report: Dict[str, Any] = {
@@ -37,7 +36,6 @@ def verify_import(manifest: pc.PackageManifest, mapping, staging: Path
         "environment": _environment(manifest),
         "notes": [],
     }
-    project_id = mapping.project_id
     with SessionLocal() as db:
         for entry in manifest.datasets:
             info = mapping.datasets.get(entry.logical_id)
@@ -231,7 +229,6 @@ def _count_from_upload(upload_id: str, payload: pc.DatasetPayloadRef
                 if path.is_file():
                     return int(len(pd.read_csv(str(path))))
             return None
-        import pyogrio
 
         gpkg = base / "original.geojson"
         if gpkg.is_file():

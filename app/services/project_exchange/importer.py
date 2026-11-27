@@ -25,10 +25,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.services.project_exchange import contracts as pc
 from app.services.project_exchange.untrusted_zip import (
-    ZipInspection, extract_zip, inspect_zip,
+    extract_zip, inspect_zip,
 )
 
 logger = logging.getLogger(__name__)
+
+#: durable job task_type（与 exporter 的导入类型一致；任务中心可见）。
+TASK_TYPE = "project_package_import"
 
 _IMPORT_SEMAPHORE = asyncio.Semaphore(1)  # 导入注册串行（写路径 + 单事务）
 _ACTIVE_IMPORT_RUNNERS: Dict[str, asyncio.Task] = {}
@@ -335,6 +338,7 @@ async def _run_import_job(job_id: str, zip_path: Path, actor,
         def _register() -> ImportMapping:
             from app.core.database import SessionLocal
 
+            mapping = ImportMapping()
             with SessionLocal() as db:
                 try:
                     mapping = _register_all(
@@ -343,6 +347,26 @@ async def _run_import_job(job_id: str, zip_path: Path, actor,
                     db.commit()
                 except Exception:
                     db.rollback()
+                    # 补偿式回滚（create_project 等入口内部 commit，单靠
+                    # rollback 不够）：隔离新项目行级联删除（datasets/
+                    # workflows/artifacts 经 ORM cascade）+ 自产 upload 行。
+                    if mapping.project_id:
+                        with SessionLocal() as cleanup_db:
+                            from app.models.project import Project
+
+                            row = cleanup_db.get(Project, mapping.project_id)
+                            if row is not None:
+                                cleanup_db.delete(row)
+                            from app.models.upload import UploadRecord
+
+                            for info in mapping.datasets.values():
+                                upload_id = info.get("upload_id")
+                                if upload_id and str(upload_id).isdigit():
+                                    up = cleanup_db.get(
+                                        UploadRecord, int(upload_id))
+                                    if up is not None:
+                                        cleanup_db.delete(up)
+                            cleanup_db.commit()
                     for path in created_files:
                         try:
                             path.unlink(missing_ok=True)
@@ -428,10 +452,8 @@ def _register_all(
     created_files: List[Path], cancel_check,
 ) -> ImportMapping:
     from app.models.project import (
-        Artifact, ArtifactLineage, MapProductVersion, Workflow, WorkflowRevision,
+        MapProductVersion, Workflow, WorkflowRevision,
     )
-    from app.schemas.project_schema import DatasetAttach
-    from app.services.project_artifact_promotion import materialize_blob
     from app.services.project_service import ProjectService
 
     mapping = ImportMapping()
@@ -606,10 +628,10 @@ def _build_remap_table(manifest: pc.PackageManifest, mapping: ImportMapping,
     - origin dataset id → 新 dataset id。
     """
     remap: Dict[str, str] = {}
-    logical_by_origin: Dict[str, str] = {}
+    origin_by_logical: Dict[str, str] = {}
     for entry in manifest.datasets:
         if entry.origin_id:
-            logical_by_origin[entry.origin_id] = entry.logical_id
+            origin_by_logical[entry.logical_id] = entry.origin_id
     for logical, info in mapping.datasets.items():
         original = info.get("original_ref") or ""
         new_dataset_id = str(info.get("dataset_id") or "")
@@ -617,10 +639,9 @@ def _build_remap_table(manifest: pc.PackageManifest, mapping: ImportMapping,
             continue  # 会话恢复在原 ref 上进行 → 无需改写
         if info.get("upload_id"):
             remap[original] = f"upload:{info['upload_id']}"
-            remap[logical_by_origin.get(logical, "") or original] = new_dataset_id
-            origin = logical_by_origin.get(logical)
-            if origin:
-                remap[origin] = new_dataset_id
+        origin = origin_by_logical.get(logical)
+        if origin and new_dataset_id:
+            remap[origin] = new_dataset_id
     return {k: v for k, v in remap.items() if k}
 
 
@@ -651,14 +672,22 @@ def _register_dataset(
     entry: pc.ManifestDataset, staging: Path, actor,
     created_files: List[Path],
 ) -> Optional[Tuple[str, Optional[int], Optional[Dict[str, Any]]]]:
-    """embedded 数据集 → UploadRecord 承载 + ProjectService.attach。
+    """embedded 数据集 → UploadRecord 承载 + ProjectDataset 直挂。
+
+    为什么不走 ``ProjectService.attach_dataset``：该入口的上传 IDOR 守卫
+    （``_caller_may_attach_upload``）要求 UploadRecord 归属调用者**已有会话**
+    ——它防的是「引用他人的既有上传」。导入场景的 upload 行是本事务**自产**
+    的（从包内载荷物化），IDOR 面不存在；且 attach_dataset 内部 commit 会
+    破坏单事务回滚假设。直挂复用同一确定性指纹
+    （``compute_dataset_fingerprint``），身份语义与生产 attach 一致。
 
     Returns (dataset_id, upload_id, session_pending) 或 None（不可注册）。
     session_pending 非 None 时由提交后的 async 阶段恢复会话引用。
     """
-    from app.models.upload import UploadRecord
-    from app.schemas.project_schema import DatasetAttach
-    from app.services.project_service import ProjectService
+    import uuid as _uuid
+
+    from app.models.project import ProjectDataset
+    from app.services.provenance import compute_dataset_fingerprint
 
     payload = entry.payload
     if payload is None:
@@ -673,21 +702,23 @@ def _register_dataset(
         db, entry, staging, payload, created_files)
     if upload_id is None:
         return None
-    dataset = ProjectService.attach_dataset(
-        db, project_id,
-        DatasetAttach(
-            name=(entry.name or entry.logical_id)[:255],
-            source_type="upload",
-            source_ref=str(upload_id),
-            schema_profile=entry.schema_profile or {},
-            crs=entry.crs or "EPSG:4326",
-        ),
-        user_id=actor.user_id,
-        org_id=actor.org_id,
+    crs = entry.crs or "EPSG:4326"
+    schema_profile = entry.schema_profile or {}
+    dataset = ProjectDataset(
+        id=f"ds_{_uuid.uuid4().hex[:16]}",
+        project_id=str(project_id),
+        name=(entry.name or entry.logical_id)[:255],
+        source_type="upload",
+        source_ref=str(upload_id),
+        schema_profile=schema_profile,
+        crs=crs,
+        quality_status="unchecked",
+        version_fingerprint=compute_dataset_fingerprint(
+            source_type="upload", source_ref=str(upload_id), crs=crs,
+            schema_profile=schema_profile),
     )
-    if dataset is None:
-        raise pc.PackageError(pc.ERR_WRITE_FAILED,
-                              f"数据集 {entry.logical_id} 注册失败（权限或项目状态异常）")
+    db.add(dataset)
+    db.flush()
     is_gpkg_member = (payload.member is not None
                       and payload.path == pc.LAYERS_GPKG_PATH)
     session_pending: Optional[Dict[str, Any]] = None
@@ -762,7 +793,6 @@ def _gpkg_layer_to_features(gpkg: Path, layer: str,
                             max_features: int = pc.MAX_FEATURES_PER_DATASET
                             ) -> Optional[List[Dict[str, Any]]]:
     """gpkg 图层 → FeatureCollection features（导入方向；有界）。"""
-    import pandas as pd
     import pyogrio
 
     try:
@@ -855,6 +885,7 @@ def _register_artifact(
     artifact = Artifact(
         id=f"art_{uuid.uuid4().hex[:16]}",
         project_id=project_id,
+        name=(entry.logical_id or "imported-artifact")[:255],
         artifact_type=entry.artifact_type[:64],
         format=entry.format[:64] or None,
         crs=entry.crs,
