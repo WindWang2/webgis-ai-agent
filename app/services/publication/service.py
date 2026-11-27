@@ -149,6 +149,10 @@ async def plan_publication_from_session(
             reason=PublicationBlockerReason.MAPSPEC_INVALID,
             message=f"MapSpec 未通过权威 schema 校验：{spec_msg}",
         ))
+    has_hard = any(b.reason in {
+        PublicationBlockerReason.MAPSPEC_INVALID,
+        PublicationBlockerReason.SNAPSHOT_BUDGET_EXCEEDED,
+    } for b in blockers)
     plan = {
         "spec_fingerprint": canonical_fingerprint(spec),
         "spec_revision": spec_revision,
@@ -157,6 +161,7 @@ async def plan_publication_from_session(
         "scope": derive_scope(spec, DEFAULT_GEOMETRY_PRECISION).model_dump(mode="json"),
         "title": str((spec.get("layout") or {}).get("title") or (spec.get("meta") or {}).get("title") or ""),
         "spec_valid": spec_valid,
+        "publishable": bool(spec_valid and not has_hard and any(lp.projectable for lp in layers)),
     }
     return {"plan": plan, "hydrated": hydrated, "spec": spec}
 
@@ -337,8 +342,6 @@ async def create_draft(
         field_whitelists=field_whitelists,
     )
     spec = planned["spec"]
-    plan = planned["plan"]
-    meta = _resolve_meta(spec, meta_params)
 
     if base_publication_id:
         base = await pub_store.get_publication(db, base_publication_id)
@@ -356,7 +359,9 @@ async def create_draft(
     else:
         product_id = product_id or uuid.uuid4().hex
         version = 1
+        meta = _resolve_meta(spec, meta_params)
 
+    plan = planned["plan"]
     document, fingerprint, blockers = build_publication_snapshot(
         spec=spec,
         plan=plan,
@@ -386,7 +391,10 @@ async def create_draft(
         title=meta.title,
         status=PUBLICATION_STATUS_DRAFT,
         access_policy="private",
-        spec_fingerprint=fingerprint,
+        # 语义区分：spec_fingerprint = 源 MapSpec canonical 指纹（与 store
+        # sidecar 同算法，可对账"原图是否变了"）；快照自身指纹在
+        # snapshot.snapshot_fingerprint（含 version，跨版本必不同）。
+        spec_fingerprint=canonical_fingerprint(spec),
         spec_revision=plan.get("spec_revision"),
         snapshot=document.model_dump(mode="json"),
         materialized=0,
