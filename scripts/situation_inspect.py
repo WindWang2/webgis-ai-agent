@@ -70,6 +70,7 @@ async def _inspect(session_id: str, as_json: bool) -> int:
         _fact_row(ctx, name, fact)
         for ctx, name, fact in situation.iter_facts()
     ]
+    known = [f for f in facts if f["status"] == "known"]
     stale = [f for f in facts if f["status"] == "stale"]
     unknown = [f for f in facts if f["status"] == "unknown"]
     report = {
@@ -106,10 +107,11 @@ async def _inspect(session_id: str, as_json: bool) -> int:
     )
     print(f"sources: ok={report['sources_ok']} unavailable={report['sources_unavailable']}")
     print(f"omitted channels: {report['omitted'] or 'none'}")
-    print(f"facts: {len(facts)} total, known={len(facts) - len(stale) - len(unknown)}, "
+    print(f"facts: {len(facts)} total, known={len(known)}, "
           f"stale={len(stale)}, unknown={len(unknown)}")
     for row in facts:
-        mark = {"known": "·", "stale": "!", "unknown": "?", "unavailable": "x"}[row["status"]]
+        mark = {"known": "·", "stale": "!", "unknown": "?", "unavailable": "x"}.get(
+            row["status"], row["status"])
         value = ""
         if row["value"] is not None:
             value = json.dumps(row["value"], ensure_ascii=False)

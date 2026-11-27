@@ -45,14 +45,21 @@ async function workbenchRevision(page: Page, sessionId: string, accessToken?: st
     `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/workbench/state?meta=1`,
     API_ORIGIN,
   );
-  const headers: Record<string, string> = {};
-  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
-  const res = await page.request.get(url.href, { headers });
-  if (!res.ok()) {
-    throw new Error(`workbench/state failed: ${res.status()} ${await res.text()}`);
-  }
-  const data = (await res.json()) as { revision?: number };
-  return Number(data.revision ?? 0);
+  // 浏览器 fetch 走 page.route 桩（j22 getJsonViaShell 同款接缝）：
+  // APIRequestContext 不经路由拦截，mock 档的 workbench/state 桩应答不到它。
+  return page.evaluate(
+    async ({ href, accessToken }: { href: string; accessToken?: string }) => {
+      const headers: Record<string, string> = {};
+      if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+      const res = await fetch(href, { headers });
+      if (!res.ok) {
+        throw new Error(`workbench/state failed: ${res.status} ${await res.text()}`);
+      }
+      const data = (await res.json()) as { revision?: number };
+      return Number(data.revision ?? 0);
+    },
+    { href: url.href, accessToken },
+  );
 }
 
 test.describe('journey-15 Pi stub MapSpec 提交', () => {

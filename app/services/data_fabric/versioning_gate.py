@@ -236,13 +236,15 @@ class InMemorySnapshotStore:
 
 
 _STORE: Optional[InMemorySnapshotStore] = None
+_STORE_LOCK = threading.Lock()
 
 
 def get_snapshot_store() -> InMemorySnapshotStore:
     global _STORE
-    if _STORE is None:
-        _STORE = InMemorySnapshotStore()
-    return _STORE
+    with _STORE_LOCK:
+        if _STORE is None:
+            _STORE = InMemorySnapshotStore()
+        return _STORE
 
 
 def content_fingerprint(features: List[Dict[str, Any]]) -> str:
@@ -318,7 +320,10 @@ def pin_or_fetch(
             snap.schema_fields, current_fields, dataset_key=dataset_key, pin=version,
             old_schema_fingerprint=snap.schema_fingerprint_of(),
         ) if current_fields else None
-        return _finish(list(snap.payload), "snapshot", version, drift, lineage_lookup, dataset_key)
+        return _finish(
+            list(snap.payload), "snapshot", version, drift, lineage_lookup, dataset_key,
+            content_fp=snap.content_fingerprint,
+        )
 
     features = fetch()
     record = SnapshotRecord(
@@ -352,6 +357,7 @@ def _finish(
     drift: Optional[DriftReport],
     lineage_lookup: Optional[Any],
     dataset_key: str,
+    content_fp: Optional[str] = None,
 ) -> GateResult:
     blocked = False
     fact_updates: Dict[str, Any] = {}
@@ -362,7 +368,9 @@ def _finish(
             blocked = True
     if blocked:
         raise DriftBlockedError(drift)  # type: ignore[arg-type]
-    fp = content_fingerprint(features) if features else None
+    # pinned 快照回放：记录里已有 content_fingerprint → 直接复用（免全量
+    # json.dumps+sha256）；空 payload 沿用 None 语义。
+    fp = (content_fp or content_fingerprint(features)) if features else None
     return GateResult(
         features=features,
         source=source,

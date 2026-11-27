@@ -17,6 +17,7 @@ BASELINE C2 断链：``WorkflowRunState`` 持久化在 ``gis_chapter`` 之外，
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from app.services.gis_harness.analysis_workflows.contracts import (
@@ -25,6 +26,8 @@ from app.services.gis_harness.analysis_workflows.contracts import (
 from app.services.gis_harness.analysis_workflows.state import (
     WorkflowRunState,
 )
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "workflow_capability_id",
@@ -116,21 +119,29 @@ def merge_workflow_rows(
         if isinstance(r, dict)]
     existing = {str(r.get("capability") or "") for r in rows}
     appended = 0
+    dropped = 0
     for run_state, contract in runs:
         for row in project_workflow_rows(run_state, contract):
             cap = str(row.get("capability") or "")
             if not cap or cap in existing:
                 continue
+            if len(rows) >= 64:      # 行上限（对齐 derive 上限 48 + 余量）
+                dropped += 1         # 截断计数——绝不静默丢弃
+                continue
             existing.add(cap)
             rows.append(row)
             appended += 1
-            if len(rows) >= 64:          # 行上限（对齐 derive 上限 48 + 余量）
-                break
-        if len(rows) >= 64:
-            break
+    # 行上限截断绝不静默：被丢族的 goal 验收证据不可见，计数 + 日志双披露
+    # （此前只记 appended，被丢行族连计数都不剩）。
+    if dropped:
+        logger.warning(
+            "workflow rows truncated at cap: %d row(s) dropped "
+            "(appended=%d) — those families' goal acceptance evidence "
+            "is not visible", dropped, appended)
     merged = dict(chapter)
     merged["analysis_steps"] = rows
     merged["analysis_workflow_row_count"] = appended
+    merged["analysis_workflow_rows_dropped"] = dropped
     return merged
 
 

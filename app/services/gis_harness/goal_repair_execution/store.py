@@ -112,7 +112,15 @@ def find_attempts(
         stmt = select(AnalysisTask).where(
             AnalysisTask.task_type == TASK_TYPE,
             AnalysisTask.session_id == session_id,
-        ).order_by(AnalysisTask.created_at.desc()).limit(max(1, limit))
+        )
+        if goal_id:
+            # goal 过滤下推 SQL：先 limit 再 Python 过滤时，同会话更新的
+            # 其它 goal attempt 会把本 goal 的活跃/历史行挤出 → 单 claim
+            # 去重与 no_progress 防护漏判。
+            stmt = stmt.where(
+                AnalysisTask.parameters["goal_id"].as_string() == goal_id)
+        stmt = stmt.order_by(
+            AnalysisTask.created_at.desc()).limit(max(1, limit))
         rows = db.execute(stmt).scalars().all()
     views = []
     for row in rows:
@@ -144,20 +152,26 @@ def _next_retry_no(session_id: str, goal_id: str, plan_version: str) -> int:
     """
     from app.core.database import SessionLocal
     from app.models.db_model import AnalysisTask
-    from sqlalchemy import func, select
+    from sqlalchemy import func, or_, select
     import contextlib
 
-    prefix = attempt_idempotency_key(
+    base = attempt_idempotency_key(
         session_id, goal_id, plan_version)
     # LIKE 通配符转义（review P3：session/goal id 含 %/_ 时防过计）。
-    escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    escaped = base.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     terminal = ("completed", "failed", "cancelled", "stale")
     with contextlib.closing(SessionLocal()) as db:
         count = db.execute(
             select(func.count()).select_from(AnalysisTask).where(
                 AnalysisTask.task_type == TASK_TYPE,
-                AnalysisTask.idempotency_key.like(
-                    f"{escaped}%", escape="\\"),
+                # 精确 base 或显式重试键（base:r{n}）——裸前缀 LIKE 会把
+                # plan_version/含冒号 goal_id 的前缀邻居算进来（retry_no
+                # 虚高 → 新键绕过单 claim）。
+                or_(
+                    AnalysisTask.idempotency_key == base,
+                    AnalysisTask.idempotency_key.like(
+                        f"{escaped}:r%", escape="\\"),
+                ),
                 AnalysisTask.status.in_(terminal),
             )
         ).scalar_one()

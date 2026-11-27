@@ -261,20 +261,28 @@ def _adjudicate_sample(candidate: Any, profile: Dict[str, Any]) -> DimensionStat
                           evidence={"sample": sample})
 
 
-def _strictest_crs_class(algorithm_ids: Sequence[str]) -> str:
-    """方法引用算法的 crs_class 并合（任一要求严格即取严格者）。"""
+def _strictest_crs_class(algorithm_ids: Sequence[str]) -> Optional[str]:
+    """方法引用算法的 crs_class 并合（任一要求严格即取严格者）。
+
+    返回 ``None`` = 方法引用了算法但全部未注册（证据不足，不得 fail-open
+    当 pass）；返回 ``""`` = 方法本身未引用算法（结构性通过）。
+    """
     from app.lib.gis.algorithm_registry import get_algorithm_registry
     reg = get_algorithm_registry()
     order = {"LOCAL_METRIC_REQUIRED": 3, "PROJECTED_REQUIRED": 2,
              "RASTER_GRID": 1}
     strictest = ""
+    resolved = 0
     for aid in algorithm_ids:
         algo = reg.get(aid)
         if algo is None:
             continue
+        resolved += 1
         cls = str(getattr(algo, "crs_class", "") or "")
         if order.get(cls, 0) > order.get(strictest, 0):
             strictest = cls
+    if not resolved and algorithm_ids:
+        return None
     return strictest
 
 
@@ -292,6 +300,11 @@ def _adjudicate_crs_scale(candidate: Any, profile: Dict[str, Any]) -> DimensionS
         recommend_metric_crs,
     )
     strictest = _strictest_crs_class(candidate.algorithm_ids)
+    if strictest is None:
+        # 引用的算法全部缺失：CRS 诉求无法判定 —— unknown 而非 pass。
+        return DimensionState(
+            dimension="crs_scale", state="unknown",
+            evidence={"reason": "algorithm_refs_unresolved"})
     if not strictest:
         return DimensionState(dimension="crs_scale", state="pass",
                               structural=True)
@@ -372,7 +385,6 @@ def _has_time_fact(profile: Dict[str, Any]) -> Optional[bool]:
 
 def _adjudicate_temporal(candidate: Any, profile: Dict[str, Any]) -> DimensionState:
     needs_time = any("temporal" in pid for pid in candidate.preconditions)
-    needs_time = needs_time or "temporal_field_required" in candidate.preconditions
     if not needs_time:
         return DimensionState(dimension="temporal", state="pass",
                               structural=True)

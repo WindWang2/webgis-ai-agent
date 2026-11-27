@@ -156,6 +156,27 @@ def _ev_record(seq, kind, payload, **extra):
     }
 
 
+def test_review_temporal_scrub_storm_coalesces_like_viewport():
+    """反证（review P2）：contracts 把 temporal_window_settled 标为
+    replace_pending —— recent 窗内同 kind 只保留最新一条。漏收会让反复拖动
+    时间轴的同类事件占满 recent 窗、合并计数失真。"""
+    events = [
+        _ev_record(1, "viewport_settled", {"center": [104.0, 30.6], "zoom": 10}),
+    ] + [
+        _ev_record(seq, "temporal_window_settled",
+                   {"mode": "range", "current": 2015 + seq})
+        for seq in range(2, 9)
+    ]
+    snap = project_interaction_snapshot(events)
+    recent_kinds = [r["kind"] for r in snap["recent_interactions"]]
+    assert recent_kinds.count("temporal_window_settled") == 1
+    # 合并保留的是最新一条（server_seq 最大）
+    kept = [r for r in snap["recent_interactions"]
+            if r["kind"] == "temporal_window_settled"][0]
+    assert kept["server_seq"] == 8
+    assert snap["temporal_window"]["current"] == 2023
+
+
 def test_review_table_clear_leaves_no_ghost_selection():
     """P2-1：table clear 后 selection 面必须为 None（不残留无 id 幽灵）。"""
     snap = project_interaction_snapshot([

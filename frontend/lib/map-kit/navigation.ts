@@ -52,10 +52,17 @@ export function fitBounds(
   // F-10: RFC 7946 §5.2 antimeridian-crossing bbox (west > east). Unwrap the
   // east edge past 180° (MapLibre LngLatBounds accepts lng > 180) — otherwise
   // the negative span counts as "degenerate" and collapses to lng ≈ 0.
-  if (west > east) east += 360;
+  const crossesAntimeridian = west > east;
+  if (crossesAntimeridian) east += 360;
   // 退化 bbox（单点/极小范围）扩到 ~300m，避免 fit 出极端 zoom
   const minSpan = 0.003;
-  if (east - west < minSpan) {
+  if (crossesAntimeridian && east - west === 0) {
+    // F-10.1：全世界 bbox（[180, s, -180, n]）unwrap 后 span=0 —— 那是整个
+    // 地球而非退化单点；走 minSpan widening 会塌缩成 lng 180 旁 ~300m 盒。
+    // 归一化回 [-180, 180]，fitBounds 落到全球。
+    west = -180;
+    east = 180;
+  } else if (east - west < minSpan) {
     const mid = (west + east) / 2;
     west = mid - minSpan / 2;
     east = mid + minSpan / 2;
@@ -91,27 +98,23 @@ export function jumpTo(map: Map, params: ViewportParams): void {
   });
 }
 
-const _bboxCache = new WeakMap<object, [number, number, number, number]>();
-
 /**
  * Calculates the bounding box of a GeoJSON object.
  * Returns [minLng, minLat, maxLng, maxLat] or null.
  *
- * Optimized single-pass traversal with WeakMap memoization and writeback.
+ * Single-pass traversal. Memoization by object identity is deliberately NOT
+ * used: GeoJSON is routinely mutated in place (coordinates replaced on the
+ * same object), and an identity-keyed cache has no invalidation hook — it
+ * would serve a stale bbox for the mutated object.
  */
 export function calculateBBox(geojson: any): [number, number, number, number] | null {
   if (!geojson || typeof geojson !== 'object') return null;
 
-  // 1. Check WeakMap cache (fast O(1) for repeated calls on the same object)
-  const cached = _bboxCache.get(geojson);
-  if (cached) return cached;
-
-  // 2. Fast path: check precomputed bbox if valid
+  // Fast path: check precomputed bbox if valid
   if (Array.isArray(geojson.bbox) && geojson.bbox.length === 4) {
     const [w, s, e, n] = geojson.bbox;
     if (Number.isFinite(w) && Number.isFinite(s) && Number.isFinite(e) && Number.isFinite(n)) {
       const validBBox: [number, number, number, number] = [w, s, e, n];
-      _bboxCache.set(geojson, validBBox);
       return validBBox;
     }
   }
@@ -146,10 +149,16 @@ export function calculateBBox(geojson: any): [number, number, number, number] | 
       if (node.type === 'FeatureCollection' && Array.isArray(node.features)) {
         for (let i = 0; i < node.features.length; i++) {
           const f = node.features[i];
-          if (f?.geometry?.coordinates) extract(f.geometry.coordinates);
+          if (f?.geometry) extract(f.geometry);
         }
-      } else if (node.type === 'Feature' && node.geometry?.coordinates) {
-        extract(node.geometry.coordinates);
+      } else if (node.type === 'Feature' && node.geometry) {
+        extract(node.geometry);
+      } else if (node.type === 'GeometryCollection' && Array.isArray(node.geometries)) {
+        // GeometryCollection 只有 geometries 无 coordinates —— 不识别会把
+        // 合法几何整体漏掉（count=0 → null）。
+        for (let i = 0; i < node.geometries.length; i++) {
+          extract(node.geometries[i]);
+        }
       } else if ('coordinates' in node) {
         extract(node.coordinates);
       }
@@ -160,7 +169,6 @@ export function calculateBBox(geojson: any): [number, number, number, number] | 
 
   if (count === 0) return null;
   const result: [number, number, number, number] = [minLng, minLat, maxLng, maxLat];
-  _bboxCache.set(geojson, result);
   return result;
 }
 

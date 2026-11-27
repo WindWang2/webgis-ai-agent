@@ -226,8 +226,19 @@ export function reportAffordance(
     if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
     // fire-and-forget：交互上报绝不阻塞手势线程；失败静默（下一轮 turn
     // 捎带的同一信封经服务端内容寻重补齐，不丢语义）。
+    const requestInit: RequestInit = {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(envelope),
+    };
+    // 特性检测：旧 Safari/Firefox 无 AbortSignal.timeout，直接调用会同步抛
+    // TypeError 窜出手势回调（widget-binding.ts 的 onReply 也不会执行）；
+    // 缺省时省略 signal —— 上报本就是 fire-and-forget，由下一轮捎带补齐。
+    if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+      requestInit.signal = AbortSignal.timeout(10_000);
+    }
     void window
-      .fetch(url, { method: 'POST', headers, body: JSON.stringify(envelope), signal: AbortSignal.timeout(10_000) })
+      .fetch(url, requestInit)
       .then((response) => { if (!response.ok) devOnly.warn('[copilot] canvas action rejected:', response.status); })
       .catch((error) => devOnly.warn('[copilot] canvas action failed:', error));
     dispatched = true;

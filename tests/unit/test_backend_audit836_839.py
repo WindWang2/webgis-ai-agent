@@ -93,6 +93,135 @@ class TestAudit837ArtifactLifecycle:
         assert "sweep_aged_artifacts" in src
 
 
+class TestArtifactLifecycleRemovalFailureRegressions:
+    """P3: 删除失败不得先删 DB 行 / 边车空主件名不得中断导出清扫。"""
+
+    @pytest.mark.asyncio
+    async def test_sweep_survives_sidecar_named_like_the_suffix(
+            self, tmp_path, monkeypatch):
+        """名字恰为 ".owner"/".diagnostics.json" 的文件会让 with_name("")
+        抛 ValueError（不被 except OSError 捕获），此前每轮导出清扫中断、
+        导出只增不减。空主件名 = 无主件 = 超龄孤儿，应被清除。"""
+        import os
+
+        from app.services import artifact_lifecycle as al
+
+        export_dir = tmp_path / "exports"
+        export_dir.mkdir()
+        monkeypatch.setattr("app.services.export_paths.exports_root",
+                            lambda: export_dir)
+        aged = time.time() - 30 * 86400
+        odd_owner = export_dir / ".owner"
+        odd_owner.write_text("u1")
+        odd_diag = export_dir / ".diagnostics.json"
+        odd_diag.write_text("{}")
+        os.utime(odd_owner, (aged, aged))
+        os.utime(odd_diag, (aged, aged))
+
+        result = await al.sweep_aged_artifacts()
+        assert result["exports_removed"] == 2
+        assert not odd_owner.exists()
+        assert not odd_diag.exists()
+
+    @staticmethod
+    def _seed_aged_report(tmp_path, monkeypatch, tag):
+        import uuid
+        from datetime import datetime, timedelta, timezone
+
+        from app.core.database import Base, Engine, SessionLocal
+        from app.models.report import Report
+        from app.services import artifact_lifecycle as al
+
+        Base.metadata.create_all(Engine)
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir(exist_ok=True)
+        monkeypatch.setattr(al, "REPORT_DIR", reports_dir)
+        sid = f"sess-retry-{tag}-{uuid.uuid4().hex}"
+        rid = f"rep-{tag}-{uuid.uuid4().hex}"
+        report_file = reports_dir / f"{rid}.pdf"
+        report_file.write_bytes(b"pdf")
+        with SessionLocal() as db:
+            db.add(Report(
+                id=rid, session_id=sid, title="t", format="pdf",
+                status="completed", file_path=str(report_file),
+                created_at=datetime.now(timezone.utc) - timedelta(days=30),
+            ))
+            db.commit()
+        return al, Report, SessionLocal, sid, rid, report_file
+
+    @pytest.mark.asyncio
+    async def test_purge_keeps_report_row_when_confined_unlink_fails(
+            self, tmp_path, monkeypatch):
+        """unlink 失败且文件仍在 REPORT_DIR 内时必须保留 DB 行，否则残留
+        文件无任何清扫入口；恢复后下一轮 purge 同时回收文件与行。"""
+        al, Report, SessionLocal, sid, rid, report_file = self._seed_aged_report(
+            tmp_path, monkeypatch, "purge")
+        monkeypatch.setattr(al, "UPLOADS_DIR", tmp_path / "uploads")
+        try:
+            real_unlink = al._safe_unlink
+            monkeypatch.setattr(al, "_safe_unlink", lambda path: False)
+            result = await al.purge_session_artifacts(sid)
+            assert result["reports_removed"] == 0
+            assert report_file.exists()
+            with SessionLocal() as db:
+                assert db.get(Report, rid) is not None
+
+            monkeypatch.setattr(al, "_safe_unlink", real_unlink)
+            retried = await al.purge_session_artifacts(sid)
+            assert retried["reports_removed"] == 1
+            assert not report_file.exists()
+            with SessionLocal() as db:
+                assert db.get(Report, rid) is None
+        finally:
+            with SessionLocal() as db:
+                row = db.get(Report, rid)
+                if row is not None:
+                    db.delete(row)
+                    db.commit()
+
+    @pytest.mark.asyncio
+    async def test_sweep_keeps_report_row_when_confined_unlink_fails(
+            self, tmp_path, monkeypatch):
+        """sweep 侧同纪律：文件残留则保留超龄行，下一轮重试。"""
+        al, Report, SessionLocal, _sid, rid, report_file = self._seed_aged_report(
+            tmp_path, monkeypatch, "sweep")
+        monkeypatch.setattr(al, "UPLOADS_DIR", tmp_path / "uploads")
+        monkeypatch.setattr("app.services.export_paths.exports_root",
+                            lambda: tmp_path / "exports")
+        monkeypatch.setattr("app.lib.artifact_cache.ARTIFACT_DIR",
+                            str(tmp_path / "artifacts"))
+        monkeypatch.setattr(
+            "app.services.project_artifact_promotion.content_store_root",
+            lambda: tmp_path / "pstore")
+
+        async def _noop_async():
+            return {}
+
+        monkeypatch.setattr(al, "_sweep_promotion_store", _noop_async)
+        monkeypatch.setattr(al, "_sweep_retention_and_orphans", _noop_async)
+        try:
+            real_unlink = al._safe_unlink
+            monkeypatch.setattr(al, "_safe_unlink", lambda path: False)
+            result = await al.sweep_aged_artifacts()
+            assert result["report_rows_removed"] == 0
+            assert report_file.exists()
+            with SessionLocal() as db:
+                assert db.get(Report, rid) is not None
+
+            monkeypatch.setattr(al, "_safe_unlink", real_unlink)
+            retried = await al.sweep_aged_artifacts()
+            assert retried["report_rows_removed"] == 1
+            assert not report_file.exists()
+            with SessionLocal() as db:
+                assert db.get(Report, rid) is None
+        finally:
+            with SessionLocal() as db:
+                row = db.get(Report, rid)
+                if row is not None:
+                    db.delete(row)
+                    db.commit()
+
+
 # ─── #838: MapSpecStore process cache invalidation ──────────────────────
 
 

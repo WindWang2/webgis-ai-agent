@@ -324,3 +324,40 @@ class TestCasSemantics:
         # spec 未被触碰。
         spec = await _spec(sid)
         assert spec["frame_product"]["active_frame"] == "fp-t-2020"
+
+
+# ── plan_from_data 纯函数：frame_id 去重不死循环 ────────────────────────
+
+
+def test_plan_dedup_long_colliding_slugs_terminates():
+    """长 slug（满 64 字符）碰撞时去重必须有限步收敛：f"{fid}-{digest}"[:64]
+    与 f"{fid}-x"[:64] 对满长 fid 均为恒等变换 —— 旧实现 while 永不退出
+    挂死 plan_from_data。"""
+    import signal
+
+    prefix = "L" * 60
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "properties": {"cat": prefix + suffix, "v": i},
+             "geometry": None}
+            for i, suffix in enumerate(("AAA", "BBB", "CCC"))
+        ],
+    }
+
+    def _timeout(signum, frame):  # pragma: no cover - 仅在缺陷复现时触发
+        raise TimeoutError("plan_from_data hung in frame_id dedup")
+
+    old = signal.signal(signal.SIGALRM, _timeout)
+    signal.alarm(10)
+    try:
+        out = fps.plan_from_data(
+            fc, product_kind="category_compare", layer_id="l", ref_id="r",
+            content_revision=1, split_field="cat")
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old)
+    assert out.get("ok") is True, out
+    ids = [f["frame_id"] for f in out["frames"]]
+    assert len(set(ids)) == len(ids) == 3
+    assert all(len(i) <= 64 for i in ids)

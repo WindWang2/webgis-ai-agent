@@ -197,7 +197,10 @@ def build_projection_patches(
     if kind == "PatchComponentIntent":
         component_id = str(getattr(intent, "component_id", "") or "")
         enabled = getattr(intent, "enabled", None)
-        component_type = getattr(intent, "component_type", None) or _component_type_of(component_id)
+        # 声明类型也必须过 IR 六面白名单 —— 直接采信可生成
+        # components.<非词表面> patch（越出 requirement 契约面）。
+        declared_type = str(getattr(intent, "component_type", "") or "")
+        component_type = _component_type_of(declared_type or component_id)
         if enabled is None or component_type is None:
             return []
         patches.append({

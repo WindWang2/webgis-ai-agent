@@ -66,6 +66,71 @@ def test_poi_long_rows_and_nan_township_centers_do_not_abort_ingest(tmp_path):
     assert all(math.isfinite(value) for value in centers[0][2:4])
 
 
+def test_township_center_nan_adcode_is_deduped_across_reimport(tmp_path, monkeypatch):
+    from app.services import local_poi, local_yearbook
+    import sqlite3
+    db = tmp_path / "yearbook.sqlite"
+    local_yearbook._open_db(db).close()
+    monkeypatch.setattr(local_yearbook, "yearbook_db_path", lambda: db)
+    row = ("town", float("nan"), 110.0, 30.0, "province", "city", "county")
+    local_poi._write_centers([row])
+    local_poi._write_centers([row])
+    conn = sqlite3.connect(db)
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM township_centers").fetchone()[0] == 1
+        assert conn.execute("SELECT adcode FROM township_centers").fetchone()[0] == ""
+    finally:
+        conn.close()
+
+
+def test_xlsx_calamine_partial_failure_does_not_replay_emitted_sheets(tmp_path, monkeypatch):
+    import sys
+    from app.services import local_poi
+
+    sheet_rows = [["id", "name", "location"], ["1", "a", "110,30"], ["2", "b", "111,31"]]
+
+    class _Sheet:
+        def iter_rows(self):
+            return iter(sheet_rows)
+
+    class _BrokenSheet:
+        def iter_rows(self):
+            raise RuntimeError("calamine parse failure")
+            yield  # pragma: no cover
+
+    class _CalamineWB:
+        sheet_names = ["s1", "s2"]
+
+        def get_sheet_by_name(self, name):
+            return _Sheet() if name == "s1" else _BrokenSheet()
+
+    class _CalamineWorkbook:
+        @staticmethod
+        def from_path(path):
+            return _CalamineWB()
+
+    class _CalamineModule:
+        CalamineWorkbook = _CalamineWorkbook
+
+    monkeypatch.setitem(sys.modules, "python_calamine", _CalamineModule)
+
+    import openpyxl
+    wb_xl = openpyxl.Workbook()
+    ws1 = wb_xl.active
+    ws1.title = "s1"
+    for row in sheet_rows:
+        ws1.append(row)
+    ws2 = wb_xl.create_sheet("s2")
+    for row in [["id", "name", "location"], ["3", "c", "112,32"]]:
+        ws2.append(row)
+    monkeypatch.setattr(openpyxl, "load_workbook", lambda *args, **kwargs: wb_xl)
+
+    got = []
+    for _header, rows in local_poi._iter_xlsx_chunks(tmp_path / "poi.xlsx", 100):
+        got.extend(row[1] for row in rows)
+    assert got == ["a", "b", "c"]
+
+
 def test_district_cache_has_lru_bound_and_independent_values(monkeypatch):
     from app.services import local_poi
     local_poi._district_codes_cache.clear()

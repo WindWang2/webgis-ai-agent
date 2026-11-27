@@ -70,6 +70,7 @@ const hud = vi.hoisted(() => {
 });
 
 const overlays = vi.hoisted(() => ({ legendRenders: 0, decorRenders: 0 }));
+const mapActionState = vi.hoisted(() => ({ selectedBaseLayer: 1 }));
 
 vi.mock('react-map-gl/maplibre', () => {
   const React = require('react');
@@ -119,7 +120,7 @@ vi.mock('@/lib/contexts/map-action-context', () => ({
     actions: [],
     dispatchAction: vi.fn(),
     popAction: vi.fn(),
-    selectedBaseLayer: 1,
+    selectedBaseLayer: mapActionState.selectedBaseLayer,
     setSelectedBaseLayer: vi.fn(),
     registerSnapshotFn: vi.fn(),
     getMapSnapshot: vi.fn(() => null),
@@ -239,6 +240,7 @@ describe('MapPanel — FE-3 interaction UX', () => {
     rmg.loaded = false;
     overlays.legendRenders = 0;
     overlays.decorRenders = 0;
+    mapActionState.selectedBaseLayer = 1;
   });
 
   it('derives interactiveLayerIds from the runtime applied spec', async () => {
@@ -305,6 +307,30 @@ describe('MapPanel — FE-3 interaction UX', () => {
     await waitFor(() => expect(hud.state.selectedFeature).toBeTruthy());
     expect(hud.state.focusLayerId).toBeNull();
     expect(screen.getAllByText('春阳水饺').length).toBeGreaterThan(0);
+  });
+
+  it('聚焦去重守卫可达：800ms 复位窗口内 layers 身份变化不重复 fitBounds（#739）', async () => {
+    const layer = pointLayer('poi', 'POI');
+    // src.bbox 分支：同步取得 bbox（无 await 窗口），fit + POST 在 effect 内落定。
+    (layer.source as any).bbox = [116, 39, 117, 40];
+    const view = await renderPanel([layer]);
+    await settleInteractive(['poi__point']);
+    expect(rmg.map._calls.fitBounds).toHaveLength(0);
+
+    // 聚焦请求 → 一次 fitBounds。
+    act(() => { hud.setState({ focusLayerId: 'poi' }); });
+    await waitFor(() => expect(rmg.map._calls.fitBounds).toHaveLength(1));
+
+    // 800ms 复位窗口内 layers 身份变化（set_view 回灌重写 layers）——
+    // 修复前：effect cleanup 清掉 lastFittedFocusRef → 重跑重新 fit（重复）。
+    rerenderPanel(view, [{ ...layer }]);
+    await drainRuntime();
+    await act(async () => { await new Promise((r) => setTimeout(r, 100)); });
+    expect(rmg.map._calls.fitBounds).toHaveLength(1);
+
+    // 复位定时器照常清理 focusLayerId（#843/#852：取消不清标记不吞复位）。
+    await act(async () => { await new Promise((r) => setTimeout(r, 900)); });
+    expect(hud.state.focusLayerId).toBeNull();
   });
 
   it('click stores the PARENT layer id (longest-prefix — poi vs poi_schools)', async () => {
@@ -647,12 +673,32 @@ describe('MapPanel — FE-3 interaction UX', () => {
     // Settle (100ms viewport-write debounce): the store gets ONE final
     // viewport write — the zoom scale bar legitimately updates once, never per
     // frame. The legend is untouched (its props don't depend on viewport).
-    act(() => {
-      vi.useFakeTimers();
-      vi.advanceTimersByTime(100);
-      vi.useRealTimers();
+    // 必须用真实计时器等待：fake timers 在 debounce 已排程后才安装，
+    // advanceTimersByTime 对既有真实定时器无效（settle 空转、写入落测试外）。
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 150));
     });
+    expect((hud.state.viewport as { center: [number, number] }).center[0]).toBeCloseTo(116.43, 6);
     expect(overlays.legendRenders).toBe(0);
     expect(overlays.decorRenders).toBeLessThanOrEqual(1);
   });
+
+  it('离线/纯 GeoJSON 底图：选中要素不触发底图自愈 setStyle 重建', async () => {
+    // index 99 → MAP_STYLES[99] 缺失 → getMapStyle 返回无 vector/raster
+    // source 的离线兜底样式；实时样式里的业务 geojson 层不得被误判为
+    // 「瓦片源丢失」而反复 setStyle。
+    mapActionState.selectedBaseLayer = 99;
+    await renderPanel([pointLayer('poi', 'POI')]);
+    await settleInteractive(['poi__point']);
+    rmg.queryResults = [featureOn('poi__point', { name: 'X' })];
+    act(() => rmg.lastOnClick?.(clickPoint));
+    await waitFor(() => expect(hud.state.selectedFeature).toBeTruthy());
+
+    const setStyleCallsBefore = rmg.map._calls.setStyle.length;
+    // 看门狗延迟 2500ms；用真实计时器等待其触发窗口。
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 2700));
+    });
+    expect(rmg.map._calls.setStyle.length).toBe(setStyleCallsBefore);
+  }, 10000);
 });

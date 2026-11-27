@@ -415,3 +415,184 @@ async def test_remediation_mapspec_polygon_alternatives_semantic_and_svg():
         svg = compile_mapspec_to_svg(mapspec)
         assert "<path" in svg
 
+
+@pytest.mark.asyncio
+async def test_mapspec_null_feature_properties_do_not_abort_authoring():
+    """GeoJSON ``"properties": null`` is legal and must not abort V3 authoring."""
+    from unittest.mock import patch
+
+    class DummyProb:
+        problem_id = "test_prob_null_props"
+        goal = "Null properties"
+
+    class DummyRec:
+        decision_fingerprint = "nullprops"
+
+    class DummyResult:
+        problem = DummyProb()
+        recommendation = DummyRec()
+        comparison_ref_id = "ref_null"
+        comparison_geojson = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [116.4, 39.9]},
+                    "properties": None,
+                },
+                {
+                    "type": "Feature",
+                    "geometry": None,
+                    "properties": None,
+                },
+            ],
+        }
+
+    upserted = []
+
+    async def mock_upsert(*, session_id, layer, source_data):
+        upserted.append((layer, source_data))
+        return {"success": True, "layer": layer}
+
+    with patch("app.services.spatial_decision.mapspec_integration._upsert_decision_layer", side_effect=mock_upsert):
+        res = await apply_v3_decision_to_mapspec("sess_null", DummyResult())
+
+    assert res["success"] is True
+    assert len(upserted) == 1
+    layer, data = upserted[0]
+    assert layer["type"] == "circle"
+    assert data["features"][0]["properties"] is None
+
+
+
+# --- 8. P3 review regressions ---
+
+@pytest.mark.asyncio
+async def test_mc_does_not_invent_missing_constraint_attribute_from_uncertainty():
+    """A constraint that fails closed deterministically must stay infeasible in MC."""
+    engine = DecisionEngineV3()
+    problem = DecisionProblem(
+        problem_id="mc_missing_constraint_attr",
+        goal="MC consistency",
+        target_area=TargetAreaSpec(query="Test City"),
+        alternatives=[
+            Alternative(id="A", name="Alt A", attributes={"cost": 100.0}),
+            Alternative(id="B", name="Alt B", attributes={"cost": 120.0}),
+        ],
+        criteria=[
+            Criterion(id="cost", name="Cost", direction=CriterionDirection.MINIMIZE),
+        ],
+        constraints=[
+            Constraint(
+                id="clearance",
+                name="Clearance <= 10",
+                constraint_type=ConstraintType.HARD,
+                category=ConstraintCategory.NUMERIC,
+                metric_key="clearance",
+                operator="<=",
+                threshold=10.0,
+            )
+        ],
+        uncertain_parameters=[
+            UncertainParameter(
+                param_id="clearance",
+                name="Clearance draw",
+                distribution=DistributionType.FIXED,
+                params={"value": 5.0},
+            )
+        ],
+        mc_sample_count=10,
+        random_seed=42,
+    )
+
+    result = await engine.solve_problem(problem)
+
+    # Deterministic pass fails closed because 'clearance' was never observed...
+    assert result.recommendation.scores["A"].feasible is False
+    # ...and MC must not fabricate it from the declared draw.
+    assert result.recommendation.robustness.prob_feasible["A"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_mc_sample_normalization_errors_are_not_swallowed(monkeypatch):
+    """Unexpected normalization failures inside MC must surface, not become 0.0 scores."""
+    import app.services.spatial_decision.decision_engine_v3 as dev3
+    from app.services.spatial_decision.normalization import normalize_criterion_values as real_normalize
+
+    calls = {"n": 0}
+
+    def flaky_normalize(raw_values, criterion):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise RuntimeError("simulated normalization bug")
+        return real_normalize(raw_values=raw_values, criterion=criterion)
+
+    monkeypatch.setattr(dev3, "normalize_criterion_values", flaky_normalize)
+
+    problem = DecisionProblem(
+        problem_id="mc_norm_failure",
+        goal="MC normalization failure",
+        target_area=TargetAreaSpec(query="Test City"),
+        alternatives=[Alternative(id="A", name="Alt A", attributes={"cost": 100.0})],
+        criteria=[
+            Criterion(id="cost", name="Cost", direction=CriterionDirection.MINIMIZE),
+        ],
+        uncertain_parameters=[
+            UncertainParameter(
+                param_id="noise",
+                name="Noise",
+                distribution=DistributionType.FIXED,
+                params={"value": 1.0},
+            )
+        ],
+        mc_sample_count=10,
+        random_seed=42,
+    )
+
+    with pytest.raises(RuntimeError):
+        await DecisionEngineV3().solve_problem(problem)
+
+
+@pytest.mark.asyncio
+async def test_uncomputed_criterion_renders_not_computed_not_zero():
+    """A criterion that failed normalization must not display as a 0.00 score."""
+    problem = DecisionProblem(
+        problem_id="uncomputed_criterion",
+        goal="Report honesty",
+        target_area=TargetAreaSpec(query="Test City"),
+        alternatives=[Alternative(id="A", name="Alt A", attributes={"x": 5.0})],
+        criteria=[
+            Criterion(
+                id="x",
+                name="X",
+                direction=CriterionDirection.UNKNOWN,
+                is_core=False,
+            )
+        ],
+    )
+
+    result = await DecisionEngineV3().solve_problem(problem)
+
+    assert "得: 未计算" in result.report_markdown
+    assert "得: 0.00" not in result.report_markdown
+
+
+@pytest.mark.asyncio
+async def test_non_numeric_alternative_attribute_is_treated_as_missing():
+    """LLM-provided non-numeric attribute values must not crash solve_problem."""
+    from app.services.spatial_decision.models_v3 import RecommendationAdmissibility
+
+    problem = DecisionProblem(
+        problem_id="non_numeric_attr",
+        goal="Robustness against bad attributes",
+        target_area=TargetAreaSpec(query="Test City"),
+        alternatives=[Alternative(id="A", name="Alt A", attributes={"cost": "high"})],
+        criteria=[
+            Criterion(id="cost", name="Cost", direction=CriterionDirection.MINIMIZE),
+        ],
+    )
+
+    result = await DecisionEngineV3().solve_problem(problem)
+
+    assert result.recommendation.scores["A"].raw_metrics["cost"] is None
+    assert result.recommendation.admissibility == RecommendationAdmissibility.INSUFFICIENT_EVIDENCE

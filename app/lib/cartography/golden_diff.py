@@ -33,10 +33,6 @@ def decode_png(png_bytes: bytes) -> Tuple[int, int, bytes]:
         raise ValueError(f"undecodable PNG: {exc}") from exc
 
 
-def _clamp(color: Tuple[int, int, int]) -> Tuple[int, int, int]:
-    return tuple(max(0, min(255, c)) for c in color)  # type: ignore[return-value]
-
-
 def color_distance(
     a: Sequence[int], b: Sequence[int], tolerance: int = 0
 ) -> int:

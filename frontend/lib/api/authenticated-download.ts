@@ -44,7 +44,8 @@ export function isProtectedDownloadUrl(url: string): boolean {
 
 /** Extract a file name from a download URL path (last non-empty segment). */
 export function filenameFromUrl(url: string): string {
-  const cleaned = url.split('?')[0] ?? url;
+  const withoutFragment = url.split('#')[0] ?? url;
+  const cleaned = withoutFragment.split('?')[0] ?? withoutFragment;
   const path = toApiPath(cleaned);
   const segments = path.split('/').filter(Boolean);
   const last = segments[segments.length - 1] ?? 'download';

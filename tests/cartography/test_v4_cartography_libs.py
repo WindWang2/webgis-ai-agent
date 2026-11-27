@@ -358,3 +358,25 @@ def test_analysis_converter_cluster_guard_and_route():
     }
     layer, _, _ = convert_analysis_to_mapspec_layer(route)
     assert layer["paint"]["width"]["method"] == "interpolate"
+
+
+def test_dot_skipped_face_releases_quota_for_later_faces():
+    """P2：被跳过的面（无效几何）必须释放其值与预算份额。
+
+    结算只在成功路径时，跳过面的值滞留分母 → 后续面配额被压缩、预算
+    闲置无披露。A（无效几何，值 1000）与 B（有效，值 1000），预算 100：
+    正确行为 = B 拿到全部 100 点。
+    """
+    bad_geom = {"type": "Polygon", "coordinates": "not-a-ring"}
+    feats = [
+        _poly_feat(1000, coords=[(0, 0), (1, 0), (1, 1), (0, 1), (0, 0)]),
+        _poly_feat(1000, coords=[(20, 0), (30, 0), (30, 10), (20, 10), (20, 0)]),
+    ]
+    feats[0]["geometry"] = bad_geom
+    out = generate_dot_density_features(
+        feats, value_field="pop", unit_value=10.0, max_total_dots=100)
+    meta = out["__dot_density_meta"]
+    # 无效几何面无点；其值必须从分母释放 → 有效面拿满预算
+    assert meta["total_dots"] == 100
+    # 全部点来自有效面（无效几何面 x∈[0,1] 无点）
+    assert all(f["geometry"]["coordinates"][0] >= 20 for f in out["features"])

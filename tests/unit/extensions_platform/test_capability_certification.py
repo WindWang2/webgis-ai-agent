@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 import pytest
 
@@ -136,6 +137,95 @@ class TestProbes:
             if c["stage"] == "runtime_probe" and c["status"] == "warn"
         ]
         assert warns
+
+    def test_side_effecting_tool_is_not_executed_twice_by_replay(self):
+        """P2：replay 不得对副作用工具执行第二次真实调用（重复外部请求/
+        写库）——按 warn 记录证据受限；纯工具仍真实重放。"""
+        from types import SimpleNamespace
+
+        from app.extensions_platform.capability_certification import (
+            _run_probe_by_registered_name,
+        )
+        from app.tools.registry import ToolRegistry
+
+        calls: list[int] = []
+
+        def tool(**kwargs):
+            calls.append(1)
+            return {"area": 6}
+
+        registry = ToolRegistry()
+        registry.register(
+            "certv4_side_effect_tool", "mutates external state",
+            tool, side_effect="external_side_effect",
+        )
+        registry.register(
+            "certv4_pure_tool", "pure compute", tool, side_effect="pure",
+        )
+        probe = SimpleNamespace(
+            args={}, replay=True, expect_key="area", expect_value=6.0, tolerance=1e-9,
+        )
+
+        checks = _run_probe_by_registered_name(
+            SimpleNamespace(_tool_registry=registry), "certv4_side_effect_tool",
+            probe, "runtime_probe", "tool:side_effect",
+        )
+        assert len(calls) == 1, "replay must not execute a side-effecting tool twice"
+        assert any(
+            c["status"] == "warn" and "replay skipped" in c["detail"] for c in checks
+        ), checks
+
+        calls.clear()
+        checks_pure = _run_probe_by_registered_name(
+            SimpleNamespace(_tool_registry=registry), "certv4_pure_tool",
+            probe, "runtime_probe", "tool:pure",
+        )
+        assert len(calls) == 2, "pure tools are still replayed for real"
+        assert any(
+            c["status"] == "pass" and "replay holds" in c["detail"]
+            for c in checks_pure
+        ), checks_pure
+
+    def test_hung_probe_is_cut_off_at_hard_cap(self, monkeypatch):
+        """P1：挂起的工具（无限阻塞）必须在 _PROBE_TIMEOUT_S 处熔断为探针
+        失败——`certify --staged` 不得永久阻塞（latency 判决只做事后判决，
+        不做事中限制；这里把上限压到 0.1s 验证熔断本身）。"""
+        import threading
+        from types import SimpleNamespace
+
+        from app.extensions_platform import capability_certification as cc
+        from app.extensions_platform.capability_certification import (
+            _run_probe_by_registered_name,
+        )
+        from app.tools.registry import ToolRegistry
+
+        release = threading.Event()
+        # 兜底释放：即使探针没被熔断（未修复路径）也不把测试进程挂死。
+        releaser = threading.Timer(3.0, release.set)
+        releaser.daemon = True
+        releaser.start()
+
+        def hung_tool(**kwargs):
+            release.wait()
+            return {"area": 6}
+
+        registry = ToolRegistry()
+        registry.register("certv4_hung_tool", "never returns", hung_tool)
+        host = SimpleNamespace(_tool_registry=registry)
+        probe = SimpleNamespace(args={}, replay=False, expect_key=None)
+
+        monkeypatch.setattr(cc, "_PROBE_TIMEOUT_S", 0.1)
+        t0 = time.monotonic()
+        checks = _run_probe_by_registered_name(
+            host, "certv4_hung_tool", probe, "runtime_probe", "tool:hung",
+        )
+        elapsed = time.monotonic() - t0
+        # 熔断（≈0.1s）而非等兜底释放（3s）——证明存在事中取消点。
+        assert elapsed < 2.0, f"probe was not cut off at the hard cap ({elapsed:.2f}s)"
+        assert any(
+            c["status"] == "fail" and "did not return within" in c["detail"]
+            for c in checks
+        ), checks
 
 
 class TestSkills:

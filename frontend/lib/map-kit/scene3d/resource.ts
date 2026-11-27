@@ -161,10 +161,13 @@ async function fetchWithBudget(
     opts.signal?.removeEventListener('abort', onOuterAbort);
   }
   if (!res.ok) {
+    // 不读 body 也必须 cancel：否则连接/响应缓冲滞留到 GC（批量 404 累积）。
+    await res.body?.cancel().catch(() => undefined);
     throw new Scene3dResourceFailure('http_error', url, `status ${res.status}`);
   }
   const declared = Number(res.headers.get('content-length') ?? '0');
   if (declared && declared > maxBytes) {
+    await res.body?.cancel().catch(() => undefined);
     throw new Scene3dResourceFailure('payload_too_large', url, `${declared} > ${maxBytes}`);
   }
   return {

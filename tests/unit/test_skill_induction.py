@@ -38,6 +38,7 @@ from app.services.gis_harness.skills.contract import (
 from app.services.gis_skills.induction import (
     DYNAMIC_STATUS_ALLOWLIST,
     MAX_DYNAMIC_CAPABILITIES,
+    InducedParameter,
     InducedSkillStore,
     SandboxReport,
     SkillInductionEngine,
@@ -95,6 +96,7 @@ def _satisfaction_block(verdict: str = "satisfied", fulfilled: int = 5,
 def _chain(steps=GOOD_STEPS, *, with_error: bool = False,
            digest_only_at: int | None = None,
            with_mutation: bool = True,
+           mutation_tool: str | None = None,
            user_goal: str | None = None) -> dict:
     goal = user_goal or "水质超标多边形提取并结合下风向人口做空间暴露度评估"
     stages: list = [
@@ -114,8 +116,11 @@ def _chain(steps=GOOD_STEPS, *, with_error: bool = False,
             else {"status": "ok", "result": f"rows={i * 7}", "latency_ms": 10 * i}
         stages.append({"stage": "TOOL_RESULTS", "tool": tool, **result})
     if with_mutation:
-        stages.append({"stage": "MAP_MUTATIONS", "op": "add_layer",
-                       "layer": "exposure_index"})
+        record = {"stage": "MAP_MUTATIONS", "op": "add_layer",
+                  "layer": "exposure_index"}
+        if mutation_tool:
+            record["tool"] = mutation_tool
+        stages.append(record)
     stages.append({"stage": "FINAL_VERDICT", "verdict": "ready"})
     return {"stages": stages, "total_records": len(stages),
             "completeness": 1.0,
@@ -126,6 +131,7 @@ def _make_trace(*, satisfaction=None, with_error: bool = False,
                 digest_only_at: int | None = None,
                 truncated: bool = False,
                 steps=GOOD_STEPS, turn_id: str = "t-induct",
+                mutation_tool: str | None = None,
                 user_goal: str | None = None) -> ReplayTrace:
     map_product: dict = {}
     if satisfaction is not False:
@@ -136,6 +142,7 @@ def _make_trace(*, satisfaction=None, with_error: bool = False,
         session_id="sess-induct-07", turn_id=turn_id,
         chain_dict=_chain(steps, with_error=with_error,
                           digest_only_at=digest_only_at,
+                          mutation_tool=mutation_tool,
                           user_goal=user_goal),
         turn_summary={"outcome": {"status": "ok"}, "work": {"artifacts": 1}},
         map_product=map_product,
@@ -267,6 +274,34 @@ class TestTraceAnalyzerGate:
         assert analyze_trace(trace).accepted is True
         assert analyze_trace(trace, satisfaction_threshold=1.0).accepted is False
 
+    def test_mutation_evidence_attached_to_actual_step(self):
+        # 中段 mutation 调用：证据必须挂到该步，而非末尾 export 步。
+        steps = GOOD_STEPS[:3] + [
+            ("apply_mutation", {"layer": "exposure_index"}),
+        ] + GOOD_STEPS[4:]
+        analysis = analyze_trace(_make_trace(
+            steps=steps, turn_id="t-mut-mid",
+            mutation_tool="apply_mutation"))
+        mutation_steps = [s for s in analysis.steps if s.is_mutation]
+        assert [s.seq for s in mutation_steps] == [4]
+        assert "map_mutation_receipt" in mutation_steps[0].evidence_kinds
+        assert "map_mutation_receipt" not in analysis.steps[-1].evidence_kinds
+
+    def test_non_numeric_duration_does_not_crash(self):
+        trace = _make_trace(turn_id="t-duration")
+        trace.tool_calls[0]["duration_ms"] = "slow"
+        analysis = analyze_trace(trace)
+        assert analysis.accepted is True
+        assert analysis.steps[0].duration_ms == 0.0
+
+    def test_non_numeric_counts_do_not_crash(self):
+        trace = _make_trace(turn_id="t-counts")
+        trace.artifacts = {"count": "many"}
+        trace.mutations = ["not", "a", "dict"]
+        analysis = analyze_trace(trace)
+        assert analysis.artifacts_count == 0
+        assert analysis.mutations_count == 0
+
 
 # ── 参数泛化 ─────────────────────────────────────────────────────────────
 
@@ -322,6 +357,38 @@ class TestParameterGeneralizer:
         model_cls = good_generalization.build_model()
         with pytest.raises(ValidationError):
             model_cls(**_variant_params(start_date="next Tuesday"))
+
+    @pytest.mark.parametrize("key", ["key", "auth", "cookie", "signature"])
+    def test_bare_sensitive_keys_never_generalized(self, key):
+        steps = GOOD_STEPS + [("upload_report_attachment", {key: "s3cr3t"})]
+        analysis = analyze_trace(
+            _make_trace(steps=steps, turn_id=f"t-bare-{key}"))
+        assert analysis.accepted is True
+        gen = generalize_parameters(analysis)
+        assert key not in {p.name for p in gen.parameters}
+        assert any(key in item and "sensitive_key" in item
+                   for item in gen.skipped)
+
+    @pytest.mark.parametrize("region", ["New York 市", " 成都市",
+                                        "St. Louis 市"])
+    def test_place_name_example_satisfies_its_own_pattern(self, region):
+        steps = [(n, dict(a)) for n, a in GOOD_STEPS]
+        steps[0][1]["region"] = region
+        outcome = SkillInductionEngine(store=None).induce(
+            _make_trace(steps=steps, turn_id="t-place-space"))
+        assert outcome.status == "induced"
+        assert outcome.rejection_codes == []
+
+    def test_longitude_key_gets_coordinate_bounds(self):
+        steps = [(n, dict(a)) for n, a in GOOD_STEPS]
+        steps[0][1]["longitude"] = 104.0
+        analysis = analyze_trace(_make_trace(steps=steps, turn_id="t-lon"))
+        gen = generalize_parameters(analysis)
+        param = {p.name: p for p in gen.parameters}["longitude"]
+        assert param.semantic_role == "coordinate"
+        assert param.constraints == {"ge": -180.0, "le": 180.0}
+        with pytest.raises(ValidationError):
+            gen.build_model()(**_variant_params(longitude=200.0))
 
 
 def _variant_params(*, region="绵阳市", threshold=0.1, **overrides) -> dict:
@@ -406,6 +473,27 @@ class TestProcedureCompiler:
             assert desc is not None, cap_id
             assert desc.status in DYNAMIC_STATUS_ALLOWLIST
 
+    def test_same_goal_distinct_topologies_get_distinct_ids(
+            self, good_analysis, good_generalization, fresh_registry):
+        base = compile_skill(good_analysis, good_generalization,
+                             registry=fresh_registry,
+                             domain="temporal_analysis")
+        narrower = analyze_trace(
+            _make_trace(steps=GOOD_STEPS[:5], turn_id="t-topo"))
+        other = compile_skill(narrower, generalize_parameters(narrower),
+                              registry=fresh_registry,
+                              domain="temporal_analysis")
+        assert narrower.goal_text == good_analysis.goal_text
+        assert other.contract.id != base.contract.id
+
+    def test_compile_without_completion_evidence_does_not_crash(
+            self, good_analysis, good_generalization, fresh_registry):
+        analysis = good_analysis.model_copy(deep=True)
+        analysis.steps[-1].evidence_kinds = []
+        compiled = compile_skill(analysis, good_generalization,
+                                 registry=fresh_registry)
+        assert compiled.contract.completion_evidence == []
+
 
 # ── 沙盒验证（静态 + 去毒 + 重放）────────────────────────────────────────
 
@@ -482,6 +570,20 @@ class TestSandboxValidator:
         assert scan_for_injection("drop ${HOME} table") is not None
         assert scan_for_injection(r"open C:\Windows\system32") is not None
         assert scan_for_injection("访问 https://evil.example") is not None
+
+    def test_reserved_parameter_name_rejected_not_crash(self, good_compiled,
+                                                        good_analysis):
+        compiled = good_compiled.model_copy(update={"parameters": [
+            InducedParameter(name="__config__", type="str",
+                             semantic_role="generic", example="x")]})
+        report = validate_compiled(
+            compiled, good_analysis,
+            variant_scenarios=[{"name": "reserved_name", "expect": "ok",
+                                "params": {"__config__": "x"}}])
+        assert report.accepted is False
+        variant = report.variant_results[0]
+        assert variant.passed is False
+        assert "param_schema" in variant.detail
 
 
 # ── 动态能力挂钩与 induced 资产隔离面 ────────────────────────────────────
@@ -560,6 +662,25 @@ class TestInducedSkillStore:
         assert store.load(good_compiled.contract.id) is None
         assert store.quarantine_ids() == [good_compiled.contract.id]
         assert store.list_ids() == []  # fail-closed：不进索引
+
+    def test_save_commits_atomically(self, good_compiled, tmp_path,
+                                     monkeypatch):
+        from app.services.gis_skills.induction import dynamic_provider
+        store = InducedSkillStore(tmp_path / "ind")
+        store.save(good_compiled)
+        target = store.root / f"{good_compiled.contract.id}.yaml"
+        before = target.read_text(encoding="utf-8")
+        changed = good_compiled.model_copy(
+            update={"yaml_text": before + "\n# v2\n"})
+
+        def _crash_before_commit(src, dst, *args, **kwargs):
+            raise OSError("simulated crash before commit")
+
+        monkeypatch.setattr(dynamic_provider.os, "replace",
+                            _crash_before_commit)
+        with pytest.raises(OSError):
+            store.save(changed)
+        assert target.read_text(encoding="utf-8") == before
 
 
 # ── 端到端编排与异常轨迹免疫 ─────────────────────────────────────────────
@@ -713,6 +834,30 @@ class TestInductionCli:
         assert data["cluster_by_session"] is True
         assert data["total"] == 1 and data["induced"] == 1  # 聚簇为 1 个产物
         assert not out.exists()  # dry-run 不落盘
+
+    def test_cli_cluster_error_source_is_json_array(self, tmp_path,
+                                                    monkeypatch):
+        # P3 data-integrity：聚簇失败的 source 必须与成功分支同构
+        # （JSON 数组），而非 Python 列表 repr 字符串。
+        root = tmp_path / "rec"
+        self._write_corpus(root)
+
+        class Boom(SkillInductionEngine):
+            def induce_many(self, traces):
+                raise RuntimeError("boom")
+
+        monkeypatch.setattr(skill_induction, "SkillInductionEngine", Boom)
+        report = tmp_path / "r.json"
+        rc = skill_induction.main([
+            "--recordings-dir", str(root), "--out-dir", str(tmp_path / "o"),
+            "--report", str(report), "--cluster-by-session"])
+        assert rc == 0
+        data = json.loads(report.read_text(encoding="utf-8"))
+        assert data["errors"] == 1
+        record = data["error_records"][0]
+        assert isinstance(record["source"], list)
+        assert record["source"] == [str(root / "sessA" / "t1.json"),
+                                    str(root / "sessA" / "t2.json")]
 
 
 # ── 独立审查（AGENT-07-REVIEW）要求的回归钉子 ────────────────────────────

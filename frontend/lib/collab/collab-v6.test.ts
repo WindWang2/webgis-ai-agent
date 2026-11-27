@@ -21,7 +21,12 @@ import {
   getCollabState,
   resetCollabStoreForTests,
 } from './store';
-import { setCollabKnownRevision, bindCollabRefetch } from './client';
+import {
+  bindCollabRefetch,
+  sendCollabPresence,
+  setCollabKnownRevision,
+  startCollabClient,
+} from './client';
 import { resetUndoForTests } from '@/lib/workbench/undo';
 import { resetLiveState, setMapSpecOwnerToken, setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 import {
@@ -192,6 +197,31 @@ describe('collab client + adopt（mock WS）', () => {
   it('认证：匿名会话以 session subprotocol 携带 owner token', () => {
     const ws = lastSocket();
     expect(ws.protocols).toEqual(['auth-frame-v1']);
+  });
+
+  it('会话切换丢弃上一会话尚未发送的 presence', () => {
+    vi.useFakeTimers();
+    try {
+      const previousSocket = lastSocket();
+      previousSocket.open();
+      sendCollabPresence({ editingLayerId: 'previous-layer' });
+
+      setMapSpecSessionCursor('sess-next', 5, 'owner-tok-next');
+      startCollabClient('sess-next', vi.fn());
+      const nextSocket = lastSocket();
+      nextSocket.open();
+      sendCollabPresence({ editingGroupId: 'next-group' });
+      vi.advanceTimersByTime(250);
+
+      const presenceFrames = nextSocket.sent
+        .map((frame) => JSON.parse(frame) as { event: string; data?: Record<string, unknown> })
+        .filter((frame) => frame.event === 'presence');
+      expect(presenceFrames).toEqual([
+        { event: 'presence', data: { editingGroupId: 'next-group' } },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('F-07: same-sid restart connects once the owner_token arrives late', () => {

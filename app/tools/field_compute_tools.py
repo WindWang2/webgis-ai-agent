@@ -50,7 +50,10 @@ class FieldComputeApplyArgs(BaseModel):
     plan_id: str
     expected_fingerprint: str = ""
     project_id: str = ""
-    wait_max_s: int = Field(20, ge=0, le=600)
+    # schema 上界必须与运行时钳制（L399 附近 min(…, 60)）一致：
+    # 曾声明 le=600 却只等 60s，合同承诺与实际不符；超限值现在被校验拒绝
+    # （VALIDATION_ERROR），而不是静默钳制。
+    wait_max_s: int = Field(20, ge=0, le=60)
     session_id: Optional[str] = None
 
 
@@ -459,9 +462,10 @@ def register_field_compute_tools(registry: ToolRegistry) -> None:
             q = (
                 db.query(AnalysisTask)
                 .filter(AnalysisTask.task_type == "field_compute_apply")
+                .filter(AnalysisTask.session_id == sid)
                 .order_by(AnalysisTask.id.desc())
             )
-            for candidate in q.limit(10):
+            for candidate in q:
                 params = candidate.parameters if isinstance(candidate.parameters, dict) else {}
                 if params.get("plan_id") == plan_id and candidate.session_id == sid:
                     row = {

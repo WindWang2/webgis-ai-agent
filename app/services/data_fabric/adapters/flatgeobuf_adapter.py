@@ -15,6 +15,7 @@ FlatGeobuf Data Source Adapter — V2 (ADR-0094 Wave F)
 import json
 from contextlib import contextmanager
 from typing import Iterator
+import hashlib
 import logging
 import os
 import tempfile
@@ -28,8 +29,9 @@ _FGB_CACHE_MAX = 4
 # #2233：按 URL 的下载锁 —— .partial 文件名曾是与目标文件确定对应的共享
 # 路径，并发下载互踩（半成品交错/替换竞态）。
 _FGB_DL_LOCKS_GUARD = threading.Lock()
-_FGB_DL_LOCKS: dict[str, threading.Lock] = {}
-_FGB_DL_LOCKS_MAX = 256
+#: url → [lock, 引用计数]：最后一个使用者离开时移除条目。不再按容量 clear()
+#: —— 那会连仍被持有/等待的锁一起丢弃，同 URL 并发下载重新互踩。
+_FGB_DL_LOCKS: dict[str, list] = {}
 
 
 def _cached_remote_flatgeobuf(session, url: str) -> str:
@@ -52,37 +54,50 @@ def _cached_remote_flatgeobuf(session, url: str) -> str:
     cap = min(_local_file_max_bytes_from_settings(), 64 * 1024 * 1024)
     directory = os.path.join(tempfile.gettempdir(), "webgis-fgb-cache")
     os.makedirs(directory, exist_ok=True)
-    local = os.path.join(directory, f"{hash(url) & 0xFFFFFFFF:08x}.fgb")
+    # 稳定摘要文件名：hash(url) 受进程随机化影响（跨进程必 miss）且只有
+    # 32 位（碰撞会把一个 URL 的文件当另一个返回）。
+    local = os.path.join(
+        directory, f"{hashlib.sha256(url.encode('utf-8')).hexdigest()[:16]}.fgb"
+    )
     with _FGB_DL_LOCKS_GUARD:
-        if len(_FGB_DL_LOCKS) >= _FGB_DL_LOCKS_MAX:
-            _FGB_DL_LOCKS.clear()
-        dl_lock = _FGB_DL_LOCKS.setdefault(url, threading.Lock())
-    with dl_lock:
-        # 唯一 .partial 名（非确定性共享路径）+ 失败清理：并发下载不再
-        # 互踩，预算中断/网络异常也不留半成品文件。
-        response = session.get(url, stream=True, timeout=(5, 30))
-        partial: Optional[str] = None
-        try:
-            response.raise_for_status()
-            count = 0
-            fd, partial = tempfile.mkstemp(prefix=".dl-", suffix=".partial", dir=directory)
-            with os.fdopen(fd, "wb") as target:
-                for chunk in response.iter_content(chunk_size=64 * 1024):
-                    count += len(chunk)
-                    if count > cap:
-                        raise QueryBudgetExceededError(
-                            "remote FlatGeobuf exceeds download byte budget"
-                        )
-                    target.write(chunk)
-            os.replace(partial, local)
-            partial = None
-        finally:
-            response.close()
-            if partial is not None:
-                try:
-                    os.unlink(partial)
-                except OSError:
-                    pass
+        entry = _FGB_DL_LOCKS.get(url)
+        if entry is None:
+            entry = [threading.Lock(), 0]
+            _FGB_DL_LOCKS[url] = entry
+        entry[1] += 1
+    dl_lock = entry[0]
+    try:
+        with dl_lock:
+            # 唯一 .partial 名（非确定性共享路径）+ 失败清理：并发下载不再
+            # 互踩，预算中断/网络异常也不留半成品文件。
+            response = session.get(url, stream=True, timeout=(5, 30))
+            partial: Optional[str] = None
+            try:
+                response.raise_for_status()
+                count = 0
+                fd, partial = tempfile.mkstemp(prefix=".dl-", suffix=".partial", dir=directory)
+                with os.fdopen(fd, "wb") as target:
+                    for chunk in response.iter_content(chunk_size=64 * 1024):
+                        count += len(chunk)
+                        if count > cap:
+                            raise QueryBudgetExceededError(
+                                "remote FlatGeobuf exceeds download byte budget"
+                            )
+                        target.write(chunk)
+                os.replace(partial, local)
+                partial = None
+            finally:
+                response.close()
+                if partial is not None:
+                    try:
+                        os.unlink(partial)
+                    except OSError:
+                        pass
+    finally:
+        with _FGB_DL_LOCKS_GUARD:
+            entry[1] -= 1
+            if entry[1] <= 0:
+                _FGB_DL_LOCKS.pop(url, None)
     with _FGB_CACHE_LOCK:
         if len(_FGB_CACHE) >= _FGB_CACHE_MAX:
             _FGB_CACHE.pop(next(iter(_FGB_CACHE)), None)
@@ -251,7 +266,7 @@ class FlatGeobufAdapter(GeospatialDataSourceAdapter):
             with self._readable_source() as path:
                 with open(path, "rb") as f:
                     header = f.read(8)
-                    return header.startswith(b"fgb")
+                    return header.startswith(FGB_MAGIC)
         except Exception as e:
             logger.debug(f"FlatGeobuf probe failed for {self.endpoint}: {e}")
             return False
@@ -571,7 +586,10 @@ class FlatGeobufAdapter(GeospatialDataSourceAdapter):
 
         if mode == ResultMode.SAMPLE and v2.sample is not None:
             out = deterministic_sample(features, v2.sample, fp)
-            truncated = False
+            # features 只是 offset+window+1 的有界读窗口，抽样后又是子集：
+            # 不能把 len(features)（部分扫描量）当 total_matching 上报 —— 如实
+            # 置 truncated=True、total_matching=None（真实总量未知）。
+            truncated = True
         else:
             out = features[offset: offset + page.limit]
             truncated = len(features) > offset + page.limit
@@ -703,10 +721,15 @@ class FlatGeobufAdapter(GeospatialDataSourceAdapter):
         """GeoDataFrame → (features, 属性行)。投影在属性层应用。"""
         if gdf is None or len(gdf) == 0:
             return [], []
+        # 不可序列化（NaN 坐标等）→ typed 错误：绝不吞成空 features ——
+        # 那会让上层产出 truncated=False/total_matching=0 的「完整空结果」，
+        # 把读取失败伪装成零命中。
         try:
             data = json.loads(gdf.to_json())
-        except Exception:
-            data = {"type": "FeatureCollection", "features": []}
+        except Exception as e:
+            raise SourceBadResponseError(
+                f"FlatGeobuf feature serialization failed: {e}"
+            ) from e
         raw_features = data.get("features", []) if isinstance(data, dict) else []
         out: List[Dict[str, Any]] = []
         for f in raw_features:

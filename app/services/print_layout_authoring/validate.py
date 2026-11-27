@@ -14,7 +14,9 @@ from app.services.print_layout_authoring.fonts import (
     font_asset_version, font_resource_status, resolve_font, wrap_text,
 )
 from app.services.print_layout_authoring.legend import layout_legend, read_legend_content
-from app.services.print_layout_authoring.pages import page_numbering
+from app.services.print_layout_authoring.pages import (
+    apply_page_overrides, page_numbering,
+)
 from app.services.print_layout_authoring.template import binding_context, resolve_binding
 
 
@@ -109,9 +111,17 @@ def validate_authoring(mapspec: Dict[str, Any], plan: Dict[str, Any], *,
         unit=str(legend_content.get("unit") or ""),
     )
 
+    # 带 page_id 校验时用该页**生效组件**（基础组件 + 页级覆写），与预览/导出
+    # 编译走同一 page_plan 优先级；只校验 plan["components"] 会漏掉页级收窄后
+    # 的溢出/图例放不下，导致 preview/apply 绿灯而编译期才 blocked。
+    effective_components = plan.get("components") or []
+    if page is not None:
+        page_def = next((p for p in plan.get("atlas", {}).get("pages", [])
+                         if str(p.get("page_id")) == page_id), None)
+        effective_components = apply_page_overrides(effective_components, page_def)
     component_reports: List[Dict[str, Any]] = []
     legend_reports: List[Dict[str, Any]] = []
-    for c in plan.get("components") or []:
+    for c in effective_components:
         cid = str(c.get("id") or "")
         frame = c.get("frame") or {}
         typo = _typography_of(c, plan)

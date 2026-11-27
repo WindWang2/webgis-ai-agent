@@ -114,7 +114,7 @@ def build_execution_bundle(
         "runtime_manifest_fingerprint": runtime_manifest_fingerprint,
         "plan_fingerprint": stored_record["plan_fingerprint"],
         "plan_id": plan.plan_id,
-        "execution_plan_version": 2,
+        "execution_plan_version": EXECUTION_PLAN_VERSION,
         "run_id": run.run_id,
         "run_status": run.status.value,
         "backend_variant": backend_variant or "in_process",

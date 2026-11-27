@@ -12,5 +12,11 @@ export const UNCERTAINTY_KIND_LABELS: Record<string, string> = {
 
 export function uncertaintyKindLabel(kind: string | undefined): string {
   const key = kind && kind.trim() ? kind : 'interval';
-  return UNCERTAINTY_KIND_LABELS[key] ?? key;
+  // 原型链防护：'constructor'/'toString'/'valueOf'/'__proto__' 等键若走
+  // `?? key` 会取到 Object.prototype 成员（函数/对象）并泄漏进 UI 文本 ——
+  // 只认自有属性。
+  const label = Object.prototype.hasOwnProperty.call(UNCERTAINTY_KIND_LABELS, key)
+    ? UNCERTAINTY_KIND_LABELS[key]
+    : undefined;
+  return label ?? key;
 }

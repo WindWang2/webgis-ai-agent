@@ -30,3 +30,21 @@ def test_org_isolation(runtime):
     m = runtime.create(org_id="org-a", user_id="u1", root_goal="a")
     assert runtime.store.get_mission(m.mission_id, org_id="org-b") is None
     assert runtime.store.get_mission(m.mission_id, org_id="org-a") is not None
+
+
+def test_lifecycle_helpers_reject_vanished_mission(runtime, monkeypatch):
+    """A mission deleted after lease acquire must raise typed FencingError."""
+    import pytest
+
+    from app.services.mission_runtime.store import FencingError
+
+    m = runtime.create(org_id="1", user_id="u1", root_goal="goal")
+    runtime.start(m.mission_id, worker_id="w1")
+    monkeypatch.setattr(runtime.store, "get_mission", lambda *a, **k: None)
+    with pytest.raises(FencingError):
+        runtime.start(m.mission_id, worker_id="w1")
+    with pytest.raises(FencingError):
+        runtime.revise_goal(m.mission_id, worker_id="w1", new_goal="new")
+    with pytest.raises(FencingError):
+        runtime.attach_session(
+            m.mission_id, worker_id="w1", session_id="s1", org_id="1")

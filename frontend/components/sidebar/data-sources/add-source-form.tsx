@@ -2,6 +2,7 @@
 
 import { useId, useState } from 'react';
 import { dataFabricApi } from '@/lib/api/data-fabric';
+import { describeApiError } from '@/lib/api/transport';
 import { useToastStore } from '@/components/ui/toast';
 import { useT } from '@/lib/i18n/useT';
 
@@ -69,7 +70,7 @@ const t = useT();
       setNewUrl('');
       onCreated();
     } catch (err) {
-      addToast(err instanceof Error ? err.message : t('sidebar.ds.registerFailed'), 'error');
+      addToast(describeApiError(err, t('sidebar.ds.registerFailed')), 'error');
     } finally {
       setSubmittingSource(false);
     }

@@ -1,5 +1,6 @@
 """地理编码工具 - Nominatim"""
 from typing import Annotated
+from urllib.parse import urlparse, urlunparse
 
 from pydantic import Field
 
@@ -17,6 +18,22 @@ def _raise_on_error(result: dict) -> None:
     """Nominatim 业务错误以 {"error": ...} 形式返回；抛出 RuntimeError（#311 降级接缝）。"""
     if "error" in result:
         raise RuntimeError(f"Nominatim API error: {result['error']}")
+
+
+def _nominatim_reverse_url() -> str:
+    """由 NOMINATIM_URL 派生 Nominatim 反查端点（/reverse）。
+
+    配置值含 /search 时按路径替换；未含 /search 时（如自建 Nominatim 挂在根
+    路径或子路径）裸字符串 replace 是空操作，反查会静默打到 search 端点、拿回
+    空 display_name —— 这里显式补 /reverse，不把错误端点发出去。
+    """
+    parsed = urlparse(settings.NOMINATIM_URL)
+    path = parsed.path
+    if "/search" in path:
+        path = path.replace("/search", "/reverse", 1)
+    else:
+        path = path.rstrip("/") + "/reverse"
+    return urlunparse(parsed._replace(path=path))
 
 
 def register_geocoding_tools(registry: ToolRegistry):
@@ -114,7 +131,7 @@ def register_geocoding_tools(registry: ToolRegistry):
        )
     async def reverse_geocode(lat: LatRange, lon: LonRange) -> dict:
         """反向地理编码：坐标 → 地名"""
-        url = settings.NOMINATIM_URL.replace("/search", "/reverse")
+        url = _nominatim_reverse_url()
         params = {
             "lat": lat,
             "lon": lon,

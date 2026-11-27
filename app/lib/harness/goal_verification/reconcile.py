@@ -182,9 +182,14 @@ def reconcile_goal_verification(
             detail = "blocked: " + ", ".join(reasons)
         elif "degraded" in statuses:
             coverage_status, detail = "warning", "degraded data roles"
-        else:
+        elif statuses and statuses <= {"bound", "external"}:
             coverage_status, detail = "pass", \
                 f"{len(roles)} roles bound/external"
+        else:
+            # 缺 status 键（→""）/ 词表外状态 = 无证据：诚实缺席，绝不
+            # 升级 pass（同「缺证据不升级 pass」红线）。
+            coverage_status, detail = "not_evaluated", \
+                "role status missing/unknown (evidence absent)"
     report.slots.append(VerificationSlot(
         slot=SLOT_DATA_COVERAGE, status=coverage_status,
         evidence_refs=[f"role:{r.get('role')}" for r in roles[:4]],

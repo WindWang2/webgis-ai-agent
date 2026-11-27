@@ -159,10 +159,11 @@ class TurnPhaseTracker:
                 self._illegal += 1
             if self._phase in TERMINAL_PHASES:
                 return False
+            current_phase = self._phase
             self._phase = terminal
             if len(self._transitions) < _MAX_TRANSITION_LOG:
                 self._transitions.append({
-                    "from": "settling",
+                    "from": current_phase.value,
                     "to": terminal.value,
                     "reason": f"kernel_status={self._last_status[:40]}",
                     "t": round(time.monotonic(), 3),

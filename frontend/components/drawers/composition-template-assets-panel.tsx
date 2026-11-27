@@ -13,7 +13,7 @@
  * 元数据放详情（展开行），选择器优先显示兼容而非百项字段。
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, RefreshCw, Save, Sparkles, X } from 'lucide-react';
 import { useT } from '@/lib/i18n/useT';
 import {
@@ -51,27 +51,46 @@ export function CompositionTemplateAssetsPanel({
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [projectId, setProjectId] = useState('');
 
+  // 代次守卫 + abort：连点刷新或快速开关面板时，旧响应不得覆盖新列表/notice。
+  const loadSeqRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
+
   const load = useCallback(async () => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     setNotice(null);
     try {
-      const res = await compositionTemplateAssetsApi.list({ forceRefresh: true });
+      const res = await compositionTemplateAssetsApi.list({
+        forceRefresh: true,
+        signal: controller.signal,
+      });
+      if (seq !== loadSeqRef.current) return;
       setAssets(res.assets);
       if (res.reason_codes.length > 0) {
         setNotice({ tone: 'info', text: t('notice.dbUnavailable') });
       }
     } catch (err) {
+      if (seq !== loadSeqRef.current) return;
       setNotice({
         tone: 'error',
         text: isApiError(err) ? err.message : t('notice.loadFailed'),
       });
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   }, [t]);
 
   useEffect(() => {
-    if (open) void load();
+    if (!open) return;
+    void load();
+    // 关闭面板（或依赖变化）时作废在飞行中的请求：旧响应不得回写状态。
+    return () => {
+      loadSeqRef.current += 1;
+      abortRef.current?.abort();
+    };
   }, [open, load]);
 
   const builtins = useMemo(() => assets.filter((a) => a.builtin), [assets]);

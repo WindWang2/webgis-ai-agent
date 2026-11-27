@@ -82,7 +82,12 @@ async def resume_workflow_from_anchor(
         return WorkflowResumeResponse(
             **await resume_from_anchor(db, anchor_id=anchor_id, user_id=user_id)
         )
-    except LookupError:
+    except LookupError as exc:
+        # KeyError/IndexError 也是 LookupError 子类 —— 它们是 resume 内部
+        # 缺键/越界的真实故障，不能伪装成「锚点不存在」的 404。
+        if isinstance(exc, (KeyError, IndexError)):
+            logger.exception("[ResumeAnchor] resume failed anchor=%s", anchor_id)
+            raise HTTPException(status_code=500, detail="failed to resume workflow")
         raise HTTPException(status_code=404, detail="resume anchor not found")
     except PermissionError:
         raise HTTPException(

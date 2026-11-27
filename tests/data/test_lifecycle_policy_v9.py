@@ -129,6 +129,30 @@ def test_default_policies_equivalent_to_status_quo(roots):
             "worker_cache"} <= kinds_seen
 
 
+def test_assess_prefetched_row_avoids_duplicate_object_selects(roots):
+    """assess 每对象只查一次登记行：``_upsert_object`` 复用预取结果，不再对
+    同一 (kind, object_id) 发第二个 SELECT（N+1 回归）。"""
+    from sqlalchemy import event
+
+    for i in range(3):
+        (roots["artifacts"] / f"nplus1-{i}.tif").write_bytes(b"x")
+    selects = []
+
+    def _record(conn, cursor, statement, parameters, context, executemany):
+        if "FROM lifecycle_objects" in statement:
+            selects.append(statement)
+
+    event.listen(Engine, "before_cursor_execute", _record)
+    try:
+        with SessionLocal() as db:
+            summary = assess(db, persist=True,
+                             now=datetime(2026, 9, 11, tzinfo=timezone.utc))
+    finally:
+        event.remove(Engine, "before_cursor_execute", _record)
+    assert summary["kinds"]["artifact_cache"]["total"] == 3
+    assert len(selects) == 3, "每对象恰好一次 SELECT（此前为两次）"
+
+
 def test_adapters_enumerate_real_mechanisms(roots):
     (roots["artifacts"] / "a.tif").write_bytes(b"x")
     (roots["cog"] / "s" / "b.tif").parent.mkdir(parents=True)
@@ -212,11 +236,14 @@ def test_gc_full_loop_approve_execute_rollback_purge(roots, monkeypatch):
         assert r["restored_count"] == 1
         assert (roots["cog"] / "s" / "old.tif").exists()
 
-        # 观察期（staging_hours=0）已过 → purge 允许且 no-op（目录已空）
-        p = rollback_plan  # noqa: F841 — 语义占位
+        # 观察期（staging_hours=0）已过 → 回滚后的计划可 purge（终态清理，
+        # 否则 .recovery.json 永远无法回收）
         from app.services.data_lifecycle.gc_plan import purge_staging
-        with pytest.raises(GcPlanError):
-            purge_staging(plan)
+        recovery = roots["data"] / ".gc-staging" / plan.id / ".recovery.json"
+        assert recovery.is_file()
+        purged = purge_staging(plan, db=db)
+        assert purged["purged"] is True and purged["had_staging"] is True
+        assert not recovery.exists()
 
 
 def test_gc_state_machine_full_matrix(roots, monkeypatch):
@@ -276,3 +303,34 @@ def test_plan_tree_bounded(roots, monkeypatch):
         if plan2.id != plan.id:
             assert plan2.plan_tree["truncated"] is True
             assert len(plan2.plan_tree["objects"]) == 3
+
+
+def _enable_worker_cache_stage_delete(staging_hours=0):
+    with SessionLocal() as db:
+        ensure_defaults(db)
+        p = db.query(LifecyclePolicy).filter_by(kind="worker_cache").one()
+        p.action = "stage_delete"
+        p.enabled = True
+        p.staging_hours = staging_hours
+        p.tier_thresholds = {"warm_after_s": 3600, "cold_after_s": 7200}
+        db.commit()
+
+
+def test_worker_cache_row_gone_before_execute_reports_already_gone(
+        roots, monkeypatch):
+    """计划的 worker_cache 行在执行时已消失（并发 prune/miss/键截断）：不得
+    谎报 registry_row_deleted —— 未删除必须如实记 already_gone。"""
+    monkeypatch.setattr("app.services.data_lifecycle.gc_plan.STAGING_DIR",
+                        roots["data"] / ".gc-staging")
+    _enable_worker_cache_stage_delete()
+    _seed_worker_cache(worker="w-gone", key="k-gone", hit_days_ago=30)
+    with SessionLocal() as db:
+        plan = create_gc_plan(db, kinds=["worker_cache"])
+        assert plan.candidate_count == 1
+        transition(plan, "approve", actor="admin")
+        db.query(GeoComputeWorkerCache).filter_by(
+            worker_id="w-gone", cache_key="k-gone").delete()
+        db.commit()
+        result = execute_plan(db, plan)
+        assert plan.status == "done"
+    assert [item["mode"] for item in result["staged"]] == ["already_gone"]

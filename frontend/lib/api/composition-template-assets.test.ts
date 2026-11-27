@@ -2,10 +2,11 @@
  * Composition template assets API client tests (G04).
  *
  * Covers list normalization (both-shapes + malformed guard), query params,
- * cache invalidation on mutations, and URL encoding of asset ids.
+ * and URL encoding of asset ids.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { clearCache } from './get-fast-path';
+import { compositionTemplateAssetsApi } from './composition-template-assets';
 
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
@@ -17,8 +18,6 @@ const jsonOk = (body: unknown, status = 200) => ({
   headers: { get: () => null },
   text: () => Promise.resolve(JSON.stringify(body)),
 });
-
-import { compositionTemplateAssetsApi } from './composition-template-assets';
 
 beforeEach(() => {
   vi.clearAllMocks();

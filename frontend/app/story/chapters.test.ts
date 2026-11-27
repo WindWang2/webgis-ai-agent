@@ -111,6 +111,22 @@ describe('产物 ref 归属', () => {
   it('无任何产物时为空表', () => {
     expect(assignChapterArtifacts([{ role: 'assistant', content: '纯文本' }], null)).toEqual({});
   });
+
+  it('mapspec 剩余归显示序最后一个可见章节（末章隐藏不丢产物）', () => {
+    const messages = [
+      { role: 'assistant', content: '看这张图 ref:chart-a' },
+      { role: 'assistant', content: '总结' },
+      { role: 'assistant', content: '结尾' },
+    ];
+    // 编排显示序 ch-2 → ch-0（ch-1 隐藏）：附录落 ch-0，而非末消息 ch-2
+    const byChapter = assignChapterArtifacts(
+      messages,
+      { mapspec: { layers: [{ v: 'ref:chart-b' }] } } as never,
+      ['ch-2', 'ch-0'],
+    );
+    expect(byChapter['ch-0']).toEqual(['ref:chart-a', 'ref:chart-b']);
+    expect(byChapter['ch-2']).toBeUndefined();
+  });
 });
 
 describe('章节相机提取（fly_to 围栏）', () => {
@@ -162,11 +178,13 @@ describe('smoke', () => {
     expect(chapterIdFor(12)).toBe('ch-12');
   });
 
-  it('localStorage 不可用时 saveOrchestration 不抛', () => {
-    const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+  it('localStorage 配额失败时 saveOrchestration 不抛且不落盘', () => {
+    // 必须让实例 mock（setup.ts 的自有属性 vi.fn）抛出：对 Storage.prototype
+    // 打 spy 不在调用链上，旧写法断言可空过。
+    vi.mocked(localStorage.setItem).mockImplementationOnce(() => {
       throw new Error('quota');
     });
     expect(() => saveOrchestration('sx', { version: 1, overrides: {} })).not.toThrow();
-    spy.mockRestore();
+    expect(storage.has('geoagent-story-orchestration-v1:sx')).toBe(false);
   });
 });

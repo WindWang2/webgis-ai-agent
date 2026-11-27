@@ -292,7 +292,7 @@ def _extract_layer_refs(mapspec: Optional[Dict[str, Any]]) -> List[SnapshotLayer
         refs.append(
             SnapshotLayerRef(
                 layer_id=str(src.get("id") or src.get("layer_id") or "")[:96],
-                source_ref=ref_val,
+                source_ref=ref_val[:160],
                 style_ref=str(src.get("style") or src.get("template") or "")[:96],
                 profile_fingerprint=str(src.get("profile_fingerprint") or "")[:64],
                 ref_kind="source",
@@ -719,7 +719,15 @@ class WorkspaceSnapshotService:
                         if item is not None:
                             item["home"] = "session"
                             out.append(item)
-            out.sort(key=lambda x: (x.get("created_at") or 0.0), reverse=True)
+
+            def _created_key(item: Dict[str, Any]) -> float:
+                # 损坏/手改的 created_at 可能是非数值：排序不得抛 TypeError
+                try:
+                    return float(item.get("created_at") or 0.0)
+                except (TypeError, ValueError):
+                    return 0.0
+
+            out.sort(key=_created_key, reverse=True)
             return out[:_MAX_SNAPSHOT_LIST]
 
         try:
@@ -986,6 +994,12 @@ class WorkspaceSnapshotService:
             await asyncio.to_thread(_atomic_write_json, path, clone.model_dump(mode="json"))
         except OSError:
             return None
+        if _home == "project":
+            await self._enforce_snapshot_cap(
+                target_session_id, project_id=project_id or src.project_id
+            )
+        else:
+            await self._enforce_snapshot_cap(target_session_id)
         return {"snapshot_id": new_id, "source": snapshot_id, "home": _home}
 
     async def delete_snapshot(

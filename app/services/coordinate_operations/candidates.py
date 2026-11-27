@@ -14,14 +14,17 @@
   制造「最佳可用」错觉；亦不把 unknown accuracy(-1) 显示为 0；
 - ``candidate_id`` = 服务器对（PROJJSON sha + 名称 + 精度）的确定性签发 ——
   客户端只能回传 id；任意 pipeline 串/格网路径/URL 一律不进执行定义；
-- 锁定时**重算**同参数候选集并按 id 匹配后才冻结定义与环境证据 —— 环境漂移
-  （pyproj/PROJ 版本、格网清单、network 开关）→ ``OPERATION_ENV_CHANGED``；
+- 锁定时**重算**同参数候选集并按 id 匹配后才冻结定义与环境证据 —— 重算定义与
+  listing 不一致（PROJ 数据库漂移）或 network 开启 → ``OPERATION_ENV_CHANGED``；
+  版本/格网漂移使候选集变化 → 查无此 id（``OPERATION_NOT_IN_PLAN``）；与计划期
+  冻结环境的比对应由调用方用返回的 ``environment`` 完成；
 - 候选有界（默认各 16 条，溢出计数如实报告）；排序只呈现、不构成批准。
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import warnings
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -76,7 +79,7 @@ def environment_fingerprint() -> Dict[str, Any]:
 
     network = bool(pyproj.network.is_network_enabled())
     grid_names: List[str] = []
-    for base in pyproj.datadir.get_data_dir().split(":"):
+    for base in pyproj.datadir.get_data_dir().split(os.pathsep):
         gdir = None
         try:
             gdir = __import__("pathlib").Path(base) / "grids"
@@ -282,7 +285,9 @@ def resolve_candidate_for_lock(
     Raises:
         operation_not_in_plan: id 不在当前环境候选集中（含伪造/漂移）。
         operation_unavailable: id 命中但当前不可执行（缺格网）。
-        operation_env_changed: 环境证据与 listing 时不一致（版本/格网/network）。
+        operation_env_changed: 重算定义与 listing 时不一致（PROJ 数据库漂移）或
+            network 开启。本函数不与计划冻结环境比对；返回的 ``environment``
+            是当前环境新鲜指纹，由调用方与计划值比对。
     """
     listing = list_operations(source_crs_input, target_crs_input, aoi)
     for cand in listing["candidates"]:

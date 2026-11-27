@@ -14,11 +14,12 @@
 """
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import re
 from dataclasses import dataclass
-from typing import List, Optional, Sequence, Tuple
+from typing import Any, List, Optional, Sequence, Tuple
 
 from app.lib.quality.discovery import repo_root
 
@@ -341,28 +342,57 @@ SECURITY_CONTROLS: Tuple[SecurityControl, ...] = (
 _NODE_DEF_RE_CACHE: dict = {}
 
 
+def _def_in_scope(nodes: Sequence[Any], func: str) -> bool:
+    """本作用域内的 def；不下探嵌套 class/函数（防跨作用域误配）。"""
+    for node in nodes:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name == func:
+                return True
+            continue
+        if isinstance(node, ast.ClassDef):
+            continue
+        if _def_in_scope(list(ast.iter_child_nodes(node)), func):
+            return True
+    return False
+
+
+def _class_scoped_def(
+    nodes: Sequence[Any], classes: Sequence[str], func: str
+) -> bool:
+    """按 ``Class`` 限定名逐层下探 class 体，再查直接层级 def。"""
+    if not classes:
+        return _def_in_scope(nodes, func)
+    head, rest = classes[0], classes[1:]
+    return any(
+        isinstance(node, ast.ClassDef)
+        and node.name == head
+        and _class_scoped_def(node.body, rest, func)
+        for node in nodes
+    )
+
+
 def _node_defined(text: str, node_name: str) -> bool:
     """节点存在性：``file::Class::test_x`` 要求 def 出现在该 class 体内
     （R1 review MINOR-3：纯文件级 containment 会让未收集类的同名 def 误过）；
-    ``file::test_x`` 维持文件级判定。"""
-    pat = _NODE_DEF_RE_CACHE.get(node_name)
-    if pat is None:
-        pat = re.compile(r"^\s*(?:async\s+)?def\s+" + re.escape(node_name) + r"\s*\(",
-                         re.MULTILINE)
-        _NODE_DEF_RE_CACHE[node_name] = pat
-    if "::" not in node_name:
+    ``file::test_x`` 维持文件级判定。
+
+    限定名支持任意层级嵌套类（``file::Outer::Inner::test_x``），且外层类
+    节点不被嵌套类内的同名 def 满足（P3 review：原单层 split 既误报嵌套类
+    节点也不封顶嵌套类边界）。
+    """
+    parts = node_name.split("::")
+    if len(parts) == 1:
+        pat = _NODE_DEF_RE_CACHE.get(node_name)
+        if pat is None:
+            pat = re.compile(r"^\s*(?:async\s+)?def\s+" + re.escape(node_name) + r"\s*\(",
+                             re.MULTILINE)
+            _NODE_DEF_RE_CACHE[node_name] = pat
         return bool(pat.search(text))
-    cls, func = node_name.split("::", 1)
-    # 类体边界封顶：目标 def 必须出现在 class {cls} 声明之后、且先于
-    # 下一个 column-0 的 class/def（DOTALL 懒惰量词 + 边界锚，防跨类误配）。
-    for m in re.finditer(r"^class\s+" + re.escape(cls) + r"\b[^:]*:", text, re.M):
-        body_start = m.end()
-        next_top = re.search(r"^(?:class\s|def\s|async\s+def\s)", text[body_start:], re.M)
-        body_end = body_start + (next_top.start() if next_top else len(text) - body_start)
-        body = text[body_start:body_end]
-        if re.search(r"^\s+(?:async\s+)?def\s+" + re.escape(func) + r"\s*\(", body, re.M):
-            return True
-    return False
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return False
+    return _class_scoped_def(tree.body, parts[:-1], parts[-1])
 
 
 def validate_security_manifest(
@@ -422,7 +452,11 @@ def validate_security_manifest(
             if not path.exists():
                 issues.append(f"{prefix} test file missing: {rel}")
                 continue
-            text = path.read_text(encoding="utf-8")
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                issues.append(f"{prefix} unreadable test file {rel}: {exc}")
+                continue
             # R2 review MAJOR-2：传完整 rest（含类限定），类感知分支才可达；
             # 类体边界由 _node_defined 的"下一个 class/column-0 def"封顶。
             if not _node_defined(text, rest):

@@ -109,19 +109,34 @@ def _infer_edges(steps: List[Scene3DStep]) -> tuple:
 
     环判定：边 ``step→dep``（step 依赖 dep）成环当且仅当 dep 经**其余**
     依赖边可达 step——检查时排除被测直边本身。
-    """
-    outputs_of: Dict[str, str] = {}
-    for step in steps:
-        for artifact in _STEP_ARTIFACTS.get(step.action, {}).get("outputs", ()):
-            outputs_of.setdefault(artifact, step.step_id)
 
+    产者登记（首产者获胜是缺陷）：同一 artifact 可有多个产者
+    （raster_surface = 采集/分析/挂载，scene_config = 建模/资产/相机）。
+    setdefault 首产者获胜使 final_verdict/attach_result 只依赖
+    s3d-elev —— s3d-elev/scene 完成后 ready_steps 即含 s3d-verdict，
+    判定先于分析完成（违背 build_scene3d_plan 文档链 run_analysis →
+    attach_result → final_verdict）。改为：消费者依赖其**之前**的全部
+    可运行产者（typed 占位 unavailable 步骤不产 artifact —— 它们永不
+    complete/skipped，进边会永久阻塞下游 ready 推进）。边恒指向步骤序
+    前方 → 结构上不成环（丢弃逻辑保留兜底显式 depends_on）。
+    """
+    outputs_of: Dict[str, List[str]] = {}
+    for step in steps:
+        if step.status != "pending":
+            continue  # typed 占位（unavailable）不产 artifact
+        for artifact in _STEP_ARTIFACTS.get(step.action, {}).get("outputs", ()):
+            outputs_of.setdefault(artifact, []).append(step.step_id)
+
+    order = {s.step_id: i for i, s in enumerate(steps)}
     by_id: Dict[str, List[str]] = {s.step_id: list(s.depends_on) for s in steps}
     for step in steps:
         needed = _STEP_ARTIFACTS.get(step.action, {}).get("inputs", ())
         for artifact in needed:
-            producer = outputs_of.get(artifact)
-            if producer and producer != step.step_id and producer not in by_id[step.step_id]:
-                by_id[step.step_id].append(producer)
+            for producer in outputs_of.get(artifact, ()):
+                if (producer != step.step_id
+                        and order[producer] < order[step.step_id]
+                        and producer not in by_id[step.step_id]):
+                    by_id[step.step_id].append(producer)
 
     dropped: List[List[str]] = []
     for step in steps:

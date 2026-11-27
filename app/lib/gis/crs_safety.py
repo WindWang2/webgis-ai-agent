@@ -164,7 +164,8 @@ def classify_crs(crs: Optional[str]) -> CRSDataClass:
 def recommend_metric_crs(bbox: Optional[Tuple[float, float, float, float]], crs: Optional[str] = None) -> str:
     """从 bbox（minx, miny, maxx, maxy，度）推荐度量 CRS（纯计算）。
 
-    极区（|lat|>84）→ UPS 极方位；否则 UTM 分带（中央经线最近原则）。
+    极区（北纬 >84° 或南纬 <-80°）→ UPS 极方位；否则 UTM 分带
+    （中央经线最近原则；UTM 仅定义到 80°S/84°N）。
     返回 EPSG 字符串；bbox 非法时返回通用 Web Mercator 之外的保守值
     （WGS84 UTM 带无法推断 → 返回空串由调用方处理）。
     """
@@ -176,7 +177,9 @@ def recommend_metric_crs(bbox: Optional[Tuple[float, float, float, float]], crs:
             from pyproj import Transformer
 
             minx, miny, maxx, maxy = Transformer.from_crs(crs, "EPSG:4326", always_xy=True).transform_bounds(minx, miny, maxx, maxy)
-    except (TypeError, ValueError):
+    except Exception:  # noqa: BLE001 — 非法 crs 串下 pyproj 抛 CRSError
+        # （RuntimeError 子类，不是 ValueError）—— 任何变换失败都必须落到
+        # 文档承诺的保守空串，由调用方处理，绝不逸出到 resolver 硬门之外。
         return ""
     import math
 
@@ -207,7 +210,10 @@ def crs_class_allows(crs_class: str, data_class: CRSDataClass) -> bool:
     if crs_class == "GEODESIC":
         return True     # 内部大地测量，度/米输入都正确处理
     if crs_class == "PROJECTED_REQUIRED":
-        return data_class == "projected_local_metric"
+        # 词表：任何投影平面坐标（含 3857，失真进 limitations）——
+        # 普通投影 CRS（classify_crs → "projected"）同样是投影平面坐标，
+        # 不得误拒；与 LOCAL_METRIC_REQUIRED（只认局部度量）保持区分。
+        return data_class in ("projected", "projected_local_metric")
     if crs_class == "LOCAL_METRIC_REQUIRED":
         return data_class == "projected_local_metric"
     return True

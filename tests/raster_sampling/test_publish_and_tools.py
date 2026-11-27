@@ -2,7 +2,41 @@
 from __future__ import annotations
 
 
-from app.services.raster_sampling.publish import build_display_curves, thin_series
+from app.services.raster_sampling.publish import (
+    build_display_curves,
+    load_rows_for_curves,
+    thin_series,
+)
+
+
+def test_load_rows_for_curves_streams_row_groups(tmp_path, monkeypatch):
+    """P2 perf：曲线原料按行组分批读，不再 read_table 整表载入。"""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    table = pa.table({
+        "sample_id": [f"s{i}" for i in range(5)],
+        "source_ref": ["ref:x"] * 5,
+        "band": [1, 1, 1, 2, 2],
+        "chainage_m": [0.0, 1.0, 2.0, 0.0, 1.0],
+        "station_index": [0, 1, 2, 3, 4],
+        "physical_value": [10.0, 11.0, 12.0, 20.0, 21.0],
+        "interpolated_value": [None] * 5,
+        "raw_value": [10.0, 11.0, 12.0, 20.0, 21.0],
+        "valid": [True] * 5,
+        "part_id": ["p0"] * 5,
+    })
+    path = tmp_path / "curves.parquet"
+    pq.write_table(table, path, row_group_size=2)
+
+    def _whole_table_read(*args, **kwargs):
+        raise AssertionError(
+            "load_rows_for_curves must stream row groups, not read_table")
+
+    monkeypatch.setattr(pq, "read_table", _whole_table_read)
+    rows = load_rows_for_curves(str(path))
+    assert [r["sample_id"] for r in rows] == ["s0", "s1", "s2", "s3", "s4"]
+    assert rows[3]["band"] == 2
 
 
 def test_thin_series_keeps_endpoints_gaps_extrema():
@@ -34,6 +68,14 @@ def test_thin_series_noop_under_limit():
     out, facts = thin_series(pts, limit=64)
     assert out == pts
     assert facts["method"] == "none"
+
+
+def test_thin_series_trim_over_limit_keeps_last_endpoint():
+    """P3：保留点超 limit 时截断仍必保末点（不丢最后站位）。"""
+    pts = [{"x": float(i), "y": None, "sid": f"s{i}"} for i in range(20)]
+    thinned, facts = thin_series(pts, limit=5)
+    assert facts["kept"] == 5
+    assert [p["x"] for p in thinned] == [0.0, 1.0, 2.0, 3.0, 19.0]
 
 
 def test_build_display_curves_gap_breaks_between_parts():
@@ -114,3 +156,72 @@ def test_build_display_curves_part_order_is_natural():
     assert [p["part"] for p in pts] == ["part-2", "part-10"]
     assert pts[0]["gap"] is False
     assert pts[1]["gap"] is True  # part 切换断口
+
+
+def test_execute_timeout_without_registered_job_reports_not_submitted(
+        monkeypatch):
+    """P2：wait_for 超时若取消发生在 job 登记前（尚无 job 行），不得谎报
+    submitted/running 并指引轮询一个不存在的 job。"""
+    import asyncio
+
+    from app.services.raster_sampling import service as rs_service
+    from app.tools import raster_sampling_tools as mod
+    from app.tools.registry import ToolRegistry
+
+    registry = ToolRegistry()
+    mod.register_raster_sampling_tools(registry)
+    fn = registry.get("webgis_raster_sampling_execute")
+    assert fn is not None
+
+    monkeypatch.setattr(mod, "_sid", lambda _provided: "sess-1")
+
+    async def _stuck(**_kwargs):
+        await asyncio.sleep(30)  # 取消早于 submit_async_job
+        return {"job_id": "never"}
+
+    async def _status(**_kwargs):
+        return {"success": True, "plan_id": "plan-1", "job": None}
+
+    monkeypatch.setattr(rs_service, "execute", _stuck)
+    monkeypatch.setattr(rs_service, "status", _status)
+
+    out = asyncio.run(fn(plan_id="plan-1", wait_max_s=1, session_id="sess-1"))
+    assert out["success"] is False
+    assert out["code"] == "EXECUTION_NOT_SUBMITTED"
+    assert "next" not in out
+
+
+def test_results_allows_receipt_without_outputs(monkeypatch):
+    """空 outputs 收据仍可返回成果页，sample_table_ref 为空。"""
+    import asyncio
+
+    from app.services.raster_sampling import service as rs_service
+    from app.tools import raster_sampling_tools as mod
+    from app.tools.registry import ToolRegistry
+
+    registry = ToolRegistry()
+    mod.register_raster_sampling_tools(registry)
+    fn = registry.get("webgis_raster_sampling_results")
+    assert fn is not None
+    monkeypatch.setattr(mod, "_sid", lambda _provided: "sess-1")
+
+    async def _results(**_kwargs):
+        return {
+            "execution_id": "exec-1", "plan_id": "plan-1",
+            "receipt": {"outputs": None}, "pagination": {"page": 1}, "rows": [],
+        }
+
+    monkeypatch.setattr(rs_service, "results", _results)
+    out = asyncio.run(fn(plan_id="plan-1", session_id="sess-1"))
+    assert out["success"] is True
+    assert out["sample_table_ref"] == ""
+
+
+def test_bounded_row_preserves_full_raw_exact():
+    """长整数精确值不得被静默截断成另一个数字。"""
+    from app.tools.raster_sampling_tools import _bounded_row
+
+    raw_exact = 1234567890123456789012345678901234567890
+    out = _bounded_row({"raw_exact": raw_exact, "support_pixels": [1]})
+    assert out["raw_exact"] == str(raw_exact)
+    assert "support_pixels" not in out

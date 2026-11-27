@@ -6,6 +6,7 @@ Capability 是「需要什么能力」的稳定词汇（recipe/plan 引用它）
 """
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
@@ -170,7 +171,7 @@ class CapabilityRegistry:
                     issues.append(f"capability {cap.id}: incompatible capability {inc} not registered")
                 elif inc == cap.id:
                     issues.append(f"capability {cap.id}: incompatible with itself")
-            for dep in cap.depends_on[:6]:
+            for dep in cap.depends_on:
                 if dep not in self._by_id:
                     issues.append(f"capability {cap.id}: depends_on capability {dep} not registered")
                 elif dep == cap.id:
@@ -250,16 +251,25 @@ def load_dynamic_capabilities(
 
 
 _registry: Optional[CapabilityRegistry] = None
+_registry_init_lock = threading.Lock()
 
 
 def get_capability_registry() -> CapabilityRegistry:
     global _registry
-    if _registry is None:
-        _registry = CapabilityRegistry()
-        _registry.load_builtins()
+    if _registry is not None:
+        return _registry
+    # 双重检查锁定：构造 + load_builtins 在锁内完成，注册表仅在**完整
+    # 装载后**发布 —— 并发读者不会观察到半空表或持另一个初始化实例
+    # （load_builtins 先 clear 再逐条 register）。
+    with _registry_init_lock:
+        if _registry is None:
+            reg = CapabilityRegistry()
+            reg.load_builtins()
+            _registry = reg
     return _registry
 
 
 def reset_capability_registry() -> None:
     global _registry
-    _registry = None
+    with _registry_init_lock:
+        _registry = None

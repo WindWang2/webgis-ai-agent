@@ -202,6 +202,18 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         from app.services.modelops.service import get_modelops_service, normalize_scope
 
         scope = normalize_scope(session_id=session_id, project_id=project_id)
+        if postgis_table:
+            # LLM 提供的标识符在工具面就收敛（与发布通道同一白名单），
+            # 绝不把未校验表名交给引擎/DDL。
+            from app.services.modelops.geo_output import validate_table_name
+
+            try:
+                postgis_table = validate_table_name(postgis_table)
+            except (TypeError, ValueError) as exc:
+                raise ModelOpsError(
+                    str(exc),
+                    correction_hint="pass a lowercase identifier matching ^[a-z_][a-z0-9_]{0,62}$",
+                ) from exc
         service = get_modelops_service()
         roi: Optional[List[float]] = None
         if roi_bbox is not None:
@@ -211,7 +223,10 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
                     correction_hint="pass exactly four numbers",
                 )
             roi = [float(v) for v in roi_bbox]
-            if not (roi[0] < roi[2] and roi[1] < roi[3]):
+            # 校验口径必须与交给引擎的 int 截断值一致：小数像素 ROI
+            # （如 10.0/10.9）按 float 校验会通过，但 int() 截断后 x0==x1，
+            # 形成零宽窗口。
+            if not (int(roi[0]) < int(roi[2]) and int(roi[1]) < int(roi[3])):
                 raise ModelOpsError(
                     f"invalid roi_bbox {roi}: x0<x1 and y0<y1 required",
                     correction_hint="pass [x0, y0, x1, y1] with x0<x1 and y0<y1",

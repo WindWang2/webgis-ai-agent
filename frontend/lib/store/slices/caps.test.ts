@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createStore } from "zustand/vanilla";
 import { createLayersSlice, MAX_ANNOTATIONS } from "./layersSlice";
-import { createUiSlice, MAX_OPS_LOG, MAX_UI_FEED } from "./uiSlice";
+import { createUiSlice, MAX_OPS_LOG, MAX_SYSTEM_MESSAGE_QUEUE, MAX_UI_FEED } from "./uiSlice";
 
 // FE-3 (design §7): bounded UI state — annotations cap 500, opsLog cap 200
 // (findings E4: unbounded arrays). Tests assert the caps hold and that the
@@ -80,6 +80,24 @@ describe("store slice caps (FE-3)", () => {
       const store = makeStore();
       for (let i = 0; i < 5; i++) store.getState().pushOpLog({ id: `op-${i}` } as any);
       expect(store.getState().opsLog).toHaveLength(5);
+    });
+  });
+
+  describe("system message queue (uiSlice)", () => {
+    it(`keeps at most ${MAX_SYSTEM_MESSAGE_QUEUE} queued messages, dropping the OLDEST`, () => {
+      const store = makeStore();
+      // pending 非空 → 后续消息只能入队（consumer 未 drain 的场景）
+      store.getState().setPendingSystemMessage("active");
+      for (let i = 0; i < MAX_SYSTEM_MESSAGE_QUEUE + 5; i++) {
+        store.getState().setPendingSystemMessage(`q-${i}`);
+      }
+      const queue = store.getState()._systemMessageQueue;
+      expect(queue).toHaveLength(MAX_SYSTEM_MESSAGE_QUEUE);
+      // 最新保留在队尾，最旧 5 条被逐出
+      expect(queue[queue.length - 1]).toBe(`q-${MAX_SYSTEM_MESSAGE_QUEUE + 4}`);
+      expect(queue[0]).toBe("q-5");
+      // 队首 pending 不变（队列上限不影响当前显示的消息）
+      expect(store.getState().pendingSystemMessage).toBe("active");
     });
   });
 

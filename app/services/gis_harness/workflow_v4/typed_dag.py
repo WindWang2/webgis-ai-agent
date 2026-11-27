@@ -66,6 +66,7 @@ _PORT_TYPE_ANY_FEATURE = "feature_collection"
 
 _MAX_GRAPH_NODES = 64
 _MAX_GRAPH_EDGES = 128
+_MAX_NODE_INPUTS = 6
 
 
 class TypedPort(BaseModel):
@@ -122,7 +123,7 @@ class TypedWorkflowNode(BaseModel):
             "optional": self.optional,
             "side_effect": self.effective_side_effect()[:24],
             "parameters": [{"name": p[:48]} for p in self.parameters[:8]],
-            "inputs": [p.to_bounded_dict() for p in self.inputs[:6]],
+            "inputs": [p.to_bounded_dict() for p in self.inputs[:_MAX_NODE_INPUTS]],
             "outputs": [p.to_bounded_dict() for p in self.outputs[:6]],
         }
 
@@ -216,7 +217,8 @@ def validate_typed_dag(graph: TypedWorkflowGraph) -> List[str]:
     - 边类型兼容：ports_compatible；
     - 有向无环；
     - 主输出可达：所有无出边的 output 节点均可从 data_input 到达；
-    - 词表：kind ⊆ TYPED_NODE_KINDS。
+    - 词表：kind ⊆ TYPED_NODE_KINDS；
+    - 输入预算：每节点有效上游（数据流边 ∪ 结构依赖）≤6。
     """
     violations: List[str] = []
     ids = [n.node_id for n in graph.nodes]
@@ -234,6 +236,17 @@ def validate_typed_dag(graph: TypedWorkflowGraph) -> List[str]:
                 violations.append(f"TYPED_DAG_DANGLING_DEP:{n.node_id}:{dep}")
         if n.fallback_of and n.fallback_of not in by_id:
             violations.append(f"TYPED_DAG_DANGLING_FALLBACK:{n.node_id}")
+        if len(n.inputs) > _MAX_NODE_INPUTS:
+            violations.append(
+                f"TYPED_DAG_INPUT_LIMIT:{n.node_id}:{len(n.inputs)}"
+                f">{_MAX_NODE_INPUTS}")
+        upstream = set(n.depends_on)
+        upstream.update(e.from_node for e in graph.edges
+                        if e.to_node == n.node_id)
+        if len(upstream) > _MAX_NODE_INPUTS:
+            violations.append(
+                f"TYPED_DAG_INPUT_LIMIT:{n.node_id}:{len(upstream)}"
+                f">{_MAX_NODE_INPUTS}")
     for e in graph.edges:
         src, dst = by_id.get(e.from_node), by_id.get(e.to_node)
         if src is None or dst is None:
@@ -354,8 +367,9 @@ def build_typed_dag(
       —— 家族级数据需求是方法论声明的"应考虑"集合）；
     - 选中方法的 output_artifacts → output 节点（有 plan 真实产出者才
       入边，防类型失配）；
-    - 边：角色/变换 → 方法声明消费它的分析节点（数据流），结构
-      depends_on 仅作顺序约束元数据。
+    - 边：cap 依赖（artifact 类型契约推断的产出者）→ 分析节点的声明输入
+      端口（数据流，类型精确匹配优先）；角色/变换供给补位剩余端口；
+      depends_on 另作结构顺序约束元数据保留。
     """
     nodes: List[TypedWorkflowNode] = []
     edges: List[TypedWorkflowEdge] = []
@@ -443,17 +457,44 @@ def build_typed_dag(
             optional=optional,
             parallel_safe=len(deps) <= 1 and not optional,
         ))
-        # 方法声明角色消费 → role/transform 供给边（方法契约驱动接线）
-        for role in method_roles:
-            src = _role_source(role)
-            if src is not None:
+        # 数据流边不在本循环内生成：见下方「端口接线」（cap 依赖供给优先，
+        # 角色供给补位 —— 多输入算法的每个声明端口都必须有供给）。
+        # depends_on 保留为结构顺序约束元数据（悬空依赖由 validate_typed_dag
+        # 拦截）。
+
+    # ── 端口接线（数据流边）：每个声明输入端口都要有供给 ────────────────
+    # cap 依赖供给优先：depends_on 由 artifact 类型契约推断（A.output ∩
+    # B.input ⇒ A→B，planner.infer_dependency_edges），与声明端口类型精确
+    # 匹配；方法声明角色/修复链供给补位剩余端口。历史上角色边只接
+    # inputs[0]、cap 依赖只作元数据 → 多输入算法（input_artifact_types
+    # ≥2）的其余声明端口在运行时拿不到 descriptor（driver _gather_inputs
+    # 只认边视图）→ 绑定门判 MISSING_INPUT → 节点 BLOCKED、实例 FAILED。
+    def _wire_input_ports(target: str, inputs: List[TypedPort],
+                          suppliers: Sequence[str]) -> None:
+        """suppliers 按序填入首个兼容空位（确定性；不配/无空位则跳过）。"""
+        used = {e.to_port for e in edges if e.to_node == target}
+        for src in suppliers:
+            src_node = next((n for n in nodes if n.node_id == src), None)
+            if src_node is None or not src_node.outputs:
+                continue
+            sp = src_node.outputs[0]
+            for p in inputs:
+                if p.name in used or not ports_compatible(sp, p):
+                    continue
                 edges.append(TypedWorkflowEdge(
-                    from_node=src, from_port=(
-                        "output" if src.startswith("transform:")
-                        else "data"),
-                    to_node=f"cap:{capability}", to_port=inputs[0].name))
-        # 结构依赖 = 执行顺序约束（仅节点元数据，不生成数据流边 —— 类型
-        # 兼容只在真实数据流边上裁决；悬空依赖由 validate_typed_dag 拦截）。
+                    from_node=src, from_port=sp.name,
+                    to_node=target, to_port=p.name))
+                used.add(p.name)
+                break
+
+    for n in [x for x in nodes if x.kind == "analysis"]:
+        suppliers: List[str] = list(n.depends_on)
+        suppliers.extend(
+            src for src in (
+                _role_source(role) for role in method_roles
+            ) if src is not None
+        )
+        _wire_input_ports(n.node_id, n.inputs, suppliers)
 
     # ── 连通性兜底（MAJOR-4）：方法未声明 requires_roles 时，无任何
     # 数据流入边的 analysis 节点接入全部角色供给 —— 保证图从输入侧可达
@@ -470,12 +511,7 @@ def build_typed_dag(
         for n in [x for x in nodes if x.kind == "analysis"]:
             if _has_incoming(n.node_id) or not all_sources or not n.inputs:
                 continue
-            for src in all_sources:
-                edges.append(TypedWorkflowEdge(
-                    from_node=src, from_port=(
-                        "output" if src.startswith("transform:")
-                        else "data"),
-                    to_node=n.node_id, to_port=n.inputs[0].name))
+            _wire_input_ports(n.node_id, n.inputs, all_sources)
 
     # ── output 节点 ───────────────────────────────────────────────────
     # 产出者裁决：artifact 的产出 analysis 节点 = 其解析算法的

@@ -133,6 +133,9 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
   const materializeEpochRef = useRef(0);
   useEffect(() => {
     materializeEpochRef.current += 1;
+    // 在途物化的 finally 因代次不匹配永不清除（R2 #2191）—— 同时解除该目录
+    // 「加载至地图」的禁用态，否则切换会话后按钮永久禁用。
+    setMaterializingId(null);
   }, [sessionId]);
   const [inspectedItem, setInspectedItem] = useState<CatalogItem | null>(null);
   const [inspectedDescriptor, setInspectedDescriptor] = useState<DatasetDescriptor | null>(null);

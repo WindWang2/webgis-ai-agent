@@ -334,9 +334,9 @@ class FaissVectorStore:
             # and mutating it here would make a failed write look
             # succeeded to every later reader in this process (#1704).
             repaired = dict(meta)
-            repaired["chunks"] = list(chunks)[:ntotal]
-            for i, ch in enumerate(repaired["chunks"]):
-                ch["index"] = i
+            repaired["chunks"] = [
+                {**ch, "index": i} for i, ch in enumerate(chunks[:ntotal])
+            ]
             try:
                 with _write_lock(self.index_dir):
                     _atomic_write_json(
@@ -447,12 +447,25 @@ class FaissVectorStore:
                 if _HAS_FCNTL:
                     fcntl.flock(f.fileno(), fcntl.LOCK_SH)
                     try:
-                        return json.load(f)
+                        loaded = json.load(f)
                     finally:
                         fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-                # Windows dev：共享锁缺席，读侧依赖写侧原子替换
-                # （_atomic_write_json 的 os.replace）保证不撕裂。
-                return json.load(f)
+                else:
+                    # Windows dev：共享锁缺席，读侧依赖写侧原子替换
+                    # （_atomic_write_json 的 os.replace）保证不撕裂。
+                    loaded = json.load(f)
+                # Legal-but-non-object JSON ([]/null/"str"/number) would
+                # propagate to every unguarded meta.get("chunks") caller
+                # (add_vectors/search/get_stats/mark_deleted/compact) as an
+                # AttributeError → 500. Treat it as unreadable metadata and
+                # fall back to the empty dict, matching the parse-error path.
+                if not isinstance(loaded, dict):
+                    logger.warning(
+                        f"[RAG] metadata.json is not a JSON object "
+                        f"({type(loaded).__name__}); ignoring its contents"
+                    )
+                    return {"chunks": []}
+                return loaded
         except Exception as e:
             logger.warning(f"[RAG] Failed to load metadata: {e}")
             return {"chunks": []}

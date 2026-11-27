@@ -31,6 +31,8 @@ MAX_POINTS = 64
 MAX_SERIES = 6
 #: 类目轴条目上限。
 MAX_BARS = 12
+#: radar 轴数上限（多边形网近似；超出截断 + 截断数随结果返回）。
+MAX_RADAR_AXES = 8
 
 #: 分类色板（8 色，与前端 chart 默认色同族的确定性子集；不随数据变化）。
 CHART_PALETTE = (
@@ -223,11 +225,12 @@ def _render_line_family(x: float, y: float, title: str,
     n = max(len(vs) for vs in series_values) if series_values else 0
     # review P0-1：单点 series 的 i/(len-1) 除零会把异常炸穿整页编译
     # （compile catch-all → 全空白 + 零诊断）。<2 点的序列画孤立 marker。
-    short = [vs for vs in series_values if 0 < len(vs) < 2]
-    for vs in short:
+    for si, vs in enumerate(series_values):
+        if not (0 < len(vs) < 2):
+            continue
         px, py = x + 12 + plot_w / 2.0, y + head + (max_val - vs[0]) / span * h
         parts.append(f'<circle cx="{_fmt(px)}" cy="{_fmt(py)}" r="2.4" '
-                     f'fill="{CHART_PALETTE[series_values.index(vs) % len(CHART_PALETTE)]}" '
+                     f'fill="{CHART_PALETTE[si % len(CHART_PALETTE)]}" '
                      f'fill-opacity="0.75" />')
     if n >= 2:
         for si, vs in enumerate(series_values):
@@ -417,9 +420,9 @@ def _render_special(x: float, y: float, title: str, kind: str,
                         f'width="{_fmt(cell_w - 1)}" height="{_fmt(cell_h - 1)}" '
                         f'fill="{color}" fill-opacity="{_fmt(0.25 + 0.65 * t)}" />')
         return "".join(parts)
-    # radar（近似：≤8 轴的多边形网 + 序列折线）
+    # radar（近似：≤MAX_RADAR_AXES 轴的多边形网 + 序列折线）
     axes = [(_point_name(p), _point_value(p) or 0.0)
-            for p in points if isinstance(p, dict)][:8]
+            for p in points if isinstance(p, dict)][:MAX_RADAR_AXES]
     if len(axes) >= 3:
         cx, cy, r = x + w / 2.0, y + 16.0 + 45.0, 42.0
         vmax = max((v for _n, v in axes), default=1.0) or 1.0
@@ -473,7 +476,10 @@ def render_chart_panel(
         return (f'<g class="chrome-panel" data-kind="{kind_label}">{body}</g>', "unsupported", [])
 
     truncations: List[str] = []
-    shown_cap = MAX_POINTS * (len(series) or 1)
+    # 点级截断按**序列逐个**发生（_parse_chart 每序列帽 MAX_POINTS）：披露
+    # 闸门必须按实际保留数比较 —— 此前 shown_cap=MAX_POINTS×序列数 是聚合帽，
+    # 2 序列 70+10 点时 raw=80≤128 不披露，实际丢 6 点（review P2）。
+    shown_cap = len(points) + sum(len(s["data"]) for s in series)
     if raw_count > shown_cap:
         # 点级截断按截断前原始合法点数计（review P1-2：此前恒 0）
         truncations.append(f"chart points {raw_count}→{shown_cap}")
@@ -499,14 +505,17 @@ def render_chart_panel(
                 "horizontal_bar"):
         if series:
             n_cat = max((len(s["data"]) for s in series), default=0)
-            names = [s.get("name") or f"s{i}" for i, s in enumerate(series)]
             for ci in range(n_cat):
                 cat: List[Tuple[str, float]] = []
-                for si, s in enumerate(series):
+                for s in series:
                     if ci < len(s["data"]):
-                        v = _point_value(s["data"][ci])
+                        p = s["data"][ci]
+                        v = _point_value(p)
                         if v is not None:
-                            cat.append((names[si], v))
+                            # 类目标签取**点**的 name/x —— 此前用序列名，
+                            # _render_bars 的 row[0][0] 让所有类目都标成
+                            # 序列 0 名（review P2）。
+                            cat.append((_point_name(p), v))
                 if cat:
                     category_rows.append(cat)
         else:
@@ -546,6 +555,26 @@ def render_chart_panel(
     if category_rows and len(category_rows) > MAX_BARS:
         truncations.append(f"chart categories {len(category_rows)}→{MAX_BARS}")
 
+    # 其余族的条目帽截断同样回传（review P2：此前闸门只查 category_rows
+    # —— 仅柱族填充，pie/donut/rose 切片与 box_plot/ranking_list/radar
+    # 条目超帽被静默丢弃，装配层收不到披露）。
+    if kind in ("pie", "donut", "rose"):
+        flat_n = len(series_rows[0]) if series_rows else 0
+        if flat_n > MAX_BARS:
+            truncations.append(f"chart slices {flat_n}→{MAX_BARS}")
+    elif kind == "box_plot":
+        n_items = len([p for p in points if isinstance(p, dict)])
+        if n_items > MAX_BARS:
+            truncations.append(f"chart boxes {n_items}→{MAX_BARS}")
+    elif kind == "ranking_list":
+        n_items = len([p for p in points if isinstance(p, dict)])
+        if n_items > MAX_BARS:
+            truncations.append(f"chart rows {n_items}→{MAX_BARS}")
+    elif kind == "radar":
+        n_items = len([p for p in points if isinstance(p, dict)])
+        if n_items > MAX_RADAR_AXES:
+            truncations.append(f"chart axes {n_items}→{MAX_RADAR_AXES}")
+
     group = (f'<g class="chrome-panel" data-kind="{kind_label}">{body}</g>'
              if body else "")
     return (group, status, truncations)
@@ -554,12 +583,19 @@ def render_chart_panel(
 def chart_panel_height(chart: Any) -> float:
     """装配前的确定性高度估计（stack 布局用；与渲染几何同表）。"""
     kind, _t, points, series, _s, _rc = _parse_chart(chart)
-    if kind in ("pie", "donut", "rose", "box_plot", "heat_matrix", "kpi_card",
+    if kind == "box_plot":
+        # 渲染器按 row_h=22 逐箱绘制（y+22 起，最多 MAX_BARS 行）——高度
+        # 必须覆盖内容底边，否则 stack 布局下方面板重叠。
+        n_boxes = len([p for p in points if isinstance(p, dict)])
+        return max(130.0, 22.0 + 22.0 * min(n_boxes, MAX_BARS))
+    if kind in ("pie", "donut", "rose", "heat_matrix", "kpi_card",
                 "radar"):
         return 130.0
     if kind == "horizontal_bar":
-        return 30.0 + 16.0 * min(len(series[0]["data"]) if series else len(points),
-                                 MAX_BARS)
+        # 渲染器按 max(各序列点数) 生成类目行（_render_chart_panel:506），
+        # 高度估算须同口径。
+        n_bars = max((len(s["data"]) for s in series), default=len(points))
+        return 30.0 + 16.0 * min(n_bars, MAX_BARS)
     return 116.0 + 22.0
 
 

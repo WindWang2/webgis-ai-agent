@@ -248,6 +248,52 @@ def test_stale_plan_rejected_when_state_changed(gc_env):
     execute_gc(plan2)
 
 
+def test_execute_rechecks_references_before_deleting_manifest(
+    gc_env, monkeypatch,
+):
+    """P1 并发：execute 删候选 manifest 前不重验现有引用 —— recheck 之后
+    经注册通道新建的引用救不回候选 manifest（静默数据丢失）。
+
+    注入点选在 blob 删除循环（recheck 之后、manifest 删除之前的真实
+    IO 窗口）：模拟一条不经 gc 锁的并发发布注册了引用候选 manifest 的
+    DB 根行。
+    """
+    import app.services.lakehouse.lakehouse_gc as gc_mod
+    from app.services.lakehouse.data_object import resolve_data_object
+    from app.services.lakehouse.lakehouse_gc import execute_gc, plan_gc
+
+    orphan = _publish(tag=b"race-victim")
+    plan = plan_gc(grace_hours=0.0, ttl_floor=0.0)
+    assert orphan in plan["candidates"]
+    # 至少一个可删内容 blob —— 并发注入的挂点（manifest 删除在其后）。
+    assert plan["deletable_blobs"]
+
+    real_store = gc_mod._object_store()
+    real_delete = real_store.delete_blob
+    injected = {"done": False}
+
+    class _RacingStore:
+        """并发发布在 GC 删除窗口内注册新引用（发布侧不经 gc 锁）。"""
+
+        def __init__(self, inner):
+            self._inner = inner
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+        def delete_blob(self, key):
+            if not injected["done"]:
+                injected["done"] = True
+                _register_revision(orphan)
+            return real_delete(key)
+
+    monkeypatch.setattr(gc_mod, "_object_store", lambda: _RacingStore(real_store))
+    result = execute_gc(plan)
+    # 候选 manifest 被新引用救回（未修复：无条件删除 → 解析不到）。
+    assert orphan not in result["deleted_manifests"]
+    assert resolve_data_object(orphan) is not None
+
+
 def test_gc_plan_works_on_s3_backend(gc_env, monkeypatch):
     """R1-1 回归：S3 后端（epoch 归一化 LastModified）的 GC plan 不崩。"""
     import app.services.lakehouse.lakehouse_gc as gc_mod

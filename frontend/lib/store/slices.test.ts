@@ -42,6 +42,16 @@ describe('layers slice', () => {
     expect(useHudStore.getState().layers).toHaveLength(0);
   });
 
+  it('updateLayer for a missing id is a no-op (no generation bump, no new array)', () => {
+    const s = useHudStore.getState();
+    s.addLayer({ id: 'L1', name: 'A', type: 'vector', visible: true, opacity: 1, group: 'analysis', source: { type: 'FeatureCollection', features: [] } as any });
+    const generation = useHudStore.getState().layerIntentGeneration;
+    const layers = useHudStore.getState().layers;
+    s.updateLayer('missing-layer', { opacity: 0.2 });
+    expect(useHudStore.getState().layerIntentGeneration).toBe(generation);
+    expect(useHudStore.getState().layers).toBe(layers);
+  });
+
   it('process layers 不影响主 layers', () => {
     const s = useHudStore.getState();
     s.addProcessLayer('step-1', { type: 'FeatureCollection', features: [] } as any);

@@ -15,6 +15,7 @@ import type { ExportItem, ExportSettings } from '@/lib/store/hud-types';
 const updateExportSettings = vi.fn();
 const setExports = vi.fn();
 const dispatchAction = vi.fn();
+const addToast = vi.fn();
 
 const mockState: Record<string, any> = {
   exportSettings: {
@@ -46,6 +47,10 @@ vi.mock('@/lib/store/useHudStore', () => ({
 
 vi.mock('@/lib/contexts/map-action-context', () => ({
   useMapAction: () => ({ dispatchAction }),
+}));
+
+vi.mock('@/components/ui/toast', () => ({
+  useToastStore: { getState: () => ({ addToast }) },
 }));
 
 // Import AFTER the mocks are registered so the component picks them up.
@@ -120,6 +125,28 @@ describe('MapStudioTab — 分段控件 tab 语义', () => {
 
     const historyTab = screen.getByRole('tab', { name: /导出历史/ });
     expect(historyTab.querySelector('span[aria-hidden]')).not.toBeNull();
+  });
+
+  it('方向键：ArrowRight 前进、ArrowLeft 反向（APG）', () => {
+    render(<MapStudioTab />);
+    const tablist = screen.getByRole('tablist');
+    const layoutTab = screen.getByRole('tab', { name: /制图排版/ });
+    const framesTab = screen.getByRole('tab', { name: /画幅/ });
+    fireEvent.keyDown(tablist, { key: 'ArrowRight' });
+    expect(framesTab).toHaveAttribute('aria-selected', 'true');
+    fireEvent.keyDown(tablist, { key: 'ArrowLeft' });
+    expect(layoutTab).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('非法下载文件名：toast 可见（不再静默失效）', () => {
+    mockState.exports = [{
+      id: 'e1', name: '中文名.png', filename: '../中文名.png',
+      type: 'png', size: '1.2MB', date: '',
+    }];
+    render(<MapStudioTab />);
+    fireEvent.click(screen.getByRole('tab', { name: /导出历史/ }));
+    fireEvent.click(screen.getByRole('button', { name: '下载' }));
+    expect(addToast).toHaveBeenCalledWith('导出下载失败：../中文名.png', 'error');
   });
 });
 

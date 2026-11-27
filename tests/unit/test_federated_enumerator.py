@@ -12,7 +12,8 @@ from app.services.data_fabric.query.federation import FederatedQueryError
 from app.services.data_fabric.query.predicates import predicate_from_dict
 
 
-def _src(sid, rows=None, ndv=None, crs=None, server_reproj=False, extent=None):
+def _src(sid, rows=None, ndv=None, crs=None, server_reproj=False, extent=None,
+         caps=None):
     return SourceFacts(
         source_id=sid,
         dataset_id=f"ds_{sid}",
@@ -22,6 +23,7 @@ def _src(sid, rows=None, ndv=None, crs=None, server_reproj=False, extent=None):
         server_reprojection=server_reproj,
         extent=extent,
         row_count=rows,
+        caps=caps,
     )
 
 
@@ -244,3 +246,58 @@ def test_mixed_crs_multi_hop_propagates_subtree_output_crs():
     # 树中两个 reproject 节点
     text = str(out.tree.canonical_dict())
     assert text.count('"kind":"reproject"') == 2 or text.count("reproject") >= 2
+
+
+class _PushdownCaps:
+    """声明 output_crs 扫描通道的 caps（server placement 门控）。"""
+
+    def __init__(self, source_type="postgis", output_crs_pushdown=True):
+        self.source_type = source_type
+        self.output_crs_pushdown = output_crs_pushdown
+        self.server_reprojection = True
+
+
+def _positional_crs_ctx(left_rows, right_rows):
+    return EnumerationContext(
+        sources=[
+            _src("a", rows=left_rows, crs="EPSG:4326", extent=[0, 0, 1, 1],
+                 caps=_PushdownCaps()),
+            _src("b", rows=right_rows, crs="EPSG:3857",
+                 extent=[0, 0, 100000, 100000], caps=_PushdownCaps()),
+        ],
+        joins=[JoinEdge(left_source_id=None, right_source_id=None,
+                        kind="spatial_join", spatial_op="intersects",
+                        positional_index=0)],
+        limit=1000,
+    )
+
+
+def test_server_crs_placement_lands_on_transform_side_scan():
+    """V7 W8 回归：server placement 必须落在 ``transform_side`` 声明的 scan。
+
+    首跳 ``transform_side=left``（左源更小 → 变换总成本更低）时，
+    output_crs 若一律落右 scan，左侧几何永不变换、右 scan 反被标为
+    自己的 CRS —— 空间跳两侧坐标系静默错位（错误结果）。
+    """
+    out = enumerate_federation(_positional_crs_ctx(10, 1000))
+    dec = out.crs_transforms[0]
+    assert dec["placement"] == "server"
+    assert dec["transform_side"] == "left", "更小的一侧（a，10 行）被变换"
+    assert dec["to_crs"] == "EPSG:3857"
+    tree = out.tree.canonical_dict()
+    assert tree["left"]["output_crs"] == "EPSG:3857", (
+        "变换侧 scan 必须携带目标 CRS（服务端交付即目标坐标系）"
+    )
+    assert tree["right"]["output_crs"] is None, "右 scan 不得被误标目标 CRS"
+
+
+def test_server_crs_placement_right_side_still_lands_on_right_scan():
+    """对偶锁定：右源更小时 server placement 仍落右 scan（修复不得翻转）。"""
+    out = enumerate_federation(_positional_crs_ctx(1000, 10))
+    dec = out.crs_transforms[0]
+    assert dec["placement"] == "server"
+    assert dec["transform_side"] == "right"
+    assert dec["to_crs"] == "EPSG:4326"
+    tree = out.tree.canonical_dict()
+    assert tree["right"]["output_crs"] == "EPSG:4326"
+    assert tree["left"]["output_crs"] is None

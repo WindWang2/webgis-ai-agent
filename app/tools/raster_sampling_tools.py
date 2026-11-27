@@ -305,12 +305,32 @@ def register_raster_sampling_tools(registry: ToolRegistry) -> None:
                         background=False, trusted_dispatch=True),
                     timeout=min(60, max(1, wait_max_s)))  # 契约：0-60s 钳制
         except asyncio.TimeoutError:
+            # wait_for 已取消协程：取消可能发生在作业登记（submit）之前，
+            # 此时没有 job 可轮询 —— 只有确认存在活跃 job 才允许返回
+            # submitted/status 指引，否则如实报未提交。
+            try:
+                view = await service.status(session_id=sid, plan_id=plan_id)
+            except Exception:  # noqa: BLE001 — 查不到就绝不虚报已提交
+                view = {}
+            job = (view or {}).get("job") or {}
+            job_status = str(job.get("status") or "")
+            if job_status in ("pending", "queued", "running", "cancelling"):
+                return {
+                    "success": True,
+                    "submitted": True,
+                    "status": job_status,
+                    "job_id": job.get("job_id"),
+                    "detail": "execution still running after wait_max_s",
+                    "next": ["webgis_raster_sampling_status (plan_id)"],
+                }
             return {
-                "success": True,
-                "submitted": True,
-                "status": "running",
-                "detail": "execution still running after wait_max_s",
-                "next": ["webgis_raster_sampling_status (plan_id)"],
+                "success": False,
+                "code": "EXECUTION_NOT_SUBMITTED",
+                "detail": (
+                    "wait_max_s elapsed and no active sampling job is "
+                    "registered (the inline wait was cancelled before/at "
+                    "registration); poll status to confirm before retrying"
+                ),
             }
         except RasterSamplingError as exc:
             return _typed_error(exc)
@@ -423,7 +443,7 @@ def register_raster_sampling_tools(registry: ToolRegistry) -> None:
             ], "thinning": curves.get("thinning", {})}
                 if curves else None),
             "station_layer_ref": out.get("station_layer_ref", ""),
-            "sample_table_ref": (out["receipt"]["outputs"]
+            "sample_table_ref": ((out["receipt"].get("outputs") or {})
                                  .get("sample_table_ref", "")),
         }
 
@@ -433,7 +453,7 @@ def _bounded_row(row: Dict[str, Any]) -> Dict[str, Any]:
     out = dict(row)
     out.pop("support_pixels", None)
     if out.get("raw_exact"):
-        out["raw_exact"] = str(out["raw_exact"])[:32]
+        out["raw_exact"] = str(out["raw_exact"])
     return out
 
 

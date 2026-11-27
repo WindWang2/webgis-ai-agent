@@ -162,3 +162,30 @@ def test_v3_print_mode_and_profiles_unchanged():
         "viewport", "a4_portrait", "a4_landscape", "presentation_16x9",
         "academic_figure"}
     assert "map_border" in CANVAS_TYPES
+
+
+def test_l4_failed_yield_does_not_hide_donor() -> None:
+    """腾让后仍放不下时，donor 不得被无谓隐藏（可选组件白丢）。"""
+    from app.lib.cartography.layout_solver import (
+        LayoutParticipantV4,
+        solve_layout_v4,
+    )
+
+    zones = ["top-left", "top-center", "top-right",
+             "bottom-left", "bottom-center", "bottom-right"]
+    fillers = [
+        LayoutParticipantV4(
+            id=f"f{i}", type="legend", requested_zone=zone,
+            priority=i, optional=True, width_units=1)
+        for i, zone in enumerate(zones)
+    ]
+    big = LayoutParticipantV4(
+        id="big", type="legend", requested_zone="top-left",
+        priority=99, optional=True, width_units=2, min_width_units=2,
+        collapsible=False)
+    sol = solve_layout_v4(
+        [*fillers, big], zone_capacity={z: 1 for z in zones})
+    assert sol.zone_for("big") is None
+    # 最高优先 filler 仍是腾让候选，但腾让无果 ⇒ 必须留在原位。
+    assert sol.zone_for("f5") == "bottom-right"
+    assert "f5" not in {s.id for s in sol.suppressed}

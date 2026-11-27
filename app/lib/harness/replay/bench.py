@@ -149,11 +149,15 @@ def _drift_attributes(scenario: Scenario, *,
     ]
     if rederivable:
         rederived = []
+        # 基线只取「实际成功重推导」的同批记录：>16 条或单条重推导返回
+        # None 时，不得把未参与对比的录制项误报为 removed。
+        rederived_baseline = []
         for record in rederivable[:16]:
             rebuilt = rederive_capability_decision(record)
             if rebuilt is not None:
                 rederived.append(rebuilt)
-        diffs = diff_decisions(rederivable, rederived)
+                rederived_baseline.append(record)
+        diffs = diff_decisions(rederived_baseline, rederived)
         if diffs:
             attributes["decision_diffs"] = diffs[:16]
     return attributes

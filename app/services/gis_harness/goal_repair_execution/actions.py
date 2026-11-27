@@ -250,12 +250,15 @@ async def _wait_delivery_job(
         try:
             view = await get_delivery_job(job_id, _delivery_actor(ctx))
             last_status = str(getattr(view, "status", "") or "")[:16]
-        except Exception as exc:  # noqa: BLE001 — 无权/损坏 → 诚实失败
-            return bounded_action_receipt(
-                action_id=aid, action=action, requirement_id=rid,
-                status=ACTION_FAILED, job_id=job_id,
-                detail=f"delivery job read failed: {exc}"[:200],
-                error_code="DELIVERY_JOB_READ_FAILED")
+        except Exception as exc:  # noqa: BLE001 — 瞬时读失败重试至 deadline
+            if asyncio.get_event_loop().time() >= deadline:
+                return bounded_action_receipt(
+                    action_id=aid, action=action, requirement_id=rid,
+                    status=ACTION_FAILED, job_id=job_id,
+                    detail=f"delivery job read failed: {exc}"[:200],
+                    error_code="DELIVERY_JOB_READ_FAILED")
+            await asyncio.sleep(DELIVERY_POLL_INTERVAL_S)
+            continue
         if last_status == JobStatus.completed.value:
             receipt = getattr(view, "receipt", None)
             rows = getattr(receipt, "row_count", None)

@@ -147,4 +147,32 @@ describe('FrameProductPanel', () => {
       };
     expect(sent2.patch.active_frame).toBe('fp-t-2024');
   });
+
+  it('409 superseded：标题输入回落到服务端真相，不显示未落盘的标题', async () => {
+    const { FrameProductPanel } = await import(
+      '@/components/workbench/frame-product-panel');
+    const spec = threeFrameSpec();
+    await primeCursorWithSpec(spec);
+
+    const converged = JSON.parse(JSON.stringify(spec));
+    converged.revision = 13;
+    converged.frame_product.frames[1].title = '2022（服务端）';
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      detail: {
+        status: 'superseded',
+        mutation_revision: 13,
+        mapspec: converged,
+      },
+    }), { status: 409, headers: { 'content-type': 'application/json' } }));
+
+    render(<FrameProductPanel />);
+    await screen.findByTestId('frame-product-frames');
+    const titleInputs = screen.getAllByLabelText('画幅标题') as HTMLInputElement[];
+    fireEvent.change(titleInputs[1], { target: { value: '2022（本地）' } });
+    fireEvent.blur(titleInputs[1]);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    // 非 applied（409 superseded）也回写 committed 真相；未落盘的本地标题
+    // 不得继续显示（defaultValue 非受控输入会残留）。
+    await waitFor(() => expect(titleInputs[1].value).toBe('2022（服务端）'));
+  });
 });

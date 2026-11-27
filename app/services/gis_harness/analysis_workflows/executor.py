@@ -167,6 +167,10 @@ class WorkflowExecutor:
         #: 步骤只水合一次；预算门在首水合处一次性裁决）
         self._role_cache: Dict[Tuple[str, str], Tuple[
             Optional[Dict[str, Any]], str]] = {}
+        #: (role, ref) → 在途水合锁（同波多步骤经 asyncio.gather 并发消费
+        #: 同一 role: 时单飞——后到者等锁后命中缓存，同一大 FC 不被并发
+        #: 水合两次导致峰值内存翻倍）
+        self._role_locks: Dict[Tuple[str, str], asyncio.Lock] = {}
 
     # ── 输入解析 ─────────────────────────────────────────────────────────
 
@@ -220,6 +224,10 @@ class WorkflowExecutor:
                 return None, "", warnings
         identity = ref_identity(ref, (descriptor or {}).get("content_revision"))
         if self._sd is None:
+            # 无 session_data 时 ref 无法水合 —— 必须 typed 缺失，不得把
+            # None 当参数静默 dispatch（畸形调用应 blocked 而非假执行）。
+            warnings.append(
+                f"输入 {param} 的 ref 无法水合（无 session_data）")
             return None, identity, warnings
         payload = None
         try:
@@ -271,15 +279,20 @@ class WorkflowExecutor:
                     identities[param] = ref_identity(ref, rev)
                     continue
                 cache_key = (role, ref)
-                if cache_key in self._role_cache:
-                    payload, ident = self._role_cache[cache_key]
-                else:
-                    payload, ident, hydrate_warnings = await self._hydrate(
-                        session_id, ref, param, step.step_id)
-                    warnings.extend(hydrate_warnings)
-                    if payload is None and hydrate_warnings:
-                        return None, identities, warnings
-                    self._role_cache[cache_key] = (payload, ident)
+                lock = self._role_locks.get(cache_key)
+                if lock is None:
+                    lock = asyncio.Lock()
+                    self._role_locks[cache_key] = lock
+                async with lock:
+                    if cache_key in self._role_cache:
+                        payload, ident = self._role_cache[cache_key]
+                    else:
+                        payload, ident, hydrate_warnings = await self._hydrate(
+                            session_id, ref, param, step.step_id)
+                        warnings.extend(hydrate_warnings)
+                        if payload is None:
+                            return None, identities, warnings
+                        self._role_cache[cache_key] = (payload, ident)
                 # ADR-0284 D2：执行期衔接门（实测几何 vs 步骤语义合同）
                 gate = check_payload_semantics(
                     param, payload, step.semantic_contract)
@@ -296,9 +309,13 @@ class WorkflowExecutor:
                         f"上游步骤 {upstream} 未满足（{entry.state if entry else 'absent'}）")
                     return None, identities, warnings
                 upstream_env = state.envelopes.get(upstream)
-                # ADR-0284 D3：上游产物是栅格 ref（无 FC）→ ref 直通下游
+                # ADR-0284 D3：上游产物是栅格 ref（无 FC）→ ref 直通下游。
+                # ref:geojson-* 是 FC 产物地址：即使矢量结果夹带栅格白名单
+                # 事实（envelope.raster 非空），也绝不能把 ref 字符串当
+                # 几何参数（resume 复用路径无 _step_payloads 时可达）。
                 if upstream_env is not None and upstream_env.ref \
                         and not self._step_payloads.get(upstream) \
+                        and not str(upstream_env.ref).startswith("ref:geojson") \
                         and (upstream_env.raster
                              or upstream_env.ref.startswith("ref:raster")):
                     args[param] = upstream_env.ref
@@ -314,7 +331,11 @@ class WorkflowExecutor:
                 if payload is None:
                     envelope = state.envelopes.get(upstream)
                     if envelope and envelope.ref and self._sd is not None:
-                        payload = await self._sd.get(session_id, envelope.ref)
+                        try:
+                            payload = await self._sd.get(
+                                session_id, envelope.ref)
+                        except Exception:  # noqa: BLE001 — ref 死亡=typed 缺失
+                            payload = None
                     if not isinstance(payload, dict):
                         warnings.append(
                             f"上游步骤 {upstream} 的产物不可水合（ref 失效）")
@@ -574,7 +595,7 @@ class WorkflowExecutor:
             units=dict(step.unit_contract),
             feature_count=feature_count,
             empty=((fc is not None and _feature_count(fc) == 0)
-                   or (fc is None and ref != "" and feature_count == 0
+                   or (fc is None and feature_count == 0
                        and not raster_facts)),
             stats={k: stats[k] for k in sorted(stats)
                    [:MAX_ENVELOPE_STATS_KEYS]} if stats else {},
@@ -619,6 +640,29 @@ class WorkflowExecutor:
         state.log("step_satisfied", step=step.step_id, ref=ref,
                   features=envelope.feature_count)
 
+    async def _run_step_guarded(
+        self, session_id: str, contract: AnalysisWorkflowContract,
+        step: AnalysisStepSpec, state: WorkflowRunState,
+        *, deferred_repeats: Optional[List[Tuple[AnalysisStepSpec, str]]] = None,
+    ) -> None:
+        """_run_step 的外层护栏：结果装配阶段（_extract_fc/建 envelope 等）
+        的畸形载荷不得逃出 execute —— 记为步骤 failed（诚实降级）。"""
+        try:
+            await self._run_step(
+                session_id, contract, step, state,
+                deferred_repeats=deferred_repeats)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — 畸形结果=步骤失败
+            entry = state.steps.get(step.step_id)
+            if entry is not None:
+                entry.state = "failed"
+                entry.reason_code = type(exc).__name__
+                entry.message = str(exc)[:300]
+                entry.touch()
+                state.log("step_failed", step=step.step_id,
+                          code=entry.reason_code)
+
     async def _settle_repeated_step(
         self, session_id: str, step: AnalysisStepSpec,
         state: WorkflowRunState, message: str,
@@ -640,8 +684,13 @@ class WorkflowExecutor:
             twin_receipt["reused_from_step"] = twin
             state.receipts[step.step_id] = twin_receipt
             if envelope_clone.ref and self._sd is not None:
-                self._step_payloads[step.step_id] = await self._sd.get(
-                    session_id, envelope_clone.ref)  # type: ignore[assignment]
+                try:
+                    self._step_payloads[step.step_id] = await self._sd.get(
+                        session_id, envelope_clone.ref)  # type: ignore[assignment]
+                except Exception:  # noqa: BLE001 — 产物重读失败不废复用本身
+                    logger.warning(
+                        "reused step %s payload re-read failed (ref=%s)",
+                        step.step_id, envelope_clone.ref, exc_info=True)
             entry.state = "satisfied"
             entry.reason_code = ""
             entry.message = ""
@@ -669,12 +718,12 @@ class WorkflowExecutor:
         # a source ref was overwritten in place. Always re-read live identity.
         self._role_cache.clear()
         self._step_payloads.clear()
+        self._role_locks.clear()
         state.status = "running"
         state.touch()
         state.log("workflow_start", turn=self._turn)
         pending = [s for s in contract.steps
                    if only_steps is None or s.step_id in only_steps]
-        executed_any = False
         for wave in _waves(contract):
             runnable = [s for s in wave if s in pending]
             if not runnable:
@@ -700,16 +749,13 @@ class WorkflowExecutor:
                 break
             deferred_repeats: List[Tuple[AnalysisStepSpec, str]] = []
             await asyncio.gather(*[
-                self._run_step(session_id, contract, step, state,
-                               deferred_repeats=deferred_repeats)
+                self._run_step_guarded(
+                    session_id, contract, step, state,
+                    deferred_repeats=deferred_repeats)
                 for step in wave_runnable])
             # siblings-finish：所有 producer 已发布终态，再复用或诚实失败。
             for step, message in deferred_repeats:
                 await self._settle_repeated_step(session_id, step, state, message)
-            executed_any = executed_any or any(
-                state.steps[s.step_id].state in ("satisfied", "failed",
-                                                 "cancelled", "blocked")
-                for s in wave_runnable)
             if self._persist is not None:
                 await self._persist(state)
             # 波内失败/取消 → 不再启动新波（siblings-finish 契约，对齐
@@ -751,7 +797,6 @@ class WorkflowExecutor:
 def _waves(contract: AnalysisWorkflowContract) -> List[List[AnalysisStepSpec]]:
     """拓扑波次（Kahn；确定性序——同波内按契约声明顺序）。"""
     steps = list(contract.steps)
-    by_id = {s.step_id: s for s in steps}
     deps: Dict[str, Set[str]] = {}
     for s in steps:
         deps[s.step_id] = set(s.depends_on) | {
@@ -768,5 +813,4 @@ def _waves(contract: AnalysisWorkflowContract) -> List[List[AnalysisStepSpec]]:
         waves.append(wave)
         done.update(s.step_id for s in wave)
         remaining = [s for s in remaining if s.step_id not in done]
-    del by_id
     return waves

@@ -100,7 +100,19 @@ def verify_frame_product(
         )
 
     required_rows = [r for r in frames_out if r["required"]]
-    complete = bool(required_rows) and all(_frame_ok(r) for r in required_rows)
+    # 「全部 required 才 complete」红线：证据行有界（前 _MAX_EVIDENCE_FRAMES
+    # 帧）不得成为逃逸口 —— 未被检视的 required 帧（画幅 >12 或调用方
+    # required_frame_ids 越界）必须让产品停在 incomplete。
+    inspected = {str(r.get("frame_id") or "") for r in frames_out}
+    complete = (
+        bool(required_rows)
+        and required <= inspected
+        and all(_frame_ok(r) for r in required_rows)
+    )
+    # 未被检视的 required 帧（画幅 >_MAX_EVIDENCE_FRAMES 或越界 required
+    # id）进 problems 披露 —— 证据截断不成为 complete 的逃逸口。
+    for fid in sorted(required - inspected):
+        problems.append(f"frame_not_inspected:{fid}")
     return {
         "status": "complete" if complete else "incomplete",
         "mapspec_revision": mapspec_revision,

@@ -96,8 +96,16 @@ def generate_dot_density_features(
         max(0.0, _value_of(f, value_field)) for _, f in indexed
     )
     remaining_budget = max_total_dots
+    # 上一面的值（下一步开始时结算）——**每个面都必须结算**：被跳过的
+    # 面（不可解析值/无效几何/退化 bbox/零点）若不把值从「剩余值和」
+    # 释放，其值滞留分母会压缩后续面配额，且预算闲置而无披露。
+    prev_value = 0.0
 
     for _, feat in indexed:
+        # 面级结算前置：无论上一面成功撒点还是被跳过，同步扣减值和预算。
+        remaining_value_sum = max(0.0, remaining_value_sum - prev_value)
+        remaining_budget = max(0, max_total_dots - total)
+        prev_value = max(0.0, _value_of(feat, value_field))
         geom = feat.get("geometry") or {}
         props = feat.get("properties") or {}
         raw_val = props.get(value_field)
@@ -157,9 +165,6 @@ def generate_dot_density_features(
                     break
         if placed < n and attempts >= max_attempts:
             shortfall += n - placed
-        # 面级结算：预算/值和同步扣减
-        remaining_value_sum = max(0.0, remaining_value_sum - max(0.0, _value_of(feat, value_field)))
-        remaining_budget = max(0, max_total_dots - total)
         if truncated:
             break
 

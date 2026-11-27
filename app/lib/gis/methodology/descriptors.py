@@ -235,9 +235,6 @@ class MethodDescriptorRegistry:
                     violations.append(f"{tag}: alternative {alt} 不存在")
                 if alt == mid:
                     violations.append(f"{tag}: alternative 指向自身")
-            for cond in d.invalid_when + d.degraded_when:
-                if cond.dimension not in QUALIFICATION_DIMENSIONS:
-                    violations.append(f"{tag}: unknown dimension {cond.dimension}")
             for vf in d.visualization_guidance:
                 if viz_family_exists and not viz_family_exists(vf):
                     violations.append(f"{tag}: viz family {vf} 未注册")

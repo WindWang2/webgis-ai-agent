@@ -144,6 +144,19 @@ describe("MapSpec Reconciler (ADR-0036)", () => {
       const patch = diffSpecs(prev, next);
       expect(patch.sources).toEqual([]);
     });
+
+    it("同 content_revision 的 32 位指纹碰撞仍报 update（指纹只证明不等）", () => {
+      // p332789 / p529192 的 JSON 序列化 FNV-1a 32 位哈希相同。
+      const refSource = { type: "geojson", ref_id: "ref:geojson-fnv-collision", content_revision: 9 } as const;
+      const prev = baseSpec({
+        sources: { edges: { ...refSource, inlineData: { type: "FeatureCollection", features: [], x: "p332789" } } as never },
+      });
+      const next = baseSpec({
+        sources: { edges: { ...refSource, inlineData: { type: "FeatureCollection", features: [], x: "p529192" } } as never },
+      });
+      const patch = diffSpecs(prev, next);
+      expect(patch.sources).toEqual([{ id: "edges", kind: "update", next: next.sources.edges }]);
+    });
   });
 
   describe("diffSpecs — layer changes", () => {

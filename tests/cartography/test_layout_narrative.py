@@ -97,6 +97,23 @@ def test_layout_score_deterministic_and_empty() -> None:
     assert empty["overall"] == 0.0 and empty["reasons"]
 
 
+def test_layout_score_middle_component_does_not_lower_density() -> None:
+    """四象限全占 + middle 组件时 density 不得反降到 0.5（ratio 封顶 1.0）。"""
+    from app.lib.cartography.layout_score import score_layout
+
+    quadrants = [
+        {"type": "legend", "position": "top-left"},
+        {"type": "north_arrow", "position": "top-right"},
+        {"type": "scale_bar", "position": "bottom-left"},
+        {"type": "attribution", "position": "bottom-right"},
+    ]
+    without_middle = score_layout(quadrants)
+    with_middle = score_layout(
+        quadrants + [{"type": "chart_panel", "position": "middle-center"}])
+    assert without_middle["scores"]["density"] == 1.0
+    assert with_middle["scores"]["density"] == 1.0
+
+
 # ── W5.3 多图版面（C2 IR 编排）──────────────────────────────────────────
 
 def test_atlas_pages_deterministic_and_bounded() -> None:

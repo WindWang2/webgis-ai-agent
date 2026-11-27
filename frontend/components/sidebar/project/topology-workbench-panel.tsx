@@ -13,7 +13,7 @@
  * - 例外是用户决定（理由必填）；修复候选明确区分建议与可提交计划。
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { GitBranch, LocateFixed, Network, RefreshCw } from 'lucide-react';
 
 import { EmptyState } from '@/components/shared/empty-state';
@@ -91,6 +91,8 @@ export function TopologyWorkbenchPanel({ projectId, sessionId, authed }: Topolog
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recheckBusy, setRecheckBusy] = useState(false);
+  /** openFinding 的请求代际（慢网下旧响应的证据/候选不得覆盖新问题）。 */
+  const findingReqRef = useRef(0);
 
   // 规则集创建表单
   const [showCreate, setShowCreate] = useState(false);
@@ -106,11 +108,12 @@ export function TopologyWorkbenchPanel({ projectId, sessionId, authed }: Topolog
     try {
       const { items } = await fetchRulesets({ project_id: projectId, limit: 50 });
       setRulesets(items);
+      setError(null);
       if (items.length > 0 && !items.some((r) => r.id === selectedRulesetId)) {
         setSelectedRulesetId(items[0].id);
       }
     } catch (err) {
-      setError(parseApiErrorDetail(err, String(t("errors.load", { message: "rulesets" }))));
+      setError(parseApiErrorDetail(err, String(t('errors.load', { message: t('rulesets.section') }))));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
@@ -120,11 +123,12 @@ export function TopologyWorkbenchPanel({ projectId, sessionId, authed }: Topolog
     try {
       const { items } = await fetchRuns({ ruleset_id: selectedRulesetId, limit: 20 });
       setRuns(items);
+      setError(null);
       if (items.length > 0 && !items.some((r) => r.id === selectedRunId)) {
         setSelectedRunId(items[0].id);
       }
     } catch (err) {
-      setError(parseApiErrorDetail(err, 'runs'));
+      setError(parseApiErrorDetail(err, String(t('errors.load', { message: t('runs.section') }))));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRulesetId]);
@@ -133,9 +137,11 @@ export function TopologyWorkbenchPanel({ projectId, sessionId, authed }: Topolog
     if (!selectedRunId) { setRunDetail(null); return; }
     try {
       setRunDetail(await fetchRun(selectedRunId));
+      setError(null);
     } catch (err) {
-      setError(parseApiErrorDetail(err, 'run detail'));
+      setError(parseApiErrorDetail(err, String(t('errors.load', { message: t('runs.section') }))));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRunId]);
 
   const loadFindings = useCallback(async () => {
@@ -149,10 +155,12 @@ export function TopologyWorkbenchPanel({ projectId, sessionId, authed }: Topolog
       setFindings(page.items);
       setFindingsTotal(page.total);
       setStatusCounts(page.status_counts ?? {});
+      setError(null);
     } catch (err) {
-      setError(parseApiErrorDetail(err, 'findings'));
+      setError(parseApiErrorDetail(err, String(t('errors.load', { message: t('findings.section') }))));
     }
 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRunId, severityFilter, statusFilter, offset]);
 
   useEffect(() => { void loadRulesets(); }, [loadRulesets]);
@@ -163,9 +171,12 @@ export function TopologyWorkbenchPanel({ projectId, sessionId, authed }: Topolog
   const running = runs.some((r) => r.status === 'pending' || r.status === 'running');
   useEffect(() => {
     if (!running) return;
-    const h = window.setInterval(() => { void loadRuns(); void loadRunDetail(); }, 10_000);
+    // findings 必须一起刷新（评审 P2）：运行完成时 selectedRunId/severityFilter/
+    // statusFilter/offset 一个都不变，loadFindings 的 effect 不会重跑 —— 问题队列
+    // 会留着上一运行的旧数据，与运行详情的 findings_total/open 计数自相矛盾。
+    const h = window.setInterval(() => { void loadRuns(); void loadRunDetail(); void loadFindings(); }, 10_000);
     return () => window.clearInterval(h);
-  }, [running, loadRuns, loadRunDetail]);
+  }, [running, loadRuns, loadRunDetail, loadFindings]);
 
   const handleCreateRuleset = async () => {
     setBusy(true); setError(null);
@@ -175,12 +186,12 @@ export function TopologyWorkbenchPanel({ projectId, sessionId, authed }: Topolog
         rules: draftRules, project_id: projectId,
         session_id: sessionId ?? undefined,
       });
-      addToast(`ruleset v${created.current_version} created`, 'success');
+      addToast(`${t('rulesets.create')} ${t('rulesets.version', { version: created.current_version })}`, 'success');
       setShowCreate(false);
       setSelectedRulesetId(created.id);
       await loadRulesets();
     } catch (err) {
-      setError(parseApiErrorDetail(err, 'create ruleset'));
+      setError(parseApiErrorDetail(err, String(t('errors.generic', { message: t('rulesets.create') }))));
     } finally { setBusy(false); }
   };
 
@@ -214,7 +225,7 @@ export function TopologyWorkbenchPanel({ projectId, sessionId, authed }: Topolog
         }
       }
       const res = await submitTopologyRun({ ruleset_id: selectedRulesetId, bindings, session_id: sessionId ?? undefined, project_id: projectId });
-      addToast(`run ${res.run_id.slice(0, 8)} submitted (job)`, 'success');
+      addToast(`${t('runs.status.pending')} · ${res.run_id.slice(0, 8)}`, 'success');
       await loadRuns();
       setSelectedRunId(res.run_id);
     } catch (err) {
@@ -239,15 +250,20 @@ export function TopologyWorkbenchPanel({ projectId, sessionId, authed }: Topolog
 
   const openFinding = async (f: TopologyFinding) => {
     setSelectedFinding(f); setWitness(null); setCandidates(null); setExceptionReason('');
+    // 请求代际守卫（评审 P2）：慢网下先后点开两个问题，先发请求的
+    // witness/candidates 后返回会覆盖后者，抽屉展示错问题的证据与修复候选。
+    const gen = ++findingReqRef.current;
     try {
       const [w, c] = await Promise.all([
         fetchFindingWitness(f.id).catch(() => null),
         fetchRepairCandidates(f.id).catch(() => null),
       ]);
+      if (gen !== findingReqRef.current) return;
       setWitness(w);
       setCandidates(c?.candidates ?? []);
     } catch (err) {
-      setError(parseApiErrorDetail(err, 'finding'));
+      if (gen !== findingReqRef.current) return;
+      setError(parseApiErrorDetail(err, String(t('errors.load', { message: t('findings.detail') }))));
     }
   };
 

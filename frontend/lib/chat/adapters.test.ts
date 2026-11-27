@@ -224,6 +224,21 @@ describe('stepResultDecision', () => {
     expect(mk(undefined)).toBe(true);
   });
 
+  it('image results without geojson_ref get distinct layer ids in the same millisecond', () => {
+    const mk = (stepId: string) => stepResultDecision({
+      tool: 'heatmap_data',
+      step_id: stepId,
+      result: { image: 'blob:x' },
+    } as never, baseCtx);
+    const first = mk('step-1');
+    const second = mk('step-2');
+
+    expect(first.layerMount!.layerId).not.toBe(second.layerMount!.layerId);
+    expect(first.layerMount!.addLayerArg.id).toBe(first.layerMount!.layerId);
+    expect(second.layerMount!.addLayerArg.id).toBe(second.layerMount!.layerId);
+    expect(mk('step-1').layerMount!.layerId).toBe(first.layerMount!.layerId);
+  });
+
   it('image result mounts as heatmap; chart passthrough', () => {
     const d = stepResultDecision({
       tool: 'heatmap_data',

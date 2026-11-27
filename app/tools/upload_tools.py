@@ -70,7 +70,13 @@ def register_upload_tools(registry: ToolRegistry):
         with db_session() as db:
             query = db.query(UploadRecord).order_by(UploadRecord.upload_time.desc())
             query = query.filter(UploadRecord.session_id == session_id)
-            records = query.limit(50).all()
+            # P3 api-contract：多取 1 条探测截断——仅 limit(50) 时 LLM 无法
+            # 区分「正好 50 条」与「还有更多」，回 truncated 标志（同
+            # inventory_layers 的 count/total/truncated 契约）。
+            records = query.limit(51).all()
+
+        truncated = len(records) > 50
+        records = records[:50]
 
         if not records:
             return {
@@ -99,6 +105,7 @@ def register_upload_tools(registry: ToolRegistry):
             "success": True,
             "uploads": items,
             "count": len(items),
+            "truncated": truncated,
         }
 
     @tool(registry,

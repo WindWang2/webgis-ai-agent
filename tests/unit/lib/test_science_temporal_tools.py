@@ -83,6 +83,20 @@ class TestScienceTemporalTools:
         assert "anomaly_last" in out["features_summary"]
         assert "change_z" in out["features_summary"]
 
+    async def test_oversized_inline_stack_rejected(self, registry):
+        # P2-app_tools_science_temporal_tools.py-00：内联 stack 超 4M 值必须
+        # 在解析后立即结构化拒绝（防一次性吃满内存），不得继续计算。
+        from app.lib.gis.scientific_errors import ResourceScaleMismatch
+        from app.tools import science_temporal_tools as stt
+
+        big = [[[0.0] * 2001 for _ in range(2000)]]   # 4,002,000 值
+        with pytest.raises(ResourceScaleMismatch):
+            stt._as_array(big, "stack")
+        out = await registry.dispatch(
+            "temporal_cube_stats", {"stack": big, "times": [0.0]})
+        assert out.get("success") is False
+        assert out.get("code") == "RESOURCE_SCALE_MISMATCH"
+
     async def test_invalid_input_error_response(self, registry):
         # dispatch 错误映射：形状不一致 → 错误响应（不静默成功）
         out = await registry.dispatch(

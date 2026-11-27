@@ -113,6 +113,19 @@ def test_window_scan_without_metadata_degrades_bounded(tmp_path):
     assert len(res["features"]) == 4
 
 
+def test_window_scan_corrupt_geometry_is_typed(clustered_parquet, monkeypatch):
+    """损坏几何的解析失败必须 typed 包装（绝不裸异常穿出扫描层）。"""
+    path, _total = clustered_parquet
+    import shapely.geometry as shapely_geometry
+
+    def _boom(*_args, **_kwargs):
+        raise ValueError("corrupt geometry")
+
+    monkeypatch.setattr(shapely_geometry, "shape", _boom)
+    with pytest.raises(LakehouseScanError, match="geometry scan failed"):
+        scan_parquet_window(path, [-1.0, -1.0, 180.0, 2.0])
+
+
 def test_window_scan_max_rows_truncates_honestly(clustered_parquet):
     path, _total = clustered_parquet
     res = scan_parquet_window(path, [-1.0, -1.0, 180.0, 2.0], max_rows=7)

@@ -169,7 +169,7 @@ export function validateLayoutIr(ir: LayoutIr): string[] {
       issues.push(`${cid}: role 非法 ${JSON.stringify(comp.role)}`);
     }
     const { x, y, width: w, height: h } = comp.frame;
-    if ([x, y, w, h].some((v) => typeof v !== 'number' || v < 0)) {
+    if ([x, y, w, h].some((v) => !Number.isFinite(v) || v < 0)) {
       issues.push(`${cid}: frame 几何必须非负`);
     }
     if (x + w > cw + 1e-6 || y + h > ch + 1e-6) issues.push(`${cid}: frame 超出画布`);

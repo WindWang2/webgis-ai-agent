@@ -272,7 +272,7 @@ def result_page(run_id: str, cursor: int, limit: int,
         "cursor": cursor,
         "next_cursor": next_cursor if next_cursor < total else None,
         "page_size": limit,
-        "crs": fc.get("crs", {}).get("properties", {}).get("name")
+        "crs": ((fc.get("crs") or {}).get("properties") or {}).get("name")
         if isinstance(fc.get("crs"), dict) else None,
     }
 
@@ -312,11 +312,16 @@ def publish_data_object_for_run(
         publish_data_object,
     )
 
-    d = final_dir(run_id)
-    files = {
-        p.name: p for p in sorted(d.iterdir())
-        if p.is_file() and p.name not in ("manifest.json", "receipt.json")
-    }
+    try:
+        d = final_dir(run_id)
+        files = {
+            p.name: p for p in sorted(d.iterdir())
+            if p.is_file() and p.name not in ("manifest.json", "receipt.json")
+        }
+    except Exception as e:  # noqa: BLE001 — 终态目录不可读：三态降级不伤本体
+        logger.warning("[coord-ops] data object listing failed for %s: %s",
+                       run_id, e)
+        return {"state": "failed", "error": str(e)[:200]}
     if not files:
         return {"state": "failed", "error": "no output files"}
     try:

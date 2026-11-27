@@ -1,10 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, waitFor } from '@testing-library/react';
 import { ApiError } from '@/lib/api/transport';
 import { useWorkspaceSession } from './use-workspace-session';
 import { devOnly } from '@/lib/utils/logger';
 import { resetViewportSeq } from '@/lib/utils/viewport-seq';
 import { getMapSpecSessionCursor, setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
+
+const fetchVisualEvidenceThumb = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/api/visual-context', () => ({ fetchVisualEvidenceThumb }));
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 // The hook both subscribes (useHudStore(selector)) and reads transient state
@@ -92,6 +95,8 @@ describe('useWorkspaceSession selectSession (F-09)', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    delete (URL as unknown as { createObjectURL?: unknown }).createObjectURL;
+    delete (URL as unknown as { revokeObjectURL?: unknown }).revokeObjectURL;
   });
 
   it('encodes session ids in restore URLs', async () => {
@@ -379,6 +384,68 @@ describe('useWorkspaceSession selectSession (F-09)', () => {
     expect(result.current.getSessionTokenFor('session-0')).toBeNull();
     expect(result.current.getSessionTokenFor('session-1')).toBe('token-1');
     expect(result.current.getSessionTokenFor('session-128')).toBe('token-128');
+  });
+
+  it('revokes restored attachment thumbnail blob URLs when the transcript is replaced', async () => {
+    const createObjectURL = vi.fn(() => 'blob:thumb-1');
+    const revokeObjectURL = vi.fn();
+    (URL as unknown as { createObjectURL?: unknown }).createObjectURL = createObjectURL;
+    (URL as unknown as { revokeObjectURL?: unknown }).revokeObjectURL = revokeObjectURL;
+    fetchVisualEvidenceThumb.mockResolvedValue(new Blob(['thumb']));
+    fetchMock
+      .mockResolvedValueOnce(jsonOk({ sessions: [] }))
+      .mockResolvedValueOnce(jsonOk({
+        title: 'S',
+        messages: [{
+          id: 'm1', role: 'user', content: 'hi', timestamp: '2026-01-01T00:00:00Z',
+          attachments: [{ evidence_id: 'e1', source_type: 'reference_upload' }],
+        }],
+      }))
+      .mockResolvedValueOnce(jsonOk(undefined, 204)) // clarifications/pending
+      .mockResolvedValueOnce(jsonOk({ map_state: null }));
+
+    const { result } = renderHook(() => useWorkspaceSession(vi.fn()));
+    await act(async () => {
+      await result.current.selectSession('sid-thumb', vi.fn());
+    });
+    await waitFor(() => expect(createObjectURL).toHaveBeenCalledTimes(1));
+
+    // 新会话替换 transcript → 上一批缩略图 blob URL 不再被引用，必须回收。
+    act(() => {
+      result.current.startNewSession(vi.fn());
+    });
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:thumb-1');
+  });
+
+  it('restores attachment thumbnails with bounded concurrency', async () => {
+    let active = 0;
+    let maxActive = 0;
+    fetchVisualEvidenceThumb.mockImplementation(() => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      return new Promise(() => {});
+    });
+    const messages = Array.from({ length: 6 }, (_, i) => ({
+      id: `m${i}`,
+      role: 'user',
+      content: 'hi',
+      timestamp: '2026-01-01T00:00:00Z',
+      attachments: [{ evidence_id: `e${i}`, source_type: 'reference_upload' }],
+    }));
+    fetchMock
+      .mockResolvedValueOnce(jsonOk({ sessions: [] }))
+      .mockResolvedValueOnce(jsonOk({ title: 'S', messages }))
+      .mockResolvedValueOnce(jsonOk(undefined, 204)) // clarifications/pending
+      .mockResolvedValueOnce(jsonOk({ map_state: null }));
+
+    const { result } = renderHook(() => useWorkspaceSession(vi.fn()));
+    await act(async () => {
+      await result.current.selectSession('sid-thumbs', vi.fn());
+    });
+
+    // 并发上限 4：首批只发出 4 个 thumb 请求，不得一次打满 6 个。
+    expect(fetchVisualEvidenceThumb).toHaveBeenCalledTimes(4);
+    expect(maxActive).toBeLessThanOrEqual(4);
   });
 
   it('F-1: startNewSession aborts an in-flight selectSession restore', async () => {

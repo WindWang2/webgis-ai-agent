@@ -10,6 +10,7 @@ import {
   pushOperationReceipt,
   setReceiptBusSession,
 } from '@/lib/map-operations/receipt-bus';
+import { clearPendingRemoved, markPendingRemoved } from '@/lib/mapspec/session-cursor';
 
 function fetchJson(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -69,6 +70,45 @@ describe('MapHarnessCards', () => {
     );
     // auto → 确认卡不出现
     expect(screen.queryByTestId('display-confirmation-card')).toBeNull();
+  });
+
+  it('prototype-chain status/effect kind 不注入函数源码，未知 effect 回退 effectOther', async () => {
+    fetchMock.mockResolvedValue(fetchJson({
+      session_id: 's1', mode: 'auto', confirmed: true, pending: false,
+      required_render_seq: 0, latest_observation_seq: 0, verdict_present: true,
+    }));
+    render(<MapHarnessCards sessionId="s1" />);
+    pushOperationReceipt({
+      operation_id: 'mop-proto-1',
+      status: 'constructor',
+      message: 'prototype key',
+      effects: [{ index: 0, kind: 'constructor', targets: [], state: 'applied' }],
+    } as never, 's1');
+    const card = await screen.findByTestId('map-operation-card-mop-proto-1');
+    // 未知状态回退 text-ink，而不是 STATUS_TONE['constructor'] 的函数源码。
+    const statusEl = screen.getByTestId('map-op-status-mop-proto-1');
+    expect(statusEl.className).toContain('text-ink');
+    expect(statusEl.className).not.toContain('function');
+    // 原型链 kind 不得把函数对象传给 t；回退「其他」。
+    expect(card.textContent).toContain('其他');
+    expect(card.textContent).not.toContain('function');
+  });
+
+  it('effects 超过 8 条时披露剩余条数（不再静默丢弃第 9+ 条）', async () => {
+    fetchMock.mockResolvedValue(fetchJson({
+      session_id: 's1', mode: 'auto', confirmed: true, pending: false,
+      required_render_seq: 0, latest_observation_seq: 0, verdict_present: true,
+    }));
+    render(<MapHarnessCards sessionId="s1" />);
+    pushOperationReceipt({
+      operation_id: 'mop-many-effects',
+      status: 'committed',
+      effects: Array.from({ length: 11 }, (_, index) => ({
+        index, kind: 'set_layer_opacity', targets: [`layer-${index}`], state: 'applied',
+      })),
+    } as never, 's1');
+    const more = await screen.findByTestId('map-op-effects-more-mop-many-effects');
+    expect(more.textContent).toContain('…+3');
   });
 
   it('offers approval for confirmation_required and backfills the final receipt', async () => {
@@ -228,6 +268,87 @@ describe('MapHarnessCards', () => {
       expect(line.textContent).toContain('等待用户确认');
       expect(line.textContent).not.toContain('自动确认');
     } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('「稍后」dismiss 后新代次 pending 复现：卡片回归（确认不被静默跳过）', async () => {
+    vi.useFakeTimers();
+    try {
+      fetchMock.mockResolvedValue(fetchJson({
+        session_id: 's1', mode: 'required', confirmed: false, pending: true,
+        required_render_seq: 5, latest_observation_seq: 7, verdict_present: true,
+      }));
+      render(<MapHarnessCards sessionId="s1" />);
+      await act(async () => { await vi.advanceTimersByTimeAsync(5100); });
+      expect(screen.getByTestId('display-confirmation-card')).toBeInTheDocument();
+
+      // 「稍后」：本次裁决的卡收起的（done=true）。
+      fireEvent.click(screen.getByTestId('display-confirm-dismiss'));
+      await act(async () => { await vi.advanceTimersByTimeAsync(50); });
+      expect(screen.queryByTestId('display-confirmation-card')).toBeNull();
+
+      // live generation 前进 → 2s debounce 复查：新观测代次仍 pending。
+      // 修复前：done 无代次归属，卡永居 null —— required 模式用户确认被静默跳过。
+      fetchMock.mockResolvedValue(fetchJson({
+        session_id: 's1', mode: 'required', confirmed: false, pending: true,
+        required_render_seq: 8, latest_observation_seq: 9, verdict_present: true,
+      }));
+      markPendingRemoved('layer-a');
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      expect(screen.getByTestId('display-confirmation-card')).toBeInTheDocument();
+    } finally {
+      clearPendingRemoved();
+      vi.useRealTimers();
+    }
+  });
+
+  it('并发水合乱序返回：陈旧响应不覆盖新态（required pending 不被吞成已确认）', async () => {
+    vi.useFakeTimers();
+    try {
+      // 受控 fetch：按发出顺序挂起，由测试决定响应次序（模拟慢响应后到）。
+      const inflight: Array<(r: Response) => void> = [];
+      fetchMock.mockImplementation(
+        () => new Promise<Response>((resolve) => { inflight.push(resolve); }),
+      );
+      render(<MapHarnessCards sessionId="s1" />);
+      // 挂载 5s 兜底水合 + 回执环回填（两个请求挂起，先不响应）。
+      await act(async () => { await vi.advanceTimersByTimeAsync(5100); });
+      const displayCalls = () => fetchMock.mock.calls
+        .map((c) => String(c[0]))
+        .filter((u) => u.includes('/display-confirmation') && !u.includes('/ack'));
+      expect(displayCalls()).toHaveLength(1);
+      await act(async () => { inflight[1](fetchJson({ operations: [] })); });
+
+      // MapSpec live generation 变化 → 2s debounce 复查（第二次水合发出）。
+      markPendingRemoved('layer-a');
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      expect(displayCalls()).toHaveLength(2);
+
+      // 新态先到：required + pending（等待用户确认）。
+      await act(async () => {
+        inflight[2](fetchJson({
+          session_id: 's1', mode: 'required', confirmed: false, pending: true,
+          required_render_seq: 9, latest_observation_seq: 9, verdict_present: true,
+        }));
+      });
+      expect(screen.getByTestId('display-confirmation-card')).toBeInTheDocument();
+      expect(screen.getByTestId('final-acceptance-line').textContent).toContain('等待用户确认');
+
+      // 旧响应后到（挂载兜底那次的陈旧快照 confirmed:true）—— 修复前它会
+      // setConfirmStatus(旧态)：待确认卡被吞、行改口"用户已确认"。
+      await act(async () => {
+        inflight[0](fetchJson({
+          session_id: 's1', mode: 'required', confirmed: true, pending: false,
+          required_render_seq: 5, latest_observation_seq: 5, verdict_present: true,
+        }));
+      });
+      expect(screen.getByTestId('display-confirmation-card')).toBeInTheDocument();
+      const line = screen.getByTestId('final-acceptance-line');
+      expect(line.textContent).toContain('等待用户确认');
+      expect(line.textContent).not.toContain('用户已确认');
+    } finally {
+      clearPendingRemoved();
       vi.useRealTimers();
     }
   });

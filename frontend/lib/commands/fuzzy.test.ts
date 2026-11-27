@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { buildSearchIndex, fuzzyMatch, searchIndexed } from './fuzzy';
 import { formatShortcut, isEditableTarget, matchesShortcut, normalizeShortcut } from './shortcut';
 
@@ -53,6 +53,17 @@ describe('searchIndexed', () => {
 
   it('keywords 兜底命中', () => {
     expect(searchIndexed(index, 'document').map((h) => h.id)).toEqual(['b']);
+  });
+
+  it('buildSearchIndex 预计算 lowerKeywords，查询期不逐条 toLowerCase', () => {
+    const idx = buildSearchIndex([{ id: 'x', title: 'T', group: 'G', keywords: 'Alpha Beta' }]);
+    expect(idx[0].lowerKeywords).toBe('alpha beta');
+
+    const spy = vi.spyOn(String.prototype, 'toLowerCase');
+    // 命中 keywords 路径不得再对 keywords 调 toLowerCase（仅 query 自身一次）
+    searchIndexed(idx, 'alpha');
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
   });
 
   it('无命中返回空', () => {

@@ -31,6 +31,27 @@ def test_full_analysis_chain_dag_structure():
     assert plan.step("s3d-verdict").depends_on
 
 
+def test_analysis_chain_verdict_waits_for_run_analysis():
+    """artifact 首产者获胜（setdefault）曾使 final_verdict/attach_result
+    只依赖 s3d-elev —— s3d-elev/scene 完成后 ready_steps 即含 s3d-verdict，
+    判定先于分析完成（违背 run_analysis → attach_result → final_verdict
+    文档链）。"""
+    plan = build_scene3d_plan("立体地形+视域", analysis_goal="viewshed",
+                              elevation_ref="ref:dem-1")
+    assert "s3d-analysis" in plan.step("s3d-verdict").depends_on
+    assert "s3d-analysis" in plan.step("s3d-attach").depends_on
+    # elev/scene 完成但 analysis 未完成 → verdict 不得 ready
+    for sid in ("s3d-elev", "s3d-qualify", "s3d-scene"):
+        plan.step(sid).status = "complete"
+    assert "s3d-verdict" not in plan.ready_steps()
+    assert "s3d-analysis" in plan.ready_steps()
+    plan.step("s3d-analysis").status = "complete"
+    assert "s3d-verdict" in plan.ready_steps()
+    # 表达链（无分析）verdict 仍只依赖 elev/scene（零行为变化）
+    plain = build_scene3d_plan("表达链", analysis_goal="")
+    assert set(plain.step("s3d-verdict").depends_on) == {"s3d-elev", "s3d-scene"}
+
+
 def test_ready_progression_and_skip_unlocks():
     plan = build_scene3d_plan("表达链", analysis_goal="")
     assert plan.ready_steps() == ["s3d-elev"]

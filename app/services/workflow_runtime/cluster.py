@@ -227,13 +227,23 @@ class WorkerRegistry:
         limit: int = MAX_WORKERS_LISTED,
     ) -> list[WorkerRecord]:
         """活跃 worker（可按 profile 槽位 / 后端过滤；调度准入输入）。"""
+        return self._list_active(profile=profile, backend=backend, limit=limit)
+
+    def _list_active(
+        self, *, profile: str, backend: str, limit: int,
+    ) -> list[WorkerRecord]:
         from app.models.db_model import WorkflowWorkerRow
 
+        resolved_limit = 0 if int(limit) <= 0 else max(
+            1, min(int(limit), MAX_WORKERS_LISTED))
         try:
             with self._factory() as db:
                 rows = db.query(WorkflowWorkerRow).filter(
                     WorkflowWorkerRow.status == "active",
-                ).limit(max(1, min(int(limit), MAX_WORKERS_LISTED))).all()
+                ).order_by(
+                    WorkflowWorkerRow.last_heartbeat_at.desc(),
+                    WorkflowWorkerRow.worker_id.asc(),
+                ).all()
                 out: list[WorkerRecord] = []
                 now = _utcnow()
                 for r in rows:
@@ -270,7 +280,7 @@ class WorkerRegistry:
                             r.last_heartbeat_at.isoformat()
                             if r.last_heartbeat_at else "",
                     })
-                return out
+                return out if resolved_limit == 0 else out[:resolved_limit]
         except Exception:  # noqa: BLE001 — 查询失败按「无 worker」降级
             return []
 
@@ -279,4 +289,4 @@ class WorkerRegistry:
         return sum(
             int((w["capabilities"].get("profiles") or {})
                 .get(profile, 0) or 0)
-            for w in self.list_active(profile=profile))
+            for w in self._list_active(profile=profile, backend="", limit=0))

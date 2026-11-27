@@ -92,6 +92,20 @@ class TestExportParity:
                 if i.code == "export_parity_gap"]
         assert gaps[0].ids == ["chart-a", "chart-b"]
 
+    def test_export_targets_over_cap_disclosed(self):
+        spec = _spec({"id": "chart", "type": "export_layout"})
+        contract = CompositionContractV1(
+            contract_id="contract.test.many_targets",
+            template_id="composition.standard_analysis",
+            export_targets=("png", "pdf", "svg", "print", "interactive",
+                            "jpg", "webp"),
+        )
+        issues = conformance_report(spec, contract=contract)
+        truncated = [i for i in issues if i.code == "export_targets_truncated"]
+        assert len(truncated) == 1 and truncated[0].severity == "warning"
+        # 第 7 个目标（webp）既不被核查、也不再伪装成"全部检查过"。
+        assert all("webp" not in i.message for i in issues)
+
 
 # ── 版本兼容（契约 min_abi / 身份块 ABI / 契约指纹漂移）─────────────────
 

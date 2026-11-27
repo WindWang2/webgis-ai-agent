@@ -266,8 +266,8 @@ class ClusterMetrics:
                 "profile_slots": profiles, "gpu_workers": gpu_workers}
 
     def _leader_summary(self) -> Optional[dict[str, Any]]:
-        leaders = [
-            w for w in self._store.live_workers(role="coordinator", within_s=60)
-        ]
+        # 只统计持有未过期 leadership lease 的 coordinator：standby 每 tick
+        # 也刷新 worker 心跳，按 role+心跳统计会把 standby 混入 leader 数。
+        leaders = self._store.live_leaders(limit=8)
         return {"count": len(leaders),
                 "ids": [w["worker_id"] for w in leaders][:8]}

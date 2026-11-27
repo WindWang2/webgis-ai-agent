@@ -139,6 +139,131 @@ class TestClarificationSession:
         assert target.code not in answered_codes
 
 
+class TestReviewP2Fixes:
+    """review P2：超替携带的三条不变式。"""
+
+    def test_restore_user_fields_carries_beyond_sixteen(self):
+        """反证：_restore_user_fields 只遍历 user_fields[:16] —— >16 个
+        user-origin 字段时超出部分静默不携带（user-wins 违约），硬编码 16
+        也与 MAX_FIELD_PROVENANCE=32 不符。"""
+        from app.services.gis_harness.intent import resolve_map_request_intent
+        from app.services.gis_harness.requirement_ir.build import build_document
+        from app.services.gis_harness.requirement_ir.contracts import (
+            MAX_FIELD_PROVENANCE,
+            Provenance,
+        )
+
+        base = build_document(
+            "成都小学分布", resolve_map_request_intent("成都小学分布"), turn=1)
+        prov = Provenance(origin="user", turn=1)
+        paths = [
+            "output.formats", "output.report", "output.publish",
+            "output.live_map", "output.dpi", "output.medium",
+            "representation.palette", "representation.geometry_kind",
+            "components.title", "components.legend", "components.scale_bar",
+            "components.north_arrow", "components.labels",
+            "components.attribution", "time.series", "audience",
+            "time.range_start", "time.range_end", "datasets", "purpose",
+        ]
+        values = {
+            "output.formats": ["png", "pdf"], "output.report": True,
+            "output.publish": True, "output.live_map": True,
+            "output.dpi": 150, "output.medium": "print",
+            "representation.palette": "blue",
+            "representation.geometry_kind": "heatmap",
+            "components.title": True, "components.legend": True,
+            "components.scale_bar": True, "components.north_arrow": True,
+            "components.labels": True, "components.attribution": True,
+            "time.series": True, "audience": "public",
+            "time.range_start": "2020-01-01", "time.range_end": "2023-12-31",
+            "datasets": ["ds-a"], "purpose": "briefing",
+        }
+        assert len(paths) > 16 and len(paths) <= MAX_FIELD_PROVENANCE
+        user_fields = {p: (values[p], prov) for p in paths}
+        restored = service._restore_user_fields(base, user_fields, 2)
+        carried = [
+            p for p in paths
+            if restored.intent.field_provenance.get(p) is not None
+            and restored.intent.field_provenance[p].is_user()
+        ]
+        assert carried == paths, f"未携带：{set(paths) - set(carried)}"
+
+    def test_valueless_camera_lock_dropped_on_carry(self):
+        """反证：scene_camera 携带锁在该轴字段无值时失去保护对象 —— 留着
+        会让 agent 写该轴必被 _lock_conflict 拒绝且无用户解锁途径。"""
+        from app.services.gis_harness.intent import resolve_map_request_intent
+        from app.services.gis_harness.requirement_ir.build import build_document
+        from app.services.gis_harness.requirement_ir.contracts import (
+            Provenance,
+            UserLock,
+        )
+
+        base = build_document(
+            "成都小学分布", resolve_map_request_intent("成都小学分布"), turn=1)
+        assert base.intent.scene.camera_pitch is None
+        lock = UserLock(scope="scene_camera", value="pitch",
+                        provenance=Provenance(origin="user"))
+        carried = base.model_copy(update={
+            "intent": base.intent.model_copy(update={"locks": [lock]})})
+        restored = service._restore_user_fields(carried, {}, 2)
+        assert not any(
+            l.scope == "scene_camera" for l in restored.intent.locks)
+
+    def test_valued_camera_lock_survives_carry(self):
+        """对照：该轴确有用户值时锁必须存活（user-wins 不回退）。"""
+        from app.services.gis_harness.intent import resolve_map_request_intent
+        from app.services.gis_harness.requirement_ir.build import build_document
+        from app.services.gis_harness.requirement_ir.contracts import (
+            Provenance,
+            UserLock,
+        )
+
+        base = build_document(
+            "成都小学分布", resolve_map_request_intent("成都小学分布"), turn=1)
+        lock = UserLock(scope="scene_camera", value="pitch",
+                        provenance=Provenance(origin="user"))
+        prov = Provenance(origin="user", turn=1)
+        carried = base.model_copy(update={
+            "intent": base.intent.model_copy(update={"locks": [lock]})})
+        restored = service._restore_user_fields(
+            carried, {"scene.camera_pitch": (45.0, prov)}, 2)
+        assert restored.intent.scene.camera_pitch == 45.0
+        assert any(l.scope == "scene_camera" and l.value == "pitch"
+                   for l in restored.intent.locks)
+
+    def test_rejected_patch_does_not_truncate_remaining_diff(self, monkeypatch):
+        """反证：edit 轮任一 patch 被拒（非 CAS）后，其余 patch 不得全部
+        PatchStale 被静默丢弃 —— diff_to_patches 的链式 expected_revision
+        假设全量应用，本轮差分被截断。"""
+        from app.services.gis_harness.requirement_ir.contracts import PatchRecord
+
+        store = MemStore()
+        run(service.ensure_document(
+            store, "s1", "成都的小学分布情况，做一张图", turn=1))
+
+        def _fake_diff(old, new_core, *, turn, query=""):
+            base = int(old.revision)
+            return [
+                PatchRecord(op_id="e1", turn=turn, actor="user", op="set",
+                            path="output.dpi", value=99999,
+                            expected_revision=base),
+                PatchRecord(op_id="e2", turn=turn, actor="user", op="set",
+                            path="representation.palette", value="blue",
+                            expected_revision=base + 1),
+            ]
+
+        monkeypatch.setattr(service, "diff_to_patches", _fake_diff)
+        result = run(service.ensure_document(
+            store, "s1", "改成各区统计", turn=2))
+        # 首条被拒（值非法）且不得产生 stale —— 第二条必须仍然生效
+        assert result["patch_errors"], result
+        assert "patch_stale_revision" not in result["patch_errors"]
+        assert result["patched"] == 1
+        doc = service._doc_from(
+            run(service.load_state(store, "s1")).document)
+        assert doc.intent.representation.palette == "blue"
+
+
 class TestReplayDrift:
     def test_session_replay_invariant(self):
         store = MemStore()

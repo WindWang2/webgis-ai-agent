@@ -1501,8 +1501,11 @@ class MapProductPlanner:
                 # primary；后续元素不得再提升第二 primary（P3 修复，此前
                 # 两个禁用元素可各提升一个 primary）。
                 promoted.role = "primary"
-            resolved_to = target_use or (
-                promoted.cartography if promoted is not None else "")
+            # resolved_to 必须反映**实际**提升的层：声明 use 层不在计划中
+            # 或已被同批禁用时 promoted 落到 point_overlay 兜底，若仍报
+            # target_use，降级披露就与计划事实不符（to_element/disclosure
+            # 声称的目标并未被提升）。
+            resolved_to = promoted.cartography if promoted is not None else ""
             finalized.fallbacks.append(FallbackDecision(
                 from_element=element,
                 to_element=resolved_to,

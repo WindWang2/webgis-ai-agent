@@ -16,6 +16,7 @@ P1（任务书 §2）编排面：
 """
 from __future__ import annotations
 
+import datetime
 import hashlib
 import json
 import logging
@@ -49,9 +50,39 @@ _DEFAULT_RULE_BUDGET_S = 30.0
 _OVERALL_RANK = {"fail": 2, "warn": 1, "pass": 0}
 
 
+def _stable_projection(value: Any) -> str:
+    """单个不可 JSON 化值的稳定文本投影（不含内存地址/哈希序）。"""
+    cls = type(value)
+    qualified = f"{cls.__module__}.{cls.__qualname__}"
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return f"{cls.__name__}:{value}"
+    if isinstance(value, (bytes, bytearray)):
+        return f"{cls.__name__}:{bytes(value).hex()}"
+    if isinstance(value, (datetime.date, datetime.time)):
+        return f"{cls.__name__}:{value.isoformat()}"
+    if cls.__repr__ is not object.__repr__:
+        # 自定义 repr 通常按值输出（numpy/Decimal/dataclass）；只有未覆写
+        # 的 object.__repr__ 才带内存地址。
+        return f"{qualified}:{value!r}"
+    return qualified
+
+
+def _fingerprint_default(value: Any) -> str:
+    """不可 JSON 化值 → **进程稳定**的投影（绝不含 repr 的内存地址）。
+
+    ``default=str`` 会把自定义对象串成 ``<X object at 0x7f...>``、把 set 按
+    哈希随机序串化 —— 同一逻辑载荷跨进程指纹不同，computed 报告的复用/
+    幂等检查被击穿。时间类保留 isoformat（有值语义），其余按类型级标记。
+    """
+    if isinstance(value, (set, frozenset)):
+        return "set:" + json.dumps(
+            sorted(_stable_projection(v) for v in value), ensure_ascii=False)
+    return _stable_projection(value)
+
+
 def _payload_fingerprint(payload: Dict[str, Any]) -> str:
     canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True,
-                           separators=(",", ":"), default=str)
+                           separators=(",", ":"), default=_fingerprint_default)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:32]
 
 

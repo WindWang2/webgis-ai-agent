@@ -259,3 +259,19 @@ def test_preflight_warnings():
     ir2 = plan_publication_pages(doc2)
     codes2 = {w["code"] for w in publication_preflight(ir2, doc2)}
     assert "title_wrap_expected" in codes2
+
+
+def test_preflight_survives_non_dict_component_options():
+    """P2：组件 options 为非 dict（list/str）时 preflight 不得自己崩。
+
+    旧实现 ``(c.get("options") or {}).get("text")`` 抛 AttributeError →
+    导出规划 500；坏文档应得到 attribution_missing warning。
+    """
+    doc = _doc_zones()
+    doc["layout"]["components"] = [
+        {"id": "attr-1", "type": "attribution", "options": ["not", "a", "dict"]},
+    ]
+    ir = plan_publication_pages(
+        doc, atlas=AtlasPolicy(driver="category", category_property="zone"))
+    codes = {w["code"] for w in publication_preflight(ir, doc)}
+    assert "attribution_missing" in codes

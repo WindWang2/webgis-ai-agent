@@ -262,6 +262,13 @@ def compute_reliability(
             "UNKNOWN_OUTPUT_NOT_DISTINCT",
             "unknown_output 与有效桶输出重合——误差缺失必须独立可辨，"
             "不能悄悄落到某个可靠性等级", field="visual.unknown_output")
+    if v.out_of_domain_output is not None and any(
+            abs(v.out_of_domain_output - o) < 1e-9 for o in outputs):
+        raise AuthoringError(
+            "OUT_OF_DOMAIN_OUTPUT_NOT_DISTINCT",
+            "out_of_domain_output 与有效桶输出重合——越界误差必须独立可辨，"
+            "不能悄悄画成某个有效可靠性等级",
+            field="visual.out_of_domain_output")
 
     buckets: List[Dict[str, Any]] = []
     for i, out in enumerate(outputs):

@@ -411,6 +411,7 @@ class _AggregateState:
 
         self.aggs = list(aggs)
         self.group_by = list(group_by)
+        self._needs_field_props = any(a.field is not None for a in self.aggs)
         self.groups: Dict[Tuple, AggregateGroup] = {}
         self._group_cap = group_count_cap()
 
@@ -446,6 +447,13 @@ class _AggregateState:
                 }
             self.groups[key] = acc
         acc["n"] += 1
+        # 每聚合循环只读同一行：投影/右回退在循环外取一次（避免 行数×聚合数
+        # 的重复全列拷贝）。纯 count(*) 无字段聚合不复制行。
+        if self._needs_field_props:
+            left_props = {k: v2_ for k, v2_ in row.items() if not k.startswith("__")}
+        else:
+            left_props = {}
+        right_props = row.get("__right__") or {}
         for a in self.aggs:
             name = a.func if a.field is None else f"{a.func}_{a.field}"
             cell = acc["cells"][name]
@@ -454,10 +462,6 @@ class _AggregateState:
                 continue
             v = None
             if a.field is not None:
-                left_props = {
-                    k: v2_ for k, v2_ in row.items() if not k.startswith("__")
-                }
-                right_props = row.get("__right__") or {}
                 if a.field in left_props:
                     v = left_props[a.field]  # 左（事实表）优先
                 elif a.field in right_props:
@@ -1493,9 +1497,6 @@ def execute_federated_chain(
       ``__left_geometry__``（F3）；无任何几何可携带时 typed 失败，绝不静默 0 行。
 
     V4（ADR-0101 D7）：
-    - 首跳同源（同 source_id）且 adapter 支持 ``server_spatial_join`` →
-      服务端快路径；**typed DataFabricError 原样上抛（不回退）**，仅
-      非 typed 异常回退本地并记录 warning —— 与两源路径同一语义。
     - attribute/aggregate 跳先做半连接右侧行约减（键集有界）。
     - derive_projection 时按计划的派生字段投影拉取。
     """
@@ -1558,9 +1559,6 @@ def execute_federated_chain(
     per_source_rows: List[int] = []
     adapters: List[Any] = []
     semi_join_stats: List[Dict[str, int]] = []
-    # The adapter seam returns grouped counts, not row-preserving spatial
-    # joins. Chain hops require all attributes and geometry for later hops.
-    server_side_first_hop = False
     for src in ordered_sources:
         feats = _fetch(src)
         per_source_rows.append(len(feats))
@@ -1662,9 +1660,7 @@ def execute_federated_chain(
     rows_fetched = sum(per_source_rows)
     result = {
         "status": "success",
-        "strategy": "server_side_first_hop"
-        if server_side_first_hop
-        else "left_deep_chain",
+        "strategy": "left_deep_chain",
         "order": [s.source_id for s in ordered_sources],
         "rows": final_rows,
         "row_count": len(final_rows),
@@ -1900,13 +1896,21 @@ def enrich_request_from_runtime(
                 )
         except Exception:  # noqa: BLE001 - catalog 缺失 → 无事实富集
             descriptor = None
-        runtime.enrich(rs, fingerprint=fingerprint, descriptor=descriptor)
+        try:
+            runtime.enrich(rs, fingerprint=fingerprint, descriptor=descriptor)
+        except Exception:  # noqa: BLE001 - 单源富集失败 → 跳过该源，绝不中断
+            pass
         factor = getattr(rs, "feedback_factor", None)
+        if factor is not None:
+            try:
+                factor = float(factor)
+            except (TypeError, ValueError):  # noqa: BLE001 - 非法因子 → 不修正
+                factor = None
         if src.estimated_rows is None and getattr(rs, "facts_row_count", None):
             base_rows = int(rs.facts_row_count)
             rows_basis = f"source_facts:{rs.facts_row_count_basis}"
             if factor:
-                base_rows = int(round(base_rows * float(factor)))
+                base_rows = int(round(base_rows * factor))
                 rows_basis += (
                     f"×feedback:{factor}(samples={rs.feedback_samples})"
                 )
@@ -2160,7 +2164,12 @@ def _execute_v6_with_governance(executor, req, engine_breaker, cache_ctx, cache)
             "explain_v6": explain_v6_lines(
                 plan, _v6_explain_ctx(req), exec_result=exec_result
             ),
-            "semi_join_reduction": exec_result.get("hop_stats"),
+            # 与 V5 记录形状对齐：hop 记录里的 keyset_reduction 提升到顶层
+            # right_rows_before/after（chain_explain_lines 等消费方只读顶层）。
+            "semi_join_reduction": [
+                {**h, **(h.get("keyset_reduction") or {})}
+                for h in (exec_result.get("hop_stats") or [])
+            ],
             "bloom_reduction": exec_result.get("bloom_stats"),
             "replans_used": exec_result.get("replans_used", 0),
             # ── V7（ADR-0119 W8/W10）执行证据 additive ──

@@ -250,9 +250,21 @@ async def handle_layers_changed(session_id: str, data: dict):
     return
 
 
+# security P2：order 必须是有限的图层 id 列表 —— 此前只做 truthiness 判断，
+# 任意无界 JSON（dict/嵌套结构/超长元素）都直写 map_state。
+_MAX_LAYER_ORDER_ENTRIES = 500
+
+
 async def handle_layers_reordered(session_id: str, data: dict):
     order = data.get("order")
-    if order:
+    if (
+        isinstance(order, list)
+        and 0 < len(order) <= _MAX_LAYER_ORDER_ENTRIES
+        and all(
+            isinstance(layer_id, str) and 0 < len(layer_id) <= 200
+            for layer_id in order
+        )
+    ):
         await session_data_manager.set_map_state(session_id, "layer_order", order)
         await session_data_manager.append_event(session_id, "layers_reordered", data)
 

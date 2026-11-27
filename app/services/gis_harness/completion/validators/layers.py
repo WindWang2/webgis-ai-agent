@@ -17,8 +17,15 @@ from ..contracts import (
 
 
 def _layer_declared_visible(layer: Dict[str, Any]) -> bool:
-    layout = layer.get("layout") or {}
+    layout = layer.get("layout")
+    if not isinstance(layout, dict):   # 真值非 dict（手写层）按无 layout 处理
+        layout = {}
     return layer.get("visible") is not False and layout.get("visibility") != "none"
+
+
+def _is_data_layer(layer: Dict[str, Any]) -> bool:
+    """数据层（有 source 引用）—— basemap/label 子层不算。"""
+    return bool(str(layer.get("source") or ""))
 
 
 def validate_layers(
@@ -71,16 +78,21 @@ def validate_layers(
                 )
                 continue
             src = str(layer.get("source") or "")
-            if src and src not in sources:
+            if not src or src not in sources:
                 findings.append(
                     MapCompletionFinding(
                         code=F_SOURCE_MISSING,
                         severity="error",
                         target=lid,
-                        detail=f"layer source '{src[:48]}' not registered in MapSpec sources",
+                        detail=(
+                            "result layer has no source binding"
+                            if not src else
+                            f"layer source '{src[:48]}' not registered in "
+                            "MapSpec sources"
+                        ),
                     )
                 )
-            elif src and descriptors is not None:
+            elif descriptors is not None:
                 src_def = source_by_id.get(src) or {}
                 # V4：磁盘栅格（ref:raster/*）与 store ref 同面探测（inputs
                 # 经 probe_ref 合成 descriptor）—— 过期栅格不再静默跳过。
@@ -142,7 +154,8 @@ def validate_layers(
         # 无 planned result layer 绑定（旧章节 / 纯展示路径）：退化为
         # “至少一个可见数据层”断言（basemap/label 子层不算 —— 有 source
         # 引用且非 none-position 的数据层）。
-        if not any(_layer_declared_visible(ly) for ly in layers):
+        if not any(_is_data_layer(ly) and _layer_declared_visible(ly)
+                   for ly in layers):
             findings.append(
                 MapCompletionFinding(
                     code=F_NO_RESULT_LAYER,

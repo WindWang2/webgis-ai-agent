@@ -25,6 +25,32 @@ from app.services.gis_harness.tools import (
 )
 
 
+def _forward_keeping_warnings(res: Dict[str, Any], out: Dict[str, Any]) -> Dict[str, Any]:
+    """review P2-8：转发证据，但保留 out 已累积的 warnings 披露。
+
+    ``_forward_evidence`` 以子结果 warnings **整体替换** out["warnings"] ——
+    产品门降级(:235)/scope 未验证(:383)/legend 失败(:414)/converter 降级
+    (:419/:455)/design 面板跳过(:704)/layout 失败(:753) 等先前入账的披露会被
+    静默抹掉（#716 只补回了 authoring_failures 与 scope_warning）。这里按序
+    合并回去（去重，与 :1106 同纪律）。
+    """
+    prior = list(out.get("warnings") or [])
+    out = _forward_evidence(res, out)
+    if not prior:
+        return out
+    merged = list(out.get("warnings") or [])
+    out["warnings"] = prior + [w for w in merged if w not in prior]
+    return out
+
+
+def _candidate_why(candidate: Any) -> str:
+    """候选一句理由：condition 首句为空时安全回落到 reasons 首句。"""
+    condition = (candidate.condition_reasons_zh[0]
+                 if candidate.condition_reasons_zh else "")
+    reason = candidate.reasons_zh[0] if candidate.reasons_zh else ""
+    return (condition or reason)[:60]
+
+
 async def webgis_map_product(
     registry: ToolRegistry,
     query: str,
@@ -438,7 +464,7 @@ async def webgis_map_product(
                     "cartography": h_carto, "layer_type": h_type,
                     "authored": True,
                 })
-                out = _forward_evidence(res, out)
+                out = _forward_keeping_warnings(res, out)
             else:
                 msg = f"heatmap layer authoring failed: {res.get('message')}"
                 out.setdefault("warnings", []).append(msg)
@@ -471,7 +497,7 @@ async def webgis_map_product(
                 })
                 # #1068(E-7): points 层也转发证据 —— layout 后续失败时
                 # 结果不再携带 heatmap 的过期 mutation_revision。
-                out = _forward_evidence(res, out)
+                out = _forward_keeping_warnings(res, out)
             else:
                 msg = f"point layer authoring failed: {res.get('message')}"
                 out.setdefault("warnings", []).append(msg)
@@ -638,8 +664,7 @@ async def webgis_map_product(
         _digest_cands = [
             {"m": c.map_model_id, "f": c.expression_family,
              "s": c.suitability.value,
-             **({"why": (c.condition_reasons_zh[0]
-                         or c.reasons_zh[0])[:60]}
+             **({"why": _candidate_why(c)}
                 if (c.condition_reasons_zh or c.reasons_zh) and
                 c.suitability != "suitable" else {})}
             for c in _cand_set.candidates[:4]
@@ -1096,7 +1121,16 @@ async def webgis_map_product(
     final_spec = layout_res.get("mapspec") if isinstance(layout_res.get("mapspec"), dict) else None
     if final_spec is not None:
         out["mapspec"] = final_spec
-        out = _forward_evidence(layout_res, out)
+        out = _forward_keeping_warnings(layout_res, out)
+        # review P2-9：design trace 在 layout_set 之前构建，其指纹只能是
+        # 中间态（或无 layer_upsert 时恒为 absent:not-committed）。终稿指纹
+        # 落地后二次回填 —— 否则 trace 自称「未提交」与同载荷终稿指纹自相
+        # 矛盾，QA 也无法用它反查终稿 spec。
+        _trace = design_payload.get("design_decision_trace")
+        if isinstance(_trace, dict) and out.get("mapspec_fingerprint"):
+            # 不再截断：终稿指纹与同载荷 out.mapspec_fingerprint 必须逐字一致
+            # （QA 反查的正是这一个值）。
+            _trace["mapspecFingerprint"] = str(out["mapspec_fingerprint"])
     if authoring_failures or (
         isinstance(scope_verdict, dict) and scope_verdict.get("verdict") == "unverified"
     ):

@@ -94,6 +94,20 @@ describe('ResultDetail — truthfulness + map linkage', () => {
     expect(screen.getByText('失败')).toBeInTheDocument();
     expect(screen.getByText('请提供 value_field。')).toBeInTheDocument();
   });
+
+  it('featureCount 为 null 时不白屏（如实显示未报告）', () => {
+    const r = hotspotResult();
+    // 载荷漂移：descriptor 的 feature_count 为 null 落到 output 上
+    (r.outputs[0] as { featureCount?: number | null }).featureCount = null;
+    useHudStore.setState({ results: [r] });
+    render(
+      <ResultDetail result={r} sessionId="sess" ownerToken={null} onBack={() => {}} onSend={() => {}} />,
+    );
+    // 输出段照常渲染，要素数显示「未报告」而不是整块崩溃
+    expect(screen.getByText('要素数')).toBeInTheDocument();
+    const row = screen.getByText('要素数').closest('div');
+    expect(within(row as HTMLElement).getAllByText('未报告').length).toBe(1);
+  });
 });
 
 describe('ResultDetail — V4 action grouping + status vocabulary', () => {

@@ -71,6 +71,28 @@ def test_missing_bounds_are_not_fabricated(tmp_path):
     assert "bounds" not in source_data
 
 
+def test_truthy_non_dict_raster_source_does_not_raise():
+    """A truthy non-dict ``raster_source`` (list/str) must be treated as absent
+    instead of crashing on ``.get`` — the module never raises."""
+    for bad_source in (["not", "a", "dict"], "not-a-dict"):
+        payload = {
+            "array": np.array([[0.1, 0.5], [0.8, 0.9]]),
+            "bounds": [100.0, 20.0, 105.0, 25.0],
+            "raster_source": bad_source,
+        }
+
+        raster_layer, legend, png, source_data = convert_raster_to_mapspec_layer(
+            payload, {"id": "non-dict-src", "source": "src-non-dict"}
+        )
+
+        assert raster_layer["id"] == "non-dict-src"
+        assert raster_layer["paint"]["opacity"] == 0.85
+        assert raster_layer["legend_spec"]["type"] == "continuous"
+        assert legend is not None
+        assert png is not None
+        assert source_data is not None
+
+
 # ─── #480: NaN nodata rendering ──────────────────────────────────────────────
 
 

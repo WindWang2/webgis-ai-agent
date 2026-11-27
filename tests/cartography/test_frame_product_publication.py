@@ -220,6 +220,51 @@ class TestProductPageCompile:
         # 局部域边界 25 不应作为图例标签出现（它已被共享域取代）。
         assert "25 – 30" not in outcome.svg
 
+    def test_shared_legend_band_svg_escapes_label_color_field(self):
+        """图例带 SVG 面的 label/color/field 必须转义（HTML 孪生面同链）。
+
+        label/color 来自用户 legend_spec（nodata 尤其原样透传）、field 来自
+        shared_expression —— 未转义时单文件 SVG 导出可注入脚本，color 还能
+        破出 fill 属性注入事件处理器。
+        """
+        from app.services.publication_export import _shared_legend_band_svg
+
+        doc = {"frame_product": {"shared_expression": {
+            "field": "per_10k</text><script>alert(1)</script>",
+            "unit": "人/万人"}}}
+        shared_legend_spec = {
+            "type": "graduated", "breaks": [20.0, 26.0],
+            "labels": ["20 – 26<img src=x onerror=alert(2)>"],
+            "palette_colors": ['#ffffff" onclick="alert(3)"'],
+            "nodata": {"label": "无数据</text><script>alert(4)</script>",
+                       "color": '#cccccc" onload="alert(5)"'},
+        }
+        band = _shared_legend_band_svg(doc, None, 1200, shared_legend_spec)
+        # 未转义载荷不得出现（内容面 + 属性面）。
+        for payload in ("<script", "<img", 'onclick="alert', 'onload="alert',
+                        "</text><script>"):
+            assert payload not in band, payload
+        # 转义形态在场（确实转义而非被丢弃）。
+        assert "per_10k&lt;/text&gt;&lt;script&gt;" in band
+        assert "&lt;img src=x onerror=alert(2)&gt;" in band
+        assert '#ffffff&quot; onclick=&quot;alert(3)&quot;' in band
+        assert '#cccccc&quot; onload=&quot;alert(5)&quot;' in band
+
+    def test_product_page_svg_has_no_raw_legend_payload(self):
+        """端到端：恶意 nodata label/color 经真实导出路径进入组合页 SVG
+        时是转义形态（单文件 SVG 导出不可执行）。"""
+        doc = _product_document()
+        doc["layers"][0]["legend_spec"]["nodata"] = {
+            "label": "无数据</text><script>alert(1)</script>",
+            "color": '#cccccc" onload="alert(2)"',
+        }
+        outcome = self._compile(doc)
+        assert outcome.svg.count("<clipPath") == 3  # 页面仍正常组合
+        for payload in ("<script", 'onload="alert', "</text><script>"):
+            assert payload not in outcome.svg, payload
+        assert "无数据&lt;/text&gt;&lt;script&gt;" in outcome.svg
+        assert '#cccccc&quot; onload=&quot;alert(2)&quot;' in outcome.svg
+
 
 @pytest.mark.slow
 class TestProductPdfReal:
@@ -248,3 +293,32 @@ class TestProductPdfReal:
         assert "成都每万人小学学位" in text
         for t in ("2020", "2022", "2024"):
             assert t in text
+
+
+class TestProductPageRawGuard:
+    def test_grid_overflow_is_typed_error(self):
+        """未按 schema 校验的原始文档：网格放不下 → typed 拒绝而非裸 ValidationError。"""
+        doc = _product_document()
+        doc["frame_product"]["grid"] = {"columns": 1}
+        base = doc["frame_product"]["frames"][0]
+        doc["frame_product"]["frames"] = [
+            {**base, "frame_id": f"f{i}"} for i in range(39)]
+        with pytest.raises(MapSpecSchemaError) as ei:
+            plan_publication_pages(doc, atlas=AtlasPolicy(driver="product"))
+        assert ei.value.code == "product_page_grid_overflow"
+
+    def test_invalid_frame_id_is_typed_error(self):
+        """缺 frame_id / >64 字符 → typed 拒绝而非 FrameSlotIR ValidationError。"""
+        missing = _product_document()
+        del missing["frame_product"]["frames"][0]["frame_id"]
+        with pytest.raises(MapSpecSchemaError) as ei:
+            plan_publication_pages(
+                missing, atlas=AtlasPolicy(driver="product"))
+        assert ei.value.code == "product_page_frame_id_invalid"
+
+        overlong = _product_document()
+        overlong["frame_product"]["frames"][0]["frame_id"] = "x" * 65
+        with pytest.raises(MapSpecSchemaError) as ei2:
+            plan_publication_pages(
+                overlong, atlas=AtlasPolicy(driver="product"))
+        assert ei2.value.code == "product_page_frame_id_invalid"

@@ -26,7 +26,7 @@ from app.services.gis_harness.recipes import CartographyRecipe
 _NUM_FIELD_ROLE = lambda name, note="": role(  # noqa: E731
     "measure", capability="admin_aggregation",
     artifacts=("admin_aggregate_table", "stats_table"), geometry=("polygon", "table"),
-    note=note,
+    note=note or name,
 )
 
 _RECIPES: List[CartographyRecipe] = [

@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 
 logger = logging.getLogger(__name__)
@@ -137,10 +137,10 @@ def defect_payload(defects: Sequence[Any]) -> List[Dict[str, Any]]:
 
 async def save_proposal(session_id: str, proposal: Dict[str, Any]) -> bool:
     from app.services.session_data import session_data_manager
+    from app.services.session_state_atomic import atomic_update_state
 
-    try:
-        raw = await session_data_manager.get_map_state(session_id)
-        proposals = (raw or {}).get(PROPOSALS_KEY)
+    def _update(snapshot: Mapping[str, Any]) -> Dict[str, Any]:
+        proposals = snapshot.get(PROPOSALS_KEY)
         entries = [p for p in proposals if isinstance(p, dict)] \
             if isinstance(proposals, list) else []
         entries = [
@@ -150,8 +150,13 @@ async def save_proposal(session_id: str, proposal: Dict[str, Any]) -> bool:
         entries.append(proposal)
         while len(entries) > _MAX_PROPOSALS:
             entries.pop(0)
-        return bool(await session_data_manager.set_map_state(
-            session_id, PROPOSALS_KEY, entries))
+        return {PROPOSALS_KEY: entries}
+
+    try:
+        # 读改写必须在存储层原子完成（同会话并发 plan 不得互相覆盖提案）。
+        committed = await atomic_update_state(
+            session_data_manager, session_id, [PROPOSALS_KEY], _update)
+        return committed is not None
     except Exception:  # noqa: BLE001 — 提案存储失败 = plan 失败（typed 上抛面）
         logger.warning("[VisualRepair] save proposal failed", exc_info=True)
         return False

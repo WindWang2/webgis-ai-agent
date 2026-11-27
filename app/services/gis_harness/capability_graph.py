@@ -980,7 +980,10 @@ def reset_capability_graph() -> None:
     with _graph_lock:
         _graph_cache["fingerprint"] = None
         _graph_cache["graph"] = None
-        _MODEL_REGISTRY_STORE = None
+        # 与 _shared_model_registry_store 的创建写回同锁：否则并发首建
+        # 在 reset 后把旧单例写回，重置隔离失效。
+        with _MODEL_REGISTRY_LOCK:
+            _MODEL_REGISTRY_STORE = None
 
 
 def graph_build_count_for_tests() -> int:
@@ -1164,13 +1167,13 @@ def _structural_audit(g: "CapabilityGraph") -> List["GraphIssue"]:
             if e.dst.startswith(f"{KIND_ARTIFACT_TYPE}:"):
                 if e.relation == REL_PRODUCES:
                     produced[e.dst] = produced.get(e.dst, 0) + 1
-                elif e.relation in (REL_ACCEPTS, REL_BINDS_TO):
+                elif e.relation in (REL_ACCEPTS, REL_BINDS_TO, REL_CONSUMES):
                     consumed[e.dst] = consumed.get(e.dst, 0) + 1
         for at in sorted(produced.keys()):
             if consumed.get(at, 0) == 0:
                 _emit("artifact_no_consumer",
                       f"artifact type {at.split(':', 1)[1]} is produced but "
-                      "never accepted/bound by any node")
+                      "never accepted/bound/consumed by any node")
 
     # ── 弃用暴露：非弃用 algorithm → 弃用 tool（新 plan 选到弃用面）──
     for e in g._edges:  # noqa: SLF001

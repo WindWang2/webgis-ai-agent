@@ -5,7 +5,7 @@
  * 主成果 completed）。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 
 vi.mock('@/components/ui/toast', () => {
   const store = { toasts: [] as unknown[], addToast: vi.fn(), removeToast: vi.fn() };
@@ -53,8 +53,7 @@ const DESCRIBE = {
   crs_description: null, fields: [], geometry: { types: ['Point'] },
 };
 
-const LISTING = {
-  source: { kind: 'session_ref', label: 'x', row_count: 5, crs: 'EPSG:4267', crs_identity: 'EPSG:4267' },
+const LISTING = {  source: { kind: 'session_ref', label: 'x', row_count: 5, crs: 'EPSG:4267', crs_identity: 'EPSG:4267' },
   target: { crs: 'EPSG:4269', identity: 'EPSG:4269', name: 'NAD83' },
   listing: {
     candidates: [
@@ -78,6 +77,25 @@ function renderPanel() {
   useCoordinateOperationsStore.getState().openWith('ref:data-test-1');
   return render(<CoordinateOperationsPanel sessionId="sess-1" ownerToken={null} />);
 }
+
+const LOCKED_PLAN = {
+  plan_id: 'p1', session_id: 'sess-1', title: 't', status: 'locked',
+  revision: 2, plan: { source: { ref: 'ref:data-test-1' }, target_crs: 'EPSG:32650' },
+  normalized_digest: 'dg', source_fingerprint: 'fp',
+  selected_candidate_id: 'cand_a',
+  operation: { candidate_id: 'cand_a', name: 'op', accuracy: null,
+    accuracy_unknown: true, ballpark: false, definition_sha256: 'd1',
+    environment: {}, projjson_bytes: 100 },
+  preview: null, preview_digest: null, preview_stale: false,
+  created_at: null, updated_at: null,
+};
+
+const COMPLETED_RUN = {
+  run_id: 'r1', plan_id: 'p1', status: 'completed', job_id: 1,
+  error_code: null, output_ref: 'ref:coord-ops/r1', output_rows: 1201,
+  receipt_summary: { rows_total: 1201 }, plan_revision: 2,
+  created_at: null, finished_at: null,
+};
 
 describe('CoordinateOperationsPanel', () => {
   beforeEach(() => {
@@ -156,5 +174,88 @@ describe('CoordinateOperationsPanel', () => {
     });
     expect(screen.getByText(/显示副本不可用/)).toBeTruthy();
     expect(screen.getAllByText(/1201/).length).toBeGreaterThan(0);
+  });
+
+  it('AOI 缺格不以 0 兜底：只填一格 → 计划不带 aoi、derivation=none', async () => {
+    apiMock.describeSource.mockResolvedValue(DESCRIBE);
+    apiMock.createPlan.mockResolvedValue({
+      plan_id: 'p1', revision: 1, status: 'draft', normalized_digest: 'dg',
+      plan: { source: {}, target_crs: 'EPSG:32650' },
+    });
+    renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: /检查源/ }));
+    await waitFor(() => expect(screen.getByText('EPSG:4326')).toBeTruthy());
+    // 只在 west 输入 116.4（其余三格留空）
+    fireEvent.change(screen.getByPlaceholderText('west'), { target: { value: '116.4' } });
+    fireEvent.click(screen.getByRole('button', { name: /保存计划/ }));
+    await waitFor(() => expect(apiMock.createPlan).toHaveBeenCalled());
+    const plan = apiMock.createPlan.mock.calls[0][0] as {
+      aoi?: unknown; aoi_derivation?: string;
+    };
+    expect(plan.aoi_derivation).toBe('none');
+    expect(plan.aoi == null).toBe(true);
+  });
+
+  it('AOI 清空某格即解除（四格齐全才发 explicit 全量 bbox）', async () => {
+    apiMock.describeSource.mockResolvedValue(DESCRIBE);
+    apiMock.createPlan.mockResolvedValue({
+      plan_id: 'p1', revision: 1, status: 'draft', normalized_digest: 'dg',
+      plan: { source: {}, target_crs: 'EPSG:32650' },
+    });
+    renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: /检查源/ }));
+    await waitFor(() => expect(screen.getByText('EPSG:4326')).toBeTruthy());
+    for (const [k, v] of [['west', '116.4'], ['south', '39.9'], ['east', '116.5'], ['north', '40.0']] as const) {
+      fireEvent.change(screen.getByPlaceholderText(k), { target: { value: v } });
+    }
+    // 清掉 east → 不再是完整 bbox
+    fireEvent.change(screen.getByPlaceholderText('east'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: /保存计划/ }));
+    await waitFor(() => expect(apiMock.createPlan).toHaveBeenCalled());
+    const plan = apiMock.createPlan.mock.calls[0][0] as {
+      aoi?: unknown; aoi_derivation?: string;
+    };
+    expect(plan.aoi_derivation).toBe('none');
+    expect(plan.aoi == null).toBe(true);
+  });
+
+  it('成果只载入一页时披露「已载入 / 总数」（不静默截断）', async () => {
+    apiMock.listPlans.mockResolvedValue({ plans: [LOCKED_PLAN] });
+    apiMock.listRuns.mockResolvedValue({ runs: [COMPLETED_RUN] });
+    apiMock.inspectRun.mockResolvedValue({ ...COMPLETED_RUN, receipt: null });
+    const rows = Array.from({ length: 20 }, (_, i) => ({
+      properties: { name: `row-${i}` },
+      first_coordinate: [i, i],
+    }));
+    apiMock.resultPage.mockResolvedValue({
+      run_id: 'r1', rows, total_rows: 40, cursor: 0, next_cursor: 20,
+      page_size: 20, crs: 'EPSG:32650',
+    });
+    renderPanel();
+    fireEvent.click(await screen.findByRole('button', { name: '结果分页' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('co-result-count')).toHaveTextContent('20 / 40');
+    });
+  });
+
+  it('轮询超时（非终态）：如实报错而非静默结束', async () => {
+    apiMock.listPlans.mockResolvedValue({ plans: [LOCKED_PLAN] });
+    apiMock.listRuns.mockResolvedValue({ runs: [] });
+    apiMock.execute.mockResolvedValue({ ...COMPLETED_RUN, status: 'running', receipt: null });
+    apiMock.inspectRun.mockResolvedValue({ ...COMPLETED_RUN, status: 'running', receipt: null });
+    renderPanel();
+    const runBtn = await screen.findByRole('button', { name: /执行全量重投影/ });
+    // 只对轮询腿用假时钟：600 × 1s 一次推进（真实 1s 间隔测试不可行）。
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(runBtn);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(600_000);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/poll_timeout/));
+    expect(screen.getByRole('button', { name: /执行全量重投影/ })).not.toBeDisabled();
   });
 });

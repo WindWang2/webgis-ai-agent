@@ -100,3 +100,29 @@ def test_init_db_creates_tables(tmp_path):
     assert "conversations" in tables
     assert "messages" in tables
     assert "layers" in tables
+
+
+def test_layer_insert_autoincrements_id_on_sqlite(tmp_path):
+    """P1 回归：layers.id 是 BigInteger 自增主键。SQLite 只把
+    「INTEGER PRIMARY KEY」当 rowid 别名；缺 with_variant(Integer, "sqlite")
+    时 create_all 建成 BIGINT 主键，不显式给 id 的 Layer 插入 NOT NULL 失败
+    （图层创建整体不可用）。同文件其余 BigInteger 自增主键均有该 variant。"""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    import app.models  # noqa: F401  注册全部表（含 layers 的 FK 依赖表）
+    from app.core.database import Base
+    from app.models.db_model import Layer, Organization
+
+    db_path = str(tmp_path / "layer_id.db")
+    engine = create_engine(f"sqlite:///{db_path}")
+    Base.metadata.create_all(bind=engine)
+    with Session(engine) as s:
+        s.add(Organization(id=1, name="org", slug="org"))
+        s.commit()
+        # 不显式给 id：修复前 sqlite3.IntegrityError NOT NULL constraint failed: layers.id
+        layer = Layer(org_id=1, name="layer-autoincrement", layer_type="vector")
+        s.add(layer)
+        s.commit()
+        assert layer.id is not None
+        assert s.get(Layer, layer.id) is layer
+    engine.dispose()

@@ -70,4 +70,18 @@ describe('AddSourceForm 协议下拉（#1747）', () => {
       ),
     );
   });
+
+  it('注册失败 toast 经 describeApiError 归一（保留服务端 detail/action）', async () => {
+    const err = new Error('register failed') as Error & { body?: unknown };
+    err.body = { detail: { message: '字段级错误', action: '检查 URL' } };
+    vi.mocked(dataFabricApi.createDataSource).mockRejectedValue(err);
+    renderForm();
+    fireEvent.change(screen.getByLabelText('数据源名称'), { target: { value: 'bad' } });
+    fireEvent.change(screen.getByLabelText('Endpoint URL / 连接地址'), {
+      target: { value: 'https://bad' },
+    });
+    fireEvent.click(screen.getByText('提交注册并同步'));
+    await waitFor(() =>
+      expect(toastStore.addToast).toHaveBeenCalledWith('字段级错误 · 检查 URL', 'error'));
+  });
 });

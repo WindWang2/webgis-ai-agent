@@ -39,8 +39,8 @@ REPO = Path(__file__).resolve().parents[1]
 REPORT_DIR = REPO / ".agent-work" / "quality-v2"
 PYTEST = [sys.executable, "-m", "pytest"]
 
-#: 后端车道默认资源护栏（bounded；不用 -n auto）
-PYTEST_GUARDS = ["--timeout=120", "--timeout-method=thread", "-p", "no:cacheprovider"]
+#: 非 pytest 步骤（证书生成/预检/pnpm 等）的子进程兜底超时，防挂起永久卡死
+NON_PYTEST_STEP_TIMEOUT_S = 1800
 
 def _perf_lane_files() -> list:
     """R1 review MINOR：perf 车道清单单一来源化 —— 扫描 perf 标记文件，
@@ -169,8 +169,15 @@ def _changed_py_targets() -> list:
     import subprocess
 
     def _git(args: list) -> str:
-        return subprocess.run(["git"] + args, cwd=REPO, capture_output=True,
-                              text=True, timeout=30).stdout
+        proc = subprocess.run(["git"] + args, cwd=REPO, capture_output=True,
+                              text=True, timeout=30)
+        if proc.returncode != 0:
+            # git 失败（如 origin/master 缺失）时 stdout 为空：不得静默把
+            # changed lane 退化成 base-only，至少向 stderr 披露。
+            print(f"WARN: git {' '.join(args)} 失败（exit={proc.returncode}）："
+                  f"{(getattr(proc, 'stderr', '') or '').strip()[:200]}",
+                  file=sys.stderr)
+        return proc.stdout
 
     files = set(_git(["diff", "--name-only", "HEAD"]).splitlines())
     files |= set(_git(["diff", "--name-only", "origin/master...HEAD"]
@@ -206,6 +213,11 @@ def _changed_py_targets() -> list:
         if t not in seen:
             seen.add(t)
             ordered.append(t)
+    if len(ordered) > 40:
+        dropped = ordered[40:]
+        preview = ", ".join(dropped[:10]) + (" …" if len(dropped) > 10 else "")
+        print(f"WARN: changed 目标 {len(ordered)} 个超过上界 40，"
+              f"截断 {len(dropped)} 个（未执行）：{preview}", file=sys.stderr)
     return ordered[:40]
 
 
@@ -213,20 +225,30 @@ def _run_lane(lane: str, retry_failed: bool) -> dict:
     spec = LANES[lane]
     results = []
     for cmd in spec["commands"]:
+        is_pytest_step = cmd[0] == sys.executable and "pytest" in cmd[1:3]
+        # 非 pytest 步骤（gen_*/preflight/pnpm）挂起时不得永久卡死；pytest
+        # 步骤保持其自有 --timeout 语义，不加外部 subprocess 超时。
+        timeout_s = None if is_pytest_step else NON_PYTEST_STEP_TIMEOUT_S
         t0 = time.monotonic()
-        proc = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True)
+        try:
+            proc = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True,
+                                  timeout=timeout_s)
+            exit_code = proc.returncode
+            tail = "\n".join((proc.stdout or "").splitlines()[-12:])
+        except subprocess.TimeoutExpired:
+            exit_code = 124
+            tail = f"TIMEOUT：步骤超过 {timeout_s}s 未返回，已终止（疑似挂起）"
         elapsed = time.monotonic() - t0
-        tail = "\n".join((proc.stdout or "").splitlines()[-12:])
         step = {
             "command": " ".join(str(c) for c in cmd),
-            "exit": proc.returncode,
+            "exit": exit_code,
             "elapsed_s": round(elapsed, 1),
             "tail": tail,
         }
         # Quality V2 flake 统计：仅在显式 --retry-failed 时，失败的 pytest
         # 步骤用 --lf 重跑一次；重跑全绿 = 顺序/负载敏感的 flake 候选
         # （recovered=true 计入报告，不改变车道判定口径——ok 仍按首次）。
-        if retry_failed and proc.returncode != 0 \
+        if retry_failed and exit_code != 0 \
                 and cmd[0] == sys.executable and "pytest" in cmd[1:3]:
             filtered = []
             skip_next = False
@@ -393,7 +415,7 @@ def main() -> int:
 
     report = {
         "lane": args.lane,
-        "lanes_run": lanes,
+        "lanes_run": [r["lane"] for r in lane_reports],
         "all_ok": all(r["ok"] for r in lane_reports),
         "total_s": total,
         "lanes": lane_reports,

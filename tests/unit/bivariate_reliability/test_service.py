@@ -421,6 +421,19 @@ async def test_visual_channel_layer_type_mismatch_rejected(session_id):
     assert exc.value.code == "VISUAL_CHANNEL_LAYER_TYPE_MISMATCH"
 
 
+@pytest.mark.asyncio
+async def test_bivariate_symbol_layer_type_rejected(session_id):
+    """symbol 层不支持 bivariate_matrix：inspect 与 preview 口径必须一致。"""
+    await seed_layer(session_id, make_fc(ROWS, geom="Point"),
+                    layer_type="symbol")
+    ins = await inspect_layer(session_id, "L1", trusted_dispatch=True)
+    assert ins["supported"]["bivariate_matrix"] is False
+    with pytest.raises(AuthoringError) as exc:
+        await _preview(session_id, bivariate_plan())
+    assert exc.value.code == "UNSUPPORTED_LAYER_TYPE"
+    assert exc.value.status_code == 409
+
+
 # ── B29 / B30 / B31 / B36 ──────────────────────────────────────────────
 
 @pytest.mark.asyncio

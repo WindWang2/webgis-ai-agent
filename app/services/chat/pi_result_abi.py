@@ -37,6 +37,9 @@ _SUMMARY_MAX_CHARS = 1200
 _WARNING_MAX_CHARS = 160
 _MAX_WARNINGS = 6
 _MAX_IDS = 16
+#: 单个 id 的长度上限（其余有界字段均有 64/128/256 上限；不限单项会让
+#: 长 id 把 envelope 推过 4KB，而收缩序不含这些键）。
+_MAX_ID_CHARS = 64
 
 
 def result_abi_enabled() -> bool:
@@ -47,7 +50,7 @@ def result_abi_enabled() -> bool:
 def _bounded_ids(values: Optional[List[Any]]) -> List[str]:
     out: List[str] = []
     for value in values or []:
-        text = str(value or "")
+        text = str(value or "")[:_MAX_ID_CHARS]
         if text and text not in out:
             out.append(text)
         if len(out) >= _MAX_IDS:
@@ -146,7 +149,11 @@ def build_result_envelope(
     if status == "repeated":
         warnings.append("deduplicated: identical call already executed this turn")
     if warnings:
-        envelope["warnings"] = warnings[:_MAX_WARNINGS]
+        bounded_warnings = warnings
+        if status == "repeated" and len(warnings) > _MAX_WARNINGS:
+            # 去重提示是追加的末条 —— 保留它，裁掉一条 extra warning。
+            bounded_warnings = warnings[:_MAX_WARNINGS - 1] + [warnings[-1]]
+        envelope["warnings"] = bounded_warnings[:_MAX_WARNINGS]
 
     if status == "error":
         error_msg = str(getattr(result, "error_msg", "") or "")

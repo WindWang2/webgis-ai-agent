@@ -536,10 +536,21 @@ const t = useT();
     };
   }, [sessionId, messages.length]);
 
+  // D-F8：按消息对象身份缓存 citation 解析 —— 流式 token 批次只替换当前
+  // 流式消息对象，历史消息命中缓存，不再每批次对全部消息重跑 splitCitationBlocks。
+  const citationSourcesCacheRef = useRef(new WeakMap<ChatMessage, CitationSource[]>());
   const citationSourcesByMessage = useMemo(() => {
+    const cache = citationSourcesCacheRef.current;
     let latest: CitationSource[] = [];
     return messages.map((message) => {
-      if (message.role === 'user') latest = splitCitationBlocks(message.content).sources;
+      if (message.role === 'user') {
+        let sources = cache.get(message);
+        if (!sources) {
+          sources = splitCitationBlocks(message.content).sources;
+          cache.set(message, sources);
+        }
+        latest = sources;
+      }
       return latest;
     });
   }, [messages]);

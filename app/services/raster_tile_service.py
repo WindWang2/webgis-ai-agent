@@ -90,6 +90,11 @@ logger = logging.getLogger(__name__)
 # PERF-F6: bounded (was unbounded per-path growth over process lifetime).
 _CRS_LESS_WARNED: "set[str]" = set()
 _CRS_LESS_WARNED_MAX = 4096
+# Locked like the module's other in-process caches (_STATS_CACHE_LOCK,
+# _RASTER_CACHE_LOCK): concurrent tile renders used to race the
+# membership check / clear / add below, duplicating the warning or
+# momentarily overshooting the 4096 bound.
+_CRS_LESS_WARNED_LOCK = threading.Lock()
 
 
 # ─── G20 / raster_expression.v1：权威样式进入数据面 ─────────────────────────
@@ -455,10 +460,13 @@ def render_raster_tile(
             if src.crs is None:
                 # Warn at most once per file: a pan/zoom touches many tiles and
                 # would otherwise emit thousands of identical warnings.
-                if raster_path not in _CRS_LESS_WARNED:
-                    if len(_CRS_LESS_WARNED) >= _CRS_LESS_WARNED_MAX:
-                        _CRS_LESS_WARNED.clear()  # warn-once is best-effort
-                    _CRS_LESS_WARNED.add(raster_path)
+                with _CRS_LESS_WARNED_LOCK:
+                    _warn_crs_less = raster_path not in _CRS_LESS_WARNED
+                    if _warn_crs_less:
+                        if len(_CRS_LESS_WARNED) >= _CRS_LESS_WARNED_MAX:
+                            _CRS_LESS_WARNED.clear()  # warn-once is best-effort
+                        _CRS_LESS_WARNED.add(raster_path)
+                if _warn_crs_less:
                     logger.warning(
                         "raster_tile_service: %s has no CRS tag; assuming source "
                         "is already in EPSG:3857 (no reprojection). Assign a CRS "
@@ -508,6 +516,14 @@ def render_raster_tile(
                     )
             elif bands:
                 indexes = tuple(b for b in bands if 1 <= b <= src.count)[:3]
+                if len(bands) == 3 and len(indexes) != 3:
+                    # A 3-band request that loses a band to the range filter
+                    # must not fall into the count<3 branch and silently
+                    # render band 1 only (RGB request degraded to grayscale).
+                    raise RasterTileError(
+                        "BAND_OUT_OF_RANGE",
+                        "requested RGB bands reference a band absent from this raster",
+                    )
             else:
                 indexes = (1,) if src.count < 3 else (1, 2, 3)
             if not indexes:

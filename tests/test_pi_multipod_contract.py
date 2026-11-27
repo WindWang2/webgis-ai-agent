@@ -7,7 +7,11 @@ import app.agent_pi_bridge as bridge_mod
 from app.agent_pi_bridge import register_active_pi_turn
 from app.core.bridge_secret import get_bridge_secret
 from app.main import app
-from app.services.chat.pi_turn_context import issue_turn_token, pi_turn_registry
+from app.services.chat.pi_turn_context import (
+    PiTurnRegistry,
+    issue_turn_token,
+    pi_turn_registry,
+)
 
 
 @pytest.fixture
@@ -90,3 +94,38 @@ async def test_multipod_turn_ownership_contract(async_client):
         detail = resp409.json()["data"]
         assert detail["code"] == "TURN_CONTEXT_INACTIVE"
         assert "guidance" in detail
+
+
+@pytest.mark.asyncio
+async def test_sweep_retries_after_redis_unavailable(monkeypatch):
+    """启动期 Redis 不可用不得永久置 _swept（后续心跳仍须清扫）。"""
+    class FakeScanClient:
+        def __init__(self):
+            self.keys = {
+                "webgis:pi:active_turn:s1": b"inst-a:turn-1",
+                "webgis:pi:active_turn:s2": b"other:turn-2",
+            }
+            self.deleted = []
+
+        async def scan_iter(self, match=None, count=100):
+            for key in list(self.keys):
+                yield key
+
+        async def get(self, key):
+            return self.keys.get(key)
+
+        async def delete(self, key):
+            self.deleted.append(key)
+            self.keys.pop(key, None)
+            return 1
+
+    reg = PiTurnRegistry()
+    fake = FakeScanClient()
+    planned = [None, fake]
+    monkeypatch.setattr(reg, "_get_redis_client", lambda: planned.pop(0))
+    monkeypatch.setattr(reg, "_instance_id", lambda: "inst-a")
+
+    assert await reg.sweep_own_keys() == 0
+    assert reg._swept is False
+    assert await reg.sweep_own_keys() == 1
+    assert fake.deleted == ["webgis:pi:active_turn:s1"]

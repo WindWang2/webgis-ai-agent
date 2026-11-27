@@ -122,6 +122,17 @@ async def resolve_session_target(
                 "reason_code": REASON_CATALOG_MISS,
                 "reason_detail": "no default model resolvable from server config",
             }
+        # P2：default_item 恒有值（build_catalog 无条件推 is_default 项），因此
+        # 空/非法 base_model 只能靠 available 诚实拒绝。credential_missing 例外：
+        # inherit 目标即 spawn 快照默认（Pi 子进程自带凭证），保留 get_state
+        # 回读的 degraded 披露路径（M09/M10，既有测试锁死该范围界限）。
+        if not item.available and item.unavailable_reason != "credential_missing":
+            return {
+                "ok": False, "item": item, "pref": pref, "catalog": catalog,
+                "catalog_generation": catalog_gen,
+                "reason_code": REASON_CATALOG_MISS,
+                "reason_detail": f"model unavailable: {item.unavailable_reason}",
+            }
         return {
             "ok": True, "item": item, "pref": pref, "catalog": catalog,
             "catalog_generation": catalog_gen, "reason_code": "", "reason_detail": "",

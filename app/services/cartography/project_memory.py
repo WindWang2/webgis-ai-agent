@@ -493,8 +493,14 @@ def apply_distribution_drift(
         held_fact.payload = incoming
         held_fact.status = "stale"
         held_fact.last_verified_at = _now()
+        # 现代事实按 source 限定 subject；无 source 来源的 legacy 字段级先验
+        # （subject = 裸字段名）也必须一并失效，否则 get_shared_classification
+        # 仍能通过字段名命中它并继续注入。
+        subjects = [str(field)]
+        if "::" in str(field):
+            subjects.append(str(field).split("::", 1)[1])
         stale_count = mark_stale(
-            db, project_id, kinds=["shared_classification"], subjects=[str(field)],
+            db, project_id, kinds=["shared_classification"], subjects=subjects,
         )
         db.flush()
         event = {

@@ -387,6 +387,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
                            if v.reason_code.startswith((
                                "AWF_DATA_ROLE_MISSING",
                                "AWF_ROLE_KIND_MISMATCH"))
+                           and ":" in v.reason_code
                            else ""))}
                 for v in result.step_verdicts
                 if v.verdict in ("blocked", "skipped")][:8],
@@ -729,8 +730,14 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
             from app.services.gis_harness.analysis_workflows.contracts import (
                 AnalysisWorkflowContract,
             )
-            contract = AnalysisWorkflowContract.model_validate(
-                state.contract_snapshot)
+            try:
+                contract = AnalysisWorkflowContract.model_validate(
+                    state.contract_snapshot)
+            except Exception:  # noqa: BLE001 — 快照损坏=诚实失败（同 run）
+                return {"success": False, "tool": tool_name, "declined": True,
+                        "reason_code": "AWF_CONTRACT_SNAPSHOT_CORRUPT",
+                        "message": "契约快照不可解析（需重新 plan）",
+                        "alternatives": ["webgis_analysis_workflow_plan"]}
             try:
                 bindings = _parse_bindings(role_refs)
                 param_changes = (json.loads(params) if isinstance(params, str)
@@ -751,12 +758,22 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
                             "reason_code": "AWF_UNKNOWN_STEP",
                             "message": f"未知步骤 {step_id}"}
                 merged_params[step_id].update(changes or {})
-            replan = plan_workflow(
-                contract.family, workflow_id=workflow_id,
-                bindings=merged_bindings, params_overrides=merged_params,
-                recipe_refs=contract.recipe_refs,
-                include_optional_steps=any(step.optional for step in contract.steps),
-                tool_exists=(lambda n: True))
+            try:
+                replan = plan_workflow(
+                    contract.family, workflow_id=workflow_id,
+                    bindings=merged_bindings, params_overrides=merged_params,
+                    recipe_refs=contract.recipe_refs,
+                    include_optional_steps=any(step.optional for step in contract.steps),
+                    tool_exists=(lambda n: True))
+            except KeyError:
+                return {"success": False, "tool": tool_name, "declined": True,
+                        "reason_code": AWF_UNKNOWN_FAMILY,
+                        "message": f"未知族 {contract.family}（词表: {FAMILY_IDS}）",
+                        "alternatives": list(FAMILY_IDS)}
+            except ContractValidationError as exc:
+                return {"success": False, "tool": tool_name, "declined": True,
+                        "reason_code": exc.code, "message": str(exc),
+                        "next_step": next_step_for_blocked(exc.code)}
             contract = replan.contract
             state.contract_snapshot = contract.model_dump()
             state.contract_fingerprint = replan.fingerprint

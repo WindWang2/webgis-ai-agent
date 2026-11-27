@@ -62,6 +62,19 @@ class TestValidateFailClosed:
         case = benchmark_spec.compile_benchmark_case()
         assert case.expected_export_formats == ["png"]
 
+    def test_duplicate_data_alias_rejected(self):
+        spec = LabScenario.from_dict(_base_spec(data=[
+            {"alias": "x", "builder": "chengdu_schools"},
+            {"alias": "x", "builder": "od_edges"}]))
+        with pytest.raises(SpecError, match="duplicate data aliases"):
+            spec.validate()
+
+    def test_visual_judge_requires_cartography_fixture(self):
+        """visual_judge=true 而无任何 dict cartography fixture = 静默无效。"""
+        spec = LabScenario.from_dict(_base_spec(visual_judge=True))
+        with pytest.raises(SpecError, match="visual_judge requires"):
+            spec.validate()
+
     def test_components_expectation_requires_cartography_checks(self):
         spec = LabScenario.from_dict(_base_spec(
             expectations={"mapspec_components": ["title"]}))

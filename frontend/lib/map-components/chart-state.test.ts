@@ -45,6 +45,8 @@ describe('chart state machine', () => {
 
   it('操作 → 状态映射（close/restore/collapse/expand）', () => {
     expect(chartStateOperation('visible', 'close')).toBe('hidden');
+    // close 产出的目标态必须能通过同模块迁移校验（镜像表含 visible>hidden）
+    expect(canTransitionChartState('visible', chartStateOperation('visible', 'close')!)).toBe(true);
     expect(chartStateOperation('hidden', 'restore')).toBe('visible');
     expect(chartStateOperation('floating', 'collapse')).toBe('collapsed');
     expect(chartStateOperation('collapsed', 'expand')).toBe('expanded');

@@ -322,11 +322,15 @@ def _target_cells_for_samples(
 
     if crosses_am:
         # Split across the date line into two bboxes for correct polyfill
-        # Interval A: [raw_max_lon, 180], Interval B: [-180, raw_min_lon]
-        bbox_a = {"type": "Polygon", "coordinates": [[[raw_max_lon, min_lat], [180.0, min_lat], [180.0, max_lat], [raw_max_lon, max_lat], [raw_max_lon, min_lat]]]}
-        bbox_b = {"type": "Polygon", "coordinates": [[[-180.0, min_lat], [raw_min_lon, min_lat], [raw_min_lon, max_lat], [-180.0, max_lat], [-180.0, min_lat]]]}
-        cells_a = h3.geo_to_cells(bbox_a, resolution) if raw_max_lon < 180.0 else set()
-        cells_b = h3.geo_to_cells(bbox_b, resolution) if raw_min_lon > -180.0 else set()
+        # Interval A: [raw_max_lon - buf, 180], Interval B: [-180, raw_min_lon + buf]
+        # The ~1 km buffer must be applied to the two inner edges, otherwise
+        # the date line halves get a hard edge at the sample extremes.
+        a_west = max(raw_max_lon - _BBOX_BUF_DEG, -180.0)
+        b_east = min(raw_min_lon + _BBOX_BUF_DEG, 180.0)
+        bbox_a = {"type": "Polygon", "coordinates": [[[a_west, min_lat], [180.0, min_lat], [180.0, max_lat], [a_west, max_lat], [a_west, min_lat]]]}
+        bbox_b = {"type": "Polygon", "coordinates": [[[-180.0, min_lat], [b_east, min_lat], [b_east, max_lat], [-180.0, max_lat], [-180.0, min_lat]]]}
+        cells_a = h3.geo_to_cells(bbox_a, resolution) if a_west < 180.0 else set()
+        cells_b = h3.geo_to_cells(bbox_b, resolution) if b_east > -180.0 else set()
         target_cells: Any = sorted(set(cells_a) | set(cells_b))
         # Fallback: if split produced nothing (tiny band at exact 180), fall back to narrow strip
         if not target_cells:

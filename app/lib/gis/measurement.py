@@ -472,7 +472,10 @@ def derive_field_semantics(
             kind_conf = RoleConfidence.RULE_DERIVED.value
             evidence.append("sample:unit_interval")
     if kind == MeasurementKind.RATE.value and _SIGNED_NAME_RE.search(field) and _crosses:
-        # 带符号变化率（如人口增长率有负增长）：diverging 语义。
+        # 带符号变化率（如人口增长率有负增长）：kind 升级为 SIGNED_CHANGE
+        # （否则 measurement_to_data_kind 仍返 sequential、center 丢失）。
+        kind = MeasurementKind.SIGNED_CHANGE.value
+        kind_conf = RoleConfidence.RULE_DERIVED.value
         evidence.append("sample:signed_rate")
 
     # 2) unit：override > 值结构 > 名称 hint > 维度缺省。

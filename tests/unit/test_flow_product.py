@@ -311,6 +311,14 @@ def test_dimension_fields_split_aggregation():
 # ── Time window / category / threshold / top-N determinism ───────────────
 
 
+def test_unparseable_time_bound_rejected_not_silently_ignored():
+    rows = [row("A", "B", 1, ts="2024-03-01T00:00:00Z")]
+    with pytest.raises(FlowProductError, match="time_start"):
+        build(rows, time_field="ts", time_start="not-a-time")
+    with pytest.raises(FlowProductError, match="time_end"):
+        build(rows, time_field="ts", time_end="not-a-time")
+
+
 def test_time_window_half_open_with_timezone():
     rows = [
         row("A", "B", 1, ts="2024-03-01T00:00:00+08:00"),   # 03-01 00:00 +08
@@ -452,6 +460,17 @@ def test_weight_encoded_transforms_with_fixed_domain():
     assert legend["fixed_domain"] is True
 
 
+def test_negative_fixed_domain_sqrt_log1p_does_not_crash():
+    rows = [row("A", "B", 8), row("B", "A", 3)]
+    for transform in ("sqrt", "log1p"):
+        res = build(rows, weight_domain=(-10.0, -1.0), weight_transform=transform)
+        assert all(
+            f["properties"]["weight_encoded"] == 0.0
+            for f in res.edge_fc["features"]
+        )
+        json.dumps(res.product, allow_nan=False)
+
+
 # ── Rejections: CRS / cost semantics / unresolvable input / caps ─────────
 
 
@@ -520,6 +539,28 @@ def test_node_table_point_fc_resolution():
     feats = res.edge_fc["features"]
     assert len(feats) == 1, "unmapped node row excluded, not guessed"
     assert res.product["stats"]["rows"]["excluded"].get("unmapped_node") == 1
+    names = {f["properties"]["legacy_id"]: f["properties"]["name"]
+             for f in res.node_fc["features"]}
+    assert names == {"A": "Alpha", "B": "Beta"}
+
+
+def test_node_table_point_fc_null_node_id_falls_back_to_feature_id():
+    nodes = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "id": "A",
+             "geometry": {"type": "Point", "coordinates": [104.0, 30.0]},
+             "properties": {"node_id": None, "name": "Alpha"}},
+            {"type": "Feature", "id": "B",
+             "geometry": {"type": "Point", "coordinates": [104.1, 30.1]},
+             "properties": {"node_id": None, "name": "Beta"}},
+        ],
+    }
+    rows = [{"origin_id": "A", "destination_id": "B", "weight": 4}]
+    res = build(rows, nodes=nodes)
+    feats = res.edge_fc["features"]
+    assert len(feats) == 1
+    assert feats[0]["properties"]["weight"] == 4
     names = {f["properties"]["legacy_id"]: f["properties"]["name"]
              for f in res.node_fc["features"]}
     assert names == {"A": "Alpha", "B": "Beta"}

@@ -61,7 +61,7 @@ export function QueryResults({
       if (!entry) return null;
       const [name, data] = entry;
       const frame = pickFrame(data);
-      return { name, frame, nodata: windowResult.nodata, steps: windowResult.times.length };
+      return { name, frame, nodata: windowResult.nodata };
     }
     if (labeledResult) {
       const entry = Object.entries(labeledResult.variables)[0];
@@ -73,7 +73,6 @@ export function QueryResults({
         frame,
         nodata:
           labeledResult.attrs.nodata_per_variable?.[name] ?? labeledResult.attrs.nodata,
-        steps: (labeledResult.coords.time as Array<number | string>).length || 1,
       };
     }
     return null;

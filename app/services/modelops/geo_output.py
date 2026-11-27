@@ -51,11 +51,6 @@ def publish_geojson_to_postgis(
     返回 ``{"published": bool, ...}``：失败/跳过**不抛异常**（产物已
     有 GeoJSON 文件兜底；PostGIS 是增量通道，不是唯一真相）。
     """
-    validate_table_name(table)
-    if if_exists not in _IF_EXISTS:
-        raise ValueError(f"if_exists must be one of {sorted(_IF_EXISTS)} (got {if_exists!r})")
-    # 校验失败也走 honest skip（返回 reason 而非抛——引擎在推理完成后
-    # 调用本函数，抛错会毁掉已完成的推理产物）。
     features = feature_collection.get("features")
     if not isinstance(features, list) or not features:
         return {"published": False, "reason": "empty feature collection"}

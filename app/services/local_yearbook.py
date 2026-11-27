@@ -227,6 +227,10 @@ def _merged_headers(raw: pd.DataFrame, hdr: int) -> List[str]:
             cols.append(b[1:] + a)
         elif a not in ("", "nan"):
             cols.append(a + b)
+        else:
+            # 主表头为空/nan 不能把该列踢出 cols：数据行同位仍有值，删列会让
+            # 其后所有列整体前移。保留占位维持对齐；子表头非 "#" 时直接作列名。
+            cols.append(b if b not in ("", "nan") else "")
     return cols
 
 
@@ -255,8 +259,8 @@ def _sheet_rows(
             continue  # 整行无数据（表尾空白/省名行/章节行）
         indicators: Dict[str, Any] = {}
         for merged, v in zip(cols, values):
-            if v is None or str(v) == "":
-                continue
+            if v is None or str(v) == "" or not merged:
+                continue  # 空占位列只保对齐，不产生无名指标
             key = normalize_indicator(merged) or merged
             indicators[key] = v
         if not indicators:

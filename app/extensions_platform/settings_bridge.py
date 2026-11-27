@@ -204,7 +204,19 @@ def parse_trusted_publishers(raw: str) -> dict[str, Path]:
                     f"publisher key_id {key_id!r} must be a lowercase identifier",
                 )
             )
-        publishers[key_id.strip()] = Path(path.strip())
+        key_id = key_id.strip()
+        key_path = Path(path.strip())
+        if key_id in publishers and publishers[key_id] != key_path:
+            # 重复 key_id 静默覆盖 = 信任公钥无声切换；与 parse_version_pins
+            # 同规则显式拒绝（相同路径的重复条目仍幂等）。
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_PARSE_FAILED,
+                    f"EXTENSION_TRUSTED_PUBLISHERS has conflicting entries for "
+                    f"key_id {key_id!r}",
+                )
+            )
+        publishers[key_id] = key_path
     return publishers
 
 

@@ -73,7 +73,9 @@ _STATUS_BY_REASON = {
     "asset_retired": 409,
     "asset_revision_not_found": 404,
     "asset_version_not_published": 409,
-    "asset_reference_scan_truncated": 200,  # 附带披露，不是失败
+    # 该 reason 是服务端拒绝（扫描不完整），不是附带披露；映射成 200
+    # 会让客户端拿到「成功码 + 错误体」。
+    "asset_reference_scan_truncated": 409,
 }
 
 

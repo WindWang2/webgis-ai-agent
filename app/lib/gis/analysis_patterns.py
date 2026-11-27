@@ -107,7 +107,10 @@ PATTERNS: Tuple[AnalysisPattern, ...] = (
         task_aliases=("accessibility_analysis",),
         query_keywords=("可达", "服务区", "等时圈", "分钟", "通勤时间"),
         recommended_capabilities=("service_area", "closest_facility"),
-        optional_capabilities=("network_accessibility", "poi_query"),
+        # network_accessibility 是工具/契约名，不是能力 id——注册表里的
+        # 网络可达性能力是 accessibility（capabilities/network.py）；悬空
+        # id 会让按能力 id 解析的消费方拿到空。
+        optional_capabilities=("accessibility", "poi_query"),
         required_output_facets=("map", "legend", "title"),
         normalization_guidance="可达性用真实路网（步行/驾车 profile），不要用欧氏缓冲冒充。",
         common_pitfalls=(
@@ -124,7 +127,7 @@ PATTERNS: Tuple[AnalysisPattern, ...] = (
         required_roles=(),
         optional_roles=(R.POPULATION_MEASURE,),
         recommended_capabilities=("service_area", "spatial_join"),
-        optional_capabilities=("network_accessibility", "admin_aggregation"),
+        optional_capabilities=("accessibility", "admin_aggregation"),
         required_output_facets=("map", "legend", "title"),
         normalization_guidance="覆盖评价的分子是『被覆盖的需求量』而非『设施数』；有 population_measure 才能算覆盖率。",
         common_pitfalls=(

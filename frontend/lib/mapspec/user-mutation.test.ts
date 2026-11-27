@@ -541,6 +541,35 @@ describe('refreshMapSpecAfterExternalMutation', () => {
     expect(getMapSpecSessionCursor().revision).toBe(11);
     expect(useHudStore.getState().layers[0].visible).toBe(false);
   });
+
+  it('does not treat a null map-state revision as 0 (would reject the fetched spec as stale)', async () => {
+    // 游标已有 5，state 的 revision 字段为 null —— Number(null)=0 曾成为候选，
+    // 使 fetch 的 spec 携带 0 被旧代次保护拒收且 sync 被跳过。
+    setMapSpecSessionCursor('sid-1', 5);
+    fetchMock.mockImplementation((url: unknown) => (
+      String(url).includes('/map-state') ? Promise.resolve({
+        ok: true, status: 200, statusText: 'OK',
+        text: () => Promise.resolve(JSON.stringify({
+          map_state: {
+            mapspec: {
+              version: '1.0',
+              sources: { LN: { type: 'geojson' } },
+              layers: [{ id: 'LN', source: 'LN', type: 'circle', layout: { visibility: 'visible' } }],
+            },
+            _cartographic_mutation_revision: null,
+          },
+        })),
+      }) : Promise.resolve({
+        ok: true, status: 200, statusText: 'OK', text: () => Promise.resolve('{}'),
+      })
+    ));
+
+    await refreshMapSpecAfterExternalMutation('sid-1');
+
+    expect(getMapSpecSessionCursor().revision).toBe(5);
+    expect((getCommittedMapSpec() as { layers?: Array<{ id?: string }> } | null)?.layers?.[0]?.id).toBe('LN');
+    expect(useHudStore.getState().layers.some((l) => l.id === 'LN')).toBe(true);
+  });
 });
 
 /* ─── R2-N1/R2-N2（review-fix-rereview-20261108 Fix-2）：stale map-state 守卫 ── */

@@ -152,7 +152,9 @@ export function parseMessageContent(content: string): React.ReactNode[] {
   const elements: React.ReactNode[] = [];
 
   // 正则匹配 ```lang\ncode\n```
-  const codeBlockRegex = /```(\w*)\n([\s\S]*?)```/g;
+  // 语言段允许连字符/加号/点号/#（c++、objective-c、c# 等）；
+  // 右围栏缺失时（流式中途未闭合）兜底匹配到文末，避免整块退化为字面反引号文本
+  const codeBlockRegex = /```([\w+#.-]*)\n([\s\S]*?)(?:```|$)/g;
 
   let lastIndex = 0;
   let match: RegExpExecArray | null;

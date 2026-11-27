@@ -56,6 +56,14 @@ async def _scope_source_points(
     No selection and no ids: return the source unchanged. A live selection
     that fails validation is an error, not a silent full-layer analysis.
     """
+    if feature_ids is not None and not isinstance(
+        feature_ids, (list, tuple, set, frozenset)
+    ):
+        return {
+            "success": False,
+            "code": "invalid_feature_ids",
+            "error": "feature_ids 必须是要素 id 列表，收到的不是列表",
+        }
     ids = [str(item) for item in (feature_ids or []) if item]
     if not ids and session_id:
         from app.services.gis_situation.analysis_scope import (

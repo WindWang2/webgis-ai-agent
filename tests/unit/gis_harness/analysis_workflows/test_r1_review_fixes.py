@@ -325,3 +325,94 @@ async def test_f8_recompute_tool_marks_stale_then_reruns(registry):
     assert any(e.get("event") == "step_stale"
                for e in after.run_log), after.run_log
     assert after.steps["zones_count"].state == "satisfied"
+
+
+# ── 全量审查 P3：执行器结果装配/输入解析护栏 ──────────────────────────────
+
+def _single_step_contract(**step_kw):
+    from app.services.gis_harness.analysis_workflows.contracts import (
+        AnalysisStepSpec, AnalysisWorkflowContract,
+    )
+
+    defaults = {"step_id": "only", "tool_name": "producer"}
+    defaults.update(step_kw)
+    return AnalysisWorkflowContract(
+        workflow_id="awf.p3.guard",
+        family="admin_facility_distribution",
+        steps=(AnalysisStepSpec(**defaults),),
+    )
+
+
+async def test_geojson_ref_with_stray_raster_facts_is_hydrated_not_passed():
+    """ref:geojson-* 是 FC 产物：即使 envelope.raster 夹带白名单事实，
+    step: 输入也必须水合为载荷而不是把 ref 字符串当参数。"""
+    from app.services.gis_harness.analysis_workflows.contracts import (
+        AnalysisArtifactEnvelope, AnalysisStepSpec,
+    )
+
+    fc = {"type": "FeatureCollection", "features": []}
+
+    class _Store:
+        async def get(self, session_id, ref):
+            assert ref == "ref:geojson-up"
+            return fc
+
+    contract = _single_step_contract(
+        role_inputs={"geojson": "step:up"}, depends_on=("up",))
+    state = new_state(contract, contract_fingerprint="fp")
+    state.steps["up"] = type(state.steps["only"])(
+        step_id="up", state="satisfied", fingerprint="fp-up")
+    state.envelopes["up"] = AnalysisArtifactEnvelope(
+        step_id="up", workflow_id=contract.workflow_id, tool_name="producer",
+        ref="ref:geojson-up", raster={"nodata": 0}, geometry_types=("Point",))
+    executor = WorkflowExecutor(registry=None, session_data=_Store())
+    args, _identities, warnings = await executor._resolve_inputs(
+        "s", contract, contract.steps[0], state)
+    assert warnings == []
+    assert args["geojson"] is fc
+
+
+async def test_missing_session_data_blocks_role_input():
+    from app.services.gis_harness.analysis_workflows.contracts import (
+        DataRoleBinding,
+    )
+
+    contract = _single_step_contract(role_inputs={"points": "role:subject"})
+    contract.data_contracts["subject"] = DataRoleBinding(
+        role="subject", ref="ref:geojson-x")
+    state = new_state(contract, contract_fingerprint="fp")
+    executor = WorkflowExecutor(registry=None, session_data=None)
+    args, _identities, warnings = await executor._resolve_inputs(
+        "s", contract, contract.steps[0], state)
+    assert args is None
+    assert any("无法水合" in w for w in warnings)
+
+
+async def test_zero_match_network_result_envelope_is_empty():
+    async def dispatch(tool, args, session_id):
+        return {"success": True, "routes": []}
+
+    contract = _single_step_contract()
+    state = new_state(contract, contract_fingerprint="fp")
+    executor = WorkflowExecutor(registry=None, dispatch=dispatch)
+    state = await executor.execute("s", contract, state)
+    envelope = state.envelopes["only"]
+    assert envelope.empty is True
+    assert envelope.feature_count == 0
+
+
+async def test_malformed_route_properties_marks_step_failed():
+    """畸形 routes 载荷（properties 非 dict）不得逃出 execute。"""
+    async def dispatch(tool, args, session_id):
+        return {"success": True, "routes": [{
+            "geometry": {"type": "LineString",
+                         "coordinates": [[104.0, 30.6], [104.1, 30.7]]},
+            "properties": "not-a-dict",
+        }]}
+
+    contract = _single_step_contract()
+    state = new_state(contract, contract_fingerprint="fp")
+    executor = WorkflowExecutor(registry=None, dispatch=dispatch)
+    state = await executor.execute("s", contract, state)
+    assert state.steps["only"].state == "failed"
+    assert state.steps["only"].reason_code == "AttributeError"

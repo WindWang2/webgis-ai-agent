@@ -884,6 +884,62 @@ async def test_bridge_rejects_oversized_goal(monkeypatch):
     assert out == {"delegated": False, "reason": "invalid_goal"}
 
 
+@pytest.mark.asyncio
+async def test_bridge_invalid_status_shape_fails_honestly(monkeypatch):
+    """run_swarm 返回形状异常 → 诚实 delegated=False，不得裸 AttributeError。"""
+    from types import SimpleNamespace
+
+    from app.agent_pi_bridge import SwarmBridge
+
+    class _BrokenOrch:
+        async def run_swarm(self, goal, projection=None):
+            return SimpleNamespace()  # 缺 manifest/counts/run_id/state
+
+    monkeypatch.setenv("GIS_SWARM_ORCHESTRATOR", "1")
+    bridge = SwarmBridge(_sid(), orchestrator_factory=lambda sid: _BrokenOrch())
+    out = await bridge._delegate_locked("目标")
+    assert out == {"delegated": False, "reason": "swarm_status_invalid"}
+
+
+@pytest.mark.asyncio
+async def test_bridge_discloses_swarm_run_id_when_durable_settle_fails(monkeypatch):
+    """durable mirror settle 失败仍须披露 run id 供对账。"""
+    from types import SimpleNamespace
+
+    from app.agent_pi_bridge import SwarmBridge
+
+    status = SimpleNamespace(
+        run_id="swarm-x", state="succeeded", counts={"ok": 1},
+        manifest=None, manifest_ref="mf-1", tasks={},
+    )
+
+    class _Orch:
+        async def run_swarm(self, goal, projection=None):
+            return status
+
+    class _Run:
+        swarm_run_id = "swarm-run-1"
+
+    class _Durable:
+        def begin_run(self, *a, **k):
+            return _Run()
+
+        def settle(self, *a, **k):
+            raise RuntimeError("settle failed")
+
+    import app.services.mission_runtime.service as svc
+    import app.services.mission_runtime.swarm_bridge as durable
+
+    monkeypatch.setenv("GIS_SWARM_ORCHESTRATOR", "1")
+    monkeypatch.setattr(svc, "mission_runtime_enabled", lambda: True)
+    monkeypatch.setattr(durable, "DurableSwarmBridge", _Durable)
+    bridge = SwarmBridge(_sid(), orchestrator_factory=lambda sid: _Orch())
+    out = await bridge._delegate_locked("目标", mission_id="mission-1", org_id="org-1")
+    assert out["mission_mirror_status"] == "unavailable"
+    assert out["mission_swarm_run_id"] == "swarm-run-1"
+
+
+
 # ─────────────────────────── 状态快照 ───────────────────────────
 
 

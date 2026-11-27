@@ -69,6 +69,24 @@ def test_record_tool_call_writes_one_jsonl_line(_isolated_metrics):
     assert "ts" in row and row["ts"].endswith("Z")
 
 
+def test_record_tool_call_fills_session_when_correlation_explicit(_isolated_metrics):
+    from app.lib.runtime.context import bind_runtime_context
+    from app.services.jobs.context import JobOrigin, use_origin
+
+    with bind_runtime_context(session_id="s-runtime"), \
+         use_origin(JobOrigin(session_id="s-origin")):
+        tool_metrics.record_tool_call(
+            tool="heatmap_data", arg_bytes=10, result_bytes=20,
+            duration_ms=1, cache_hit=False, error=None, session_id=None,
+            tool_call_id="tc-explicit", run_id="r-explicit", turn_id="t-explicit",
+        )
+    row = _wait_for_rows(_isolated_metrics)[0]
+    assert row["session_id"] == "s-origin"
+    assert row["tool_call_id"] == "tc-explicit"
+    assert row["run_id"] == "r-explicit"
+    assert row["turn_id"] == "t-explicit"
+
+
 def test_record_tool_call_cache_hit_true(_isolated_metrics):
     tool_metrics.record_tool_call(
         tool="heatmap_data", arg_bytes=10, result_bytes=20,
@@ -197,6 +215,22 @@ def test_snapshot_reports_true_percentiles(_isolated_metrics):
     # p99 ≈ 1000
     assert 500 <= snap["p99"] <= 5000
     assert snap["max_ms"] == 10000  # max is max, not a percentile
+
+
+def test_record_tool_call_large_duration_stays_in_bounded_histogram(_isolated_metrics):
+    duration_ms = 2 ** 32
+    tool_metrics.record_tool_call(
+        tool="slow", arg_bytes=0, result_bytes=0,
+        duration_ms=duration_ms, cache_hit=False, error=None, session_id=None,
+    )
+    snap = tool_metrics.aggregator_snapshot()["slow"]
+    assert snap["count"] == 1
+    assert snap["total_ms"] == duration_ms
+    assert snap["max_ms"] == duration_ms
+    bins = tool_metrics._hist["slow"]
+    assert len(bins) == 33
+    assert bins[-1] == 1
+    assert sum(bins) == 1
 
 
 def test_snapshot_aggregates_result_bytes(_isolated_metrics):

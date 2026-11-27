@@ -44,26 +44,34 @@ PROFILE_SCAN_LIMIT = 20_000
 class FieldProfile:
     """单字段的有界统计（可 JSON 化为 plan 校验证据）。"""
 
-    __slots__ = ("name", "types", "distinct", "values_scanned")
+    __slots__ = ("name", "types", "distinct", "distinct_abandoned", "values_scanned")
 
     def __init__(self, name: str) -> None:
         self.name = name
         self.types: Dict[str, int] = {}
         self.distinct: Dict[str, int] = {}
+        self.distinct_abandoned = False
         self.values_scanned = 0
 
     def observe(self, value: Any) -> None:
         self.values_scanned += 1
         self.types[json_field_type(value)] = self.types.get(json_field_type(value), 0) + 1
+        if self.distinct_abandoned:
+            return
         if isinstance(value, str) and len(value) <= ENUM_VALUE_MAX_LEN:
             self.distinct[value] = self.distinct.get(value, 0) + 1
             if len(self.distinct) > ENUM_DISTINCT_LIMIT:
-                # 超限即放弃 distinct 追踪（高基数字段不是 categorial）
+                # 超限即永久放弃 distinct 追踪（高基数字段不是 categorial）：
+                # 只清空而不放弃追踪，后续值会重新回填出「残留词表」，
+                # 被误判为 categorial 后对合法新值误报 enum_violation。
                 self.distinct = {}
+                self.distinct_abandoned = True
 
     @property
     def is_categorical(self) -> bool:
-        return 0 < len(self.distinct) <= ENUM_DISTINCT_LIMIT
+        return (
+            not self.distinct_abandoned and 0 < len(self.distinct) <= ENUM_DISTINCT_LIMIT
+        )
 
     @property
     def dominant_type(self) -> Optional[str]:

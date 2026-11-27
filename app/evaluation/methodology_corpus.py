@@ -2,7 +2,7 @@
 
 人工审定的「用户意图 → 专业方法语义计划」期望表，覆盖：
 
-- 12 个方法论族 × 中英双语真实表述（含口语/正式变体）；
+- 13 个方法论族 × 中英双语真实表述（含口语/正式变体）；
 - 歧义/欠指定 prompt（"分布情况"既可描述制图也可密度分析 —— 期望是
   **语义计划**（方法族/角色/义务/拒绝集），不是精确工具序列）；
 - hard negatives：表述像 A 族但应裁决为 B 族；数据事实上明显不成立的
@@ -39,7 +39,7 @@ class MethodologyCase:
     profile: tuple = field(default=())
 
 
-#: 12 族审定的核心案例（zh/en 平行；歧义与负例见各条）。
+#: 13 族审定的核心案例（zh/en 平行；歧义与负例见各条）。
 METHODOLOGY_CORPUS: Tuple[MethodologyCase, ...] = (
     # ── descriptive_mapping ──────────────────────────────────────────
     MethodologyCase(

@@ -26,7 +26,8 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 CACHE_DIR = Path(".agent-work/integration/cache")
-CACHE_VERSION = 1
+# 2：修正包 __init__ 内相对 import 的解析级别（旧缓存条目须失效重解析）
+CACHE_VERSION = 2
 #: 全仓扫描文件硬上限（资源纪律）
 _MAX_FILES = 20000
 #: 选择结果目标上限（超出 = 显式警告，不静默截断）
@@ -94,6 +95,8 @@ def _file_imports(path: Path, repo_root: Path) -> List[str]:
     rel = path.relative_to(repo_root).as_posix()
     own_module = module_name_for(rel) or ""
     own_parts = own_module.split(".") if own_module else []
+    # __init__.py 的 own_parts 已剥掉 "__init__" 段：模块自身即所在包。
+    own_is_package = rel == "__init__.py" or rel.endswith("/__init__.py")
     found: Set[str] = set()
 
     def _add(module: str) -> None:
@@ -117,8 +120,11 @@ def _file_imports(path: Path, repo_root: Path) -> List[str]:
                     _add_from(node.module,
                               (alias.name for alias in node.names))
             else:
-                # 相对 import：基包 = 自身所在包上溯 level-1 层
-                base = own_parts[:-(node.level)] if node.level <= len(own_parts) else []
+                # 相对 import：基包 = 自身所在包上溯 level-1 层；
+                # 包 __init__ 自身即所在包（level=1 指向自身，不能再上溯）。
+                up = (max(node.level - 1, 0) if own_is_package
+                      else node.level)
+                base = own_parts[:len(own_parts) - up]
                 module = ".".join(base + ([node.module] if node.module else []))
                 _add_from(module, (alias.name for alias in node.names))
     return sorted(found)
@@ -315,16 +321,28 @@ def select_tests(
         else:
             result.uncovered.append(rel)
 
-    def _import_covered(rel: str) -> bool:
-        seed_closure = graph.reverse_app_closure(
-            {_app_modules_for_file(rel)})
-        return any(seed_closure & set(imports)
-                   for imports in graph.tests.values())
+    # 覆盖率判定 = 单次前向可达：测试 import 的可传递依赖集合。
+    # seed ∈ 集合 ⇔ 某测试的反向闭包命中 seed（与原逐文件判定等价）；
+    # 原实现对每个 changed app 文件重建反向邻接并全扫 tests，复杂度
+    # 随变更集平方退化（数百文件级集成分支）。
+    forward: Dict[str, List[str]] = {}
+    for src, imports in graph.app.items():
+        src_module = module_name_for(src)
+        if src_module is not None:
+            forward[src_module] = imports
+    test_reachable: Set[str] = set()
+    stack = [m for imports in graph.tests.values() for m in imports]
+    while stack:
+        module = stack.pop()
+        if module in test_reachable:
+            continue
+        test_reachable.add(module)
+        stack.extend(forward.get(module, ()))
 
     for rel in app_changed:
         mapped = map_directory_target(rel, root)
         mapped_ok = mapped is not None and (root / mapped).is_dir()
-        if not _import_covered(rel) and not mapped_ok:
+        if _app_modules_for_file(rel) not in test_reachable and not mapped_ok:
             result.uncovered.append(rel)
 
     result.via_import = sorted(imported_targets)

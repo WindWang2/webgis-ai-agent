@@ -28,7 +28,9 @@ def sample_parameter_distribution(
     p = param.params
 
     if dist == DistributionType.FIXED:
-        val = float(p.get("value", p.get("expected", 0.0)))
+        if "value" not in p and "expected" not in p:
+            raise ValueError("fixed uncertainty requires an explicit 'value' or 'expected'")
+        val = float(p.get("value", p.get("expected")))
         if not np.isfinite(val):
             raise ValueError("fixed uncertainty value must be finite")
         return np.full(n_samples, val, dtype=float)

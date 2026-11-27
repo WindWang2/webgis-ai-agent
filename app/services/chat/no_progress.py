@@ -299,6 +299,9 @@ class GisProgressTracker:
         reasons: List[str] = []
         count = self._planning_counts.get(signature, 0) + 1
         self._planning_counts[signature] = count
+        # 已存在的 signature 计数更新必须刷新 LRU 位置 —— 否则紧随其后的
+        # 淘汰会把刚计数的签名从头部删掉（重复计数丢失）。
+        self._planning_counts.move_to_end(signature)
         if len(self._planning_counts) > _PLANNING_HISTORY_MAX:
             # 淘汰最旧（OrderedDict 头部）
             for key in list(self._planning_counts):

@@ -107,6 +107,8 @@ def verify_vertical_evidence(
     layers = mapspec.get("layers")
     if isinstance(layers, list):
         for layer in layers:
+            if len(bundle.height_attribute) >= 8:
+                break
             if not isinstance(layer, dict):
                 continue
             extrusion = layer.get("extrusion")

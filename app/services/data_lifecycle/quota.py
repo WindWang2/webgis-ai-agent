@@ -87,7 +87,8 @@ def workspace_snapshot_protected_pointers() -> Tuple[set, set, bool]:
     """全部工作空间快照 manifest 引用的持久指针集合（只读，有界）。
 
     Returns ``(locations, shas, truncated)``：``content_location`` 集合、
-    ``content_payload_sha256`` 集合与**截断标志**。调用方（promotion GC /
+    ``content_payload_sha256`` 集合与**截断标志**（cap 截断**或扫描失败**
+    —— 二者同义：保护面可能不完整）。调用方（promotion GC /
     retention 的 plan 与 execute）把它们交给单一保护谓词
     ``promotion_blob_protection``，凡是 location 或 sha 命中的 blob 一律
     PROTECTED。超过 ``SNAPSHOT_POINTER_SCAN_CAP`` 条**去重后条目**即停止
@@ -105,18 +106,26 @@ def workspace_snapshot_protected_pointers() -> Tuple[set, set, bool]:
     shas: set = set()
     try:
         root = _workspaces_root()
-    except Exception:  # noqa: BLE001 — 配置漂移按空保护面（调用方如实降级）
-        return locations, shas, False
+    except Exception:  # noqa: BLE001 — 扫描失败 = 保护面未知（fail-closed）
+        logger.exception(
+            "[quota] workspace snapshot pointer scan: _workspaces_root() "
+            "failed — protection surface unknown, marking scan truncated"
+        )
+        return locations, shas, True
     if not root.is_dir():
         return locations, shas, False
     try:
         project_dirs = sorted(p for p in root.iterdir() if p.is_dir())
     except OSError:
-        return locations, shas, False
+        logger.exception(
+            "[quota] workspace snapshot pointer scan: root iterdir() failed "
+            "— protection surface unknown, marking scan truncated"
+        )
+        return locations, shas, True
     seen_entries: set = set()
+    counted = 0
     truncated = False
     for proj_dir in project_dirs:
-        project_counted = 0
         # ADR-0226：同一项目域还有 runtime-snapshots/*.json —— 其
         # ``source_bindings[].durable_pointer`` 与 workspace 快照指针同语义
         # （同一 BlobStore），保护面必须一并覆盖（否则组合 workspace 快照被
@@ -152,22 +161,24 @@ def workspace_snapshot_protected_pointers() -> Tuple[set, set, bool]:
                     entry_key = (loc, sha)
                     if entry_key in seen_entries:
                         continue  # 重复指针不重复计数（round-2 review MAJOR a）
-                    if project_counted >= SNAPSHOT_POINTER_SCAN_CAP:
+                    if counted >= SNAPSHOT_POINTER_SCAN_CAP:
                         logger.error(
-                            "[quota] workspace snapshot pointer scan hit per-project cap %d — "
+                            "[quota] workspace snapshot pointer scan hit cap %d — "
                             "protection scan incomplete (project=%s)",
                             SNAPSHOT_POINTER_SCAN_CAP, proj_dir.name,
                         )
                         truncated = True
                         break
                     seen_entries.add(entry_key)
-                    project_counted += 1
+                    counted += 1
                     if loc:
                         locations.add(loc)
                     if sha:
                         shas.add(sha)
             if truncated:
                 break
+        if truncated:
+            break
     return locations, shas, truncated
 
 
@@ -188,7 +199,9 @@ def _env_int(env_name: str, default: int) -> int:
     try:
         val = int(float(raw))
         return val if val > 0 else default
-    except (TypeError, ValueError):
+    # OverflowError: env 为 inf/Infinity 时 float() 成功但 int() 溢出；
+    # 必须与非法文本同样回退默认值，而不是把请求打成 500。
+    except (TypeError, ValueError, OverflowError):
         return default
 
 
@@ -610,14 +623,25 @@ def plan_retention_cleanup(
     all_by_loc = referencing_counts(db, locations)
 
     sha_counts = referencing_sha_counts(db, shas)
-    candidate_loc = {r.content_location for r in candidates}
-    candidate_sha = {r.content_sha256 for r in candidates}
+    # 每个 location/sha 减去**全部**候选修订自身的引用（不是 1）：多个候选
+    # 修订共享同一内容时，只减 1 会让该 blob 永远显示「仍有存活引用」。
+    candidate_loc_counts: Dict[str, int] = {}
+    candidate_sha_counts: Dict[str, int] = {}
+    for r in candidates:
+        if r.content_location:
+            candidate_loc_counts[r.content_location] = (
+                candidate_loc_counts.get(r.content_location, 0) + 1
+            )
+        if r.content_sha256:
+            candidate_sha_counts[r.content_sha256] = (
+                candidate_sha_counts.get(r.content_sha256, 0) + 1
+            )
     surviving_by_loc = {
-        loc: cnt - (1 if loc in candidate_loc else 0)
+        loc: cnt - candidate_loc_counts.get(loc, 0)
         for loc, cnt in all_by_loc.items()
     }
     surviving_by_sha = {
-        sha: cnt - (1 if sha in candidate_sha else 0)
+        sha: cnt - candidate_sha_counts.get(sha, 0)
         for sha, cnt in sha_counts.items()
     }
     snap = {
@@ -631,8 +655,32 @@ def plan_retention_cleanup(
     snap_locations, snap_shas, snap_truncated = workspace_snapshot_protected_pointers()
     snap["snapshot_locations"] = snap_locations
     snap["snapshot_shas"] = snap_shas
-    snap["protection_scan_truncated"] = snap_truncated
-    if snap_truncated:
+    # 域侧持有面（与 execute 同源）：G40 资产版本行 + G48 georef 会话
+    # refcount —— plan 缺了它们，候选 blob 集会大于 execute 实际删除集，
+    # 审批指纹覆盖范围即失真（任一扫描失败/截断 ⇒ 本轮跳过 blob 删除）。
+    from app.services.artifact_lifecycle import (
+        _georef_live_blob_keys,
+        _symbol_version_blob_keys,
+    )
+
+    domain_scan_failed = False
+    try:
+        snap["symbol_version_blob_keys"] = _symbol_version_blob_keys(db)
+        georef_keys, georef_truncated = _georef_live_blob_keys()
+        snap["georef_blob_keys"] = georef_keys
+    except Exception:
+        logger.exception(
+            "[quota] retention plan: domain blob protection scan "
+            "failed — skipping blob-deletion phase this cycle"
+        )
+        snap["symbol_version_blob_keys"] = set()
+        snap["georef_blob_keys"] = set()
+        georef_truncated = True
+        domain_scan_failed = True
+    snap["protection_scan_truncated"] = bool(
+        snap_truncated or georef_truncated or domain_scan_failed
+    )
+    if snap["protection_scan_truncated"]:
         # round-2 review MAJOR（fail-closed）：保护面截断 ⇒ 保护集可能不完整
         # —— 本轮跳过 blob 删除阶段（plan 与 execute 同规则：保护优先，
         # 绝不带残缺保护面删除）。候选修订行照常披露，blob 候选恒空。
@@ -933,16 +981,47 @@ def execute_orphan_revision_cleanup(plan: Dict[str, Any], *, db=None) -> Dict[st
                     "pinned_shas": set(pinned_content_sha256s(db)),
                     "snapshot_locations": locations, "snapshot_shas": shas,
                 }
-                result["deleted_blobs"] = []
-                for key, location in removed_blobs.items():
-                    path = (store.root / location).resolve()
-                    if not path.is_relative_to(store.root.resolve()):
-                        continue
-                    if promotion_blob_protection(
-                        key, location, store.blob_mtime(path), now=time.time(),
-                        grace_hours=RetentionPolicy.from_env().grace_hours, **snap,
-                    ) is None and store.delete_blob(key):
-                        result["deleted_blobs"].append(key)
+                # 域侧持有面（R 审计 round-2）：G40 资产版本行 + G48 georef 会话
+                # refcount —— 与 retention execute / promotion GC 同一保护谓词、
+                # 同一保护集来源；任一扫描失败/截断 ⇒ 本轮跳过 blob 删除
+                #（fail-closed：保护面残缺时绝不删除）。
+                from app.services.artifact_lifecycle import (
+                    _georef_live_blob_keys,
+                    _symbol_version_blob_keys,
+                )
+
+                domain_scan_failed = False
+                try:
+                    snap["symbol_version_blob_keys"] = _symbol_version_blob_keys(db)
+                    georef_keys, georef_truncated = _georef_live_blob_keys()
+                    snap["georef_blob_keys"] = georef_keys
+                except Exception:
+                    logger.exception(
+                        "[quota] orphan revision cleanup: domain blob "
+                        "protection scan failed — skipping blob-deletion "
+                        "phase this cycle"
+                    )
+                    snap["symbol_version_blob_keys"] = set()
+                    snap["georef_blob_keys"] = set()
+                    georef_truncated = True
+                    domain_scan_failed = True
+                if georef_truncated or domain_scan_failed:
+                    result["blob_cleanup_deferred"] = (
+                        "georef protection scan truncated"
+                        if georef_truncated else
+                        "domain blob protection scan failed"
+                    )
+                else:
+                    result["deleted_blobs"] = []
+                    for key, location in removed_blobs.items():
+                        path = (store.root / location).resolve()
+                        if not path.is_relative_to(store.root.resolve()):
+                            continue
+                        if promotion_blob_protection(
+                            key, location, store.blob_mtime(path), now=time.time(),
+                            grace_hours=RetentionPolicy.from_env().grace_hours, **snap,
+                        ) is None and store.delete_blob(key):
+                            result["deleted_blobs"].append(key)
 
     finally:
         if owned:

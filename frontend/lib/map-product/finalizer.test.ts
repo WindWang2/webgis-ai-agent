@@ -177,6 +177,73 @@ describe('map_finalization 命令 — viewCommands 集成（review P2 覆盖缺�
     expect(map.fitBounds).not.toHaveBeenCalled();
     expect(result).toMatchObject({ status: 'succeeded' });
   });
+
+  it('execute 内重评判定无需修复 → 立即 succeeded（不等 moveend，不空转 10s 假失败）', async () => {
+    const { viewCommands } = await import('@/lib/map-commands/viewCommands');
+    const {
+      notifyUserGestureStart,
+      notifyUserGestureEnd,
+      _resetCameraArbitrationForTests,
+    } = await import('@/lib/map-commands/camera-arbitration');
+
+    // getBounds 第 1 次（命令入口校验）：视野外 → repairable；第 2 次（execute
+    // 内重评）：用户已把地图拖到结果区 → valid → 跳过 fitBounds。
+    let boundsCalls = 0;
+    const map = {
+      getBounds: () => {
+        boundsCalls += 1;
+        const v = boundsCalls === 1
+          ? { w: 0, s: 0, e: 1, n: 1 }
+          : { w: 104, s: 30, e: 106, n: 32 };
+        return {
+          getWest: () => v.w,
+          getSouth: () => v.s,
+          getEast: () => v.e,
+          getNorth: () => v.n,
+        };
+      },
+      fitBounds: vi.fn(),
+      once: vi.fn(),
+      stop: vi.fn(),
+      getCenter: () => ({ lng: 104.5, lat: 30.5 }),
+      getZoom: () => 10,
+      getBearing: () => 0,
+      getPitch: () => 0,
+    } as any;
+
+    vi.useFakeTimers();
+    try {
+      _resetCameraArbitrationForTests();
+      // 命令启动时用户正在拖图 → runCameraCommand 先等手势（≤3s 等待窗）
+      notifyUserGestureStart();
+      const resultPromise = viewCommands['map_finalization'].run({
+        map,
+        params: { status: 'complete', bbox: [104, 30, 105, 31] },
+      } as any);
+      // 用户在等待窗内把地图拖到结果区，然后松手（手势结束 → 命令继续）
+      await vi.advanceTimersByTimeAsync(500);
+      notifyUserGestureEnd();
+      await vi.advanceTimersByTimeAsync(0); // 放行 waitForGestureEnd 的续体
+
+      // execute 已跑完重评且没有触发任何相机动作 —— 自然 moveend 不会到来
+      expect(boundsCalls).toBeGreaterThanOrEqual(2); // 重评确实发生
+      expect(map.fitBounds).not.toHaveBeenCalled();
+
+      // 修复前：execute 空返回 → 无相机动作、moveend 永不触发 → 只能等 10s
+      // 安全超时才 ack failed:timeout（假失败），且队列停 10s。
+      const result = await Promise.race([
+        resultPromise,
+        vi.advanceTimersByTimeAsync(10_000).then(() => ({ status: 'timeout' })),
+      ]);
+      expect(result).toMatchObject({
+        status: 'succeeded',
+        result: { viewport: 'valid', repaired: false },
+      });
+    } finally {
+      vi.useRealTimers();
+      _resetCameraArbitrationForTests();
+    }
+  });
 });
 
 describe('finalizationUserNotice — 轻量披露', () => {

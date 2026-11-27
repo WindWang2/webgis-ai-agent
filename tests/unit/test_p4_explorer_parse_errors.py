@@ -52,6 +52,32 @@ async def test_parse_tolerates_unreadable_source(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_parse_store_failure_isolated_per_source() -> None:
+    """单个源 store_ref 失败只跳过该源，不中断整个 parse 阶段。"""
+    csv_text = "name,phone\na,110\n"
+    stored_payload = {"data": base64.b64encode(csv_text.encode()).decode("ascii"),
+                      "codec": "base64", "content_type": "text/csv", "encoding": "utf-8"}
+    calls = {"n": 0}
+
+    def store_ref(payload, kind):  # noqa: ANN001, ANN201
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("session store down")
+        return "ref_parsed_ok"
+
+    result = await run_parse_stage(
+        "parse-store-iso",
+        [_fetch_result("s1", csv_text), _fetch_result("s2", csv_text)],
+        load_ref=lambda ref: stored_payload,
+        store_ref=store_ref,
+    )
+    assert result.success is True
+    assert [p["source_id"] for p in result.data["parsed_results"]] == ["s2"]
+    assert len(result.data["errors"]) == 1
+    assert result.data["errors"][0]["source_id"] == "s1"
+
+
+@pytest.mark.asyncio
 async def test_parse_decode_failure_is_not_reported_as_store_handoff_failure() -> None:
     result = await run_parse_stage(
         "parse-review", [{"source_id": "broken", "ref_id": "present"}],

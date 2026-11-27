@@ -44,6 +44,14 @@ class NetworkAccessibilityService:
     @classmethod
     def _e2sfca_zone_weights(cls, cutoff_minutes: float, decay_zones: int) -> List[float]:
         """Per-band Gaussian weights w_r at band midpoints (deterministic)."""
+        if not math.isfinite(cutoff_minutes) or cutoff_minutes <= 0:
+            # band_width = cutoff/zones; cutoff<=0 makes the band index
+            # 0.0//0.0 (ZeroDivisionError) for a co-located pair — reject the
+            # mathematically undefined decay instead.
+            raise ValueError(
+                f"e2sfca cutoff_minutes 必须为有限正数（收到 {cutoff_minutes}）："
+                "band_width = cutoff_minutes / decay_zones"
+            )
         if not cls._E2SFCA_MIN_ZONES <= int(decay_zones) <= cls._E2SFCA_MAX_ZONES:
             raise ValueError(
                 f"decay_zones 必须在 {cls._E2SFCA_MIN_ZONES}-{cls._E2SFCA_MAX_ZONES} 之间"
@@ -88,7 +96,21 @@ class NetworkAccessibilityService:
         Returns:
             AccessibilityResult object.
         """
-        if not demand_points or not facilities:
+        method_norm = method.lower()
+        if method_norm not in ("15min_circle", "2sfca", "e2sfca"):
+            raise ValueError(
+                f"未知可达性方法 {method!r}（合法：15min_circle | 2sfca | e2sfca）"
+            )
+
+        if not facilities:
+            # #814 symmetry: an empty facility parse must not be wrapped as a
+            # successful 0%-coverage analysis (the demand side already raises
+            # in the engine).
+            raise ValueError(
+                "network_accessibility requires at least one facility — refusing "
+                "to report a fabricated 0% coverage result (audit #814)."
+            )
+        if not demand_points:
             return AccessibilityResult(
                 analysis_id="acc_empty",
                 mode=profile.name if profile else "driving",
@@ -136,8 +158,6 @@ class NetworkAccessibilityService:
         weighted_travel_time_sum = 0.0
 
         per_zone_metrics: List[Dict[str, Any]] = []
-
-        method_norm = method.lower()
 
         if method_norm == "2sfca":
             # Step 1: Facility ratios R_j = Capacity_j / Sum(Demand_k in cutoff)

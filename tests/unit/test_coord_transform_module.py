@@ -227,3 +227,21 @@ def test_tool_handlers_coercion_and_dependency_error(monkeypatch):
     assert res_dep["code"] == "DEPENDENCY_ERROR"
     assert res_dep["error_type"] == "ImportError"
 
+
+def test_reproject_coordinates_rejects_empty_epsg():
+    # Regression: empty/None EPSG codes normalize to equal strings and used to
+    # hit the src == dst shortcut, returning success with unprojected data.
+    from app.tools.registry import ToolRegistry
+    from app.tools.coord_transform import register_epsg_transform_tools
+
+    registry = ToolRegistry()
+    register_epsg_transform_tools(registry)
+    reproject_coordinates = registry._tools["reproject_coordinates"]
+
+    input_geom = {"type": "Point", "coordinates": [116.404, 39.915]}
+
+    for from_epsg, to_epsg in (("", ""), (None, None), ("   ", "  ")):
+        res = reproject_coordinates(input_geom, from_epsg, to_epsg)
+        assert res["success"] is False
+        assert res["code"] == "VALIDATION_ERROR"
+

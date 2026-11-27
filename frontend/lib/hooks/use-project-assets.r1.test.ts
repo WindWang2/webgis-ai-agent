@@ -6,12 +6,14 @@ const fetchArtifactLineage = vi.fn();
 const fetchDataUsage = vi.fn();
 const planDataGc = vi.fn();
 const listWorkspaceSnapshots = vi.fn();
+const inspectWorkspaceSnapshot = vi.fn();
 
 vi.mock('@/lib/api/project-assets', () => ({
   fetchProjectArtifacts: (...args: unknown[]) => fetchProjectArtifacts(...args),
   fetchDataUsage: (...args: unknown[]) => fetchDataUsage(...args),
   planDataGc: (...args: unknown[]) => planDataGc(...args),
   listWorkspaceSnapshots: (...args: unknown[]) => listWorkspaceSnapshots(...args),
+  inspectWorkspaceSnapshot: (...args: unknown[]) => inspectWorkspaceSnapshot(...args),
 }));
 vi.mock('@/lib/api/project', () => ({
   fetchArtifactLineage: (...args: unknown[]) => fetchArtifactLineage(...args),
@@ -20,6 +22,19 @@ vi.mock('@/lib/api/project', () => ({
 import { useDataGc, useProjectArtifacts, useProjectSnapshots } from './use-project-assets';
 
 const PAGE = { items: [], total: 0, limit: 50, offset: 0, has_more: false };
+
+function verification(id: string) {
+  return {
+    snapshot_id: id,
+    exists: true,
+    integrity_ok: true,
+    restorable: true,
+    artifacts: { total: 0, live: 0, missing: [] },
+    layers: { total: 0, live: 0, missing: [] },
+    mapspec_available: true,
+    integrity: {},
+  };
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -88,5 +103,43 @@ describe('project asset hook races', () => {
       resolveFirst({ project_id: 'p1', count: 1, bounded: 50, items: [{ snapshot_id: 's', artifacts: 0, layers: 0, project_id: 'p1', home: 'project' }] });
     });
     expect(result.current.snapshots).toEqual([]);
+  });
+
+  it('drops a late diff instead of overwriting a newer diff result', async () => {
+    const signals: Array<AbortSignal | undefined> = [];
+    let resolveFirstA: (value: unknown) => void = () => {};
+    let aCalls = 0;
+    inspectWorkspaceSnapshot.mockImplementation(
+      (_projectId: string, snapshotId: string, _sessionId: string, opts?: { signal?: AbortSignal }) => {
+        signals.push(opts?.signal);
+        if (snapshotId === 'a') {
+          aCalls += 1;
+          if (aCalls === 1) {
+            return new Promise((resolve) => { resolveFirstA = resolve; });
+          }
+        }
+        return Promise.resolve(verification(snapshotId));
+      },
+    );
+
+    const { result } = renderHook(() => useProjectSnapshots('p1', 'sess'));
+    await waitFor(() => expect(listWorkspaceSnapshots).toHaveBeenCalled());
+
+    let first: Promise<unknown> = Promise.resolve();
+    await act(async () => {
+      first = result.current.loadDiff('a', 'b');
+    });
+    await act(async () => {
+      await result.current.loadDiff('c', 'd');
+    });
+    expect(result.current.diff?.a.snapshot_id).toBe('c');
+    expect(signals[0]?.aborted).toBe(true);
+
+    await act(async () => {
+      resolveFirstA(verification('a'));
+      await first;
+    });
+    expect(result.current.diff?.a.snapshot_id).toBe('c');
+    expect(result.current.verifications.a).toBeUndefined();
   });
 });

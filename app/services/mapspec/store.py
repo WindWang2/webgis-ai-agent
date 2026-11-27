@@ -84,7 +84,9 @@ def _atomic_write_json_sync(path: Path, payload: Any) -> None:
     不会出现半截写入。临时文件与目标同目录保证 replace 不跨文件系统。
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    data = json.dumps(payload, ensure_ascii=False, indent=2)
+    # allow_nan=False：NaN/Infinity 会写出裸记号（非法 JSON，前端 JSON.parse
+    # 直接失败）——宁可在写入点响亮失败，也不落一份不可解析的 mapspec.json。
+    data = json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False)
     fd, tmp_name = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
     )
@@ -152,7 +154,10 @@ def _fingerprint_sync(mapspec: Dict[str, Any]) -> str:
     单次 O(spec bytes)；调用方必须在线程内执行（大 spec 的 dumps 在
     事件循环上即为本票要消灭的停顿源）。
     """
-    payload = json.dumps(mapspec, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    payload = json.dumps(
+        mapspec, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        allow_nan=False,
+    )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 

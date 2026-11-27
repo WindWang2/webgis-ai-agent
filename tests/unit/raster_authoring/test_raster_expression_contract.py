@@ -58,6 +58,22 @@ def test_two_band_default_is_single_and_explicit_rgb_is_rejected():
     assert "two-band" in exc.value.message
 
 
+def test_four_band_request_is_rejected_before_any_stats_read(monkeypatch):
+    # 4+ 波段按 mode=rgb 放行会让图例 ("R","G","B")[i] 越界、渲染丢弃第 4 波段；
+    # 契约层必须先行拒绝，且绝不先触发有界统计读。
+    src = _source(4)
+
+    def _explode(*args, **kwargs):
+        raise AssertionError("band_stats must not run for an unsupported band count")
+
+    monkeypatch.setattr("app.services.raster_authoring.contract.band_stats", _explode)
+    with pytest.raises(RasterExpressionError) as exc:
+        resolve_expression({"bands": [1, 2, 3, 4], "stretch": "auto"}, src)
+    assert exc.value.code == "BAND_COUNT_UNSUPPORTED"
+    assert exc.value.field == "bands"
+    assert exc.value.details.get("band_count") == 4
+
+
 def test_four_band_rgb_order_is_preserved_not_sorted():
     src = _source(4)
     spec = resolve_expression(

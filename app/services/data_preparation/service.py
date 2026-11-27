@@ -55,8 +55,10 @@ def _extract_fc(payload: Any) -> Tuple[Dict[str, Any], List[Dict[str, Any]], str
         crs = str(payload.get("crs") or "")
     if not isinstance(fc, dict):
         raise InspectError("PAYLOAD_UNSUPPORTED", "ref 载荷不是 FeatureCollection")
-    if isinstance(fc.get("crs"), dict):
-        crs = str(fc["crs"].get("properties", {}).get("name") or crs)
+    # geojson.crs 只在载荷未声明外层 crs 时兜底（与 snapshot.parse_payload
+    # 的优先级一致：外层 crs 优先），否则同一载荷两模块 CRS 判定会相反。
+    if not crs and isinstance(fc.get("crs"), dict):
+        crs = str(fc["crs"].get("properties", {}).get("name") or "")
     features = fc.get("features")
     if not isinstance(features, list):
         raise InspectError("PAYLOAD_UNSUPPORTED", "features 不是列表")

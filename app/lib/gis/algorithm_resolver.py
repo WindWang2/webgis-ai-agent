@@ -372,16 +372,21 @@ class AlgorithmResolver:
                         break
                 if not hinted and hinted_algo is not None and hint_rejected:
                     best_entry = scored[0]
-                    if best_entry[2] in hinted_algo.fallback_algorithms:
-                        hint_trail = [FallbackStep(
-                            from_element=algorithm_hint,
-                            to_element=best_entry[2],
-                            reason_code="explicit_request_substituted",
-                            evidence={"first_rejection": rejected[0]
-                                      if rejected else ""},
-                            semantics=hinted_algo.fallback_semantics.get(
-                                best_entry[2], "approximation"),
-                        )]
+                    # 替补无论是否命中 hinted 算法的声明 fallback 链，都是
+                    # 对显式请求的顶替 —— 未声明等价性时以独立 reason_code
+                    # 显性化（"顶替绝不能静默"），否则证据面看不见这次替换。
+                    hint_trail = [FallbackStep(
+                        from_element=algorithm_hint,
+                        to_element=best_entry[2],
+                        reason_code=(
+                            "explicit_request_substituted"
+                            if best_entry[2] in hinted_algo.fallback_algorithms
+                            else "explicit_request_substituted_undeclared"),
+                        evidence={"first_rejection": rejected[0]
+                                  if rejected else ""},
+                        semantics=hinted_algo.fallback_semantics.get(
+                            best_entry[2], "approximation"),
+                    )]
             _, best_score, _, best, best_tool, best_bd, best_warns, best_uneval = scored[0]
             reason = self._candidate_reason(best, best_tool, profile)
             contested = len(scored) > 1
@@ -449,6 +454,10 @@ class AlgorithmResolver:
                         rejected=rejected[:_MAX_REJECTIONS],
                         fallback_trail=trail[:_MAX_FALLBACK_TRAIL],
                         fallback_candidates=[fb.id],
+                        # P3：算法级 fallback 成功与另两个分支同口径携带
+                        # 全拒时收集的变换建议（否则 planner 拿不到重投影
+                        # 提示，降级成功路径静默丢失可执行下一步）。
+                        required_transformations=transformations,
                         scientific_warnings=fb_warns[:_MAX_REJECTIONS],
                         not_evaluated=fb_uneval[:_MAX_REJECTIONS],
                         backend_variant=fb_bv,

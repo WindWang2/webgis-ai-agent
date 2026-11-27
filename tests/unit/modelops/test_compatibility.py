@@ -12,6 +12,7 @@ from app.lib.modelops.compatibility import (
     FAILURE_TEMPORAL_LENGTH,
     InputProfile,
     WARNING_NODATA_HEAVY,
+    WARNING_RESOLUTION_UNKNOWN,
     qualify,
     report_to_error,
 )
@@ -21,7 +22,7 @@ from app.lib.modelops.descriptor import (
     SpatialRequirements,
     TemporalRequirements,
 )
-from app.lib.modelops.errors import CompatibilityError
+from app.lib.modelops.errors import CompatibilityError, DescriptorError
 from app.lib.modelops.promptable import PromptSpec
 from app.lib.modelops.temporal import TemporalStackSpec
 
@@ -64,6 +65,19 @@ def test_rgb_model_vs_multispectral(tiny_desc_factory):
 
     report = qualify(_desc(tiny_desc_factory), _profile(band_count=8))
     assert M in codes(report) or FAILURE_BAND_COUNT in codes(report)
+
+
+def test_temporal_rgb_stack_not_flagged_multispectral(tiny_desc_factory):
+    """时序 RGB 栈 = 3*T 波段；模态门按每切片 3 波段判定（非整栈 >3）。"""
+    from app.lib.modelops.capabilities import TASK_TEMPORAL_FORECAST
+
+    d = tiny_desc_factory(
+        task_types=(TASK_TEMPORAL_FORECAST,),
+        output_types=("temporal_stack",),
+        temporal=TemporalRequirements(max_length=8),
+    )
+    report = qualify(d, _profile(band_count=6, temporal_length=2))
+    assert report.compatible
 
 
 def test_sar_missing_polarization(tiny_desc_factory):
@@ -147,6 +161,33 @@ def test_nodata_heavy_is_warning_not_failure(tiny_desc_factory):
     report = qualify(_desc(tiny_desc_factory), _profile(nodata_ratio=0.8))
     assert report.compatible
     assert WARNING_NODATA_HEAVY in {w.code for w in report.warnings}
+
+
+def test_unknown_resolution_emits_warning(tiny_desc_factory):
+    """m_per_px=0 时无法做 resolution 判定 → 显式 warning（不静默跳过）。"""
+    report = qualify(_desc(tiny_desc_factory), _profile(m_per_px=0.0))
+    assert report.compatible
+    assert WARNING_RESOLUTION_UNKNOWN in {w.code for w in report.warnings}
+
+
+def test_temporal_orders_by_instant_not_string(tiny_desc_factory):
+    """不同 UTC 偏移的合法时刻按瞬时比较（字符串排序会误判顺序）。"""
+    spec = TemporalStackSpec(
+        times=(
+            "2026-01-01T00:00:00+08:00",  # = 2025-12-31T16:00Z
+            "2025-12-31T20:00:00Z",
+        ),
+        max_length=8,
+    )
+    assert len(spec.times) == 2
+    with pytest.raises(DescriptorError, match="ascending"):
+        TemporalStackSpec(
+            times=(
+                "2025-12-31T20:00:00-05:00",  # = 2026-01-01T01:00Z
+                "2026-01-01T00:00:00Z",
+            ),
+            max_length=8,
+        )
 
 
 def test_prompt_against_non_promptable_model(tiny_desc_factory):

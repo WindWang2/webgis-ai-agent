@@ -34,6 +34,8 @@ interface ViewState {
 const IDENTITY: ViewState = { scale: 1, tx: 0, ty: 0 };
 const MIN_SCALE = 1;
 const MAX_SCALE = 14;
+/** 指针移动超过该距离（CSS px）即视为拖拽平移，不再当作点击。 */
+const CLICK_DRAG_THRESHOLD = 4;
 
 export function DorlingDiagram({ layout, selectedId, onSelect, height = 420 }: Props) {
   const t = useT('cartogram.diagram');
@@ -44,6 +46,7 @@ export function DorlingDiagram({ layout, selectedId, onSelect, height = 420 }: P
   const [hovered, setHovered] = useState<string | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const drag = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
+  const dragMoved = useRef(false);
 
   useEffect(() => {
     setView(IDENTITY);
@@ -58,7 +61,7 @@ export function DorlingDiagram({ layout, selectedId, onSelect, height = 420 }: P
     [circles, hovered, selected],
   );
 
-  const onWheel = useCallback((event: React.WheelEvent<SVGSVGElement>) => {
+  const onWheel = useCallback((event: WheelEvent) => {
     event.preventDefault();
     const svg = svgRef.current;
     if (!svg) return;
@@ -84,9 +87,17 @@ export function DorlingDiagram({ layout, selectedId, onSelect, height = 420 }: P
     });
   }, [extent]);
 
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    svg.addEventListener('wheel', onWheel, { passive: false });
+    return () => svg.removeEventListener('wheel', onWheel);
+  }, [circles.length, onWheel]);
+
   const onPointerDown = useCallback((event: React.PointerEvent<SVGSVGElement>) => {
     if (event.button !== 0) return;
     drag.current = { x: event.clientX, y: event.clientY, tx: view.tx, ty: view.ty };
+    dragMoved.current = false;
     (event.target as Element).setPointerCapture?.(event.pointerId);
   }, [view.tx, view.ty]);
 
@@ -99,6 +110,9 @@ export function DorlingDiagram({ layout, selectedId, onSelect, height = 420 }: P
     const fitScale = Math.min(rect.width / extent, rect.height / extent) || 1;
     const dx = (event.clientX - start.x) / fitScale;
     const dy = (event.clientY - start.y) / fitScale;
+    if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > CLICK_DRAG_THRESHOLD) {
+      dragMoved.current = true;
+    }
     setView((prev) => ({ scale: prev.scale, tx: start.tx + dx, ty: start.ty + dy }));
   }, [extent]);
 
@@ -124,6 +138,11 @@ export function DorlingDiagram({ layout, selectedId, onSelect, height = 420 }: P
   }, [ids, selectedId, onSelect]);
 
   const onClick = useCallback((event: React.MouseEvent<SVGSVGElement>) => {
+    if (dragMoved.current) {
+      // 拖动平移后的 click 不是选择：忽略本次并复位。
+      dragMoved.current = false;
+      return;
+    }
     const svg = svgRef.current;
     if (!svg) return;
     const rect = svg.getBoundingClientRect();
@@ -149,6 +168,7 @@ export function DorlingDiagram({ layout, selectedId, onSelect, height = 420 }: P
   const unit = layout?.legend?.unit || '';
   const zeroCount = (layout?.zero_ids ?? []).length;
   const missingCount = (layout?.missing_ids ?? []).length;
+  const maxRadius = circles.reduce((max, c) => Math.max(max, c.radius), -Infinity);
 
   return (
     <div className="space-y-2" data-g47-diagram="root">
@@ -164,7 +184,6 @@ export function DorlingDiagram({ layout, selectedId, onSelect, height = 420 }: P
           viewBox={`0 0 ${extent} ${extent}`}
           preserveAspectRatio="xMidYMid meet"
           style={{ width: '100%', height, display: 'block', touchAction: 'none', cursor: drag.current ? 'grabbing' : 'grab' }}
-          onWheel={onWheel}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
@@ -215,7 +234,7 @@ export function DorlingDiagram({ layout, selectedId, onSelect, height = 420 }: P
             </g>
             <g fontSize={11 / view.scale} fill="#0f172a" textAnchor="middle" pointerEvents="none">
               {circles
-                .filter((c) => c.radius >= Math.max(...circles.map((x) => x.radius)) * 0.42)
+                .filter((c) => c.radius >= maxRadius * 0.42)
                 .map((c) => (
                   <text key={`label-${c.feature_id}`} x={c.x} y={c.y + 4 / view.scale}>
                     {c.label || c.feature_id}

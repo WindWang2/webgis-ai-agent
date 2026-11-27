@@ -275,7 +275,21 @@ class GovDataAdapter(BaseDataAdapter):
                 raise ValueError("Excel workbook has no active sheet")
             values = ws.iter_rows(values_only=True)
             headers = list(next(values, ()))
-            rows = [dict(zip(headers, row, strict=True)) for row in values]
+            # Ragged rows are routine in real spreadsheets (a trailing extra
+            # cell, a truncated row). csv.DictReader tolerates them, so this
+            # path must too: short rows are padded with None (restval) and
+            # surplus cells are kept under the None rest key. strict=True here
+            # aborted the entire dataset on the first row whose cell count
+            # differed from the header row.
+            rows = []
+            for row in values:
+                cells = list(row)
+                if len(cells) < len(headers):
+                    cells.extend([None] * (len(headers) - len(cells)))
+                entry = dict(zip(headers, cells))
+                if len(cells) > len(headers):
+                    entry[None] = cells[len(headers):]
+                rows.append(entry)
         finally:
             wb.close()
 
@@ -294,13 +308,20 @@ class GovDataAdapter(BaseDataAdapter):
 
     @staticmethod
     def _guess_format(url: str) -> str:
-        if url.endswith(".csv"):
+        # Gov portal links routinely append query strings (?download=1) or
+        # serve mixed-case extensions. Match the URL path only and fold case,
+        # otherwise these links were reported as "unknown" → content_type
+        # application/octet-stream → parse() rejected every fetched file.
+        import urllib.parse
+
+        path = urllib.parse.urlsplit(url).path.lower()
+        if path.endswith(".csv"):
             return "csv"
-        elif url.endswith(".xlsx"):
+        elif path.endswith(".xlsx"):
             return "xlsx"
-        elif url.endswith(".xls"):
+        elif path.endswith(".xls"):
             return "xls"
-        elif url.endswith(".json"):
+        elif path.endswith(".json"):
             return "json"
         return "unknown"
 

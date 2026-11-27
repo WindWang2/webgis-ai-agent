@@ -90,7 +90,9 @@ def _normalize_token(v: Any) -> str:
 
 
 def _normalize_field(name: str) -> str:
-    return "".join(ch for ch in str(name).strip().lower() if not ch.isspace())
+    return "".join(
+        ch for ch in str(name).strip().lower()
+        if not ch.isspace() and ch != "-")
 
 
 def _match_field_synonym(field: str) -> Optional[Tuple[str, int]]:
@@ -185,7 +187,9 @@ def derive_importance_model(
         if not present:
             derivation.reason_codes.append("user_field_absent:values_not_in_data")
             return derivation
-        non_null = sum(dist.values())
+        # None 桶（缺失值）不计入非空：与 distinct_values（distinct 面已排除
+        # None 键）同口径，否则字段有缺失值时覆盖率虚高、夸大取舍证据强度。
+        non_null = sum(c for v, c in dist.items() if v is not None)
         derivation.selected = ImportanceModel(
             field=user_field,
             # 与词表序同款 canonical 化：kept/匹配面是 List[str] 契约。
@@ -255,7 +259,9 @@ def derive_importance_model(
                 assessment.reason_codes.append("no_ordered_vocabulary")
             continue
 
-        non_null = sum(dist.values())
+        # None 桶（缺失值）不计入非空 —— 与上方 distinct_values=len(values)
+        # （已排除 None 键）同口径；计入会让覆盖率虚高。
+        non_null = sum(c for v, c in dist.items() if v is not None)
         coverage = non_null / total if total else 0.0
         model = ImportanceModel(
             field=field,
@@ -302,14 +308,14 @@ def _looks_like_road_field(field: str) -> bool:
 #: 缺省带级保留秩（词表序前 K；street = 全保留哨兵 999）。
 #: 惯例：粗尺度保跨城干线（world 3 = 高速/国道/省道），city 带纳入县乡
 #: 干线，street 带全量。可被用户逐带覆盖（apply 工具入参）。
+_STREET_SENTINEL = 999
+
 DEFAULT_KEEP_RANKS: Dict[str, int] = {
     "world": 3,
     "province": 4,
     "city": 6,
-    "street": 999,
+    "street": _STREET_SENTINEL,
 }
-
-_STREET_SENTINEL = 999
 
 
 def kept_values_for_band(
@@ -333,6 +339,9 @@ def kept_values_for_band(
     # 全保留 —— 评审 R1-P2-7：键名笔误不得改变取舍语义）
     ranks = {**DEFAULT_KEEP_RANKS, **(keep_ranks or {})}
     k = int(ranks[tier])
+    if k < 0:
+        # 负 K 会从词表尾部切片 —— 静默保留错误取值集，必须 fail-closed。
+        raise ValueError(f"keep rank for {tier!r} must be >= 0 (got {k})")
     kept = list(model.value_order[:k])
     if mandatory_values:
         for v in mandatory_values:

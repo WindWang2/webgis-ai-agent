@@ -341,11 +341,11 @@ class MapProductEvidence:
         if not isinstance(raw, dict):
             return None
         fallbacks = [
-            fb for fb in raw.get("fallback_decisions", [])
+            fb for fb in (raw.get("fallback_decisions") or [])
             if isinstance(fb, dict)
         ][:_MAX_PRODUCT_FALLBACKS]
         components = [
-            str(c) for c in raw.get("component_selection", [])
+            str(c) for c in (raw.get("component_selection") or [])
         ][:_MAX_PRODUCT_COMPONENTS]
         return cls(
             intent_resolution=raw.get("intent_resolution") or {},

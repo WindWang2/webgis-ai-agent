@@ -62,3 +62,18 @@ def test_returns_geo_analysis_result():
     res = DummyAnalyzer.geo_op("raw_data")
     assert res.success is True
     assert res.summary == "Already wrapped"
+
+def test_plain_function_first_data_param_normalized(monkeypatch):
+    """普通函数（无 self/cls）的首个数据形参也必须被归一，而非误取第二个形参。"""
+    def fake_to_fc(data):
+        return {"type": "FeatureCollection", "features": [], "normalized": True}
+    monkeypatch.setattr("app.services.spatial_operator.to_feature_collection", fake_to_fc)
+
+    @spatial_operator(name="plain_op")
+    def plain_op(data, callback=None):
+        return {"data": data}
+
+    res = plain_op({"type": "Feature", "geometry": None})
+    assert isinstance(res, GeoAnalysisResult)
+    assert res.success is True
+    assert res.data["data"] == {"type": "FeatureCollection", "features": [], "normalized": True}

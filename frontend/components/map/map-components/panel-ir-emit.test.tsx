@@ -8,6 +8,7 @@ import { render, waitFor, act } from '@testing-library/react';
 import React from 'react';
 import type { MapSpecComponent } from '@/lib/mapspec-compiler/types';
 import { resetSelectionStore, getSelection } from '@/lib/selection/selection-store';
+import { useHudStore } from '@/lib/store/useHudStore';
 import { renderComponent } from './index';
 
 vi.mock('recharts', async () => {
@@ -71,6 +72,7 @@ function chartComponent(): MapSpecComponent {
 
 beforeEach(() => {
   resetSelectionStore();
+  useHudStore.getState().clearLayers?.();
   emitChart.mockClear();
   emitTable.mockClear();
   chartCoreSpy.mockClear();
@@ -143,6 +145,62 @@ describe('chart-panel keyboard category select (SW-08)', () => {
     });
     expect(emitChart).toHaveBeenCalledWith(
       expect.objectContaining({ layerId: 'districts', action: 'clear' }),
+    );
+  });
+});
+
+describe('table-panel inline row click → IR emit (ADR-0285 D2)', () => {
+  const ctx = { spec: null, zoom: 10, centerLat: 30 } as never;
+
+  function tableComponent(): MapSpecComponent {
+    return {
+      id: 'table-panel', type: 'table_panel', enabled: true,
+      placement: { mode: 'floating', x: 32, y: 96, width: 420, height: 280 },
+      options: { layerId: 'poi-layer' },
+    } as unknown as MapSpecComponent;
+  }
+
+  function seedLayer() {
+    const store = useHudStore.getState();
+    act(() => {
+      store.addLayer?.({
+        id: 'poi-layer',
+        name: 'POI',
+        type: 'circle',
+        visible: true,
+        source: {
+          type: 'FeatureCollection',
+          features: [
+            { type: 'Feature', id: 1, properties: { osm_id: 1, name: 'A' }, geometry: { type: 'Point', coordinates: [1, 1] } },
+            { type: 'Feature', id: 2, properties: { osm_id: 2, name: 'B' }, geometry: { type: 'Point', coordinates: [1, 1] } },
+          ],
+        },
+      } as never);
+    });
+  }
+
+  it('inline 行点击与 PagedTableBody 同通道：publishSelection 同刻上行 IR', async () => {
+    seedLayer();
+    const { container } = render(renderComponent(tableComponent(), ctx) as never);
+    const row = await waitFor(() => {
+      const el = container.querySelector('[data-testid="table-panel-row"]') as HTMLElement | null;
+      if (!el) throw new Error('row not rendered yet');
+      return el;
+    });
+    act(() => { row.click(); });
+    // 联动照常
+    expect(getSelection()?.source).toBe('table');
+    expect(getSelection()?.selected_ids).toHaveLength(1);
+    // 修复前：inline 体只 publishSelection、不 emit —— 与分页体行为不一致。
+    expect(emitTable).toHaveBeenCalledWith(
+      expect.objectContaining({ layerId: 'poi-layer', featureId: expect.any(String) }),
+    );
+    // 再点同一行 = 清除：clear 也同刻上行 IR。
+    const sameRow = container.querySelector('[data-testid="table-panel-row"]') as HTMLElement;
+    act(() => { sameRow.click(); });
+    expect(getSelection()).toBeNull();
+    expect(emitTable).toHaveBeenCalledWith(
+      expect.objectContaining({ layerId: 'poi-layer', action: 'clear' }),
     );
   });
 });

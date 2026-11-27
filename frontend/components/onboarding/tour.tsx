@@ -109,6 +109,16 @@ export function Tour(): React.ReactElement | null {
   return (
     <div className="fixed inset-0 z-[95]" onKeyDown={onKeyDown} data-testid="onboarding-tour">
       {/* 遮罩 + 焦点圈闭（有目标时挖孔，无目标时整层轻遮罩） */}
+      {spot ? (
+        /* 暗区命中层：有目标时暗区由 box-shadow 绘制、不参与命中测试，
+           若无此层则点暗区无响应，与无目标步骤（遮罩 inset-0 任意点击关闭）不一致。 */
+        <div
+          className="absolute inset-0"
+          onMouseDown={() => finishTour(false)}
+          aria-hidden
+          data-testid="tour-scrim"
+        />
+      ) : null}
       <div
         className={spot ? "absolute rounded-md bg-transparent" : "absolute inset-0 bg-black/50"}
         style={

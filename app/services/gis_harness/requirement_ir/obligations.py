@@ -3,7 +3,7 @@
 独立成模块以避免 build ↔ patch 导入环：patch.apply_patch 在每次写后
 调用 :func:`rederive` 保持义务与 spec 同步（义务是理解面的投影，不是
 平行真相）；条目 lifecycle 状态与 user pin 按
-(kind, export_format, group_by, capability) 匹配保留。
+(kind, source_path, export_format, group_by, capability) 匹配保留。
 """
 from __future__ import annotations
 
@@ -92,12 +92,14 @@ def rederive(spec: GISIntentSpec, old_items: List[RequirementItem],
     old_index: Dict[tuple, RequirementItem] = {}
     for item in old_items:
         old_index.setdefault(
-            (item.kind, item.export_format, item.group_by, item.capability),
+            (item.kind, item.source_path, item.export_format,
+             item.group_by, item.capability),
             item)
     fresh = derive_requirements(spec)
     for item in fresh.items:
         old = old_index.get(
-            (item.kind, item.export_format, item.group_by, item.capability))
+            (item.kind, item.source_path, item.export_format,
+             item.group_by, item.capability))
         if old is not None:
             item.state = old.state
             item.pinned = item.pinned or old.pinned

@@ -284,3 +284,22 @@ class TestSchema:
         s1 = la.sort_overrides_stable(cur)
         s2 = la.sort_overrides_stable(list(reversed(cur)))
         assert [o["featureId"] for o in s1] == ["a", "b"] == [o["featureId"] for o in s2]
+
+
+def test_override_status_bad_source_revision_is_unverified():
+    """sourceRevision 非数值不得让只读状态判定抛 ValueError。"""
+    st = la.override_status(
+        {"sourceRevision": "not-a-number"}, feature_found=True,
+        current_revision=2, label_field="name",
+        feature_properties={"name": "x"})
+    assert st == "unverified"
+
+
+def test_preview_strips_feature_id_before_known_feature_lookup():
+    """带首尾空白的 featureId 必须能命中 known_features（不误判不存在）。"""
+    ops = [{"featureId": "  a  ", "op": "set", "set": {"hidden": True}}]
+    pv = la.preview_authoring_ops(
+        [], ops, layer_id="L", known_features=[{"id": "a"}])
+    assert pv.reports[0].action == "set"
+    assert "feature_not_found" not in pv.reports[0].findings
+    assert pv.unresolved_targets == 0

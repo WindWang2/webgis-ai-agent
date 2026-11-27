@@ -92,9 +92,12 @@ def make_cache_key(tool_name: str, args: dict, owner_scope: Optional[str] = None
     # oversized 短路 — 证明不了"无 ref"就保守跳过缓存，与无界旧语义一致。
     from app.lib.json_size import ESTIMATE_MAX_NODES
     ref_budget = [ESTIMATE_MAX_NODES]
-    if _contains_ref(args, ref_budget) or ref_budget[0] <= 0:
+    try:
+        if _contains_ref(args, ref_budget) or ref_budget[0] <= 0:
+            return None
+        canonical = json.dumps(args, sort_keys=True, separators=(",", ":"), default=str)
+    except RecursionError:
         return None
-    canonical = json.dumps(args, sort_keys=True, separators=(",", ":"), default=str)
     if owner_scope is None:
         owner_scope = _owner_scope_for_cache(
             args.get("session_id") if isinstance(args, dict) else None
@@ -191,7 +194,7 @@ def set_cached(key: str, value: Any, ttl: int) -> None:
     try:
         payload = json.dumps(value, default=str).encode("utf-8")
         _get_redis_client().setex(key, ttl, payload)
-    except (_redis.RedisError, TypeError, ValueError) as e:
+    except (_redis.RedisError, TypeError, ValueError, RecursionError) as e:
         _warn_throttled(f"[tool_cache] Redis SET failed, dropping cache write: {type(e).__name__}: {e}")
 
 

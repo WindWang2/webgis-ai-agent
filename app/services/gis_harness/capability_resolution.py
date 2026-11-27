@@ -549,8 +549,12 @@ def resolve_capabilities(
                     "capabilities": f"{a}|{b}",
                     "hint": "split the goal or drop one capability",
                 })
+    # 互斥对两端都在 required 集时双向各命中一次 —— 按 (code, capabilities)
+    # 去重，避免同一冲突占掉 to_dict 的有界切片名额。
     resolution.conflicts = sorted(
-        resolution.conflicts, key=lambda c: c["capabilities"])
+        {(c["code"], c["capabilities"]): c
+         for c in resolution.conflicts}.values(),
+        key=lambda c: c["capabilities"])
 
     for cap in required_set:
         resolution.decisions.append(_resolve_one(

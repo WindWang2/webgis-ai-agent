@@ -34,6 +34,16 @@ function isFiniteBounds(b: BoundsWSEN): boolean {
   );
 }
 
+/** 数据范围允许退化（单点 / 零宽零高；spec-bounds 原样产出），仅要求有序。 */
+function isFiniteDataBounds(b: BoundsWSEN): boolean {
+  return (
+    b.length === 4 &&
+    b.every(Number.isFinite) &&
+    b[2] >= b[0] &&
+    b[3] >= b[1]
+  );
+}
+
 /**
  * 遮罩范围 → 纸张图框导出范围：以 Mercator 中心为不动点，把短边扩张到
  * 图框纵横比（width/height）。遮罩永远完整保留；aspectWH ≤ 0 或遮罩非法
@@ -89,7 +99,7 @@ export function boundsContained(
   data: BoundsWSEN | null | undefined,
   frame: BoundsWSEN | null | undefined,
 ): boolean {
-  if (!data || !frame || !isFiniteBounds(data) || !isFiniteBounds(frame)) return true;
+  if (!data || !frame || !isFiniteDataBounds(data) || !isFiniteBounds(frame)) return true;
   const eps = 1e-9;
   return (
     data[0] >= frame[0] - eps &&

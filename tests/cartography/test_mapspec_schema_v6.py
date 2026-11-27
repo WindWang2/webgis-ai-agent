@@ -323,3 +323,23 @@ class TestUnknownFieldsPolicy:
         assert any(d.path == "layers[1].id" for d in result.invalid_fields)
         # 索引错误不殃及相邻层
         assert not any(d.path == "layers[2].id" for d in result.invalid_fields)
+
+
+def test_unknown_field_walk_stops_at_disclosure_cap():
+    """unknown 披露收集必须有界：达到封顶后不得继续遍历全量键。"""
+    from app.lib.cartography import mapspec_schema as ms
+
+    class _CountingDict(dict):
+        def __init__(self, data):
+            super().__init__(data)
+            self.yielded = 0
+
+        def items(self):
+            for k, v in super().items():
+                self.yielded += 1
+                yield k, v
+
+    payload = _CountingDict({f"unknown_{i}": i for i in range(1000)})
+    out = []
+    ms._walk_model(ms.MapSpecDocument, payload, "", out)
+    assert payload.yielded <= ms.MAX_DISCLOSURES_PER_KIND + 2

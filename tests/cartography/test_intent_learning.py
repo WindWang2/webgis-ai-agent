@@ -154,6 +154,24 @@ def test_feedback_signal_decay(db):
     assert eff["positive"] == 0.0
 
 
+def test_feedback_scope_none_aggregates_across_scopes(db):
+    from app.models.intent_learning import CartoFeedbackSignal
+    now = datetime.now(timezone.utc)
+    db.add(CartoFeedbackSignal(
+        created_at=now, signal_type="reject", weight=2.0, decay_days=30.0,
+        target="recipe:scoped", session_id="s1", project_id="p1", payload={}))
+    db.add(CartoFeedbackSignal(
+        created_at=now, signal_type="reject", weight=3.0, decay_days=30.0,
+        target="recipe:scoped", payload={}))
+    db.commit()
+    # None = 不限定该维度 → 跨作用域聚合（而非只匹配 IS NULL 行）
+    aggregate = effective_signal_weight(db, target="recipe:scoped", now=now)
+    assert aggregate["negative"] == pytest.approx(5.0, abs=1e-3)
+    scoped = effective_signal_weight(
+        db, target="recipe:scoped", now=now, session_id="s1", project_id="p1")
+    assert scoped["negative"] == pytest.approx(2.0, abs=1e-3)
+
+
 def test_feedback_decay_factor_pure():
     assert signal_decay_factor(0.0, 30.0) == 1.0
     assert signal_decay_factor(30.0, 30.0) == 0.5

@@ -4,6 +4,8 @@ import {
   renderSvgScalebar,
   renderSvgLegend,
   renderSvgPrintLayout,
+  renderSvgFrameBorder,
+  renderSvgCropMarks,
 } from "./svg-marginalia";
 
 describe("SVG Marginalia Vector Renderer", () => {
@@ -84,5 +86,21 @@ describe("SVG Marginalia Vector Renderer", () => {
     expect(printLayoutSvg).not.toContain("<style>");
     expect(printLayoutSvg).toContain("&lt;style&gt;body{display:none}&lt;/style&gt;");
     expect(printLayoutSvg).toContain("100 &lt; &quot;km&quot;");
+  });
+
+  it("coerces numeric options so JS-side strings cannot inject attributes", () => {
+    const payload = `1" onload="alert(1)`;
+    const svgs = [
+      renderSvgFrameBorder({ width: payload as never, height: payload as never, margin: payload as never }),
+      renderSvgCropMarks({ width: payload as never, height: payload as never, bleedPx: payload as never }),
+      renderSvgNorthArrow({ width: payload as never, height: payload as never }),
+      renderSvgScalebar({ lengthPx: payload as never }),
+      renderSvgPrintLayout({ width: payload as never, height: payload as never }),
+    ];
+    for (const svg of svgs) {
+      expect(svg).not.toContain('onload="alert(1)"');
+      expect(svg).not.toContain('onload=&quot;alert(1)&quot;');
+      expect(svg).not.toContain('onload');
+    }
   });
 });

@@ -127,6 +127,13 @@ def test_retrieval_sensitive_excluded_by_default(db):
     assert len(r.retrieve_memories(db, _ctx(include_sensitive=True))) == 1
 
 
+def test_empty_subject_gets_no_partial_match_bonus():
+    """空 subject 行（历史/直写库）不得对任何查询 subject 白送部分匹配分。"""
+    bonus, reasons = r._subject_bonus("", _ctx(subjects=("成都市",)))
+    assert bonus == 0.0
+    assert reasons == []
+
+
 def test_retrieval_dataset_version_compatibility(db):
     s.record_memory(db, MemoryWriteRequest(
         kind=KIND_DATASET_SEMANTICS, scope=SCOPE_PROJECT, scope_id="proj-1",

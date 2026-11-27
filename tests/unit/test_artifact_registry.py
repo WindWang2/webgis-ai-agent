@@ -23,6 +23,7 @@ from app.services.artifact_registry import (
     A_SUPERSEDED,
     A_VALID,
     MAX_ARTIFACT_RECORDS,
+    MAX_RECORD_METADATA_KEYS,
     ArtifactGraph,
     collect_orphan_refs,
     get_artifact,
@@ -88,6 +89,20 @@ async def test_register_and_roundtrip(clean_session):
 
     listing = await list_artifacts(clean_session)
     assert [r.artifact_id for r in listing] == [ref]
+
+
+@pytest.mark.asyncio
+async def test_register_metadata_new_keys_survive_full_budget(clean_session):
+    """metadata 满 24 键时，本次写入的新证据（新键优先）不被截断丢弃。"""
+    ref = await _store_geojson(clean_session)
+    old_md = {f"old_{i}": i for i in range(MAX_RECORD_METADATA_KEYS)}
+    assert await register_artifact(clean_session, artifact_id=ref, metadata=old_md)
+    await register_artifact(
+        clean_session, artifact_id=ref, metadata={"fresh_evidence": "kept"}
+    )
+    loaded = await get_artifact(clean_session, ref)
+    assert loaded.metadata.get("fresh_evidence") == "kept"
+    assert len(loaded.metadata) <= MAX_RECORD_METADATA_KEYS
 
 
 @pytest.mark.asyncio
@@ -180,6 +195,61 @@ async def test_sweep_marks_expired_and_stale(clean_session):
     assert (await get_artifact(clean_session, ghost_ref)).status == A_EXPIRED
     assert (await get_artifact(clean_session, orphan_ref)).status == A_STALE
     assert (await get_artifact(clean_session, live_ref)).status == A_VALID
+
+
+@pytest.mark.asyncio
+async def test_mark_status_rejects_unknown_status(clean_session):
+    """账本状态是有限集合：自由串不入账（与 update_record_metadata 同纪律）。"""
+    from app.services.artifact_registry import mark_status
+
+    ref = await _store_geojson(clean_session)
+    await register_artifact(clean_session, artifact_id=ref)
+    assert await mark_status(clean_session, ref, "erased") is False
+    assert (await get_artifact(clean_session, ref)).status == A_VALID
+
+
+@pytest.mark.asyncio
+async def test_sweep_does_not_clobber_concurrent_revival(clean_session, monkeypatch):
+    """sweep 的探测前快照 bucket 不得覆盖持锁重读后的并发复活（→ valid）。"""
+    import app.services.artifact_registry as reg
+    from app.services.artifact_registry import ArtifactRecord
+
+    ref_a = "ref:geojson-sweep-race-revived"
+    ref_b = "ref:geojson-sweep-race-changed"
+    t0 = time.time() - 10
+    # 探测前快照：A 已 expired；B valid（制造 changed → 触发持锁回写）
+    seen = {
+        ref_a: ArtifactRecord(
+            artifact_id=ref_a, status=A_EXPIRED, created_at=t0, updated_at=t0
+        ),
+        ref_b: ArtifactRecord(
+            artifact_id=ref_b, status=A_VALID, created_at=t0, updated_at=t0
+        ),
+    }
+    # 持锁重读：探测→保存之间 register_artifact 复活 A（probe 命中 → valid）
+    fresh = {
+        ref_a: ArtifactRecord(
+            artifact_id=ref_a, status=A_VALID, created_at=t0, updated_at=t0 + 1
+        ),
+        ref_b: ArtifactRecord(
+            artifact_id=ref_b, status=A_VALID, created_at=t0, updated_at=t0
+        ),
+    }
+    calls = {"n": 0}
+    real_load = reg._load_records
+
+    async def fake_load(session_id, backend):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {a: ArtifactRecord.from_dict(r.to_dict()) for a, r in seen.items()}
+        if calls["n"] == 2:
+            return {a: ArtifactRecord.from_dict(r.to_dict()) for a, r in fresh.items()}
+        return await real_load(session_id, backend)
+
+    monkeypatch.setattr(reg, "_load_records", fake_load)
+    await sweep_statuses(clean_session, chapter={}, mapspec={})
+    loaded = await get_artifact(clean_session, ref_a)
+    assert loaded is not None and loaded.status == A_VALID
 
 
 @pytest.mark.asyncio

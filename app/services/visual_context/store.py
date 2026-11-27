@@ -94,7 +94,9 @@ async def load_evidence_index_strict(session_id: str) -> List[VisualEvidenceReco
     if not isinstance(items, list):
         return []
     out = []
-    for item in items[:256]:
+    # 不做条数截断：bound 证据永不淘汰，任何读取上限都会让较早证据
+    # 「查无此条」→ 台账误判已撤（V33）。
+    for item in items:
         r = VisualEvidenceRecord.from_dict(item)
         if r is not None:
             out.append(r)

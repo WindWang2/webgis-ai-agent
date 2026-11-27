@@ -183,6 +183,15 @@ class TestMetricsSemantics:
         assert ev.dimensions["wall_clock_ms"].status == NOT_EVALUATED
         assert ev.dimensions["wall_clock_ms"].value == 12.5
 
+    def test_out_of_vocabulary_dimension_is_not_dropped(self):
+        """外部 adapter 的词表外维度必须进 SpecEval（fail 即 spec 红）。"""
+        ev = self._eval(
+            [DimensionVerdict("science_custom", FAIL, detail="bad")],
+            declared=set())
+        assert "science_custom" in ev.dimensions
+        assert ev.dimensions["science_custom"].status == FAIL
+        assert not spec_ok(ev)
+
     def test_detail_failure_blocks_ok_even_all_green(self):
         ev = self._eval(
             [DimensionVerdict("goal_completion", PASS)], declared=set())

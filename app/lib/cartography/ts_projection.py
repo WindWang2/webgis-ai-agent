@@ -206,9 +206,6 @@ def _literal_values(annotation: Any) -> tuple[str, ...] | None:
         # v1.5（C11）：int Literal（如 bivariate.matrix 2|3）→ 数量字面量联合。
         if all(isinstance(v, int) and not isinstance(v, bool) for v in vals):
             return tuple(str(v) for v in vals)
-    args = get_args(annotation)
-    if args and all(isinstance(a, str) for a in args) and origin is not None and hasattr(origin, "__name__") and origin.__name__ == "Literal":
-        return tuple(f'"{a}"' for a in args)
     return None
 
 
@@ -241,6 +238,14 @@ def _ts_of(annotation: Any, owner: str, field: str, optional_mark: bool) -> str:
         if inner.startswith("["):
             return inner  # 元组 override 已含完整形状
         return f"{inner}[]"
+    if origin is not None and origin.__name__ in ("tuple", "Tuple"):
+        # 定长元组 → TS 元组类型（review P2：此前无 tuple 分支，元组注释
+        # 一路落到函数末尾的 unknown —— 如 MapSpecTemporalConfig.extent
+        # 的 [start, end) ISO instant 二元组，TS 侧定长契约静默丢失）。
+        if not args:
+            return "unknown[]"
+        return "[" + ", ".join(
+            _ts_of(a, owner, field, False) for a in args) + "]"
     if origin is not None and origin.__name__ == "dict":
         if args and len(args) == 2:
             return f"Record<string, {_ts_of(args[1], owner, field, False)}>"

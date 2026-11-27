@@ -227,6 +227,23 @@ describe('discoverLegendData — heatmap legend dedup & palette source', () => {
     expect(data.legendSpec?.type).toBe('graduated');
     expect(data.heatmapLegend?.paletteColors?.[0]).toBe('#428cd2');
   });
+
+  it('choropleth style carries the layer source so backend breaks/palette evidence is reachable', () => {
+    const source = {
+      type: 'geojson',
+      data: {},
+      metadata: { breaks: [0, 10, 20], palette: 'Blues' },
+    };
+    const choroLayer = {
+      id: 'choro-style', opacity: 1,
+      visible: true, type: 'vector', name: '分级设色',
+      style: { type: 'choropleth', field: 'value' },
+      source,
+    };
+    const data = discoverLegendData([choroLayer] as unknown as Layer[]);
+    expect(data.thematicLayer?.field).toBe('value');
+    expect((data.thematicLayer as { source?: unknown } | undefined)?.source).toBe(source);
+  });
 });
 
 // ── COLOR_PALETTES：模型库扩充后的前后端镜像 ─────────────────────────

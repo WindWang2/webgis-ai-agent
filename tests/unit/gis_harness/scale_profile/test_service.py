@@ -163,6 +163,27 @@ async def test_apply_pin_raw_override_honored(session):
         w["mode"] == "raw" for w in layer.get("representation", {}).get("windows", []))
 
 
+async def test_apply_raw_override_rewrites_stale_representation(session):
+    """全 raw 的二次 commit 必须重写 windows，不得残留旧 gen source 覆盖。"""
+    r1 = await apply_scale_representation(
+        session, "roads", mode="commit", operation_id="op-msp-gen")
+    assert r1["status"] == "committed", r1
+    spec = await mapspec_store_instance.get_mapspec(session)
+    layer = next(lyr for lyr in spec["layers"] if lyr["id"] == "roads")
+    assert any(w["mode"] != "raw" for w in layer["representation"]["windows"])
+
+    r2 = await apply_scale_representation(
+        session, "roads", mode="commit", operation_id="op-msp-raw2",
+        overrides=[{"kind": "pin_mode", "value": "raw"}])
+    assert r2["status"] == "committed", r2
+    assert r2["artifact_refs"] == {}
+    spec2 = await mapspec_store_instance.get_mapspec(session)
+    layer2 = next(lyr for lyr in spec2["layers"] if lyr["id"] == "roads")
+    windows = layer2["representation"]["windows"]
+    assert windows and all(w["mode"] == "raw" for w in windows)
+    assert all("source" not in w for w in windows)
+
+
 async def test_apply_preview_mode_does_not_commit(session):
     receipt = await apply_scale_representation(
         session, "roads", mode="preview", operation_id="op-msp-pv")

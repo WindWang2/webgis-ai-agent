@@ -261,6 +261,33 @@ class TestClaimLeaseMemGpu:
         )
         assert isinstance(epoch, int)
 
+    def test_advisory_oversell_reports_dimension_on_success(self, env):
+        """advisory 模式超卖不阻塞认领，但拒绝维度必须随成功返回 ——
+        否则超卖永不可观测（resource_rejections/oom_avoided 恒 0）。"""
+        store, factory = env
+        rid = store.create_run(
+            plan_snapshot=_plan_snapshot([
+                {"node_id": "n0", "category": "filter", "operation": "op",
+                 "inputs": [], "parameters": {},
+                 "estimate": {"rows": 10, "memory_mb": 500,
+                              "confidence": "high"}},
+            ]),
+            plan_fingerprint="fpv8-adv", owner_scope="u:abc",
+            resource_request={"min_mem_mb": 1},
+        )
+        ledger = ClusterLedger(
+            enforcing=False,
+            limits={"global": {"rows": None, "bytes": None, "units": None,
+                               "mem_mb": 1, "gpu": None}},
+            factory=factory,
+        )
+        epoch, reject = store.claim_lease(
+            rid, coordinator_id="c1", ttl_s=30.0,
+            ledger=ledger, return_detail=True,
+        )
+        assert epoch is not None
+        assert reject == "mem_mb"
+
     def test_finish_releases_mem_gpu_exactly(self, env):
         store, factory = env
         rid = store.create_run(

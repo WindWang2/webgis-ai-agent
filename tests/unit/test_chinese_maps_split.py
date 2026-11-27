@@ -170,7 +170,11 @@ async def test_with_fallback_error_dict_triggers_next_provider(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_with_fallback_all_fail_reports_first_detail(monkeypatch):
-    """全部失败时返回 no_key_msg 并带上第一个 provider 的失败详情。"""
+    """全部失败时返回诚实的「所有已配置服务商均失败」+ 第一个失败详情。
+
+    P3（http.py:205）：旧实现复用 no_key_msg 拼错误，默认文案会谎称未配 key，
+    该错误合成即本条发现所指的缺陷，故断言随之更新。
+    """
     from app.core.config import settings
     monkeypatch.setattr(settings, "AMAP_API_KEY", "fake")
     monkeypatch.setattr(settings, "BAIDU_MAP_AK", "")
@@ -180,7 +184,27 @@ async def test_with_fallback_all_fail_reports_first_detail(monkeypatch):
         return {"error": f"{p} down"}
 
     out = await with_fallback("amap", _call, no_key_msg="地图服务不可用")
-    assert out["error"].startswith("地图服务不可用（amap down")
+    assert out["error"].startswith("所有已配置的地图服务商均失败")
+    assert "amap down" in out["error"]
+    assert "地图服务不可用" not in out["error"]
+
+
+@pytest.mark.asyncio
+async def test_with_fallback_all_fail_does_not_claim_missing_key(monkeypatch):
+    """P3 http.py:205：只配了 tianditu 且其请求失败时，错误不得说「未配置 key」。"""
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "AMAP_API_KEY", "")
+    monkeypatch.setattr(settings, "BAIDU_MAP_AK", "")
+    monkeypatch.setattr(settings, "TIANDITU_TOKEN", "fake")
+
+    async def _call(p):
+        return {"error": "Tianditu 不支持城市 '某市'：无法解析为行政区代码"}
+
+    out = await with_fallback("amap", _call)  # 用默认 no_key_msg
+    assert "未配置任何地图 API Key" not in out["error"]
+    assert "均失败" in out["error"]
+    assert "tianditu" in out["error"]
+    assert "无法解析为行政区代码" in out["error"]
 
 
 # ── Issue #432: provider 总超时必须触发回退 ─────────────────────────────────
@@ -340,3 +364,66 @@ async def test_geocode_cn_business_error_dict_still_falls_back(monkeypatch):
     result = await geocode_cn("北京市海淀区", "", provider="amap")
     assert result["provider"] == "baidu"
     assert result["count"] == 1
+
+
+# ── P3: 在线回退路径的静默部分失败 / 畸形多边形 ─────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_child_districts_online_discloses_partial_failures(monkeypatch):
+    """P3 __init__.py:232 — gather(return_exceptions=True) 曾静默吞掉子区
+    请求的异常与 error dict，调用方只能看到缩水的 count。"""
+    from app.core.config import settings
+    from app.tools.chinese_maps import _AMAP, _child_districts_online
+
+    monkeypatch.setattr(settings, "AMAP_API_KEY", "fake")
+
+    async def fake_get(endpoint, params):
+        return {"districts": [{"name": "成都市", "districts": [
+            {"name": "锦江区", "level": "district"},
+            {"name": "武侯区", "level": "district"},
+            {"name": "成华区", "level": "district"},
+        ]}]}
+
+    async def fake_district(name, level="district", return_geometry="point"):
+        if name == "锦江区":
+            return {"type": "FeatureCollection", "features": [
+                {"type": "Feature", "geometry": {"type": "Point", "coordinates": [1.0, 2.0]},
+                 "properties": {"name": name}}]}
+        if name == "武侯区":
+            return {"error": "quota exceeded"}
+        raise RuntimeError("upstream parse failure")
+
+    monkeypatch.setattr(_AMAP, "_get", fake_get)
+    monkeypatch.setattr(_AMAP, "district", fake_district)
+
+    out = await _child_districts_online(
+        keywords="成都市", return_geometry="polygon", provider="amap")
+
+    assert out["count"] == 1
+    assert out["missing_count"] == 2
+    assert len(out["errors"]) == 2
+    assert any("武侯区" in e and "quota exceeded" in e for e in out["errors"])
+    assert any("成华区" in e and "upstream parse failure" in e for e in out["errors"])
+
+
+@pytest.mark.asyncio
+async def test_search_poi_polygon_rejects_malformed_points():
+    """P3 __init__.py:704 — 缺点位/非数值的坐标点必须在工具层干净拒绝，
+    而不是穿透到 provider 的 p[0]/p[1] 抛 IndexError/TypeError。"""
+    registry = ToolRegistry()
+    register_chinese_map_tools(registry)
+
+    truncated = await registry.dispatch(
+        "search_poi_polygon",
+        {"polygon": [[116.0, 39.0], [117.0, 39.0], [116.0]], "keyword": "咖啡"},
+    )
+    assert "error" in truncated
+    assert "坐标点" in truncated["error"]
+
+    non_numeric = await registry.dispatch(
+        "search_poi_polygon",
+        {"polygon": [[116.0, 39.0], [117.0, 39.0], ["oops", 39.0]], "keyword": "咖啡"},
+    )
+    assert "error" in non_numeric
+    assert "坐标点" in non_numeric["error"]

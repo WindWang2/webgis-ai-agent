@@ -89,6 +89,15 @@ def test_choose_classification_respects_explicit_request():
     assert choice.k == 6
 
 
+def test_choose_classification_records_unknown_explicit_method():
+    """显式 method 不在词表时必须落 rejected 留痕，不得静默丢弃。"""
+    stats = distribution_stats_from_values(_heavy_tail_values())
+    assert stats is not None
+    choice = choose_classification(stats, requested_method="not_a_method")
+    assert choice.source != "explicit"
+    assert any(r["method"] == "not_a_method" for r in choice.rejected)
+
+
 def test_choose_classification_clamps_k():
     stats = distribution_stats_from_values(_uniform_values())
     assert stats is not None

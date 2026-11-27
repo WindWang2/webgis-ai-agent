@@ -187,7 +187,12 @@ def evaluate_map_libre_expression(
     if op == "case":
         from app.services.mapspec_filter import evaluate_filter
         for index in range(1, len(expr) - 1, 2):
-            if evaluate_filter(expr[index], {"properties": props or {}}) is True:
+            try:
+                matched = evaluate_filter(expr[index], {"properties": props or {}})
+            except Exception as exc:  # noqa: BLE001 - fail-open：畸形条件按未命中
+                logger.debug("[mapspec_expr] case condition skipped: %s", exc)
+                continue
+            if matched is True:
                 return expr[index + 1]
         return expr[-1] if len(expr) > 1 else fallback
 

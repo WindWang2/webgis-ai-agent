@@ -154,9 +154,11 @@ class TurnEventEmitter:
         ))
 
     def task_error(self, task_id: str, error: str, error_class: Optional[str] = None) -> str:
-        payload = self._payload(task_id=task_id, error=error)
-        if error_class:
-            payload["error_class"] = error_class
+        # INV-7：错误事件必须携带 error_class（缺省诚实落 internal_error）。
+        payload = self._payload(
+            task_id=task_id, error=error,
+            error_class=error_class or "internal_error",
+        )
         return sse_event("task_error", payload)
 
     def task_cancelled(self, task_id: str) -> str:
@@ -224,13 +226,15 @@ class TurnEventEmitter:
         error_class: Optional[str] = None,
         recovery: Optional[dict] = None,
     ) -> str:
-        payload = self._payload(task_id=task_id, step_id=step_id, tool=tool, error=error)
+        payload = self._payload(
+            task_id=task_id, step_id=step_id, tool=tool, error=error,
+            # INV-7：错误事件必须携带 error_class（step 语境缺省 tool_error）。
+            error_class=error_class or "tool_error",
+        )
         if failure_class:
             payload["failure_class"] = failure_class
         if recovery_action:
             payload["recovery_action"] = recovery_action
-        if error_class:
-            payload["error_class"] = error_class
         if recovery:
             # GOAL 05：统一恢复裁决随事件（bounded diagnostic+decision，
             # 来自 TDS 单 seam —— 与 Pi 路径同源）。

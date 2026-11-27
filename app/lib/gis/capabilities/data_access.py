@@ -77,7 +77,11 @@ CAPABILITIES: List[CapabilityDescriptor] = [
                         "基数与空值政策、字段映射、聚合），全量键/基数/未匹配"
                         "诊断，durable 执行产出完整派生表/富集图层（GeoJSON/行集"
                         "+ DataObject 收据）。",
-            output_artifact_types=["stats_table"],
+            # durable 产物有两形：属性键关联保留左几何 → 富化 GeoJSON 图层
+            # （feature_collection），纯行集模式 → stats_table。只声明
+            # stats_table（几何族 table）会把富化图层误判成纯表，地图模型
+            # 路由拿不到要素层。
+            output_artifact_types=["stats_table", "feature_collection"],
             preferred_execution="local_first",
             deterministic=True,
             purpose_template="{subject} 数据关联",

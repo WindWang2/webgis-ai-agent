@@ -15,7 +15,7 @@ import hashlib
 import json
 import math
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Annotated, Any, Dict, List, Literal, Optional, Sequence, Union
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
@@ -531,7 +531,16 @@ def _eval_three_valued(node: Any, properties: Dict[str, Any]) -> Optional[bool]:
 
     if op in ("in", "not_in"):
         members = node.values
-        hit = any(val == m or (isinstance(val, (int, float)) and _to_number(m) == _to_number(val)) for m in members)
+        val_num = _to_number(val)
+        hit = any(
+            val == m
+            or (
+                val_num is not None
+                and _to_number(m) is not None
+                and val_num == _to_number(m)
+            )
+            for m in members
+        )
         if op == "in":
             return hit
         # F5/SQL 三值逻辑：x NOT IN (a, NULL) 永不为 TRUE —— 命中 → FALSE；
@@ -588,11 +597,23 @@ def evaluate_temporal(node: Any, properties: Dict[str, Any]) -> bool:
             return datetime.fromisoformat(str(s).replace("Z", "+00:00"))
         except ValueError as exc:
             raise PredicateError(f"invalid ISO-8601 datetime: {s!r}") from exc
+
+    def _as_utc(value: Any) -> datetime:
+        # 仓库约定：naive 时间戳一律按 UTC 解释（DB 存 naive-UTC）。naive 与
+        # aware（或 date 与 datetime）直接比较会抛 TypeError —— 本地时间过滤
+        # 会 500。两侧统一归一到 aware-UTC 后再比较。
+        if isinstance(value, datetime):
+            if value.tzinfo is None:
+                return value.replace(tzinfo=timezone.utc)
+            return value
+        return datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
+
+    tv = _as_utc(tv)
     if node.op == "before":
-        return tv < _pt(node.value)
+        return tv < _as_utc(_pt(node.value))
     if node.op == "after":
-        return tv > _pt(node.value)
-    return _pt(node.start) <= tv <= _pt(node.end)
+        return tv > _as_utc(_pt(node.value))
+    return _as_utc(_pt(node.start)) <= tv <= _as_utc(_pt(node.end))
 
 
 __all__ = [

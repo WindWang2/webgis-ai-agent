@@ -40,15 +40,6 @@ __all__ = [
 
 # ── 词表映射（descriptor 事实 → ActionKind；顺序即优先级）───────────────
 
-_MUTATION_NAME_PREFIXES = (
-    "webgis_layer_upsert", "webgis_layer_remove", "webgis_layout_set",
-    "webgis_view_set", "webgis_project_init", "webgis_apply_composition",
-    "webgis_checkpoint", "webgis_rollback", "webgis_plan_component_replace",
-    "update_layer_appearance", "display_layer", "remove_layer",
-    "reorder_layer", "alias_layer", "apply_layer_filter", "switch_base_layer",
-    "set_layer_status", "set_map_view", "finalize_display",
-    "apply_mutation", "set_map_layout",
-)
 _EXPORT_NAME_PREFIXES = ("export", "report", "generate_report")
 _OBSERVE_NAME_PREFIXES = (
     "webgis_validate", "webgis_runtime_validate", "webgis_cartography_status",

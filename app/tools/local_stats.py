@@ -6,7 +6,7 @@
 import logging
 from typing import List, Optional, Union
 
-from app.services.local_poi import gd_poi_catalog, query_gd_poi
+from app.services.local_poi import _parse_bbox, gd_poi_catalog, query_gd_poi
 from app.services.local_yearbook import (
     lookup_township_center,
     query_county_panel,
@@ -76,6 +76,8 @@ def register_local_stats_tools(registry: ToolRegistry):
         indicators: str = "",
         limit: Union[int, str] = 200,
     ) -> dict:
+        if dataset not in ("township", "county_panel"):
+            raise ValueError("dataset 必须是 'township' 或 'county_panel'")
         ind_list: Optional[List[str]] = (
             [s.strip() for s in indicators.split(",") if s.strip()] or None
         ) if indicators else None
@@ -194,8 +196,9 @@ def register_local_stats_tools(registry: ToolRegistry):
                         "extensions": "all",
                         "page": "1",
                     }
-                    if raw_bbox and isinstance(raw_bbox, (list, tuple)) and len(raw_bbox) == 4:
-                        minx, miny, maxx, maxy = raw_bbox
+                    parsed_bbox = _parse_bbox(raw_bbox)
+                    if parsed_bbox:
+                        minx, miny, maxx, maxy = parsed_bbox
                         g_minx, g_miny = wgs84_to_gcj02(minx, miny)
                         g_maxx, g_maxy = wgs84_to_gcj02(maxx, maxy)
                         params["polygon"] = f"{g_minx},{g_miny}|{g_maxx},{g_maxy}"

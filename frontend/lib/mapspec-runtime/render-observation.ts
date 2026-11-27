@@ -206,7 +206,21 @@ export function observeComponents(spec: MapSpec | null | undefined): ObservedCom
     out.push(c);
   };
   const hasType = (t: string) => resolved.some((c) => c.type === t);
+  // MapSpecChrome injects fallback north/scale when the spec has none — the
+  // observation must report what is actually on screen, so mirror the fallback
+  // (same rule, no second default table: absent from spec → chrome mounts it).
+  // 兜底项先占名额：resolved 满 32 时尾部 push 会被上限静默吞掉，已上屏的
+  // chrome 兜底就从观察里消失（少报）。
+  const fallbackDefs: ObservedComponent[] = [];
+  if (!hasType('north_arrow')) {
+    fallbackDefs.push({ id: '__autofill_north_arrow', type: 'north_arrow', enabled: true, mounted: true, anchor: 'top-right', floating: false, collapsed: false, fallback: true });
+  }
+  if (!hasType('scale_bar')) {
+    fallbackDefs.push({ id: '__autofill_scale_bar', type: 'scale_bar', enabled: true, mounted: true, anchor: 'bottom-right', floating: false, collapsed: false, fallback: true });
+  }
+  const resolvedBudget = Math.max(0, MAX_OBSERVED_COMPONENTS - fallbackDefs.length);
   for (const c of resolved) {
+    if (out.length >= resolvedBudget) break;
     push({
       id: c.id.slice(0, 64),
       type: c.type,
@@ -227,15 +241,7 @@ export function observeComponents(spec: MapSpec | null | undefined): ObservedCom
         : {}),
     });
   }
-  // MapSpecChrome injects fallback north/scale when the spec has none — the
-  // observation must report what is actually on screen, so mirror the fallback
-  // (same rule, no second default table: absent from spec → chrome mounts it).
-  if (!hasType('north_arrow')) {
-    push({ id: '__autofill_north_arrow', type: 'north_arrow', enabled: true, mounted: true, anchor: 'top-right', floating: false, collapsed: false, fallback: true });
-  }
-  if (!hasType('scale_bar')) {
-    push({ id: '__autofill_scale_bar', type: 'scale_bar', enabled: true, mounted: true, anchor: 'bottom-right', floating: false, collapsed: false, fallback: true });
-  }
+  for (const fallback of fallbackDefs) push(fallback);
   return out;
 }
 
@@ -367,7 +373,8 @@ export function collectRenderObservation({
       : undefined,
   });
   // 显式构造：既有证据字段逐项定型后落位（spread 仅携带额外证据字段，
-  // 随后不被覆盖）。
+  // 随后不被覆盖）。帧观察只取一次快照（判定与携带数据同源）。
+  const frameRows = latestFrameObservationRows();
   return {
     ...base,
     mapspec_fingerprint: mapspecFingerprint,
@@ -397,9 +404,9 @@ export function collectRenderObservation({
       ...(e.reason ? { reason: e.reason } : {}),
     })),
     // G25 逐画幅真实观察（网格运行时发布过才携带；缺席 = 未上报语义）。
-    ...(latestFrameObservationRows()
+    ...(frameRows
       ? {
-          frames: latestFrameObservationRows()!.slice(-16).map((r) => ({
+          frames: frameRows.slice(-16).map((r) => ({
             frame_id: r.frame_id,
             mode: r.mode,
             ...(typeof r.mapspec_revision === 'number' ? { mapspec_revision: r.mapspec_revision } : {}),

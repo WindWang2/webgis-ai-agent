@@ -50,6 +50,51 @@ class TestUploadTools:
         assert result["count"] == 1
         assert result["uploads"][0]["original_name"] == "test.geojson"
 
+    def _run_list(self, registry, records, session_id="sess-1"):
+        """Drive list_uploaded_data against a mocked db_session returning
+        `records`; caller supplies the runtime-verified session via context."""
+        mock_db = MagicMock()
+        mock_db.query.return_value.order_by.return_value.filter.return_value = \
+            mock_db.query.return_value.order_by.return_value
+        mock_db.query.return_value.order_by.return_value.limit.return_value.all.return_value = records
+        from app.lib.runtime.context import bind_runtime_context
+        with patch("app.tools.upload_tools.db_session") as mock_ctx, \
+                bind_runtime_context(session_id=session_id):
+            mock_ctx.return_value.__enter__ = MagicMock(return_value=mock_db)
+            mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            register_upload_tools(registry)
+            return registry._tools["list_uploaded_data"](session_id=session_id)
+
+    @staticmethod
+    def _mock_record(i):
+        r = MagicMock()
+        r.id = i
+        r.original_name = f"file-{i}.geojson"
+        r.file_type = "vector"
+        r.format = "geojson"
+        r.crs = "EPSG:4326"
+        r.geometry_type = "Point"
+        r.feature_count = 1
+        r.bbox = [0, 0, 1, 1]
+        r.file_size = 1024
+        return r
+
+    def test_list_uploaded_data_flags_truncation_beyond_limit(self, registry):
+        """P3 api-contract：会话有 51+ 条上传时必须回 truncated=True 且只列 50 条，
+        使 LLM 能区分「正好 50」与「还有更多」（修复前静默截断无标志）。"""
+        result = self._run_list(registry, [self._mock_record(i) for i in range(51)])
+        assert result["success"] is True
+        assert result["count"] == 50
+        assert len(result["uploads"]) == 50
+        assert result["truncated"] is True
+
+    def test_list_uploaded_data_not_truncated_at_exactly_limit(self, registry):
+        """P3 api-contract：正好 50 条时 truncated 必须为 False，不能误报截断。"""
+        result = self._run_list(registry, [self._mock_record(i) for i in range(50)])
+        assert result["success"] is True
+        assert result["count"] == 50
+        assert result["truncated"] is False
+
     @pytest.mark.asyncio
     async def test_get_upload_info_not_found(self, registry):
         """通过 dispatch 调用以走完标准错误包装契约（V3.x "Exception As Thought"）。"""

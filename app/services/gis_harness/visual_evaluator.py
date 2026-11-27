@@ -122,6 +122,39 @@ def _sanitize_finding(raw: Any) -> Optional[UnifiedFinding]:
 _EVALUATION_SLOTS = threading.BoundedSemaphore(2)
 
 
+async def _await_bounded(awaitable: Any) -> Any:
+    """有界等待（30s）—— 评估是软披露面，不得无限挂住调用方。"""
+    return await asyncio.wait_for(awaitable, timeout=30.0)
+
+
+def _resolve_awaitable(awaitable: Any) -> Any:
+    """取 awaitable 的结果 —— 调用方可能已在运行中的事件循环内。
+
+    ``asyncio.run`` 在活动循环内抛 RuntimeError（旧行为被 :143 宽 except
+    吞掉 → 异步评估器静默失效、恒返回 []）。无活动循环时直接 run；有活动
+    循环时开一次性线程跑独立 loop，结果/异常原样回传（降级仍由调用方
+    的 except 统一处理）。
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(_await_bounded(awaitable))
+    box: Dict[str, Any] = {}
+
+    def _runner() -> None:
+        try:
+            box["value"] = asyncio.run(_await_bounded(awaitable))
+        except BaseException as exc:  # noqa: BLE001 — 回传调用方统一降级
+            box["error"] = exc
+
+    t = threading.Thread(target=_runner, daemon=True)
+    t.start()
+    t.join()
+    if "error" in box:
+        raise box["error"]
+    return box.get("value")
+
+
 def run_visual_evaluation(
     evaluator: Optional[Callable[..., Any]],
     snapshot: Dict[str, Any],
@@ -131,15 +164,14 @@ def run_visual_evaluation(
     ``snapshot`` 由调用方组装（渲染快照引用/字节、deterministic evidence、
     scene oracle 摘要）——本函数不读取任何会话状态、不触碰 MapSpec。
     evaluator 为 None（未配置）或抛错 → 空列表（deterministic 层不受影响）。
+    返回 awaitable 的评估器（异步生产调用方在活动循环内调用）同样生效。
     """
     if evaluator is None or not _EVALUATION_SLOTS.acquire(blocking=False):
         return []
     try:
         raw = evaluator(snapshot)
         if inspect.isawaitable(raw):
-            async def resolve() -> Any:
-                return await asyncio.wait_for(raw, timeout=30.0)
-            raw = asyncio.run(resolve())
+            raw = _resolve_awaitable(raw)
     except Exception:  # noqa: BLE001 — 评估失败 = 无视觉发现（诚实降级）
         logger.warning("[VisualEvaluator] evaluation failed", exc_info=True)
         return []

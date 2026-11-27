@@ -9,12 +9,13 @@ import time
 import uuid
 
 import pytest
+from pydantic import ValidationError
 
 from app.evaluation.fixtures import od_edges, od_edges_50k
 from app.services.session_data import session_data_manager
 from app.tools import init_tools
 from app.tools.registry import ToolRegistry
-from app.tools.flow_tools import OD_FLOW_MAX_EDGES, _aggregate_rows
+from app.tools.flow_tools import OD_FLOW_MAX_EDGES, ODFlowEdgesArgs, _aggregate_rows
 
 
 @pytest.fixture
@@ -333,3 +334,32 @@ async def test_legacy_origin_aggregation_returns_node_migration_error(registry, 
     )
     assert result["success"] is False
     assert "节点" in result["correction_hint"]
+
+
+# ── declared paging bounds are enforced by the validating args model ────────
+
+
+def test_od_flow_edges_args_model_enforces_declared_paging_bounds():
+    """parameters declares limit∈[1,200]/offset≥0, but dispatch validates via
+    this args model — an unconstrained int lets out-of-range paging reach
+    query_flow_product instead of failing as a self-healing validation error."""
+    for bad in (0, -5, 201, 10_000):
+        with pytest.raises(ValidationError):
+            ODFlowEdgesArgs(limit=bad)
+    with pytest.raises(ValidationError):
+        ODFlowEdgesArgs(offset=-1)
+    # Declared bounds themselves stay valid.
+    assert ODFlowEdgesArgs(limit=1).limit == 1
+    assert ODFlowEdgesArgs(limit=200).limit == 200
+    assert ODFlowEdgesArgs(offset=0).offset == 0
+
+
+async def test_od_flow_edges_out_of_range_limit_is_a_validation_error(registry):
+    over = await registry.dispatch(
+        "od_flow_edges", {"limit": 5000}, session_id="flow-bounds-probe",
+    )
+    assert over.get("code") == "VALIDATION_ERROR"
+    under = await registry.dispatch(
+        "od_flow_edges", {"offset": -1}, session_id="flow-bounds-probe",
+    )
+    assert under.get("code") == "VALIDATION_ERROR"

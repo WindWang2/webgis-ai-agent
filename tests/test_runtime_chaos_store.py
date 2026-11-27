@@ -296,3 +296,75 @@ async def test_f27_first_wins_survives_injected_suspension_point():
     assert sum(results) == 1
     events = await store.get_map_action_events("s1")
     assert [e["action_id"] for e in events] == ["ma-dup"]
+
+
+# ── P1: control-ref WATCH conflict must retry, not degrade to a sentinel ────
+# store() 的 control-ref 写路径（session_control_budget.prepare_redis_write 的
+# WATCH）与并发 plan/checkpoint 写竞争时，服务端中止本次 EXEC 并抛 WatchError。
+# WatchError 是 RedisError 的子类：旧实现让它落到 RedisError 分支，被当成 Redis
+# 故障 → store() 返回 ref:redis-unavailable-* 伪 ref，plan/checkpoint 写入静默
+# 丢失且不重试。现在必须重读快照后重试，用尽次数才降级。
+
+
+def _racing_control_writes(monkeypatch, fail_first: int) -> dict:
+    """让前 ``fail_first`` 次 prepare_redis_write 之后，有一个并发 control-ref
+    写改动被 WATCH 的 refs_order —— 服务端随即中止本次事务。
+
+    fakeredis 的 WATCH/EXEC 语义是忠实的（被 WATCH 的 key 在 EXEC 前被改写 →
+    EXEC 返回 nil → redis-py 抛 WatchError），所以这里注入的是真实竞态而非
+    mock 异常。返回 attempt 计数器。
+    """
+    from app.services import session_control_budget as budget
+
+    original = budget.prepare_redis_write
+    attempts = {"n": 0}
+
+    async def _racing_prepare(pipe, store, session_id, ref_id, data, payload_json):
+        victims, aliases = await original(
+            pipe, store, session_id, ref_id, data, payload_json
+        )
+        attempts["n"] += 1
+        if attempts["n"] <= fail_first:
+            # WATCH 之后 pipeline 处于 immediate 模式：这条 zadd 立即执行，
+            # 等价于并发写落在我们的 WATCH 与 EXEC 之间。
+            await pipe.zadd(
+                store._refs_order_key(session_id),
+                {f"ref:plan-concurrent-{attempts['n']}": float(attempts["n"])},
+            )
+        return victims, aliases
+
+    monkeypatch.setattr(budget, "prepare_redis_write", _racing_prepare)
+    return attempts
+
+
+@pytest.mark.asyncio
+async def test_p1_store_control_ref_retries_on_watch_error(monkeypatch):
+    """P1：WATCH 冲突必须重试到提交，而不是返回 ref:redis-unavailable-*。
+
+    未修复时 WatchError 落到 RedisError 分支 → 伪 ref + 载荷从未落库。
+    """
+    store = _redis_store()
+    attempts = _racing_control_writes(monkeypatch, fail_first=2)
+
+    ref_id = await store.store("s1", {"revision": 1}, prefix="checkpoint")
+
+    assert not ref_id.startswith("ref:redis-unavailable-"), (
+        "WATCH 冲突被当成 Redis 故障降级，plan/checkpoint 写入丢失"
+    )
+    assert attempts["n"] == 3, f"未观察到 WATCH 冲突重试，attempts={attempts['n']}"
+    assert await store.get("s1", ref_id) == {"revision": 1}
+
+
+@pytest.mark.asyncio
+async def test_p1_store_control_ref_watch_error_gives_up_bounded(monkeypatch):
+    """P1：持续冲突必须有重试上限 —— 放弃后降级返回伪 ref，绝不无限循环。"""
+    store = _redis_store()
+    attempts = _racing_control_writes(monkeypatch, fail_first=10_000)
+
+    ref_id = await asyncio.wait_for(
+        store.store("s1", {"revision": 1}, prefix="plan"), timeout=5.0
+    )
+
+    assert ref_id.startswith("ref:redis-unavailable-")
+    assert attempts["n"] == 3, f"重试次数无上限（可能死循环），attempts={attempts['n']}"
+    assert await store.get("s1", ref_id) is None

@@ -33,6 +33,12 @@ describe('mergeSceneRotary', () => {
     expect(merged!.terrain).toMatchObject({ source: 'dem-src-1', exaggeration: 2 });
   });
 
+  it('mode-only rotary still backfills a resolved terrain source (不 422)', () => {
+    const merged = mergeSceneRotary({ mode: '2d' }, null, 'dem-src-1');
+    expect(merged!.mode).toBe('2d');
+    expect(merged!.terrain).toEqual({ source: 'dem-src-1' });
+  });
+
   it('no terrain anywhere and no exaggeration → no terrain key', () => {
     const merged = mergeSceneRotary({ mode: '3d' }, null, null);
     expect(merged!.terrain).toBeUndefined();

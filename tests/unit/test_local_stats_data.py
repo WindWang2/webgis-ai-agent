@@ -206,6 +206,27 @@ async def test_yearbook_ingest_links_adcode(stats_env):
     assert {r["township"] for r in jt["rows"]} == {"云合镇", "又新镇"}
 
 
+def test_yearbook_merged_header_keeps_column_alignment():
+    """主表头为空的合并单元格列不得被踢出 cols，否则其后数据列整体前移。
+
+    双行表头中第 3 列主表头为空、子表头「乙指标」无 '#' 前缀。旧实现跳过
+    该列后，数据 [1, 2, 3] 错位成 甲指标=1、丙指标=2，真正的丙指标值 3 丢失。
+    """
+    from app.services.local_yearbook import _merged_headers, _sheet_rows
+
+    raw = pd.DataFrame([
+        ["名称", "甲指标", None, "丙指标"],
+        [None, None, "乙指标", None],
+        ["四川省某镇", 1, 2, 3],
+    ])
+    assert len(_merged_headers(raw, 0)) == 3  # 每列占位，不因空主表头被剔除
+    rows = _sheet_rows(raw, 2024, "", None)
+    ind = json.loads(rows[0][7])
+    assert ind["甲指标"] == 1
+    assert ind["乙指标"] == 2
+    assert ind["丙指标"] == 3  # 旧实现为 2（整体前移）
+
+
 @pytest.mark.asyncio
 async def test_county_panel_roundtrip(stats_env):
     _, panel, _ = _ingest_all()
@@ -503,6 +524,27 @@ async def test_poi_rerun_after_interrupt_is_idempotent(stats_env):
     ]
 
 
+@pytest.mark.asyncio
+async def test_poi_catalog_tolerates_torn_meta(stats_env):
+    """meta.json 撕裂/损坏时目录查询不得整体抛错（与 ingest 侧容错对称）。
+
+    旧实现直接 json.loads 无兜底：撕裂的 meta 让 gd_poi_catalog 抛
+    JSONDecodeError，连带 get_local_stats_catalog 整个工具失败。
+    """
+    from app.services.local_poi import _meta_path, gd_poi_catalog, ingest_gd_poi
+
+    ingest_gd_poi()
+    good = gd_poi_catalog()
+    assert good["available"] is True
+    assert good["total_rows"] == 4
+
+    _meta_path().write_text('{"provinces": {"5100', encoding="utf-8")
+    torn = gd_poi_catalog()
+    assert torn["available"] is True  # 仍可用，仅省份明细降级
+    assert "provinces" not in torn
+    assert "total_rows" not in torn
+
+
 # ── 工具注册与调度 ────────────────────────────────────────────────────────
 
 
@@ -524,6 +566,20 @@ async def test_local_stats_tools_registered(stats_env):
     assert res["count"] == 1
     res = await reg.dispatch("get_township_center", {"name": "唐昌镇"})
     assert res["adcode"] == "510124"
+
+
+@pytest.mark.asyncio
+async def test_query_local_yearbook_rejects_unknown_dataset(stats_env, monkeypatch):
+    from app.tools import local_stats
+    from app.tools.registry import ToolRegistry
+
+    monkeypatch.setattr(local_stats, "query_township", lambda *args, **kwargs: {"count": 1})
+    reg = ToolRegistry()
+    local_stats.register_local_stats_tools(reg)
+
+    res = await reg.dispatch("query_local_yearbook", {"dataset": "invalid", "name": "云合镇"})
+    assert res["code"] == "VALIDATION_ERROR"
+    assert "dataset" in res["message"]
 
 
 @pytest.mark.asyncio
@@ -603,6 +659,48 @@ async def test_query_local_poi_accepts_bare_comma_bbox(stats_env):
     })
     assert res["count"] == 1
     assert res["features"][0]["properties"]["name"].startswith("海底捞")
+
+
+@pytest.mark.asyncio
+async def test_poi_online_fallback_preserves_string_bbox(stats_env, monkeypatch):
+    from app.tools import local_stats
+    from app.tools.registry import ToolRegistry
+
+    monkeypatch.setattr(local_stats, "query_gd_poi", lambda *args, **kwargs: {
+        "error": "本地 POI 库未生成（gd_pois.gpkg 缺失）",
+    })
+    monkeypatch.setattr(settings, "AMAP_API_KEY", "test-key")
+    monkeypatch.setattr("app.core.egress.assert_egress_allowed", lambda *args, **kwargs: None)
+    captured = {}
+
+    class Response:
+        status_code = 200
+
+        def json(self):
+            return {"pois": [{
+                "name": "窗口内学校",
+                "location": _gcj_loc(104.05, 30.65),
+                "type": "科教文化服务;学校;小学",
+                "adname": "锦江区",
+                "cityname": "成都市",
+            }]}
+
+    def fake_get(endpoint, params, timeout):
+        captured.update(endpoint=endpoint, params=params)
+        return Response()
+
+    monkeypatch.setattr("httpx.get", fake_get)
+    reg = ToolRegistry()
+    local_stats.register_local_stats_tools(reg)
+
+    res = await reg.dispatch("query_local_poi", {
+        "bbox": "104.0,30.60,104.10,30.70", "name_like": "小学",
+    })
+    assert captured["endpoint"].endswith("/place/polygon")
+    assert "polygon" in captured["params"]
+    assert "city" not in captured["params"]
+    assert res["source"] == "amap_online_fallback"
+    assert res["count"] == 1
 
 
 @pytest.mark.asyncio

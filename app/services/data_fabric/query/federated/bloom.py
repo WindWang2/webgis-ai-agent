@@ -69,11 +69,6 @@ def canonical_variants(v: Any) -> List[bytes]:
     return variants
 
 
-def _canonical_join_key(v: Any) -> bytes:
-    """单一主形态（构建位图用；探测侧用 canonical_variants 全覆盖）。"""
-    return canonical_variants(v)[0]
-
-
 class BloomFilter:
     """有界确定性 Bloom（sha256 双哈希派生 k 位）。"""
 

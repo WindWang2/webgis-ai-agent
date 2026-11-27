@@ -107,7 +107,7 @@ def run_mission_scenario(scenario: MissionScenario) -> CaseResult:
         "mission_frontier_correct": None,
     }
     try:
-        _execute_scenario(scenario, result, evidence, failures, metrics)
+        _execute_scenario(scenario, evidence, failures, metrics)
     except Exception as exc:  # noqa: BLE001 — fail-closed：场景崩溃即失败
         failures.append(f"driver error: {type(exc).__name__}: {exc}")
     result.metrics = metrics
@@ -135,7 +135,6 @@ def run_mission_scenario(scenario: MissionScenario) -> CaseResult:
 
 def _execute_scenario(
     scenario: MissionScenario,
-    result: CaseResult,
     evidence: Dict[str, Any],
     failures: List[str],
     metrics: Dict[str, Any],
@@ -151,7 +150,6 @@ def _execute_scenario(
     org_id = "bench-org"
     worker = _WORKER_A
     mission_id = ""
-    swarm_ids: Dict[str, str] = {}
 
     with hermetic_mission_runtime() as (runtime, clock):
         for idx, step in enumerate(scenario.steps):
@@ -213,8 +211,7 @@ def _execute_scenario(
 
             elif isinstance(step, FaultStep):
                 _execute_fault(
-                    runtime, clock, scenario, step, mission_id, worker,
-                    org_id, idx, failures,
+                    runtime, step, mission_id, worker, org_id, idx, failures,
                 )
                 step_note["fault"] = step.fault
 
@@ -264,7 +261,6 @@ def _execute_scenario(
                     mission_id, org_id=org_id, goal_slice=step.run_label,
                     tasks=payload,
                 )
-                swarm_ids[step.run_label] = run.swarm_run_id
                 step_note["swarm_run_id"] = run.swarm_run_id
 
             elif isinstance(step, CompleteStep):
@@ -371,9 +367,8 @@ def _execute_scenario(
 
 
 def _execute_fault(
-    runtime, clock, scenario: MissionScenario, step: FaultStep,
-    mission_id: str, worker: str, org_id: str, idx: int,
-    failures: List[str],
+    runtime, step: FaultStep, mission_id: str, worker: str, org_id: str,
+    idx: int, failures: List[str],
 ) -> None:
     """签名式故障注入（无 sleep；走真实分类/CAS 面）。"""
     from app.services.gis_harness.failure_taxonomy import classify_harness_failure

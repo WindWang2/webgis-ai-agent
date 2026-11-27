@@ -135,6 +135,14 @@ export function GoalSatisfactionCard({ view }: GoalSatisfactionCardProps) {
               )}
             </div>
           ))}
+          {view.requirements.length > rows.length && (
+            <div
+              className="text-meta text-ink-muted"
+              data-testid="goal-requirements-more"
+            >
+              …+{view.requirements.length - rows.length}
+            </div>
+          )}
         </div>
       )}
 

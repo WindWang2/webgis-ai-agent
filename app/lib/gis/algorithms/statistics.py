@@ -215,7 +215,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             cpu_cost="medium", memory_cost="low", io_cost="low",
             preferred_execution_policy="THREAD", priority=10,
             algorithm_family="spatial_autocorrelation",
-            method_references=["ord_getis1995"],
+            method_references=["getis_ord1992"],
             assumptions=[
                 "G=Σ_{i≠j} w_ij·x_i·x_j / Σ_{i≠j} x_i·x_j，二值距离阈值权重",
                 "值必须非负（计数/强度语义）；负值拒绝",
@@ -1155,8 +1155,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "连通分量是无向近似：有向 kNN 的互邻关系按无向边处理",
             ],
             crs_class="PROJECTED_REQUIRED",
-            scientific_preconditions=["numeric_field_required",
-                                      "min_numeric_samples:3"],
+            scientific_preconditions=["min_numeric_samples:3"],
             uncertainty_outputs=[],
             random_seed_policy="deterministic",
             numerical_tolerance="计数类输出为整数精确；稀疏度为精确比值",

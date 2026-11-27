@@ -95,6 +95,16 @@ class TestReceiptLevelReplay:
             log = await store.get_event_log("s")
             assert log and log[0]["event"] == "tool_executed"
 
+    @pytest.mark.asyncio
+    async def test_memory_store_event_log_is_session_scoped(self):
+        """同一沙箱第二个 session 的事件不得串味进 get_event_log(session_id)。"""
+        with _dispatch_sandbox() as sandbox:
+            store = sandbox.memory_store
+            await store.append_event("s1", "evt", {"x": 1})
+            await store.append_event("s2", "evt", {"x": 2})
+            s1_log = await store.get_event_log("s1")
+            assert [e["data"]["x"] for e in s1_log] == [1]
+
 
 class TestReceiptBackedScenario:
     @pytest.mark.asyncio

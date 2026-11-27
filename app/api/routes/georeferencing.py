@@ -189,7 +189,7 @@ async def create_georef_plan(
     if body.session_id and body.session_id != session_id:
         raise HTTPException(
             status_code=422,
-            detail={"code": GeorefErrorCode.INVALID_GCP_COORDS.value, "message": "Body session_id disagrees with query session_id."},
+            detail={"code": "SESSION_ID_MISMATCH", "message": "Body session_id disagrees with query session_id."},
         )
     try:
         plan = await asyncio.to_thread(

@@ -193,7 +193,10 @@ async def list_proposals(
 ) -> ProposalListResponse:
     """有界提案清单（刷新页面后恢复候选/进度的入口）。"""
     await _auth_project(db, project_id, user)
-    items = await _svc().list_proposals(project_id=project_id, owner_id=_user_id(user))
+    try:
+        items = await _svc().list_proposals(project_id=project_id, owner_id=_user_id(user))
+    except RefreshError as exc:
+        raise _http_error(exc) from exc
     return ProposalListResponse(project_id=project_id, count=len(items), items=items)
 
 

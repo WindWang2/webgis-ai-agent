@@ -18,6 +18,9 @@ from typing import Any, Optional
 
 from app.tools.registry import ToolRegistry, tool
 
+#: 内联数组规模闸（与 rs_cube_tools._TOOL_ARRAY_MAX_VALUES 同口径）。
+_TOOL_ARRAY_MAX_VALUES = 4_000_000
+
 
 def _as_array(x: Any, name: str):
     import numpy as np
@@ -25,9 +28,20 @@ def _as_array(x: Any, name: str):
     if x is None:
         raise ValueError(f"{name} 不能为空")
     try:
-        return np.asarray(x, dtype=float)
+        arr = np.asarray(x, dtype=float)
     except (TypeError, ValueError) as e:
         raise ValueError(f"{name} 无法解析为数值数组: {e}") from e
+    if arr.size > _TOOL_ARRAY_MAX_VALUES:
+        from app.lib.gis.scientific_errors import ResourceScaleMismatch
+
+        raise ResourceScaleMismatch(
+            f"{name} 元素数 {arr.size} 超过内联数组工具上界 "
+            f"{_TOOL_ARRAY_MAX_VALUES}",
+            estimated=f"{arr.size} values (~{arr.size * 8 / 1e6:.1f} MB)",
+            limit=f"≤{_TOOL_ARRAY_MAX_VALUES} values",
+            correction_hint="完整栅格走 artifact/ref 通道（refs-only 纪律）",
+        )
+    return arr
 
 
 def _feature_summary(arr, quantiles=(0.05, 0.5, 0.95)) -> dict:

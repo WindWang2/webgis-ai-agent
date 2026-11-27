@@ -50,7 +50,14 @@ def plan_scene_repairs(
     if not isinstance(scene, dict):
         return intents
 
-    codes = {f.get("code") for f in findings if isinstance(f, dict)}
+    # 红线：只消费 blocking finding。warning/info 是披露信号，不自动修复 ——
+    # SCENE_PITCH_EXTREME 同时有 blocking（pitch>85 或 <0）与 warning
+    # （60<pitch<=85）两种 severity，只按 code 不过滤 severity 会把合法相机
+    # 静默钳到 55。
+    codes = {
+        f.get("code") for f in findings
+        if isinstance(f, dict) and f.get("severity") == "blocking"
+    }
 
     if "SCENE_PITCH_EXTREME" in codes:
         intents.append(SetViewIntent(pitch=_REPAIR_PITCH))

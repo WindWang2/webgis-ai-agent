@@ -17,9 +17,15 @@ findings），零额外计算、零 I/O。
 """
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 from app.lib.runtime.gis_trace import Stage, get_gis_trace_registry
+
+#: 链尚未惰性创建时的首发射窗口：建链与去重须在同一串行区间内，
+#: 否则双线程都走 registry.record 会重复落账（record_once 只覆盖
+#: 链已存在的窗口）。
+_once_creation_lock = threading.Lock()
 
 
 def _current_turn_id() -> str:
@@ -63,9 +69,14 @@ def emit_chain_once(stage: Stage, **payload: Any) -> bool:
     try:
         registry = get_gis_trace_registry()
         chain = registry.get(turn_id)
-        if chain is not None and chain.first(stage) is not None:
-            return False
-        return registry.record(turn_id, stage, **payload)
+        if chain is not None:
+            return chain.record_once(stage, **payload) is not None
+        # 惰性建链窗口串行化：并发首发射只能有一条通过去重检查。
+        with _once_creation_lock:
+            chain = registry.get(turn_id)
+            if chain is None:
+                return registry.record(turn_id, stage, **payload)
+            return chain.record_once(stage, **payload) is not None
     except Exception:  # noqa: BLE001
         return False
 

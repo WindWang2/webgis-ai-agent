@@ -857,7 +857,7 @@ async function installStubs(page) {
       return route.fulfill({ status: 200, contentType: 'image/png', body: BLANK_TILE });
     }
 
-    if (/\.pbf(\?|$)/i.test(url) || /\/tiles?\//i.test(url) && !url.startsWith(BASE_URL)) {
+    if ((/\.pbf(\?|$)/i.test(url) || /\/tiles?\//i.test(url)) && !url.startsWith(BASE_URL)) {
       return route.fulfill({ status: 204, body: '' });
     }
 
@@ -1043,11 +1043,23 @@ async function capture() {
           if (surface.button) await clickTopBarButton(page, surface.button);
           if (surface.opsView) {
             const viewBtn = page.locator(`[data-testid="ops-view-${surface.opsView}"]`).first();
-            if (await viewBtn.count()) await viewBtn.click({ timeout: 5000 }).catch(() => {});
+            if (await viewBtn.count()) {
+              await viewBtn.click({ timeout: 5000 }).catch((err) => {
+                failures.push(`${vp.name}/${theme}/${surface.name}: ops view "${surface.opsView}" click failed: ${err.message}`);
+              });
+            } else {
+              failures.push(`${vp.name}/${theme}/${surface.name}: ops view "${surface.opsView}" not found`);
+            }
           }
           if (surface.opsWallboard) {
             const enter = page.locator('[data-testid="ops-wallboard-enter"]').first();
-            if (await enter.count()) await enter.click({ timeout: 5000 }).catch(() => {});
+            if (await enter.count()) {
+              await enter.click({ timeout: 5000 }).catch((err) => {
+                failures.push(`${vp.name}/${theme}/${surface.name}: ops wallboard enter click failed: ${err.message}`);
+              });
+            } else {
+              failures.push(`${vp.name}/${theme}/${surface.name}: ops wallboard enter not found`);
+            }
           }
           if (surface.clickSubTab) {
             const sub = page

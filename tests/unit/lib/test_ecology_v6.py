@@ -137,6 +137,41 @@ def test_landscape_patches_and_edge_density():
     assert rows[2.0]["n_patches"] == 1
 
 
+def test_landscape_patch_density_uses_total_landscape_area():
+    """P2 修复：PD 分母是景观总面积（FRAGSTATS 口径），不是类面积。
+
+    两类斑块数同为 1 时 PD 必须相等（625/100ha：16 像元 ×100 m² =
+    0.16 ha）。按类面积归一会让小类 PD 虚高（此处 5000）且跨类不可比。
+    """
+    r = np.array([
+        [1, 1, 1, 1],
+        [1, 1, 1, 1],
+        [1, 1, 1, 2],
+        [1, 1, 1, 2],
+    ])
+    table, m = landscape_metrics(r, cell_size=10.0)
+    rows = {row["class_value"]: row for row in table["classes"]}
+    assert rows[1.0]["n_patches"] == 1
+    assert rows[2.0]["n_patches"] == 1
+    total_ha = m["total_area_ha"]
+    expected = 1.0 / total_ha * 100.0
+    assert rows[1.0]["patch_density_per_100ha"] == pytest.approx(
+        expected, abs=1e-6)
+    assert rows[2.0]["patch_density_per_100ha"] == pytest.approx(
+        expected, abs=1e-6)
+    # 多斑块类：NP/total_area 口径
+    r2 = np.array([
+        [1, 2, 1, 2],
+        [2, 1, 2, 1],
+        [1, 2, 1, 2],
+        [2, 1, 2, 1],
+    ])
+    t2, m2 = landscape_metrics(r2, cell_size=10.0)
+    for row in t2["classes"]:
+        assert row["patch_density_per_100ha"] == pytest.approx(
+            row["n_patches"] / m2["total_area_ha"] * 100.0, abs=1e-6)
+
+
 def test_landscape_adversarial_inputs():
     with pytest.raises(NoValidObservations, match="all nodata"):
         landscape_metrics(np.full((3, 3), np.nan), cell_size=10.0)

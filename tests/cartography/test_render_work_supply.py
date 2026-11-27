@@ -128,6 +128,61 @@ class TestChronologyGuard:
         )
         assert env.invalidation.data_changed == ("s1",)
 
+    def test_concurrent_old_projection_does_not_roll_back_memory(
+        self, monkeypatch
+    ):
+        """并发：旧代投影在新代落盘后才完成，也不得回退 last-emitted 记忆。
+
+        review P2：缓存推进判断必须与写入同锁完成；若沿用锁外读取的快照，
+        旧代会基于过期快照覆盖新代缓存，把记忆倒拨到旧 (revision, seq)。
+        """
+        import threading
+
+        supply.project_envelope_from_state(
+            _state(_SPEC_V1, revision=3, seq=1), "sess-C", fingerprint="fp3"
+        )
+        old_started = threading.Event()
+        release_old = threading.Event()
+        real_project = supply.project_render_work_envelope
+
+        def _gated_project(mapspec, **kwargs):
+            if kwargs.get("revision") == 4:
+                old_started.set()
+                assert release_old.wait(5.0)
+            return real_project(mapspec, **kwargs)
+
+        monkeypatch.setattr(
+            supply, "project_render_work_envelope", _gated_project
+        )
+        results = {}
+
+        def _old_projection():
+            results["old"] = supply.project_envelope_from_state(
+                _state(_SPEC_V1, revision=4, seq=2),
+                "sess-C",
+                fingerprint="fp4",
+            )
+
+        worker = threading.Thread(target=_old_projection, daemon=True)
+        worker.start()
+        try:
+            assert old_started.wait(5.0)
+            # 旧代停在中途时，新代完成投影并推进 last-emitted 记忆。
+            newer = supply.project_envelope_from_state(
+                _state(_SPEC_V1, revision=5, seq=3),
+                "sess-C",
+                fingerprint="fp5",
+            )
+            assert newer is not None
+        finally:
+            release_old.set()
+            worker.join(5.0)
+        assert not worker.is_alive()
+        assert results.get("old") is not None
+        latest = supply.get_latest_for_tests("sess-C")
+        assert latest is not None
+        assert latest[1:3] == (5, 3)  # 旧代完成不得把记忆回退到 (4, 2)
+
 
 class TestAsyncSupply:
     @pytest.mark.asyncio

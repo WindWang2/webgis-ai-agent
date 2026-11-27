@@ -44,6 +44,7 @@ import hmac
 import inspect
 import json
 import logging
+import threading
 import time
 from pathlib import Path
 from typing import Any, Literal, Optional
@@ -71,6 +72,18 @@ _RESULT_SIZE_BUDGET_BYTES = {
     "bounded": 1024 * 1024,
     "ref_offload": 1024 * 1024,
 }
+# 探针单次调用硬上限（秒）：挂起的工具（无限 sleep / 死锁网络调用）不得把
+# `certify --staged` 永久阻塞。取值 = 最宽松声明类别（slow）预算 × 容忍倍数，
+# 即任何本会通过 latency 判决的探针都不会被本上限误杀；超限者按 latency
+# 判决本来也是 fail——只是从「跑完再判」变成「事中熔断」，结论不变、CLI 有界。
+_PROBE_TIMEOUT_S = max(_LATENCY_CLASS_BUDGET_S.values()) * _LATENCY_TOLERANCE_FACTOR
+# 可安全重放的副作用类（纯计算/只读：重复执行无外部后果）。其余分类
+# （state_mutation / artifact_creation / external_side_effect / destructive /
+# unclassified）**不执行第二次真实调用**——确定性重放不得以重复副作用为
+# 代价（重复发外部请求/写库），按 warn 如实记录「证据受限」而非伪造通过。
+_REPLAYABLE_SIDE_EFFECTS = frozenset(
+    {"pure", "deterministic_compute", "cacheable_read"}
+)
 
 
 # ── 检查项构造（与 certification.py 的 {check,status,detail} 同形）──────
@@ -235,23 +248,52 @@ def _bounded(detail: str, limit: int = 400) -> str:
     return detail if len(detail) <= limit else detail[:limit] + "…(truncated)"
 
 
+def _call_with_probe_timeout(call) -> Any:
+    """在 daemon 线程中执行一次探针调用，等待 _PROBE_TIMEOUT_S 后熔断。
+
+    Python 无强杀线程原语：超时的探针线程按 daemon 留场到进程退出——
+    「认证不等挂起的工具」远优于「certify CLI 永久阻塞」。超时与工具自身
+    异常都交由调用方的 except 归一为探针失败证据（认证收集而非中断）。
+    """
+    box: dict[str, Any] = {}
+
+    def _run() -> None:
+        try:
+            box["value"] = call()
+        except BaseException as exc:  # noqa: BLE001 - 回主线程原样重抛
+            box["error"] = exc
+
+    worker = threading.Thread(target=_run, name="extension-probe", daemon=True)
+    worker.start()
+    worker.join(_PROBE_TIMEOUT_S)
+    if worker.is_alive():
+        raise TimeoutError(
+            f"probe did not return within {_PROBE_TIMEOUT_S:g}s (hard cap); "
+            "the tool appears hung"
+        )
+    if "error" in box:
+        raise box["error"]
+    return box.get("value")
+
+
 def _probe_callable(func, args: dict[str, Any]) -> tuple[Optional[Any], str]:
     """执行一次探针调用；async 工具在无运行循环时驱动事件循环。
 
     运行循环已存在（进程内服务侧调用）时无法同步等待协程——按探针失败
-    如实上报（认证不能为产证据而伪造执行）。
+    如实上报（认证不能为产证据而伪造执行）。每次调用受
+    :data:`_PROBE_TIMEOUT_S` 硬上限约束：挂起的工具熔断为探针失败。
     """
     try:
         if inspect.iscoroutinefunction(func):
             try:
                 asyncio.get_running_loop()
             except RuntimeError:
-                return run_sync(func(**args)), ""
+                return _call_with_probe_timeout(lambda: run_sync(func(**args))), ""
             return None, (
                 "async tool cannot be probed synchronously inside a running "
                 "event loop (run certification from the CLI instead)"
             )
-        return func(**args), ""
+        return _call_with_probe_timeout(lambda: func(**args)), ""
     except Exception as exc:  # noqa: BLE001 - 探针收集而非中断
         return None, _bounded(f"{type(exc).__name__}: {exc}")
 
@@ -313,6 +355,7 @@ def _run_probe_by_registered_name(
     elapsed_s = time.perf_counter() - t0
     if err:
         return [_check(stage, capability_label, False, f"probe raised: {err}")]
+    meta = registry._metadata.get(projected)
     # 结果断言。expect_key 声明了但结果不是 JSON object → 如实失败
     # （None == None 的空洞性通过是被禁止的证据）。
     if probe.expect_key:
@@ -337,21 +380,31 @@ def _run_probe_by_registered_name(
             )]
         checks.append(_check(stage, capability_label, True,
                              f"expectation {probe.expect_key}≈{probe.expect_value!r} holds"))
-    # 确定性重放（连跑两次深度相等；sha256 of canonical JSON）。
+    # 确定性重放（连跑两次深度相等；sha256 of canonical JSON）。仅对无外部
+    # 后果的副作用类真实执行第二次调用；副作用工具重跑一次 = 重复发外部
+    # 请求/写库，按 warn 记录证据受限（不伪造「重放通过」）。
     if probe.replay:
-        second, err2 = _probe_callable(func, probe.args)
-        if err2:
-            return checks + [_check(stage, capability_label, False,
-                                    f"replay probe raised: {err2}")]
-        if _result_digest(first) != _result_digest(second):
-            return checks + [_check(
-                stage, capability_label, False,
-                "deterministic replay mismatch (two probes produced different results)",
-            )]
-        checks.append(_check(stage, capability_label, True, "deterministic replay holds"))
+        side_effect = meta.get("side_effect") if isinstance(meta, dict) else None
+        if side_effect in _REPLAYABLE_SIDE_EFFECTS:
+            second, err2 = _probe_callable(func, probe.args)
+            if err2:
+                return checks + [_check(stage, capability_label, False,
+                                        f"replay probe raised: {err2}")]
+            if _result_digest(first) != _result_digest(second):
+                return checks + [_check(
+                    stage, capability_label, False,
+                    "deterministic replay mismatch (two probes produced different results)",
+                )]
+            checks.append(_check(stage, capability_label, True, "deterministic replay holds"))
+        else:
+            checks.append(_check(
+                stage, capability_label, True,
+                f"deterministic replay skipped: side_effect={side_effect!r} tools "
+                "are not executed twice (replay would duplicate real side effects)",
+                warn_only=True,
+            ))
     # latency / result-size 类别核验（声明探针的首次调用实测；报告只记
     # 判决——latency 不记原始耗时，result size 随确定性结果本身确定）。
-    meta = registry._metadata.get(projected)
     latency_class = meta.get("latency_class") if isinstance(meta, dict) else None
     latency_ok, latency_detail = _classify_latency(latency_class, elapsed_s)
     checks.append(_check(stage, capability_label, latency_ok, latency_detail))
@@ -775,10 +828,25 @@ def save_certification_report(
     # gate 读到。
     target = pack_dir / CERTIFICATION_FILENAME
     tmp = target.with_name(target.name + ".tmp")
-    tmp.write_text(body, encoding="utf-8")
     import os
 
-    os.replace(tmp, target)
+    try:
+        tmp.write_text(body, encoding="utf-8")
+        os.replace(tmp, target)
+    except OSError as exc:
+        # 只读目录 / 磁盘满等 I/O 失败归一为 typed 诊断：
+        # run_pack_certification 的 save 分支与 CLI main() 只捕
+        # (ExtensionPlatformError, ValueError)——裸 OSError 会以 traceback
+        # 崩溃而非干净诊断。顺带清掉半份 tmp（原子写的中间态绝不能被
+        # gate 读到）。
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise ExtensionPlatformError(ExtensionDiagnostic.error(
+            DiagnosticCode.CERTIFICATION_INVALID,
+            f"cannot write certification report to {str(target)!r}: {exc}",
+        )) from exc
     return doc
 
 

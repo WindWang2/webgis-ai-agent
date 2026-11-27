@@ -26,6 +26,12 @@ _LEGEND_KIND_TO_COMPONENT: Dict[str, str] = {
 }
 
 
+def _as_dict(value: Any) -> Dict[str, Any]:
+    """真值非 dict（LLM 手写层/组件载荷常见：字符串/列表）按缺席处理 ——
+    绝不抛 AttributeError 穿透 _validate_all → 终验被宽 except 静默跳过。"""
+    return value if isinstance(value, dict) else {}
+
+
 def _normalize_crs_for_wgs84(crs: str) -> str:
     """CRS 是否 WGS84 系（渲染等价）：EPSG:4326/WGS84/CRS84 与 CGCS2000
     （EPSG:4490 —— 同为经纬度地理坐标，中文地理数据标准）；OGC urn/URL
@@ -73,7 +79,7 @@ def validate_semantics(
     layers = _spec_layers(mapspec)
     components = [
         c
-        for c in ((mapspec.get("layout") or {}).get("components") or [])
+        for c in (_as_dict(mapspec.get("layout")).get("components") or [])
         if isinstance(c, dict)
     ]
     enabled = [c for c in components if c.get("enabled") is not False]
@@ -92,7 +98,7 @@ def validate_semantics(
         ctype = str(c.get("type") or "")
         if ctype not in legend_family:
             continue
-        lid = str((c.get("options") or {}).get("layerId") or "")
+        lid = str(_as_dict(c.get("options")).get("layerId") or "")
         kind = thematic.get(lid)
         if kind is None:
             continue  # 未绑定/绑定层无 legend_spec：无输入，不判
@@ -116,14 +122,14 @@ def validate_semantics(
         any_legend = any(str(c.get("type") or "") in legend_family for c in enabled)
         if any_legend:
             covered = {
-                str((c.get("options") or {}).get("layerId") or "")
+                str(_as_dict(c.get("options")).get("layerId") or "")
                 for c in enabled
                 if str(c.get("type") or "") in legend_family
             }
             # 未绑定 layerId 的图例（HUD 发现语义）按渲染现实覆盖全部主题层
             # —— 不为它制造 per-layer 欠账噪声。
             if any(
-                not str((c.get("options") or {}).get("layerId") or "")
+                not str(_as_dict(c.get("options")).get("layerId") or "")
                 for c in enabled
                 if str(c.get("type") or "") in legend_family
             ):
@@ -162,10 +168,10 @@ def validate_semantics(
     # 4) CRS 契约（记录快照在场才有输入；MapSpec 渲染契约恒为 WGS84）
     if records:
         spec_refs = {
-            str((ly.get("provenance") or {}).get("result_ref") or "")
+            str(_as_dict(ly.get("provenance")).get("result_ref") or "")
             for ly in layers
         } | {
-            str((ly.get("provenance") or {}).get("source_ref") or "")
+            str(_as_dict(ly.get("provenance")).get("source_ref") or "")
             for ly in layers
         }
         for ref, record in records.items():

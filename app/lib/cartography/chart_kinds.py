@@ -40,6 +40,7 @@ CHART_STATE_TRANSITIONS: frozenset = frozenset({
     ("visible", "floating"),
     ("visible", "docked"),
     ("visible", "anchored"),
+    ("visible", "hidden"),
     ("collapsed", "expanded"),
     ("collapsed", "hidden"),
     ("expanded", "collapsed"),
@@ -55,6 +56,7 @@ CHART_STATE_TRANSITIONS: frozenset = frozenset({
     ("docked", "floating"),
     ("anchored", "floating"),
     ("docked", "anchored"),
+    ("anchored", "docked"),
 })
 
 

@@ -102,8 +102,14 @@ def main() -> int:
     if args.baseline:
         report["baseline_compare"] = compare_results(report, args.baseline)
     if args.diff:
+        try:
+            master_report = _load_report(args.diff)
+        except (OSError, ValueError) as exc:
+            print(f"cannot read --diff report {args.diff}: {exc}",
+                  file=sys.stderr)
+            return 2
         report["diff_compare"] = diff_payloads(
-            _load_report(args.diff), report,
+            master_report, report,
             baseline=args.diff, current="<current-run>")
     if args.only_failed:
         report = {

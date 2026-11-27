@@ -437,7 +437,8 @@ def match_scope(
     en_hit = _en_gazetteer_match(query, _EN_PROVINCE_FAST_PATH)
     if en_hit:
         trace["source"] = "fast_path_en_province"
-        return ScopeResult(name=en_hit, level="province"), trace
+        level = "country" if en_hit.lower() == "china" else "province"
+        return ScopeResult(name=en_hit, level=level), trace
     # 6) 行政区服务（词表未命中的「X市/县/区」面）——不可用即回退
     candidate = None
     m = re.search(r"([\u4e00-\u9fa5]{2,6}(?:(?<![超城])市|县|区))", query)
@@ -493,10 +494,6 @@ class TaskRule:
     task: str
     specificity: int
     order: int
-
-
-def _r(rule_id: str, task: str, spec: int, pattern: str) -> TaskRule:
-    return TaskRule(rule_id, re.compile(pattern, re.I), task, spec, 0)
 
 
 def _build_rules() -> List[TaskRule]:

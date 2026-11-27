@@ -106,6 +106,11 @@ class LocalFileAdapter(GeospatialDataSourceAdapter):
                 f"{path.name} is not a GeoJSON FeatureCollection",
                 details={"hint": "declare real GeoJSON files only"},
             )
+        if not isinstance(doc.get("features"), list):
+            raise SourceBadResponseError(
+                f"{path.name} FeatureCollection has no features array",
+                details={"hint": "declare real GeoJSON files only"},
+            )
         return doc
 
     def _sqlite_connect(self) -> sqlite3.Connection:

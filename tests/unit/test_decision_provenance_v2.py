@@ -99,6 +99,27 @@ class TestDecisionRecordContract:
         assert scored["score"] == 1.2346
         assert "rank" not in scored
 
+    def test_non_finite_floats_never_emit_nonstandard_json(self):
+        """review P3：NaN/Inf 不得进入 canonical JSON 或 score 投影。"""
+        import json
+
+        from app.lib.runtime.decision_record import canonical_decision_json
+
+        def _reject(value):
+            raise AssertionError(f"non-standard JSON constant: {value}")
+
+        record = decision_record(
+            DECISION_KIND_PLAN_SELECTION,
+            selected="r",
+            inputs={"mean": float("nan"), "upper": float("inf")},
+        )
+        assert record["inputs"] == {"mean": None, "upper": None}
+        text = canonical_decision_json(record)
+        json.loads(text, parse_constant=_reject)
+        assert "NaN" not in text and "Infinity" not in text
+        assert "score" not in alternative_entry("nan", score=float("nan"))
+        assert "score" not in alternative_entry("inf", score=float("inf"))
+
 
 class TestChainStructuredChannel:
     def _chain_dict_with_decision(self, **extra):

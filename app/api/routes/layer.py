@@ -1214,14 +1214,23 @@ async def get_terrain_tilejson(
     receipt_data = payload.get("receipt") if payload.get("kind") == "terrain_dem" else None
 
     # bounds/zoom：receipt 优先；无 receipt（非摄入路径）现场开文件头推导。
+    receipt_bounds: Optional[list] = None
     if isinstance(receipt_data, dict) and receipt_data.get("bbox_epsg4326"):
-        bounds = [float(v) for v in receipt_data["bbox_epsg4326"]]
+        # receipt 是存储态客户端数据：畸形/非数值 bbox 不能让端点裸 500，
+        # 按「无 receipt」降级到文件头推导（同 list_terrain_sources 的
+        # model_validate 降级纪律）。
+        try:
+            candidate = [float(v) for v in receipt_data["bbox_epsg4326"]]
+        except (TypeError, ValueError):
+            candidate = []
+        if len(candidate) == 4:
+            receipt_bounds = candidate
+    if receipt_bounds is not None:
+        bounds = receipt_bounds
         gsd_m = receipt_data.get("ground_sample_distance_m")
         from app.services.terrain_ingest import native_zoom_for_gsd
 
-        maxzoom = native_zoom_for_gsd(
-            gsd_m, tuple(bounds) if len(bounds) == 4 else None
-        )
+        maxzoom = native_zoom_for_gsd(gsd_m, tuple(bounds))
     else:
         derived = await asyncio.to_thread(_derive_terrain_header, safe_path)
         if derived is None or derived[0] is None:

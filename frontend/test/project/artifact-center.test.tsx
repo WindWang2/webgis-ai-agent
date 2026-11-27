@@ -151,13 +151,15 @@ describe('ArtifactCenter', () => {
   });
 
   it('时间排序：最早优先后首行变为最旧产物', async () => {
-    api.fetchProjectArtifacts.mockResolvedValue(
-      makeArtifactPage(2, { created_at: '2026-09-02T10:00:00Z' }),
-    );
+    const page = makeArtifactPage(2);
+    // 夹具默认同时间戳——分别覆写为两条不同时间（产物 2 更旧）。
+    page.items[0].created_at = '2026-09-02T10:00:00Z';
+    page.items[1].created_at = '2026-09-01T10:00:00Z';
+    api.fetchProjectArtifacts.mockResolvedValue(page);
     render(<ArtifactCenter projectId="p1" authed />);
-    // 夹具默认同时间戳——覆写两条不同时间
     await screen.findByText('产物 1');
     fireEvent.change(screen.getByLabelText('按时间排序产物'), { target: { value: 'oldest' } });
     expect((screen.getByRole('option', { name: '最早优先' }) as HTMLOptionElement).selected).toBe(true);
+    expect(screen.getAllByText(/^产物 \d$/).map((el) => el.textContent)).toEqual(['产物 2', '产物 1']);
   });
 });

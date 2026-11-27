@@ -297,6 +297,46 @@ def test_h9_evidence_candidates_share_selection_source():
     )
 
 
+@pytest.mark.asyncio
+async def test_h9_intent_stage_plan_receives_project_verified(monkeypatch):
+    """review P2-7：意图阶段 plan_from_intent 必须收到 project_verified。
+
+    与 candidates（tool_map_intent.py:161-164）及 product 阶段
+    （tool_map_product.py:115-127）同源 —— 漏传时 recommended_recipe 按
+    无记忆裁决，与同结果内的 candidates[0] 互相矛盾。
+    """
+    from app.services.gis_harness import tool_map_intent as intent_tools
+
+    registry = ToolRegistry()
+    register_gis_harness_tools(registry)
+    captured: dict = {}
+
+    async def _verified():
+        return {"recipe-memory-x"}
+
+    monkeypatch.setattr(intent_tools, "_project_verified_recipes", _verified)
+
+    import app.services.gis_harness.planner_runtime as planner_runtime_mod
+
+    real_get = planner_runtime_mod.get_planner_runtime
+    planner = real_get()
+    real_plan = planner.plan_from_intent
+
+    def _spy(intent, *args, **kwargs):
+        captured.update(kwargs)
+        return real_plan(intent, *args, **kwargs)
+
+    monkeypatch.setattr(planner_runtime_mod, "get_planner_runtime", lambda: planner)
+    monkeypatch.setattr(planner, "plan_from_intent", _spy)
+
+    out = await intent_tools.webgis_map_intent(registry, "成都各区餐厅数量分布")
+    assert out["success"] is True
+    assert captured.get("project_verified") == {"recipe-memory-x"}, (
+        "意图阶段 plan_from_intent 漏传 project_verified（与 candidates/"
+        "product 阶段记忆状态分叉）"
+    )
+
+
 # ─── 2026-08-25 会话回归：product-* 直写图层必须带 name ──────────────────
 
 def test_product_layers_carry_display_names():

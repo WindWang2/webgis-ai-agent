@@ -37,3 +37,14 @@ def test_signature_changes_with_path():
     e2, s2 = sign_path("b", ttl_seconds=300)
     # 即便 exp 相同（同一秒签的），sig 必然不同
     assert s1 != s2 or e1 != e2
+
+
+def test_owner_binding_does_not_rehash_database_verifier():
+    """issue 与 verify 一致：DB 加载的 verifier 不得被二次哈希。"""
+    from app.core.owner_tokens import OwnerTokenDigest, owner_token_digest
+    from app.core.signing import terrain_owner_binding
+
+    raw = "transport-secret"
+    verifier = OwnerTokenDigest(owner_token_digest(raw))
+    assert terrain_owner_binding(raw) == verifier
+    assert terrain_owner_binding(verifier) == verifier

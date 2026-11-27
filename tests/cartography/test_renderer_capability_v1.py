@@ -114,6 +114,17 @@ class TestRequiredCapabilityVerdict:
             "supported": True, "unsupported": [], "degraded": [],
         }
 
+    def test_component_registry_resolved_once_per_call(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            rc, "component_type_keys",
+            lambda: calls.append(1) or ["legend"],
+        )
+        rc.check_required_capabilities([
+            "component:legend", "component:nonexistent", "component:legend",
+        ])
+        assert len(calls) == 1
+
 
 class TestDesignSystemExport:
     def test_manifest_rides_design_system(self):

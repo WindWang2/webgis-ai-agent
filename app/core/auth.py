@@ -810,7 +810,9 @@ async def authenticate_ws_token(token: str) -> dict:
         token_ver, is_active = int(row[0] or 0), row[1]
         if int(payload.get("ver", 0)) != token_ver:
             raise WsAuthError(4001, "Token revoked, please re-login")
-        if not is_active:
+        # 与 HTTP 实时身份链路（_live_identity：None 视为启用）保持一致：
+        # is_active 列无 NOT NULL / server_default，历史行可能为 NULL。
+        if is_active is not None and not is_active:
             raise WsAuthError(4001, "Account disabled")
 
     return {"user_id": str(user_id), "payload": payload}

@@ -48,7 +48,13 @@ def _polygon_centroid(coords) -> Optional[Tuple[float, float]]:
         return None
     xs = [p[0] for p in ring[:-1]]
     ys = [p[1] for p in ring[:-1]]
-    return (sum(xs) / len(xs), sum(ys) / len(ys))
+    try:
+        from shapely.geometry import Polygon
+
+        c = Polygon(ring, coords[1:]).centroid
+        return (float(c.x), float(c.y))
+    except Exception:  # noqa: BLE001 — degenerate ring: fall back to vertex mean
+        return (sum(xs) / len(xs), sum(ys) / len(ys))
 
 
 def attach_polygon_samples(
@@ -94,6 +100,15 @@ def attach_polygon_samples(
 
     records: List[Dict[str, Any]] = []
     n_offgrid = 0
+    # 形状校验/浮点提升一次完成（不在 polygon×feature 双重循环里重复拷贝）。
+    prepared: Dict[str, np.ndarray] = {}
+    for name, arr in (feature_stack or {}).items():
+        a = np.asarray(arr, dtype=float)
+        if a.shape != (height, width):
+            raise ValueError(
+                f"特征 {name!r} 形状 {a.shape} 与网格 "
+                f"{(height, width)} 不一致")
+        prepared[name] = a
     for i, poly in enumerate(polygons or []):
         mask = cell_map == i
         n_cells = int(mask.sum())
@@ -113,12 +128,7 @@ def attach_polygon_samples(
             records.append(rec)
             continue
         feats: Dict[str, float] = {}
-        for name, arr in (feature_stack or {}).items():
-            a = np.asarray(arr, dtype=float)
-            if a.shape != (height, width):
-                raise ValueError(
-                    f"特征 {name!r} 形状 {a.shape} 与网格 "
-                    f"{(height, width)} 不一致")
+        for name, a in prepared.items():
             vals = a[mask]
             finite = vals[np.isfinite(vals)]
             rec["nan_cells"][name] = int(vals.size - finite.size)

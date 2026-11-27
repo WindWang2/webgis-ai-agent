@@ -104,23 +104,23 @@ def resolve_chain(
     service = service or source_registry_service
     hops: List[Tuple[str, List[str], Optional[bool]]] = []
     seen = {source_id}
-    current = source_id
-    while len(hops) < max_hops:
+    # BFS 展开**所有** fallback 规则（此前每源只取第一条即 break 并转向该目标：
+    # 源声明多条 on: 规则时其余永不进 chain，_match_hop 的触发匹配被架空）。
+    queue: List[str] = [source_id]
+    while queue and len(hops) < max_hops:
+        current = queue.pop(0)
         try:
             definition = service.get(current)
         except SourceRegistryError:
-            break
-        advanced = False
+            continue
         for rule in definition.normalized_fallbacks():
             if rule.source_id in seen:
                 continue
             hops.append((rule.source_id, list(rule.on), rule.comparable))
             seen.add(rule.source_id)
-            current = rule.source_id
-            advanced = True
-            break
-        if not advanced:
-            break
+            queue.append(rule.source_id)
+            if len(hops) >= max_hops:
+                break
     return hops
 
 

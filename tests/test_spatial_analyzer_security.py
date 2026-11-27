@@ -56,6 +56,23 @@ class TestAttributeFilterQueryValidation:
         assert result.success
         assert len(result.data["features"]) == 1
 
+    # --- Runtime query errors must surface as structured failures ---
+
+    def test_undefined_column_returns_structured_failure(self):
+        """P2: 引用不存在的列时 gdf.query 抛 UndefinedVariableError，必须结构化返回。"""
+        result = SpatialAnalyzer.attribute_filter(FEATURES, "missing_column > 5")
+        assert result.success is False
+        assert result.error_type == "ValidationError"
+        assert "missing_column" in result.summary
+
+    def test_empty_features_query_returns_structured_failure(self):
+        """P2: features 为空（无属性列）时 query 同样必须结构化失败。"""
+        result = SpatialAnalyzer.attribute_filter(
+            {"type": "FeatureCollection", "features": []}, "value > 1"
+        )
+        assert result.success is False
+        assert result.error_type == "ValidationError"
+
     # --- Dangerous queries must be rejected by our validator, not by pandas ---
 
     @pytest.mark.parametrize(

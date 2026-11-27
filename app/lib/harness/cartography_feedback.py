@@ -304,10 +304,7 @@ def attach_unified_feedback(
             "evidence": {
                 "score": template_axis.get("score"),
                 "reason": template_axis.get("reason"),
-                "checks": (
-                    feedback.template_codegen.findings
-                    and payload["axes"]["template_codegen"]
-                ),
+                "checks": feedback.template_codegen.findings or [],
             },
             "message": (
                 f"Template/codegen axis: {template_axis['status']} "

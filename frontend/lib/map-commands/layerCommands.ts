@@ -157,12 +157,20 @@ export const layerCommands: Record<string, CommandEntry> = {
         }
       }
 
+      // Resolve every runtime target before touching the map/store: a batch
+      // must not half-apply when a later layer is missing from the runtime.
+      const matchedByLayer = new Map<string, string[]>();
       for (const patch of patches) {
-        const desired = patch.desired ?? {};
         const matched = matchMapLayers(ctx.map, patch.layer_id);
         if (matched.length === 0) {
           return { status: 'failed', error: 'target_not_found' };
         }
+        matchedByLayer.set(patch.layer_id, matched);
+      }
+
+      for (const patch of patches) {
+        const desired = patch.desired ?? {};
+        const matched = matchedByLayer.get(patch.layer_id) ?? [];
         for (const id of matched) {
           renderer.updateLayerStyle(ctx.map, id, {
             visibility: typeof desired.visible === 'boolean'
@@ -260,8 +268,11 @@ export const layerCommands: Record<string, CommandEntry> = {
         }
       }
       // V3 round-2 FIX-B: real post-mutation verification — the source must
-      // actually exist on the map before we claim confirmed.
-      if (!map.getSource?.(id)) return { status: 'failed', error: 'mutation_failed' };
+      // actually exist on the map before we claim confirmed. P3: the LAYER must
+      // land too — a swallowed addLayer would otherwise still ack confirmed.
+      if (!map.getSource?.(id) || !map.getLayer?.(id)) {
+        return { status: 'failed', error: 'mutation_failed' };
+      }
       // V3: verifiable marker so the harness convergence metric has evidence.
       return { status: 'succeeded', result: { confirmed: true } };
     },
@@ -275,7 +286,10 @@ export const layerCommands: Record<string, CommandEntry> = {
       const imageUrl = image || url;
       // V3: silent no-ops become explicit failed results (design §6).
       if (!id) return { status: 'failed', error: 'target_not_found' };
-      if (!imageUrl || !bbox) return { status: 'failed', error: 'invalid_params' };
+      // P3: bbox must be a 4-element finite-number array — a short/non-numeric
+      // bbox would put `undefined` into the image-source coordinates and
+      // addImageSource throws (the run body has no try/catch).
+      if (!imageUrl || !bbox || !asBbox4(bbox)) return { status: 'failed', error: 'invalid_params' };
 
       const sourceId = `custom-${id}`;
       const layerId = `${sourceId}-layer`;
@@ -619,7 +633,16 @@ export const layerCommands: Record<string, CommandEntry> = {
       if (raw.length === 0) return { status: 'failed', error: 'invalid_params' };
 
       const { layers } = getHudState();
-      const show = new Set(raw.flatMap((id) => resolveLayerTargetsByRef(id, getHudState)));
+      // P3: ids that resolve to nothing must not vanish silently — they are
+      // reported in unresolved_layer_ids so the agent learns the display set
+      // is incomplete (previously only the shown count leaked out).
+      const show = new Set<string>();
+      const unresolvedShowIds: string[] = [];
+      for (const id of raw) {
+        const resolved = resolveLayerTargetsByRef(id, getHudState);
+        if (resolved.length === 0) unresolvedShowIds.push(id);
+        for (const target of resolved) show.add(target);
+      }
       if (show.size === 0) return { status: 'failed', error: 'target_not_found' };
       // v2(review R2-P1-1)：服务端守卫拒绝集（用户手动设定的层）—— 本地
       // 不得翻转呈现（服务端已保留用户决策，本地翻转会分叉且 pending 永存）。
@@ -667,7 +690,7 @@ export const layerCommands: Record<string, CommandEntry> = {
       // 持久收敛由 step_result 携带的 mapspec/mutation_revision 完成。
       const visibleLayerIds: string[] = [];
       const hiddenLayerIds: string[] = [];
-      const unresolvedLayerIds: string[] = [];
+      const unresolvedLayerIds: string[] = [...unresolvedShowIds];
       const lockConflictIds: string[] = [];
       const storePendingRepair: { layerId: string; visible: boolean }[] = [];
 
@@ -698,7 +721,9 @@ export const layerCommands: Record<string, CommandEntry> = {
       // 证据契约：confirmed = 展示集全部验证通过（读回一致）；store-owned
       // 目标如实标记 store_updated（后端 harness 视作未收敛，observation
       // 循环续证）——绝不把未验证的层报成 confirmed。
-      const confirmed = visibleLayerIds.length === show.size && storePendingRepair.length === 0;
+      const confirmed = visibleLayerIds.length === show.size
+        && unresolvedShowIds.length === 0
+        && storePendingRepair.length === 0;
 
       if (storePendingRepair.length > 0) {
         // 有界修复：等 reconcile 去抖周期后重验一次（再应用一次期望值），
@@ -719,7 +744,10 @@ export const layerCommands: Record<string, CommandEntry> = {
         status: allShowFailed ? 'failed' : 'succeeded',
         error: !allShowFailed
           ? undefined
-          : lockConflictIds.length > 0 && unresolvedLayerIds.length === 0
+          // P3: mixed failures must not relabel lock conflicts as
+          // target_not_found (R1-m4) — either side may be present; the result
+          // carries unresolved_layer_ids / locked_layer_ids separately.
+          : lockConflictIds.length > 0
             ? 'layer_locked'
             : 'target_not_found',
         result: {
@@ -922,7 +950,9 @@ export const layerCommands: Record<string, CommandEntry> = {
           beforeAnchor = undefined; // moveLayer with no anchor -> top
         } else if (position === 'bottom') {
           const bottomCandidate = customIds.find((id: string) => !customMatched.includes(id));
-          beforeAnchor = bottomCandidate;
+          // 组已覆盖整个 custom 栈（无下方异组层）：终态本就成立 —— null
+          // 保持原位；undefined 会被 moveLayer 读成「移到最顶层」。
+          beforeAnchor = bottomCandidate ?? null;
         } else if (position === 'up') {
           // 向顶层移动一格：插到「上方第一个异组层」的再上方，即该层后面那一层
           // 之前（它就是 i+1；i 已是末层时 i+1 为 undefined = 置顶，语义正确）。

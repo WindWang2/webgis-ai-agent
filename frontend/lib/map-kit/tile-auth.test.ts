@@ -179,6 +179,20 @@ describe('recoverFirstPartyTileAuth', () => {
     expect(refreshAuthToken).toHaveBeenCalledTimes(1);
   });
 
+  it('swallows refresh failures instead of leaving an unhandled rejection', async () => {
+    vi.mocked(getRefreshToken).mockReturnValue('ref');
+    vi.mocked(refreshAuthToken).mockRejectedValue(new Error('network down'));
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      recoverFirstPartyTileAuth(401, vi.fn());
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', unhandled);
+    }
+  });
+
   it('clears auth when the access token is expired and there is no refresh token', async () => {
     vi.mocked(getRefreshToken).mockReturnValue(null);
     vi.mocked(getAccessToken).mockReturnValue('expired');

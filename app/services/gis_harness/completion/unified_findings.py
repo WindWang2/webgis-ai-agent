@@ -230,8 +230,6 @@ def from_completion_finding(
     target = str(getattr(finding, "target", "") or "")
     repair = getattr(finding, "repair", None)
     scope = "map"
-    if code.startswith("render_") or code == "chart_data_missing":
-        scope = "map"
     if code in ("layer_missing", "no_result_layer", "layer_hidden",
                 "layer_transparent", "layer_order_issue", "stale_overlay"):
         scope = "layer"

@@ -8,6 +8,7 @@ import io
 import json
 from contextlib import asynccontextmanager
 
+import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
@@ -97,6 +98,74 @@ def _multipart(files: list, session_id: str = SESSION):
         payload.append(("files", (name, io.BytesIO(content), "application/octet-stream")))
     payload.append(("session_id", (None, session_id)))
     return payload
+
+
+class _SpyUploadFile:
+    """UploadFile 形状替身：记录每次 read() 申请的字节上限。"""
+
+    def __init__(self, filename: str, content: bytes):
+        self.filename = filename
+        self._content = content
+        self.read_caps: list = []
+
+    async def read(self, size: int = -1):
+        self.read_caps.append(size)
+        if size is None or size < 0:
+            return self._content
+        return self._content[:size]
+
+
+async def test_create_batch_rejects_oversized_file_before_buffering(
+    app_and_db, monkeypatch
+):
+    """P2 resource-leak：单文件超限必须 413 且 read() 带字节上限 —— 不允许
+    先把整个文件读进 worker 内存，再让 service 的后置预算校验拒绝（那时
+    内存已经占满）。"""
+    from fastapi import HTTPException
+
+    from app.api.routes import data_import as data_import_routes
+
+    monkeypatch.setattr(data_import_routes, "MAX_VECTOR_SIZE", 16)
+    spy = _SpyUploadFile(
+        "big.geojson", b'{"type":"FeatureCollection","features":[]}' + b"x" * 64
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        await data_import_routes.create_batch(
+            files=[spy],
+            session_id=SESSION,
+            _user={"user_id": "g17-user", "id": "g17-user"},
+        )
+    assert exc_info.value.status_code == 413
+    assert "FILE_TOO_LARGE" in str(exc_info.value.detail)
+    # 有界读：只申请「上限 + 1」字节，而不是无界全量 read()
+    assert spy.read_caps == [17], spy.read_caps
+
+
+async def test_create_batch_rejects_batch_total_over_budget(app_and_db, monkeypatch):
+    """P2 resource-leak：批次合计字节闸必须在路由层生效（逐文件累加，超限
+    即 413），不能只依赖 service 落盘前的后置校验。"""
+    from fastapi import HTTPException
+
+    from app.api.routes import data_import as data_import_routes
+    from app.services.data_import import budgets as real_budgets
+
+    class _Budgets:
+        MAX_FILES_PER_BATCH = real_budgets.MAX_FILES_PER_BATCH
+        MAX_BATCH_RAW_BYTES = 40
+
+    monkeypatch.setattr(data_import_routes, "budgets", _Budgets)
+    files = [
+        _SpyUploadFile("a.geojson", b"x" * 30),
+        _SpyUploadFile("b.geojson", b"y" * 30),
+    ]
+    with pytest.raises(HTTPException) as exc_info:
+        await data_import_routes.create_batch(
+            files=files,
+            session_id=SESSION,
+            _user={"user_id": "g17-user", "id": "g17-user"},
+        )
+    assert exc_info.value.status_code == 413
+    assert "BATCH_TOO_LARGE" in str(exc_info.value.detail)
 
 
 async def test_api_full_journey(client):

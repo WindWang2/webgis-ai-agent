@@ -71,6 +71,19 @@ def test_sanitize_report_svg_strips_scripts_and_file_href():
     assert "circle" in sanitized
 
 
+def test_sanitize_report_svg_preserves_text_order_after_removed_nonfirst_child():
+    svg = (
+        "<svg><text>before</text><script>evil()</script>after"
+        "<script>evil2()</script>end<text>last</text></svg>"
+    )
+    sanitized = sanitize_report_svg(svg)
+    assert sanitized == (
+        '<svg xmlns="http://www.w3.org/2000/svg" '
+        'xmlns:xlink="http://www.w3.org/1999/xlink">'
+        "<text>before</text>afterend<text>last</text></svg>"
+    )
+
+
 def test_report_service_jinja_filter_sanitizes_vector_svg():
     service = ReportService()
     template = service.template_env.get_template("report_default.html")

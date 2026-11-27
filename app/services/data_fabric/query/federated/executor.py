@@ -275,6 +275,11 @@ class PhysicalExecutor:
         self.trace = ExecutionTrace()
         try:
             return self._eval(new_tree, lift_key=None)
+        except CancelledError:
+            # 重执行期的取消必须原样冒泡（逐页取消承诺）：except Exception
+            # 会把 CancelledError（RuntimeError 子类）吞掉并返回旧结果。
+            self._streaming, self.trace = first_streaming, first_trace
+            raise
         except Exception as exc:  # noqa: BLE001 - R1-M7：重执行失败保留首次合法结果
             self._streaming, self.trace = first_streaming, first_trace
             self.adaptive.notes.append(
@@ -326,15 +331,6 @@ class PhysicalExecutor:
             # 交付 CRS 语义与行扫描一致（聚合无几何列 → 不需 output_crs）。
             req = node.aggregate_request
             rows: List[Dict[str, Any]] = []
-            if adapter is None:
-                from app.services.data_fabric.query.federation import (
-                    FederatedQueryError,
-                )
-
-                raise FederatedQueryError(
-                    f"chain source '{node.source_id}' is not connected",
-                    details={"source_id": node.source_id},
-                )
             from app.schemas.data_fabric_schema import QuerySpec
 
             extras: Dict[str, Any] = {
@@ -357,11 +353,28 @@ class PhysicalExecutor:
             result = adapter.query(node.dataset_id, QuerySpec(**extras))
             self.trace.pages_fetched += 1
             rows = list(result.data or []) if isinstance(result.data, list) else []
-            if (getattr(result, "truncated", False) or getattr(result, "has_more", False)
-                    or len(rows) >= min(fetch_window, 10_000)):
+            # R1-P1-9：组窗口完整性以 adapter 上报的权威事实为准 —— 旧的
+            # ``len(rows) >= min(fetch_window, 10_000)`` 启发式无法区分
+            # 「恰好 10k 组（完整）」与「>10k 组（被页上限截断）」：前者被
+            # 误报为不完整而响亮失败，后者若组数恰等于上限又被静默放行。
+            # adapter 未提供该事实时（None）才回退到显式截断标记。
+            group_window_complete = getattr(result, "group_window_complete", None)
+            incomplete = (
+                group_window_complete is False
+                if group_window_complete is not None
+                else bool(getattr(result, "truncated", False)
+                          or getattr(result, "has_more", False))
+            )
+            if incomplete:
                 from app.services.data_fabric.errors import QueryBudgetExceededError
 
-                raise QueryBudgetExceededError("aggregate pushdown returned an incomplete group window")
+                raise QueryBudgetExceededError(
+                    "aggregate pushdown returned an incomplete group window",
+                    details={
+                        "hint": "narrow the group_by or raise the source page limit",
+                        "group_window_complete": group_window_complete,
+                    },
+                )
             if self._streaming is not None:
                 for row in rows:
                     self._streaming.add_feature(row)
@@ -743,7 +756,21 @@ class PhysicalExecutor:
                             self._synthesize_hop(spec, scan_by_id, seq[k + 1])
                         )
                     if feasible:
+                        # 尾重排后 hop_estimates 必须随 hops 同序重排：否则后续
+                        # observe() 以原计划序的估计基数记错（adaptive_observations
+                        # /EXPLAIN 实证失真）。
+                        est_by_sid = {
+                            h.right.source_id: (
+                                hop_estimates[i + 1 + j]
+                                if i + 1 + j < len(hop_estimates)
+                                else None
+                            )
+                            for j, h in enumerate(hops[i + 1:])
+                        }
                         hops = hops[: i + 1] + rebuilt
+                        hop_estimates = hop_estimates[: i + 1] + [
+                            est_by_sid.get(sid) for sid in new_tail
+                        ]
                         # 修复评审 R1 双执行：推进到**新尾序的第一跳**（重建
                         # 列表已保留旧 hops[:i+1]，hops[i] 不再重跑）。
                         i += 1

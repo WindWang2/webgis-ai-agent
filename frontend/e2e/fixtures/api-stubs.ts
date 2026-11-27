@@ -394,13 +394,13 @@ export async function installJourneyStubs(page: Page | BrowserContext, world: Jo
     });
 
   // ── goal repair（G42 目标补全面）───────────────────────────────────────
-  await api(/\/api\/v1\/goal-repair\/sessions\/[^/]+\/preview(\?|$)/, () => {
+  await api(/\/api\/v1\/goal-repair\/sessions\/[^/]+\/preview(\?|$)/, (_url: URL, _method: string, _body: string, origin?: string) => {
     if (!world.goalRepair.preview) {
       return {
         __raw: {
           status: 404, contentType: 'application/json',
           body: JSON.stringify({ detail: { code: 'PLAN_NOT_FOUND', error: 'no plan' } }),
-          headers: corsFor(),
+          headers: corsFor(origin),
         },
       };
     }
@@ -426,7 +426,7 @@ export async function installJourneyStubs(page: Page | BrowserContext, world: Jo
     world.goalRepair.attempts.push(attempt);
     return attempt;
   });
-  await api(/\/api\/v1\/goal-repair\/attempts\/[^/]+(\?|$)/, (url: URL) => {
+  await api(/\/api\/v1\/goal-repair\/attempts\/[^/]+(\?|$)/, (url: URL, _method: string, _body: string, origin?: string) => {
     const id = url.pathname.split('/').pop() as string;
     const attempt = world.goalRepair.attempts.find((a) => a.attempt_id === id);
     if (!attempt) {
@@ -434,7 +434,7 @@ export async function installJourneyStubs(page: Page | BrowserContext, world: Jo
         __raw: {
           status: 404, contentType: 'application/json',
           body: JSON.stringify({ detail: { code: 'ATTEMPT_NOT_FOUND', error: 'gone' } }),
-          headers: corsFor(),
+          headers: corsFor(origin),
         },
       };
     }
@@ -474,7 +474,8 @@ export async function installJourneyStubs(page: Page | BrowserContext, world: Jo
   });
   await api(/\/api\/v1\/goal-repair\/attempts\/[^/]+\/cancel(\?|$)/, (url: URL, method: string) => {
     if (method !== 'POST') return { detail: 'method not allowed' };
-    const id = url.pathname.split('/').pop() as string;
+    const parts = url.pathname.split('/');
+    const id = parts[parts.length - 2];
     const attempt = world.goalRepair.attempts.find((a) => a.attempt_id === id);
     if (attempt && attempt.active) {
       attempt.status = 'cancelled';
@@ -482,7 +483,10 @@ export async function installJourneyStubs(page: Page | BrowserContext, world: Jo
       attempt.cancellable = false;
       attempt.outcome = 'cancelled';
     }
-    return { ...(attempt ?? {}), cancel_requested: true };
+    const { _selected, _acked, _reads, ...view } =
+      (attempt ?? {}) as Record<string, unknown>;
+    void _selected; void _acked; void _reads;
+    return { ...view, cancel_requested: true };
   });
 
   // ── chat stream (SSE) ────────────────────────────────────────────────────
@@ -588,8 +592,10 @@ export async function installJourneyStubs(page: Page | BrowserContext, world: Jo
   await api(/\/api\/v1\/chat\/skills(\?|$)/, () => ({ skills: [] }));
 
   // ── tasks ────────────────────────────────────────────────────────────────
-  await api(/\/api\/v1\/tasks\/jobs\/[^/]+\/retry(\?|$)/, async () => {
-    const job = world.jobs.find((j) => j.status === 'failed') ?? world.jobs[0];
+  await api(/\/api\/v1\/tasks\/jobs\/[^/]+\/retry(\?|$)/, async (url: URL) => {
+    const parts = url.pathname.split('/');
+    const id = parts[parts.length - 2];
+    const job = world.job(id) ?? world.jobs.find((j) => j.status === 'failed') ?? world.jobs[0];
     if (job) {
       job.attempt += 1;
       job.status = 'running';
@@ -602,10 +608,12 @@ export async function installJourneyStubs(page: Page | BrowserContext, world: Jo
     }
     return job;
   });
-  await api(/\/api\/v1\/tasks\/jobs\/[^/]+(\?|$)/, async (_url, method) => {
-    if (method !== 'DELETE') return {};
-    const job = world.jobs.find((j) => j.status === 'running');
-    if (job) {
+  await api(/\/api\/v1\/tasks\/jobs\/[^/]+(\?|$)/, async (url: URL, method: string) => {
+    const id = url.pathname.split('/').pop() as string;
+    const addressed = world.job(id);
+    if (method !== 'DELETE') return addressed ?? {};
+    const job = addressed ?? world.jobs.find((j) => j.status === 'running');
+    if (job && job.active) {
       // 真取消语义：请求受理 → 终态由下一次轮询给出（与后端契约一致，
       // UI 显示「已取消」必须等终态，规范 §30）。
       job.cancel_requested_at = NOW;
@@ -615,7 +623,7 @@ export async function installJourneyStubs(page: Page | BrowserContext, world: Jo
       job.progress = null;
       job.message = '已取消';
     }
-    return { job_id: world.jobs[0]?.id ?? '', status: 'cancel_requested' };
+    return { job_id: job?.id ?? '', status: 'cancel_requested' };
   });
   await api(/\/api\/v1\/tasks\/jobs(\?|$)/, async () => ({
     jobs: world.jobs,
@@ -755,9 +763,10 @@ export async function installJourneyStubs(page: Page | BrowserContext, world: Jo
   await api(/\/api\/v1\/projects\/[^/]+\/workflows(\?|$)/, () => []);
   await api(/\/api\/v1\/projects(\?|$)/, (_url: URL, method: string, body: string) => {
     if (method === 'POST') {
-      const parsed = JSON.parse(body) as { name: string; description?: string };
+      let parsed: { name?: string; description?: string } = {};
+      try { parsed = JSON.parse(body); } catch { /* non-JSON body not exercised */ }
       const project = {
-        id: `p-j-${world.projects.length + 1}`, name: parsed.name,
+        id: `p-j-${world.projects.length + 1}`, name: parsed.name ?? 'e2e 项目',
         description: parsed.description ?? '', status: 'active', metadata_json: {},
         created_at: NOW, updated_at: NOW,
       };
@@ -768,8 +777,8 @@ export async function installJourneyStubs(page: Page | BrowserContext, world: Jo
   });
 
   // ── export ───────────────────────────────────────────────────────────────
-  await api(/\/api\/v1\/export\/download\/.+(\?|$)/, () => ({
-    __raw: raw(200, 'image/png', TINY_PNG),
+  await api(/\/api\/v1\/export\/download\/.+(\?|$)/, (_url: URL, _method: string, _body: string, origin?: string) => ({
+    __raw: raw(200, 'image/png', TINY_PNG, origin),
   }));
   await api(/\/api\/v1\/export(\?|$)/, async (_url: URL, _method: string, body: string) => {
     const format = /png/i.test(body) ? 'png' : 'pdf';

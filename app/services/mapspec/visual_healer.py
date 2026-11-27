@@ -867,18 +867,20 @@ def apply_heal_plan(
             ]
             if target_id not in current_ids or occluder_id not in current_ids:
                 continue
-            layers.remove(target_layer)
+            # 记住移除前的确切位置（按对象身份，重复 id 也不会错位）——
+            # 防御分支在 target 已离开列表后需要它，而不是按 id 反查
+            # （move_above=(x,x) 时反查必抛 StopIteration）。
+            target_index = next(
+                i for i, layer in enumerate(layers) if layer is target_layer
+            )
+            layers.pop(target_index)
             occluder_index = next(
                 (i for i, layer in enumerate(layers)
                  if isinstance(layer, dict) and str(layer.get("id") or "") == occluder_id),
                 None,
             )
             if occluder_index is None:  # 防御：理论上不可达（前置校验过）
-                layers.insert(
-                    next(i for i, layer in enumerate(layers)
-                         if isinstance(layer, dict) and str(layer.get("id") or "") == target_id),
-                    target_layer,
-                )
+                layers.insert(target_index, target_layer)
                 continue
             layers.insert(occluder_index + 1, target_layer)
             applied += 1

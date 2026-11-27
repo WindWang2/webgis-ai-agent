@@ -106,6 +106,22 @@ class TestCapabilities:
         assert cap.zone
         assert cap.version.startswith("v")
 
+    def test_backend_without_version_still_declares_capability(self, monkeypatch):
+        """import 成功即能力可用：后端模块没有 __version__ 时不得静默
+        省略能力词（docstring 承诺 import 成功 → 对应能力词）。"""
+        import types
+
+        from app.services.geocompute.cluster import capabilities as caps
+
+        fake = types.ModuleType("_geocompute_fake_raster")
+        monkeypatch.setitem(sys.modules, "_geocompute_fake_raster", fake)
+        monkeypatch.setattr(
+            caps, "_BACKEND_PROBES", (("raster", "_geocompute_fake_raster"),)
+        )
+        profile = caps.probe_capability()
+        assert "raster" in profile.capabilities
+        assert profile.backends["raster"] == ""
+
     def test_satisfies(self):
         cap = WorkerCapabilityProfile(cpu_cores=4, mem_mb=8192, gpu_count=1)
         assert cap.satisfies()
@@ -312,6 +328,19 @@ class TestLocality:
         assert registry.worker_entries("w1") == 1
         assert registry.worker_cached_bytes("w1") == 100
 
+    def test_registry_update_respects_byte_gate(self, registry, monkeypatch):
+        """更新既有条目也必须经字节闸逐出 —— 覆写 size_bytes 不得让
+        per-worker 注册表字节超 MAX_CACHE_BYTES_PER_WORKER。"""
+        from app.services.geocompute.cluster import locality as loc
+
+        monkeypatch.setattr(loc, "MAX_CACHE_BYTES_PER_WORKER", 100)
+        registry.record_put("w1", "u:o", "fp-a", size_bytes=50)
+        registry.record_put("w1", "u:o", "fp-b", size_bytes=50)
+        assert registry.worker_cached_bytes("w1") == 100
+        registry.record_put("w1", "u:o", "fp-a", size_bytes=90)
+        assert registry.worker_cached_bytes("w1") <= 100
+        assert registry.worker_entries("w1") == 1
+
     def test_registry_lru_eviction(self, registry):
         for i in range(MAX_CACHE_ENTRIES_PER_WORKER + 4):
             registry.record_put("w1", "u:o", f"fp-{i}", size_bytes=1)
@@ -385,6 +414,28 @@ class TestWorkerPayloadCache:
         cache = PayloadCache(registry=_Boom(), worker_id="w1")
         cache.put("s", "r", "u", {"rows": [1]}, locality_key="fp-1")
         assert cache.get("s", "r", "u", locality_key="fp-1") is not None
+
+    def test_worker_id_wired_on_later_singleton_call(self, monkeypatch):
+        """首次无参 get_worker_cache() 之后，晚到的 worker_id 必须补接 ——
+        否则注册表位置声明永久静默失效。"""
+        from app.services.geocompute.cluster import locality as loc
+        from app.services.geocompute.cluster import object_cache as oc
+
+        recorded: list[str] = []
+
+        class _Registry:
+            def record_put(self, worker_id, owner_scope, key, *, size_bytes=0):
+                recorded.append(worker_id)
+
+            def record_hit(self, *a, **k):
+                return None
+
+        monkeypatch.setattr(loc, "WorkerCacheRegistry", _Registry)
+        monkeypatch.setattr(oc, "_default_cache", None)
+        oc.get_worker_cache()
+        cache = oc.get_worker_cache("w1")
+        cache.put("s", "r", "u:o", {"features": [1]}, locality_key="fp-1")
+        assert recorded == ["w1"]
 
 
 # ── ResourceRequest contract ─────────────────────────────────────────────

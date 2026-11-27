@@ -324,6 +324,34 @@ class TestSessionPlanSinkUpsert:
         assert progress["cap.a"]["status"] == "complete"
         assert progress["cap.a"]["bound_ref"] == "ref:a"
 
+    async def test_manifest_store_happens_inside_session_lock(self, monkeypatch):
+        """docstring 契约：manifest 落 session store 也必须在会话锁内完成。"""
+        depth = {"value": 0}
+
+        class _TrackingLock:
+            async def __aenter__(self):
+                depth["value"] += 1
+                return self
+
+            async def __aexit__(self, *exc):
+                depth["value"] -= 1
+                return False
+
+        class _Registry:
+            def lock(self, session_id: str, **kwargs: Any):
+                return _TrackingLock()
+
+        class _DepthStore(FakeStore):
+            async def store(self, session_id: str, payload: Any, prefix: str = "data") -> str:
+                assert depth["value"] > 0, "manifest store escaped the session lock"
+                return await super().store(session_id, payload, prefix=prefix)
+
+        monkeypatch.setattr(
+            "app.services.distributed_lock.session_lock_registry", _Registry()
+        )
+        sink = SessionPlanSwarmSink(store=_DepthStore())
+        ref = await sink.merge(SwarmAssetManifest(run_id="r1", session_id="s1"))
+        assert ref is not None and ref.startswith("ref:swarm-")
 
 
 class _ProgressRow:

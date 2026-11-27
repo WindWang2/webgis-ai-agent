@@ -154,6 +154,11 @@ def smooth_gapfill(
                                   mode="same") > 0
             smoothed = np.where(touched, np.nan, smoothed)
     elif method == "moving_average":
+        if window_length % 2 == 0:
+            # 中心滑动均值需奇数窗口：偶数窗口没有整数中心，pad=w//2 的
+            # valid 卷积会让输出中心落在 i−0.5 并丢弃末个输出。向下取
+            # 奇数保持输出逐样本对齐（window_length=1 即不平滑）。
+            window_length = max(1, window_length - 1)
         if window_length > n:
             raise InsufficientSamples(
                 f"window_length {window_length} exceeds series length {n}",

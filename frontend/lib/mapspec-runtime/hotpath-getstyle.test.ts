@@ -39,6 +39,7 @@ function makeMockMap() {
     },
     getPaintProperty: () => 1,
     getLayoutProperty: () => 'visible',
+    setPaintProperty: vi.fn(),
     getCenter: () => ({ lng: 116.4, lat: 39.9 }),
     getZoom: () => 10,
     getBounds: () => ({
@@ -94,7 +95,7 @@ describe('#462 — getStyle deep-clone budget on hot paths', () => {
     vi.unstubAllGlobals();
   });
 
-  it('layer-changing reconciles + source removals on a 500-layer map: zero getStyle calls after the cold seed', async () => {
+  it('layer-changing reconciles + source removals on a 250-source / 290-layer map: zero getStyle calls after the cold seed', async () => {
     seedHeavyStyle(map, 250); // 250 sources × 1 layer = 250 style layers
     const rt = new MapSpecRuntime(map);
     const specA = manyLayerSpec(40);
@@ -104,7 +105,8 @@ describe('#462 — getStyle deep-clone budget on hot paths', () => {
 
     const spy = vi.spyOn(map, 'getStyle');
 
-    // Layer-changing reconcile #1: paint edit on 20 layers (recompile).
+    // Layer-changing reconcile #1: paint edit on 20 layers — a non-structural
+    // paint patch (no z-order sync here; #2 covers the z-order/remove hot paths).
     const specB: MapSpec = {
       version: '1.0',
       sources: specA.sources,
@@ -115,6 +117,8 @@ describe('#462 — getStyle deep-clone budget on hot paths', () => {
     const p1 = rt.reconcileAsync(specB);
     rt.flush();
     await p1;
+    // The 20 paint edits really landed (an empty/rolled-back diff must fail here).
+    expect((map.setPaintProperty as ReturnType<typeof vi.fn>).mock.calls.length).toBe(20);
 
     // Reconcile #2 with 10 source removals (straggler scrub path per source).
     const removedSources = Object.keys(specB.sources).slice(0, 10);
@@ -153,8 +157,8 @@ describe('#462 — getStyle deep-clone budget on hot paths', () => {
       visible: true,
       opacity: 1,
       group: 'analysis',
-      // One spec layer fans out into several candidates; every candidate used
-      // to trigger its own getStyle() clone at runtime-evidence.ts.
+      // One spec layer per HUD row (strict 1:1); every candidate used to
+      // trigger its own getStyle() clone at runtime-evidence.ts.
       _mapspecFingerprint: 'fp',
     })) as Layer[];
 
@@ -167,7 +171,16 @@ describe('#462 — getStyle deep-clone budget on hot paths', () => {
       rt.getAppliedSpec(),
     );
 
-    expect((observation.layers as unknown[]).length).toBe(20);
+    const rows = observation.layers as Array<{
+      runtime_layer_count?: number;
+      runtime_layer_ids?: string[];
+    }>;
+    expect(rows.length).toBe(20);
+    // 候选族真实匹配 + live 层在场；length 恒等于入参行数，单独断言无意义。
+    for (let i = 0; i < 20; i += 1) {
+      expect(rows[i].runtime_layer_count).toBe(1);
+      expect(rows[i].runtime_layer_ids).toContain(`L${i}__point`);
+    }
     expect(map.getStyle.mock.calls.length).toBeLessThanOrEqual(1); // was 20+
   });
 });

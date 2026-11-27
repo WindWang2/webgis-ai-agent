@@ -41,6 +41,21 @@ def _object_with_chunks(env, n_chunks):
     )
 
 
+class _NoContentFullReadStore:
+    """包装 store：记录整读调用，内容 blob 必须走流式读。"""
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.full_reads = []
+
+    def get_blob(self, key, expected_sha256=None):
+        self.full_reads.append(key)
+        return self._inner.get_blob(key, expected_sha256=expected_sha256)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
 def test_sample_deterministic_and_bounded(env):
     obj = _object_with_chunks(env, 64)
     s1 = scrub_object(obj.data_object_id, mode="sample", sample_k=8)
@@ -80,6 +95,21 @@ def test_scrub_detects_missing_and_corrupt(env):
     store.primary_path(manifest_blob_ids[1], "binary").write_bytes(b"tampered" * 16)
     report2 = scrub_object(obj.data_object_id, mode="full")
     assert manifest_blob_ids[1] in report2["corrupt"]
+
+
+def test_scrub_full_mode_streams_blobs_without_full_materialization(env):
+    from app.services.s3_blob_store import get_object_store
+
+    obj = _object_with_chunks(env, 4)
+    manifest = resolve_data_object(obj.data_object_id)
+    content_digests = {str(b["sha256"]) for b in manifest["content_blobs"]}
+    wrapped = _NoContentFullReadStore(get_object_store())
+    report = scrub_object(
+        obj.data_object_id, mode="full", etag_check=False, store=wrapped
+    )
+    assert report["state"] == "verified"
+    # manifest 是 KB 级 JSON，允许整读；选中内容 blob 必须流式校验。
+    assert content_digests.isdisjoint(wrapped.full_reads)
 
 
 def test_scrub_invalid_inputs(env):

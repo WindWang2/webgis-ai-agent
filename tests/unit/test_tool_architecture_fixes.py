@@ -255,3 +255,85 @@ def test_detect_domains_runs_once_per_select(monkeypatch):
     monkeypatch.setattr(ToolCatalog, "detect_domains", staticmethod(_counting))
     cat.select_schemas("成都的小学分布")
     assert calls["n"] == 1
+
+
+# ─── P3 registry 缺陷回归（cost 半注册 / 签名缓存 / update_args_model 私有字段）──
+
+
+@pytest.mark.asyncio
+async def test_invalid_cost_register_leaves_no_half_registered_entry():
+    """P3: 非法 cost 此前在 _tools/_models/_schemas 写入之后才抛错，留下无
+    _metadata 的半注册工具（dispatch 按 tier=1/THREAD 放行、descriptor()
+    抛 KeyError）。修复后必须在任何写入之前失败。"""
+    reg = ToolRegistry()
+
+    with pytest.raises(ValueError, match="cost"):
+        @reg.tool(name="bad_cost_probe", description="probe", cost="ultra")
+        def _bad_cost_probe(x: int = 1) -> dict:
+            return {"x": x}
+
+    assert "bad_cost_probe" not in reg._tools
+    assert "bad_cost_probe" not in reg._models
+    assert "bad_cost_probe" not in reg._metadata
+    assert all(
+        s["function"]["name"] != "bad_cost_probe" for s in reg.get_schemas()
+    )
+    res = await reg.dispatch("bad_cost_probe", {"x": 1})
+    assert res.get("code") == "UNKNOWN_TOOL"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_reuses_registered_signature_across_calls(monkeypatch):
+    """P3 perf: 签名注册后不可变 —— dispatch 热路径不得每次 inspect.signature。"""
+    import inspect as _inspect
+    import app.tools.registry as registry_mod
+
+    reg = ToolRegistry()
+
+    @reg.tool(name="sig_cache_probe", description="probe")
+    def _probe(x: int = 1, session_id: str = "") -> dict:
+        return {"x": x, "sid": session_id}
+
+    # 首次 dispatch 构造缓存
+    assert await reg.dispatch("sig_cache_probe", {"x": 1}, session_id="s1") == {
+        "x": 1, "sid": "s1"
+    }
+
+    def _forbidden_signature(*args, **kwargs):
+        raise AssertionError("inspect.signature ran on the dispatch hot path")
+
+    class _InspectShim:
+        Parameter = _inspect.Parameter
+        signature = staticmethod(_forbidden_signature)
+        iscoroutinefunction = staticmethod(_inspect.iscoroutinefunction)
+
+    monkeypatch.setattr(registry_mod, "inspect", _InspectShim)
+    assert await reg.dispatch("sig_cache_probe", {"x": 2}, session_id="s2") == {
+        "x": 2, "sid": "s2"
+    }
+
+
+def test_update_args_model_keeps_session_id_out_of_llm_schema():
+    """P3: update_args_model 重建 schema 时未像 register 那样剔除 session_id ——
+    服务端私有字段会暴露进 LLM 可见 schema。"""
+    from pydantic import BaseModel
+
+    reg = ToolRegistry()
+
+    @reg.tool(name="session_hidden_probe", description="probe")
+    def _probe(x: int = 1) -> dict:
+        return {"x": x}
+
+    class ArgsWithSession(BaseModel):
+        x: int = 1
+        session_id: str  # required —— 未剔除时会同时进 properties 与 required
+
+    reg.update_args_model("session_hidden_probe", ArgsWithSession)
+    params = next(
+        s for s in reg.get_schemas()
+        if s["function"]["name"] == "session_hidden_probe"
+    )["function"]["parameters"]
+    assert "session_id" not in params["properties"]
+    assert "session_id" not in params["required"]
+    # 非私有字段不受影响
+    assert "x" in params["properties"]

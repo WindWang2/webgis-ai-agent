@@ -15,7 +15,7 @@
 
 import { API_BASE } from './config';
 import { apiFetch } from './transport';
-import { getAccessToken, getRefreshToken, refreshAuthToken } from '../auth/tokenStore';
+import { getAccessToken, getRefreshToken, isAccessTokenExpired, clearAuth, refreshAuthToken } from '../auth/tokenStore';
 import { fastGet, invalidateCache } from './get-fast-path';
 import type { GeoJSONFeatureCollection } from '@/lib/types';
 
@@ -196,6 +196,11 @@ export async function uploadFile(
           retry.send(formData);
         });
         return;
+      }
+      // F-06: no refresh token means no recovery path — drop a certainly-dead
+      // access token so the zombie session cannot keep issuing 401 uploads.
+      if (xhr.status === 401 && !getRefreshToken() && isAccessTokenExpired(getAccessToken())) {
+        clearAuth();
       }
       cleanup();
       if (xhr.status >= 200 && xhr.status < 300) {

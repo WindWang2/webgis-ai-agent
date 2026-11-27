@@ -95,9 +95,23 @@ def register_spatial_semantics_tools(registry: ToolRegistry) -> None:
             raise ValueError(
                 "invalid GeoJSON input: could not parse a FeatureCollection")
         scope = None
-        if scope_bbox and len(scope_bbox) == 4:
+        if scope_bbox:
+            # AOI 对账范围形状错误绝不静默忽略（此前 len!=4 时 scope=None
+            # 无声丢对账；长度 4 含非数值时 float() 裸 ValueError 无指引）。
+            if not isinstance(scope_bbox, (list, tuple)) or len(scope_bbox) != 4:
+                _got = (len(scope_bbox) if isinstance(scope_bbox, (list, tuple))
+                        else type(scope_bbox).__name__)
+                raise ValueError(
+                    f"scope_bbox 必须是 4 个数值 [minx,miny,maxx,maxy]，收到 {_got} 项；"
+                    "不需要 AOI 对账时请省略 scope_bbox，不要传错误形状")
+            try:
+                bbox = [float(v) for v in scope_bbox]
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"scope_bbox 含非数值元素 {scope_bbox!r}：4 个元素必须均可转 float"
+                    "（[minx,miny,maxx,maxy]）")
             scope = ScopeEvidence(
-                name=scope_name, bbox=[float(v) for v in scope_bbox],
+                name=scope_name, bbox=bbox,
                 bbox_crs=scope_crs or "EPSG:4326", source="user")
         result = preflight_for_feature_collection(
             data, scope=scope,

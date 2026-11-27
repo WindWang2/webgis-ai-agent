@@ -414,3 +414,78 @@ async def test_b1_slow_reader_never_clobbers_terminal_state(ops_env):
     finally:
         svc_mod.commit_member = real_commit_member
         release.set()
+
+
+async def test_p2_cancel_uses_scanned_active_job_when_state_job_id_missing(
+    ops_env, monkeypatch
+):
+    """P2（correctness）：状态文件缺 active_job_id 时，cancel_batch 必须用
+    _active_commit_job 的扫描兜底发出 DB 取消请求，而不是只走本地 G17 路径。"""
+    from app.services.data_import import staging
+    from app.services.data_import.models import BatchStatus, MemberStatus
+    from app.services.data_operations.import_jobs import TASK_TYPE
+    from app.services.jobs.store import DurableJobStore, JobStatus
+
+    svc, state, keys = await _seed_batch(ops_env)
+    async with ops_env["async_factory"]() as db:
+        job = await DurableJobStore.create(
+            db,
+            task_type=TASK_TYPE,
+            kind="data_import",
+            parameters={"batch_id": state.batch_id},
+            session_id=SESS,
+            status=JobStatus.pending,
+        )
+        await db.commit()
+        job_id = int(job.id)
+
+    fresh = staging.load_state(state.batch_id)
+    fresh.status = BatchStatus.COMMITTING
+    fresh.active_job_id = None
+    for m in fresh.members:
+        m.status = MemberStatus.COMMITTING
+    staging.save_state(fresh)
+
+    # 绕开 _load_owned 的 job_id 回填兜底，直接呈现「状态文件缺 job_id」窗口
+    async def fake_load_owned(batch_id, session_id):
+        return staging.load_state(batch_id)
+
+    monkeypatch.setattr(svc, "_load_owned", fake_load_owned)
+
+    out = await svc.cancel_batch(state.batch_id, SESS)
+    assert out["job_id"] == str(job_id)
+    assert out["status"] == "cancelling"
+    async with ops_env["async_factory"]() as db:
+        stored = await DurableJobStore.get(db, job_id)
+        await db.commit()
+    assert stored is not None and stored.status == "cancelled"
+
+
+async def test_reused_active_job_reports_idempotent_reuse(ops_env):
+    """回归（P3）：幂等命中仍活跃的 job（create 与 runner 启动之间崩溃的补
+    启动路径）时如实返回 idempotent_reuse=True，与终态复用分支（283-294）
+    语义一致，不再谎报为新建。"""
+    from app.services.data_operations import import_jobs as ij
+    from app.services.data_operations.runner import submit_async_job
+
+    svc, state, keys = await _seed_batch(ops_env)
+    from app.services.data_import import staging
+
+    fresh = staging.load_state(state.batch_id)
+    key = ij.build_idempotency_key(
+        ij.JobActor(), fresh.batch_id, fresh.plan_version,
+        {k: fresh.plan_hashes.get(k, "") for k in keys},
+        receipt_state={},
+    )
+    job_id, _, reused0 = submit_async_job(
+        task_type=ij.TASK_TYPE, kind="data_import",
+        display_name="crash-residual", params={"batch_id": state.batch_id},
+        idempotency_key=key, session_id=SESS)
+    assert reused0 is False
+
+    out = await svc.start_commit(state.batch_id, SESS, background=True)
+    assert out["job_id"] == str(job_id)
+    assert out["idempotent_reuse"] is True
+    task = svc._commit_tasks.get(state.batch_id)
+    if task is not None:
+        await asyncio.wait_for(asyncio.shield(task), timeout=60)

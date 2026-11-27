@@ -165,6 +165,45 @@ def test_s07_deep_nesting_budget():
     assert ei.value.code in ("SVG_TOO_DEEP", "SVG_TOO_MANY_NODES")
 
 
+def test_p2_use_amplification_bounded_during_walk():
+    """review P2 回归：use 展开放大边扩边校验。
+
+    此前 MAX_PRIMITIVES 只在整树走完后校验 —— N 次 use × M 图元可把峰值
+    内存放大约 400 倍才被拒。150 图元目标 × 2 次 use = 300 > 200：修正后
+    在第 2 次 use 展开途中即拒；未修正代码会走完余下子树、改栽在后续
+    <text> 上（不同 code，故本测试对未修正代码必失败）。
+    """
+    svg = (
+        b'<svg viewBox="0 0 64 64"><defs><g id="big">'
+        + b'<path d="M0 0 L1 1"/>' * 150
+        + b'</g></defs><use href="#big"/><use href="#big"/>'
+        b'<text>x</text></svg>')
+    with pytest.raises(SymbolAssetError) as ei:
+        import_svg_asset(svg, kind="point_symbol")
+    assert ei.value.code == "SVG_TOO_MANY_PRIMITIVES"
+
+
+def test_p2_defs_subtree_counts_toward_node_budget():
+    """review P2 回归：defs 内具名 g 的子节点并入全局节点预算。
+
+    此前每个 defs 目标走独立 _ImportState 计数（各自一份 400 节点预算），
+    全局 MAX_INPUT_NODES 对 defs 内容形同虚设。两个各 201 路径的具名组
+    + 顶层 1 路径 = 405 > 400：必须拒；未修正代码只数到 4 个节点 →
+    静默接受（本测试对未修正代码必失败）。
+    """
+    from app.lib.cartography.svg_import import MAX_INPUT_NODES
+
+    half = MAX_INPUT_NODES // 2 + 1  # 201（单目标不越各自预算，合起来越）
+    svg = (
+        b'<svg viewBox="0 0 64 64"><defs>'
+        + b'<g id="a">' + b'<path d="M0 0 L1 1"/>' * half + b'</g>'
+        + b'<g id="b">' + b'<path d="M0 0 L1 1"/>' * half + b'</g>'
+        + b'</defs><path d="M2 2 L3 3"/></svg>')
+    with pytest.raises(SymbolAssetError) as ei:
+        import_svg_asset(svg, kind="point_symbol")
+    assert ei.value.code == "SVG_TOO_MANY_NODES"
+
+
 def test_s08_unsupported_elements_disclosed():
     cases = {
         "clip": (b'<svg viewBox="0 0 10 10"><clipPath id="c"><rect width="4" height="4"/></clipPath>'
@@ -443,6 +482,34 @@ async def test_binding_preview_apply_undo_cycle():
     assert stored2["paint"]["color"] == "#2563eb"
 
 
+async def test_binding_idempotent_replay_reports_no_new_commit():
+    """同 mutation_id 重放不是新写入：committed/mutations/can_undo 如实为 0。"""
+    from app.services.cartographic_assets.binding import apply_binding
+
+    sid = await _seed_session(
+        [{"id": "pts", "source": "pts", "type": "circle", "paint": {}}],
+        {"pts": _pts_source()})
+    rev0 = await _current_revision(sid)
+    plan = {
+        "asset_id": "cartoasset.builtin.triangle", "revision": 1,
+        "kind": "point_symbol", "params": {"size_px": 16}}
+
+    first = await apply_binding(
+        sid, "pts", plan, expected_revision=rev0, origin="user", actor="t",
+        mutation_id="m-dedup-1")
+    assert first["committed"] is True and first["mutations"] == 1
+    assert first["can_undo"] is True and "deduplicated" not in first
+
+    replay = await apply_binding(
+        sid, "pts", plan, expected_revision=rev0, origin="user", actor="t",
+        mutation_id="m-dedup-1")
+    assert replay["deduplicated"] is True
+    assert replay["committed"] is False
+    assert replay["mutations"] == 0
+    assert replay["can_undo"] is False
+    assert replay["revision"] == first["revision"]
+
+
 async def test_s22_locked_layer_agent_rejected_and_visibility_kept():
     from app.services.cartographic_assets.binding import apply_binding
 
@@ -683,6 +750,46 @@ def test_n3_line_coord_cap():
     assert ei.value.code == "SVG_COORD_OUT_OF_RANGE"
 
 
+@pytest.mark.parametrize("primitive", [
+    b'<line x1="100" y1="0" x2="0" y2="0" transform="scale(1000)" stroke="#000000"/>',
+    b'<circle cx="10" cy="10" r="1" transform="scale(1000)"/>',
+    b'<ellipse cx="10" cy="10" rx="5" ry="3" transform="scale(1000)"/>',
+])
+def test_transformed_coords_respect_coord_cap(primitive):
+    """变换后的 line/circle/ellipse 坐标同样受 MAX_COORD_ABS 约束。"""
+    with pytest.raises(SymbolAssetError) as ei:
+        import_svg_asset(
+            b'<svg viewBox="0 0 40 40">' + primitive + b'</svg>',
+            kind="point_symbol")
+    assert ei.value.code == "SVG_COORD_OUT_OF_RANGE"
+
+
+def test_xlink_external_href_is_rejected():
+    """ElementTree 展开的 {xlink}href 也必须走外部引用拒绝。"""
+    with pytest.raises(SymbolAssetError) as ei:
+        import_svg_asset(
+            b'<svg xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 40 40">'
+            b'<rect x="0" y="0" width="5" height="5" '
+            b'xlink:href="https://evil.test/x.png"/></svg>',
+            kind="point_symbol")
+    assert ei.value.code == "SVG_EXTERNAL_HREF"
+
+
+def test_prepare_svg_for_rasterize_rewrites_root_size_only():
+    """根 width/height 改写不得命中 stroke-width 等连字符属性。"""
+    from app.lib.cartography.symbol_asset_svg import prepare_svg_for_rasterize
+
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" stroke-width="2.5" '
+        'width="100" height="50" viewBox="0 0 10 5">'
+        '<rect width="10" height="5" fill="url(#cartoap-tex)"/></svg>'
+    )
+    out = prepare_svg_for_rasterize(svg, 300, 150)
+    assert 'stroke-width="2.5"' in out
+    assert 'width="300"' in out
+    assert 'height="150"' in out
+
+
 def test_n6_builtin_ts_twin_no_drift():
     """TS builtin 孪生与 Python 单源逐 digest 一致（生成物漂移锁）。"""
     import re
@@ -727,3 +834,22 @@ def test_r3_1_use_xy_composes_inside_ancestors():
         b'</defs><use href="#p" transform="translate(5,5)" x="10" y="20"/></svg>',
         kind="point_symbol")
     assert [float(v) for v in flat.primitives[0].d[0][1:]] == [15.0, 25.0]
+
+
+def test_symbol_asset_category_revisions_are_strict_ints():
+    """revision/other_revision 不得 lax coerce 字符串或浮点（全模块纪律）。"""
+    from pydantic import ValidationError
+    from app.lib.cartography.mapspec_schema import (
+        MapSpecLayerSymbolAssetCategoryBinding,
+        MapSpecLayerSymbolAssetCategoryRule,
+    )
+
+    for bad in ("3", 3.0, True):
+        with pytest.raises(ValidationError):
+            MapSpecLayerSymbolAssetCategoryRule(
+                key="x", asset_id="a", revision=bad, content_digest="")
+    for bad in ("3", 3.0, True):
+        with pytest.raises(ValidationError):
+            MapSpecLayerSymbolAssetCategoryBinding(
+                field="x", other_revision=bad)
+

@@ -68,19 +68,22 @@ const hud = vi.hoisted(() => {
       });
     },
   };
-  const state: Record<string, any> = { ...initialState(), ...actions };
+  let state: Record<string, any> = { ...initialState(), ...actions };
   const listeners = new Set<() => void>();
   return {
-    state,
+    get state() {
+      return state;
+    },
     listeners,
     getState: () => state,
     setState: (partial: Record<string, unknown>) => {
-      Object.assign(state, partial);
+      // zustand replaces the state object per write; mutating in place hides
+      // the update from identity selectors and under-counts renders.
+      state = { ...state, ...partial };
       listeners.forEach((l) => l());
     },
     reset: () => {
-      Object.keys(state).forEach((k) => delete state[k]);
-      Object.assign(state, initialState(), actions);
+      state = { ...initialState(), ...actions };
     },
   };
 });
@@ -210,6 +213,15 @@ describe('Deterministic Work-Count Performance Evidence (Scenarios A - J)', () =
     metrics.mapLibreGetLayerCalls = 0;
     metrics.reconcileAsyncCalls = 0;
     metrics.diffSpecsCalls = 0;
+  });
+
+  // Harness fidelity: zustand's setState replaces the state object, so an
+  // identity selector must observe the new reference.
+  it('hud store mock replaces state identity on setState', () => {
+    const before = hud.getState();
+    hud.setState({ is3D: true });
+    expect(hud.getState()).not.toBe(before);
+    expect(hud.state.is3D).toBe(true);
   });
 
   // A. Continuous Pan 200 Times

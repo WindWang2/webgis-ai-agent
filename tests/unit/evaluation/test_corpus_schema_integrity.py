@@ -109,6 +109,43 @@ def test_scenario_corpus_sampling_and_coverage_report():
     assert {"families", "coverage_gaps", "registry_missing"} <= set(report)
 
 
+def test_scenario_coverage_truncated_only_when_limit_really_cuts():
+    from app.evaluation.scenario_corpus import (
+        build_scenario_corpus,
+        coverage_report,
+    )
+
+    natural = build_scenario_corpus(max_cases=10 ** 9)
+    exact = coverage_report(build_max_cases=len(natural))
+    assert exact["total"] == len(natural)
+    assert exact["truncated"] is False
+    cut = coverage_report(build_max_cases=len(natural) - 1)
+    assert cut["total"] == len(natural) - 1
+    assert cut["truncated"] is True
+
+
+def test_sample_cases_zero_or_negative_returns_empty():
+    from app.evaluation.scenario_corpus import build_scenario_corpus, sample_cases
+
+    cases = build_scenario_corpus(max_cases=60)
+    assert sample_cases(cases, 0) == []
+    assert sample_cases(cases, -1) == []
+
+
+def test_runtime_family_selection_requires_zh_phrases(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.evaluation import conformance
+    from app.evaluation.runtime_corpus import _select_runtime_families
+
+    family = SimpleNamespace(
+        domain="distribution", expected_task="task", expected_recipe="recipe",
+        phrases_en=("english seed",), phrases_zh=(),
+    )
+    monkeypatch.setattr(conformance, "CONFORMANCE_FAMILIES", (family,))
+    assert _select_runtime_families() == []
+
+
 def test_methodology_corpus_families_closed():
     from app.evaluation.methodology_corpus import (
         METHODOLOGY_CORPUS,

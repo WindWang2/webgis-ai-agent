@@ -185,3 +185,97 @@ async def test_store_read_failure_degrades_without_key(sem_store, monkeypatch):
     src = intents[0].source
     assert "descriptor_fingerprint" not in src  # 证据链降级 = 诚实缺席
     assert "descriptor_reuse" not in src
+
+
+# ─── P3 并发：绑定写 CAS 基线（读旧绑定 → 写之间防过期记录落裁决）───────
+
+
+@pytest.mark.asyncio
+async def test_binding_write_carries_cas_baseline(sem_store, monkeypatch):
+    """绑定写必须携带读时的 CAS 基线（expected_revision）。
+
+    旧行为：_apply 缺省 expected_revision=None —— 读旧绑定指纹与写之间
+    的并发 mutation 无任何保护，复用裁决基于过期记录且盲写覆盖。
+    """
+    from app.services import session_data as session_data_mod
+    from app.services.mapspec_store import mapspec_store
+
+    _patch_inline(monkeypatch)
+    sid = "h08-cas-base"
+    seen = []
+
+    async def _fake_get_state_field(session_id, field):
+        assert field == "_cartographic_mutation_revision"
+        return 7
+
+    async def _fake_get_mapspec(session_id):
+        return None
+
+    async def _fake_apply(session_id, intent, **kwargs):
+        seen.append(kwargs.get("expected_revision"))
+        from app.services.mapspec import MapSpecResult
+
+        return MapSpecResult(mapspec={"sources": {intent.source_id: intent.source}})
+
+    monkeypatch.setattr(session_data_mod.session_data_manager,
+                        "get_state_field", _fake_get_state_field)
+    monkeypatch.setattr(mapspec_store, "get_mapspec", _fake_get_mapspec)
+    monkeypatch.setattr(mapspec_store.engine, "apply_mutation", _fake_apply)
+
+    await mapspec_store.source_profile(sid, "s1", _fc())
+    assert seen == [7], "绑定写必须携带读时 CAS 基线（expected_revision=7）"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_mutation_supersedes_stale_binding_write(
+        sem_store, monkeypatch):
+    """CAS 基线读后、绑定写前落入同 session 的其他 mutation：
+
+    引擎锁内 CAS 判 superseded（revision 已推进）→ source_profile 必须
+    抛错（绑定未持久化，不得返回 profile 谎报成功）。旧行为：盲写提交，
+    静默覆盖并发结果且复用裁决基于过期记录。
+    """
+    from app.services import session_data as session_data_mod
+    from app.services.mapspec import MapSpecResult
+    from app.services.mapspec_store import mapspec_store
+
+    ref = _patch_inline(monkeypatch)
+    sid = "h08-cas-race"
+    d = _descriptor(1, ref)
+    await sem_store.put(sid, ref, d)
+
+    rev = {"baseline": 4, "current": 4}
+    seen = []
+
+    async def _fake_get_state_field(session_id, field):
+        return rev["baseline"]
+
+    async def _fake_get_mapspec(session_id):
+        # 模拟并发 mutation 在 CAS 基线读之后落地（revision 推进）。
+        rev["current"] = rev["baseline"] + 1
+        return {"sources": {
+            "s1": {"descriptor_fingerprint": d.descriptor_fingerprint}}}
+
+    async def _fake_apply(session_id, intent, **kwargs):
+        expected = kwargs.get("expected_revision")
+        seen.append(expected)
+        if expected is not None and expected != rev["current"]:
+            # 引擎锁内 CAS 语义（lifecycle_engine.apply_mutation：落后 →
+            # superseded，MapSpec 不变）。
+            return MapSpecResult(
+                superseded=True, is_error=False,
+                error_msg="MapSpec revision has changed.",
+                correction_hint=(
+                    "Re-read MapSpec and retry with the current "
+                    "mutation_revision."),
+            )
+        return MapSpecResult(mapspec={"sources": {intent.source_id: intent.source}})
+
+    monkeypatch.setattr(session_data_mod.session_data_manager,
+                        "get_state_field", _fake_get_state_field)
+    monkeypatch.setattr(mapspec_store, "get_mapspec", _fake_get_mapspec)
+    monkeypatch.setattr(mapspec_store.engine, "apply_mutation", _fake_apply)
+
+    with pytest.raises(RuntimeError, match="revision has changed"):
+        await mapspec_store.source_profile(sid, "s1", _fc())
+    assert seen == [4], "绑定写必须携带读时 CAS 基线（expected_revision=4）"

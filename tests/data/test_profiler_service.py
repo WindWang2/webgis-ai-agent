@@ -48,6 +48,23 @@ class TestSessionRefProfiling:
         assert prof.vector.scanned_rows == 10
         assert prof.vector.fields["v"].mean is not None
 
+    async def test_longitude_semantics_error_degrades_to_failed_profile(
+        self, profiler, monkeypatch
+    ):
+        from app.lib.gis import longitude
+
+        def _boom(*_args, **_kwargs):
+            raise ValueError("invalid longitude evidence")
+
+        monkeypatch.setattr(longitude, "describe_longitude_semantics", _boom)
+        ref = await _store_fc(_feats())
+        prof = await profiler.profile_session_ref("profiler-tests", ref, deep=True)
+        assert prof.profile_quality is ProfileQuality.FAILED
+        assert any(
+            d.startswith("profile_error:") and "invalid longitude evidence" in d
+            for d in prof.diagnostics
+        )
+
     async def test_cache_binds_revision(self, profiler):
         ref = await _store_fc(_feats())
         deep1 = await profiler.profile_session_ref("profiler-tests", ref, deep=True)

@@ -125,6 +125,25 @@ async def test_find_artifacts_by_role_behavioral(registry):
 
 
 @pytest.mark.asyncio
+async def test_session_conflict_returns_honest_error(registry):
+    """会话归属冲突（传入 session_id ≠ 运行时会话）→ success False 的
+    显式错误，绝不 success+空清单冒充「没有数据」（模块 docstring 纪律）。"""
+    from app.lib.runtime.context import bind_runtime_context
+
+    with bind_runtime_context(session_id="bdds-trusted"):
+        for name, extra in (
+            ("list_datasets", {}),
+            ("search_datasets", {}),
+            ("find_artifacts_by_role", {"role": "source"}),
+        ):
+            out = await registry._tools[name](
+                session_id="bdds-attacker", **extra)
+            assert out.get("success") is False, (name, out)
+            assert out.get("code") == "NO_SESSION", (name, out)
+            assert "datasets" not in out, (name, out)
+
+
+@pytest.mark.asyncio
 async def test_get_lineage_behavioral(registry):
     sid = "bdds-lin"
     # validation：缺 ref_id → 校验错误

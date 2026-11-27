@@ -216,3 +216,11 @@ def test_cost_distance_tool_chain(tmp_path, terrain_tools):
     assert len(feat["geometry"]["coordinates"]) >= 8
     assert feat["properties"]["total_cost"] == pytest.approx(
         path_payload["path_metadata"]["total_cost"], rel=1e-6)
+
+
+def test_cost_distance_analysis_discloses_artifact_write(terrain_tools):
+    """无条件写 *_costdist.tif：必须披露 artifact_creation/artifact_write
+    （与 depression_fill 同纪律，不得标成纯 deterministic_compute）。"""
+    meta = terrain_tools.metadata("cost_distance_analysis")
+    assert meta["side_effect"] == "artifact_creation"
+    assert "artifact_write" in meta["data_mutations"]

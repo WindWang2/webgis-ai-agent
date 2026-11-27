@@ -66,11 +66,16 @@ vi.mock('@/components/sidebar/chat-tab', () => ({
 }));
 vi.mock('@/components/sidebar/project-tab', () => ({ ProjectTab: () => <div data-testid="tab-project" /> }));
 vi.mock('@/components/sidebar/layers-tab', () => ({ LayersTab: () => <div data-testid="tab-layers" /> }));
+vi.mock('@/components/hud/raster-authoring-panel', () => ({
+  RasterAuthoringLauncher: () => <div data-testid="raster-authoring-launcher" />,
+}));
 vi.mock('@/components/sidebar/analysis-tab', () => ({ AnalysisTab: () => <div data-testid="tab-analysis" /> }));
 vi.mock('@/components/sidebar/data-sources-tab', () => ({ DataSourcesTab: () => <div data-testid="tab-data-sources" /> }));
 vi.mock('@/components/sidebar/map-studio-tab', () => ({ MapStudioTab: () => <div data-testid="tab-map-studio" /> }));
 vi.mock('@/components/sidebar/tasks-tab', () => ({ TasksTab: () => <div data-testid="tab-tasks" /> }));
 vi.mock('@/components/sidebar/results-tab', () => ({ ResultsTab: () => <div data-testid="tab-results" /> }));
+vi.mock('@/components/sidebar/market/market-tab', () => ({ MarketTab: () => <div data-testid="tab-market" /> }));
+vi.mock('@/components/sidebar/modelops/modelops-tab', () => ({ ModelOpsTab: () => <div data-testid="tab-modelops" /> }));
 
 // Import AFTER the mocks are registered.
 import { ContextPanel } from './context-panel';
@@ -141,12 +146,36 @@ describe('ContextPanel', () => {
     expect(screen.queryByTestId('tab-chat')).not.toBeInTheDocument();
   });
 
+  it('mobile layers tab exposes the raster authoring launcher without a selected layer', () => {
+    store.activeLeftTab = 'layers';
+    store.editingLayerId = null;
+    render(<ContextPanel {...baseProps} layoutMode="mobile" />);
+
+    expect(screen.getByTestId('tab-layers')).toBeInTheDocument();
+    expect(screen.getByTestId('raster-authoring-launcher')).toBeInTheDocument();
+  });
+
   it('maps legacy exports tab onto the map studio panel', () => {
     store.activeLeftTab = 'exports';
     render(<ContextPanel {...baseProps} />);
     expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'rail-tab-export_layout');
     expect(screen.getByText('制图工坊')).toBeInTheDocument();
     expect(screen.getByTestId('tab-map-studio')).toBeInTheDocument();
+  });
+
+  it('renders PANEL_META icon + title for market/modelops (no chat fallback)', () => {
+    store.activeLeftTab = 'market';
+    const { container, rerender } = render(<ContextPanel {...baseProps} />);
+    expect(screen.getByText('市场')).toBeInTheDocument();
+    expect(screen.getByText('扩展市场 · 包浏览 · 下载')).toBeInTheDocument();
+    expect(container.querySelector('svg.lucide-store')).not.toBeNull();
+    expect(container.querySelector('svg.lucide-message-circle')).toBeNull();
+
+    store.activeLeftTab = 'modelops';
+    rerender(<ContextPanel {...baseProps} />);
+    expect(screen.getByText('ModelOps')).toBeInTheDocument();
+    expect(container.querySelector('svg.lucide-cpu')).not.toBeNull();
+    expect(container.querySelector('svg.lucide-message-circle')).toBeNull();
   });
 
   it('close button collapses the panel', () => {

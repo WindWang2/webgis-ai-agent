@@ -19,6 +19,32 @@ class TestValidateDataPath:
         with pytest.raises(ValueError, match="非法路径"):
             validate_data_path("/etc/passwd", "/data")
 
+    def test_tmp_exemption_rejects_unrelated_cwd_tmp(self, tmp_path, monkeypatch):
+        data_dir = tmp_path / "deployment" / "data"
+        worker_cwd = tmp_path / "worker"
+        unrelated_tmp = worker_cwd / "tmp"
+        unrelated_tmp.mkdir(parents=True)
+        monkeypatch.chdir(worker_cwd)
+
+        with pytest.raises(ValueError, match="非法路径"):
+            validate_data_path(
+                str(unrelated_tmp / "raster.tif"),
+                data_dir=str(data_dir),
+            )
+
+    def test_tmp_exemption_allows_data_dir_sibling_tmp(self, tmp_path, monkeypatch):
+        data_dir = tmp_path / "deployment" / "data"
+        data_dir.mkdir(parents=True)
+        workspace = data_dir.parent / "tmp"
+        workspace.mkdir()
+        worker_cwd = tmp_path / "worker"
+        worker_cwd.mkdir()
+        monkeypatch.chdir(worker_cwd)
+        raster = workspace / "raster.tif"
+        raster.write_bytes(b"fixture")
+
+        assert validate_data_path(str(raster), data_dir=str(data_dir)) == str(raster)
+
 
 class TestUploadToolsPathTraversal:
     """upload_tools must validate record.filename before file access."""

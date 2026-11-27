@@ -340,6 +340,27 @@ describe('drawChromeLegend — 分级图例', () => {
     // W5 收敛：区间标签统一 formatLegendValue（zh-CN 感知）—— 整数不再带 .0
     expect(texts.some((t) => t.includes('0 – 10'))).toBe(true);
   });
+
+  it('多类目图例受画布下沿钳位（60 类不越界、不画到画布外）', () => {
+    const { ctx, calls } = mockCtx();
+    const categories = Array.from({ length: 60 }, (_, i) => ({ color: '#123456', label: `类${i}` }));
+    drawChromeLegend(
+      { ctx, ...DRAW_BASE },
+      {
+        kind: 'legend', anchor: 'bottom-left',
+        legendSpec: { type: 'categorical', field: '类别', categories } as any,
+      },
+      { marginX: 40, marginY: 56 },
+    );
+    const fills = calls.filter((c) => c.op === 'fillRect').map((c) => c.args as number[]);
+    expect(fills.length).toBeGreaterThan(0);
+    for (const [, y, , h] of fills) {
+      expect(y).toBeGreaterThanOrEqual(0);
+      expect(y + h).toBeLessThanOrEqual(DRAW_BASE.targetH);
+    }
+    // 条目数被钳位（不再 60 条全画）。
+    expect(fills.length).toBeLessThan(60);
+  });
 });
 
 describe('drawChromeStatsPanel / drawChromeChartPanel — 面板导出', () => {
@@ -451,6 +472,28 @@ describe('buildExportChrome — ADR-0084 布局引擎集成', () => {
     expect(model.panels[0].stats?.title).toBe('学校统计');
     // 折叠 → 只导出标题条文本
     expect(model.panels[0].text).toBe('学校统计');
+  });
+
+  it('非法面板载荷不再静默缺席：四族均推 component_skipped_invalid', async () => {
+    const model = await buildExportChrome(
+      {
+        spec: specOf([
+          comp({ id: 'stats', type: 'statistics_panel', options: { stats: {} } }),
+          comp({ id: 'memo', type: 'methodology_note', options: { warnings: {} } }),
+          comp({ id: 'unc', type: 'uncertainty_panel', options: { uncertainty: {} } }),
+          comp({ id: 'dec', type: 'decision_panel', options: { decision: {} } }),
+        ]),
+        viewport: VIEWPORT,
+        legendSpecsByLayer: {},
+      },
+      CANVAS,
+    );
+    expect(model.panels).toEqual([]);
+    for (const id of ['stats', 'memo', 'unc', 'dec']) {
+      expect(model.degradations).toContainEqual(
+        expect.objectContaining({ code: 'component_skipped_invalid', componentId: id }),
+      );
+    }
   });
 
   it('disabled legend 不再 shadow enabled categorical_legend（E-4）', async () => {
@@ -622,6 +665,21 @@ describe('V4 drawChromeChartPanel — chart kind 扩展', () => {
     expect(texts).toContain('小提琴'); // 标题条保留
     // 无图形：无数据 fillRect（面板底色 arcTo 路径除外）、无数据 arc
     expect(calls.filter((c) => c.op === 'arc').length).toBe(0);
+  });
+
+  it('rose 全零/负值：画「暂无数据」而非内部类型字面量 rose', () => {
+    const { ctx, calls } = mockCtx();
+    drawChromeChartPanel(
+      { ctx, ...DRAW_BASE },
+      {
+        kind: 'chart', anchor: 'top-left',
+        chart: { type: 'rose', title: 'R', data: [{ name: 'a', value: 0 }, { name: 'b', value: -1 }] } as any,
+      },
+      { marginX: 40 },
+    );
+    const texts = calls.filter((c) => c.op === 'fillText').map((c) => String(c.args[0]));
+    expect(texts).toContain('暂无数据');
+    expect(texts).not.toContain('rose');
   });
 
   it('donut：扇形 arc + 内圈 arc（0.6 倍半径）', () => {
@@ -969,6 +1027,108 @@ describe('#1745 面板盒高钳位', () => {
     const ys = calls.filter((c) => c.op === 'fillText').map((c) => Number(c.args[2]));
     expect(ys.length).toBeGreaterThan(0);
     expect(Math.max(...ys)).toBeLessThanOrEqual(260);
+  });
+});
+
+// ── #1745（5）：_clipText 二分裁剪（O(n²) → O(log n)）────────────────────
+
+describe('#1745 _clipText 二分裁剪', () => {
+  /** measureText 宽度 = 串长 × charWidth（对串长单调），并计数调用次数。 */
+  function clipCtx(charWidth: number) {
+    const state = { measureCalls: 0 };
+    const calls: Array<{ op: string; args: unknown[] }> = [];
+    const rec = (op: string) => (...a: unknown[]) => calls.push({ op, args: a });
+    const ctx: any = {
+      fillText: rec('fillText'),
+      fillRect: rec('fillRect'),
+      strokeRect: rec('strokeRect'),
+      beginPath: rec('beginPath'),
+      moveTo: rec('moveTo'),
+      lineTo: rec('lineTo'),
+      closePath: rec('closePath'),
+      fill: rec('fill'),
+      stroke: rec('stroke'),
+      rotate: rec('rotate'),
+      translate: rec('translate'),
+      arc: rec('arc'),
+      arcTo: rec('arcTo'),
+      save: () => {},
+      restore: () => {},
+      createLinearGradient: () => ({ addColorStop: () => {} }),
+      measureText: (t: string) => {
+        state.measureCalls += 1;
+        return { width: t.length * charWidth };
+      },
+    };
+    return { ctx, calls, state };
+  }
+
+  it('长属性值单元格：measureText 调用对数级（逐字符回扫是 O(len²)）', () => {
+    const long = 'x'.repeat(5000);
+    const table = buildExportTableData('T', [{ v: long }]);
+    expect(table).toBeTruthy();
+    const { ctx, calls, state } = clipCtx(1);
+    drawChromeTable(
+      { ctx, ...DRAW_BASE },
+      { kind: 'table', anchor: 'top-left', table: table! },
+      { marginX: 40 },
+    );
+    // 5000 字符：线性回扫 ≈ 4700+ 次 measureText；二分 ≈ log2(5000) ≈ 13 次。
+    expect(state.measureCalls).toBeLessThan(50);
+    const texts = calls.filter((c) => c.op === 'fillText').map((c) => String(c.args[0]));
+    // 裁剪结果与线性回扫一致：最长可容纳前缀 + '…'（colW=296 → maxW=288）。
+    expect(texts).toContain(`${'x'.repeat(287)}…`);
+  });
+
+  it('未超宽文本原样返回（不追加省略号）', () => {
+    const table = buildExportTableData('T', [{ v: 'short' }]);
+    const { ctx, calls, state } = clipCtx(1);
+    drawChromeTable(
+      { ctx, ...DRAW_BASE },
+      { kind: 'table', anchor: 'top-left', table: table! },
+      { marginX: 40 },
+    );
+    const texts = calls.filter((c) => c.op === 'fillText').map((c) => String(c.args[0]));
+    expect(texts).toContain('short');
+    expect(state.measureCalls).toBeGreaterThan(0);
+  });
+});
+
+// ── 图例绑定缺失：不得回退别层同类型 legend_spec ──────────────────────────
+
+describe('buildExportChrome — 图例绑定缺失语义', () => {
+  it('绑定层无 legend_spec 时不挂别层图例，改发 component_skipped_invalid', async () => {
+    const model = await buildExportChrome(
+      {
+        spec: specOf([comp({ id: 'lg', type: 'legend', options: { layerId: 'a' } })]),
+        viewport: VIEWPORT,
+        // 只有别层（b）有同类型 spec —— 旧实现按类型兜底发现把它挂进导出件。
+        legendSpecsByLayer: {
+          b: { type: 'graduated', field: '别层字段', breaks: [0, 1], palette: 'Blues', palette_colors: ['#eff3ff', '#08519c'] } as any,
+        },
+      },
+      CANVAS,
+    );
+    expect(model.legend).toBeUndefined();
+    expect(model.legends).toEqual([]);
+    expect(model.degradations).toContainEqual(
+      expect.objectContaining({ code: 'component_skipped_invalid', componentId: 'lg' }),
+    );
+  });
+
+  it('未绑定 layerId 的实例仍按类型兜底发现一次（HUD 语义不回归）', async () => {
+    const model = await buildExportChrome(
+      {
+        spec: specOf([comp({ id: 'lg', type: 'legend', options: {} })]),
+        viewport: VIEWPORT,
+        legendSpecsByLayer: {
+          b: { type: 'graduated', field: '别层字段', breaks: [0, 1], palette: 'Blues', palette_colors: ['#eff3ff', '#08519c'] } as any,
+        },
+      },
+      CANVAS,
+    );
+    expect(model.legend?.legendSpec).toMatchObject({ field: '别层字段' });
+    expect(model.degradations).toEqual([]);
   });
 });
 

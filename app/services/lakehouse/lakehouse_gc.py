@@ -345,7 +345,8 @@ def _execute_gc_locked(
 
     1. 重新扫描 → token 不匹配（候选集/水位漂移）→ typed STALE；
     2. 逐 blob 当前引用重验（计划期新发布引用候选 blob → 剔除并报告）；
-    3. 删除有界批；manifest 最后删；catalog 行由 reconcile 收敛。
+    3. 删除有界批；manifest 最后删（删前再取一次当前 DB 根引用 —— recheck
+       之后新建的引用救回候选 manifest）；catalog 行由 reconcile 收敛。
     """
     from sqlalchemy import select
 
@@ -404,9 +405,20 @@ def _execute_gc_locked(
         if store.delete_blob(digest):
             deleted_blobs.append(digest)
     deleted_manifests: List[str] = []
+    # 删前重验（R0-12，与 blob 循环同口径）：recheck 之后经**不经 gc 锁**的
+    # 发布/注册通道新建的 DB 根引用，必须能救回候选 manifest —— blob 循环
+    # 之前那次 `_protected_references` 快照看不到它（候选 manifest 一删，
+    # 新引用连同其内容边一起静默丢失）。
+    protected_now = _protected_references()
     for mid in candidates:
         if len(deleted_manifests) >= max_deletions:
             break
+        if mid in protected_now:
+            logger.warning(
+                "[lakehouse_gc] candidate manifest %.12s became referenced "
+                "after re-check — delete skipped", mid,
+            )
+            continue
         if store.delete_blob(mid):
             deleted_manifests.append(mid)
     # catalog 对账（投影漂移收敛 —— R0-10）。

@@ -150,6 +150,33 @@ describe('deriveFilterEvidence', () => {
     });
     expect(evidence.status).toBe('invalid');
   });
+
+  // review P3: features 以 unknown[] 裸转 FeatureLike[]，元素未校验。数组里
+  // 混入 null/非对象时，invalid 样本循环与计数扫描解引用 f.properties 抛
+  // TypeError，派生在渲染路径直接崩。坏元素按不命中剔除，其余照常计数。
+  it('tolerates null/non-object entries in features (get-field filter, sample path)', () => {
+    const dirty = [null, ...features, 42];
+    const evidence = deriveFilterEvidence({
+      layerId: 'l',
+      sublayerFilters: [['in', ['get', 'district'], ['literal', ['武侯区']]]],
+      features: dirty,
+    });
+    expect(evidence.status).toBe('active');
+    expect(evidence.matched_count).toBe(1);
+    expect(evidence.scanned).toBe(features.length);
+  });
+
+  it('tolerates null entries in features (no get-field filter, scan-loop path)', () => {
+    const dirty = [null, ...features];
+    const evidence = deriveFilterEvidence({
+      layerId: 'l',
+      sublayerFilters: [['==', '$type', 'Point']],
+      features: dirty,
+    });
+    expect(evidence.status).toBe('active');
+    expect(evidence.matched_count).toBe(features.length);
+    expect(evidence.scanned).toBe(features.length);
+  });
 });
 
 describe('module store', () => {

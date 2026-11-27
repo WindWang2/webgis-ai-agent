@@ -99,11 +99,18 @@ async def recolor_session_heatmaps(session_id: str, palette_name: str) -> Dict[s
         painted = recolor_heatmap_layer(layer, palette)
         res = await mapspec_store.layer_upsert(session_id, painted)
         if not res.get("success"):
+            # 已写入层无回滚（逐层 upsert 非事务）—— 必须显式披露部分应用，
+            # 否则调用方不知道地图已混色、无法据此重试/收口。
             return {
                 "success": False,
                 "code": "heatmap_restyle_failed",
                 "message": "热力色带写入 MapSpec 失败",
                 "layer_id": layer.get("id"),
+                "partial_applied": updated_ids,
+                "remaining_layer_ids": [
+                    str(ly.get("id") or "") for ly in heatmaps[
+                        len(updated_ids) + 1:]
+                ],
             }
         updated_ids.append(str(painted.get("id") or ""))
     return {

@@ -67,7 +67,14 @@ _TABLES = (
             sa.Column("plan_revision", sa.Integer(), nullable=False),
             sa.Column("plan_digest", sa.String(length=64), nullable=False),
             sa.Column("status", sa.String(length=20), nullable=False),
-            sa.Column("job_id", sa.Integer(), nullable=True),
+            #: durable job 关联：analysis_tasks.id 是 BigInteger 主键 —— 32 位
+            #: Integer 在 PG 上超 2^31-1 溢出；sqlite 变体保持 Integer（与 0109
+            #: data_join_runs.job_id 同一修复模式）。
+            sa.Column(
+                "job_id",
+                sa.BigInteger().with_variant(sa.Integer(), "sqlite"),
+                nullable=True,
+            ),
             sa.Column("idempotency_key", sa.String(length=255), nullable=True),
             sa.Column("receipt", sa.JSON(), nullable=True),
             sa.Column("error_code", sa.String(length=64), nullable=True),

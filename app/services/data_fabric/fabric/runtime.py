@@ -134,7 +134,12 @@ class FabricRuntime:
         if adapter is None and record is not None:
             # record 在、adapter 被 LRU 驱逐 → 按 redacted profile 重建
             # （secret 仅工厂构建瞬间注回；registry 契约）。
-            adapter = registry.ensure_adapter(record)
+            try:
+                adapter = registry.ensure_adapter(record)
+            except Exception as exc:  # noqa: BLE001 - 重建失败走 legacy 回退
+                logger.debug(
+                    "[runtime] adapter rebuild failed for %s: %s", pid, exc)
+                adapter = None
         if adapter is not None:
             return self._wrap(
                 adapter, profile_id=str(pid), source_type=record.source_type if record else "",

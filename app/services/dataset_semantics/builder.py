@@ -76,7 +76,8 @@ def bounded_value_samples(
             name = str(key)
             if isinstance(value, str) and name not in strings and len(strings) < field_cap:
                 strings.append(name)
-            elif numeric_fields is None and name not in inferred and len(inferred) < field_cap:
+            elif (numeric_fields is None and not isinstance(value, str)
+                  and name not in inferred and len(inferred) < field_cap):
                 inferred.append(name)
     sampled_fields = list(dict.fromkeys(numeric + inferred + strings))
     out: Dict[str, List[Any]] = {f: [] for f in sampled_fields}

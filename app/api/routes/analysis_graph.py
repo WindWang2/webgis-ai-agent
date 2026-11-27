@@ -17,4 +17,7 @@ router = APIRouter(prefix="/sessions", tags=["Agent Workbench"])
 async def get_analysis_graph(
     conversation: Conversation = Depends(require_owned_session),
 ) -> dict:
-    return await build_analysis_graph_for_session(str(conversation.session_id))
+    # require_owned_session 注入的是 Conversation ORM 行（PK = id，无
+    # session_id 属性；session_id 语义 = Conversation.id，见
+    # history_service_async.get_session_meta / owner_token_rotation）。
+    return await build_analysis_graph_for_session(str(conversation.id))

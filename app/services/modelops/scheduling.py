@@ -258,6 +258,20 @@ class WarmPoolManager:
                      "device": device, "pinned": False,
                      "error": str(exc)[:200]}
         with self._lock:
+            existing = self._pinned.get(pin_key)
+            if (existing is not None and existing.get("pinned")
+                    and state.get("pinned")
+                    and cache_key is not None
+                    and existing.get("cache_key") == cache_key):
+                # 并发 pin 同 (model_id,version,device)：两条记录只留一条，
+                # 多出的 cache refcount 立即归还 —— 否则该模型的 refcount 永
+                # 远大于记录数，LRU/TTL 再也不能驱逐它。（失败态不带
+                # cache_key 且已自行 release，不在此列。）
+                try:
+                    self._cache.release(cache_key)
+                except Exception:  # noqa: BLE001 — 归还不阻断 pin 结论
+                    logger.warning("warm pool duplicate-pin release failed: %s", pin_key)
+                return existing
             self._pinned[pin_key] = state
             return state
 

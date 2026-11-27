@@ -87,6 +87,12 @@ def _shapefile_field_map(
             raise LossError(
                 dl_contracts.ERR_LOSS_ACK_REQUIRED,
                 "field_map 输出名冲突（两字段映射到同一输出名）")
+        unmapped_names = {n for n in fields if n not in explicit}
+        clashes = sorted(unmapped_names.intersection(mapped_targets))
+        if clashes:
+            raise LossError(
+                dl_contracts.ERR_LOSS_ACK_REQUIRED,
+                f"field_map 输出名与未映射字段同名: {clashes[:8]}")
         for name in needs:
             target = explicit[name]
             if len(target.encode("utf-8")) > dl_contracts.SHP_FIELD_NAME_LIMIT or \

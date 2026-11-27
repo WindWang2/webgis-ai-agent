@@ -213,12 +213,27 @@ export function TemporalMediaPanel({ onClose }: TemporalMediaPanelProps) {
     const artifacts = result?.artifacts ?? status?.artifacts ?? undefined;
     const item = artifacts?.[kind];
     if (!item) return;
-    await downloadWithAuth(item.url, { filename: item.filename, ownerToken });
+    try {
+      await downloadWithAuth(item.url, { filename: item.filename, ownerToken });
+    } catch (err) {
+      // 过期 URL/403 等下载失败必须可见，不得留下未处理拒绝。
+      setError(err instanceof Error ? err.message : String(err));
+    }
   }, [result, status, ownerToken]);
 
   const availableFormats = useMemo(
     () => (capabilities?.formats ?? []).filter((f) => f.available),
     [capabilities]);
+
+  // 服务端能力变化（刷新/重挂载）后，若当前 format 不再可用则收敛到首个
+  // 可用格式 —— 否则 select 无匹配项显示空白，而 settings.format 仍以旧值
+  // 随 requestBody 提交（界面与提交格式不一致）。
+  useEffect(() => {
+    if (!capabilities) return;
+    const formats = capabilities.formats.filter((f) => f.available);
+    if (!formats.length || formats.some((f) => f.name === settings.format)) return;
+    setSettings((prev) => ({ ...prev, format: formats[0].name as MediaSettings['format'] }));
+  }, [capabilities, settings.format]);
 
   const progressLabel = status?.progress == null
     ? t('temporalMedia.progressUnknown', { defaultValue: '总帧数确认前不显示百分比' })
@@ -272,6 +287,9 @@ export function TemporalMediaPanel({ onClose }: TemporalMediaPanelProps) {
               format: e.target.value as 'apng' | 'gif' })}
             className="rounded border border-border bg-background px-1 py-1"
             data-testid="temporal-media-format">
+            {!availableFormats.some((f) => f.name === settings.format) && (
+              <option value={settings.format}>{settings.format.toUpperCase()}</option>
+            )}
             {availableFormats.map((f) => (
               <option key={f.name} value={f.name}>{f.name.toUpperCase()}</option>
             ))}

@@ -400,7 +400,7 @@ class SpatialEventService:
                 )
             if state is not None and state.last_event_id == envelope.event_id:
                 return WatchEvalResult(
-                    fired=state.last_fired_at == envelope.occurred_at,
+                    fired=state.last_fired_event_id == envelope.event_id,
                     reason="event_already_evaluated", state=state,
                 )
             aoi = await self._resolve_aoi(watch.condition.aoi_ref, watch) if watch.condition.aoi_ref else None

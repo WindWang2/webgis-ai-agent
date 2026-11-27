@@ -311,12 +311,18 @@ async def plan_layout(
     frozen = await _freeze(ctx, owner_token=owner_token,
                            trusted_dispatch=trusted_dispatch)
     check_anchor(plan.source_anchor, frozen)
-    from app.services.cartogram_authoring.compute import scoped_features
+    from app.services.cartogram_authoring.compute import (
+        scoped_features,
+        validate_scope,
+    )
 
     scoped = scoped_features(frozen.features, plan)
     scan = scan_quantities(
         scoped, field_name=plan.quantity.field, unit=plan.quantity.unit,
         zero_policy=plan.zero_policy, missing_policy=plan.missing_policy)
+    # 要素上界先于投影/邻接（与 worker 一致），超限源不先付出最重的一步。
+    clamp_plan_budget(plan, features=len(scoped), adjacency_edges=0)
+    validate_scope(plan, frozen.features)
     prepared = prepare_geography(
         scoped, source_crs=plan.source_crs,
         target_crs=plan.projection.crs,
@@ -340,16 +346,30 @@ async def start_layout(
     from app.services.jobs.lifecycle import JobKind
 
     ctx = await resolve_layer(session_id, layer_id)
+    if plan.layer_id != layer_id:
+        # 冻结/求解/apply 都用 URL 层；计划里的 layer_id 若不同，回执会报错层，
+        # 且计划摘要也与实际写入对象脱节 —— 入队前就拒绝。
+        raise AuthoringError(
+            "INVALID_PLAN",
+            f"计划的 layer_id {plan.layer_id!r} 与目标层 {layer_id!r} 不一致",
+            status_code=422, field="layer_id",
+            correction_hint="用目标层 id 重建计划后再 run。")
     frozen = await _freeze(ctx, owner_token=owner_token,
                            trusted_dispatch=trusted_dispatch)
     check_anchor(plan.source_anchor, frozen)
     # 入队前做一次完整资格预检：不可修复的输入不占用 job 槽位。
-    from app.services.cartogram_authoring.compute import scoped_features
+    from app.services.cartogram_authoring.compute import (
+        scoped_features,
+        validate_scope,
+    )
 
     scoped = scoped_features(frozen.features, plan)
     scan = scan_quantities(
         scoped, field_name=plan.quantity.field, unit=plan.quantity.unit,
         zero_policy=plan.zero_policy, missing_policy=plan.missing_policy)
+    # 要素上界先于投影/邻接（与 worker 一致），超限源不先付出最重的一步。
+    clamp_plan_budget(plan, features=len(scoped), adjacency_edges=0)
+    validate_scope(plan, frozen.features)
     prepared = prepare_geography(
         scoped, source_crs=plan.source_crs,
         target_crs=plan.projection.crs,
@@ -516,6 +536,19 @@ async def list_layouts(session_id: str, *, limit: int = 20) -> Dict[str, Any]:
     return {"session_id": session_id, "items": items, "truncated": len(items) >= cap}
 
 
+def _previous_snapshot(previous: Any) -> Optional[Dict[str, Any]]:
+    """上一版证据块的有界快照：不再嵌套它自己的 previous。
+
+    否则每次 apply 都把整条历史链塞进新块，mapspec 层 JSON 线性膨胀且每次
+    请求都要重复读取。
+    """
+    if not isinstance(previous, dict):
+        return None
+    snapshot = dict(previous)
+    snapshot.pop("previous", None)
+    return snapshot
+
+
 async def apply_layout(
     session_id: str, layer_id: str, *, layout_ref: str,
     expected_revision: int,
@@ -550,6 +583,11 @@ async def apply_layout(
 
     base_ref = _base_ref(ctx)
     source = layout.get("source") or {}
+    from app.services.session_data import session_data_manager
+    # 冻结/布局记录的是 resolve_alias 后的规范 ref（snapshot.freeze_source）；
+    # 层源是别名时，未解析的 ref 与布局锚永远不等 → 恒判 STALE_SOURCE。
+    # 解析后再比对/查 descriptor，并把规范 ref 写回证据块。
+    base_ref = await session_data_manager.resolve_alias(session_id, base_ref)
     if source.get("ref_id") and source.get("ref_id") != base_ref:
         raise AuthoringError(
             "STALE_SOURCE",
@@ -563,7 +601,6 @@ async def apply_layout(
     # 布局与当前源同代，此时放行等于把"可能过期"的成果写上生产层。
     base_rev = source.get("content_revision")
     try:
-        from app.services.session_data import session_data_manager
         descriptor = await session_data_manager.get_ref_descriptor(session_id, base_ref)
     except Exception as exc:  # noqa: BLE001 - 统统一成 typed 拒绝
         raise AuthoringError(
@@ -629,7 +666,7 @@ async def apply_layout(
         "decided_by": origin,
         "actor": actor,
         "applied_at": applied_at,
-        "previous": previous if isinstance(previous, dict) else None,
+        "previous": _previous_snapshot(previous),
     }
     source_data = {
         "ref_id": base_ref,

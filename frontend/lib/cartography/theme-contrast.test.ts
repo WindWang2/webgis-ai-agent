@@ -46,8 +46,8 @@ function srgbToLinear(c: number): number {
   return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
 }
 
-function luminance(color: string): number {
-  const opaque = toOpaque(color, false);
+function luminance(color: string, onDark: boolean): number {
+  const opaque = toOpaque(color, onDark);
   const h = opaque.replace('#', '');
   const r = parseInt(h.slice(0, 2), 16);
   const g = parseInt(h.slice(2, 4), 16);
@@ -55,9 +55,9 @@ function luminance(color: string): number {
   return 0.2126 * srgbToLinear(r) + 0.7152 * srgbToLinear(g) + 0.0722 * srgbToLinear(b);
 }
 
-function contrast(fg: string, bg: string): number {
-  const l1 = luminance(fg);
-  const l2 = luminance(bg);
+function contrast(fg: string, bg: string, onDark: boolean): number {
+  const l1 = luminance(fg, onDark);
+  const l2 = luminance(bg, onDark);
   return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
 }
 
@@ -92,6 +92,17 @@ describe('V3 cartographic theme contrast gates (WCAG AA)', () => {
     ['dark', parseHexVars(darkSection), true],
   ];
 
+  it('dark: rgba map-chrome 底色按 dark profile 合成，不按白底提亮', () => {
+    const vars = parseHexVars(darkSection);
+    const bg = vars['map-chrome-bg'];
+    const ink = vars['map-chrome-text'];
+    expect(bg && ink).toBeTruthy();
+    expect(contrast(bg, ink, true)).toBeCloseTo(
+      contrast(toOpaque(bg, true), toOpaque(ink, true), true),
+      10,
+    );
+  });
+
   for (const [profile, vars, onDark] of profiles) {
     it(`${profile}: 正文 token 在其面板底色上 ≥ 4.5:1`, () => {
       const panel = vars['surface-panel'];
@@ -99,7 +110,7 @@ describe('V3 cartographic theme contrast gates (WCAG AA)', () => {
       for (const token of ['text-primary', 'text-secondary']) {
         const fg = vars[token];
         expect(fg, `${profile} --${token} 缺失`).toBeTruthy();
-        const ratio = contrast(toOpaque(fg, onDark), toOpaque(panel, onDark));
+        const ratio = contrast(fg, panel, onDark);
         expect(ratio, `${profile} --${token} on --surface-panel = ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
       }
     });
@@ -109,9 +120,9 @@ describe('V3 cartographic theme contrast gates (WCAG AA)', () => {
       const ink = vars['map-chrome-text'];
       const muted = vars['map-chrome-text-muted'];
       expect(bg && ink && muted, `${profile} map-chrome token 缺失`).toBeTruthy();
-      expect(contrast(toOpaque(ink, onDark), toOpaque(bg, onDark))).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(ink, bg, onDark)).toBeGreaterThanOrEqual(4.5);
       // muted 是辅助信息（小字），也必须过 AA
-      expect(contrast(toOpaque(muted, onDark), toOpaque(bg, onDark))).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(muted, bg, onDark)).toBeGreaterThanOrEqual(4.5);
     });
   }
 });

@@ -133,9 +133,29 @@ def test_publication_components_no_demand_without_export_or_layers():
     assert check_publication_components(ch, spec) != []  # 有层有导出 → 要求
     assert check_publication_components(ch, _mapspec(exports=[])) == []
     assert check_publication_components(_chapter(layers=0), spec) == []
+    # 无 spec：无法证明声明了出版导出 → 零 finding（不得以假前提报缺失）
+    assert check_publication_components(ch, None) == []
     # 组件齐备 → 零 finding
     full = _mapspec(components=[{"type": t} for t in (
         "title", "north_arrow", "scale_bar")], exports=["png"])
+    assert check_publication_components(ch, full) == []
+
+
+def test_publication_components_read_canonical_layout_components():
+    """真实 MapSpec 组件在 layout.components（MapSpecLayoutConfig）——
+    只读顶层 components 键会让三项出版组件恒报缺失（假阳性 warning +
+    add_component 修复路由）。"""
+    ch = _chapter()
+    spec = {
+        "layout": {"components": [{"id": "t", "type": "title"}]},
+        "exports": ["pdf"],
+    }
+    codes = {f.target for f in check_publication_components(ch, spec)}
+    assert codes == {"north_arrow", "scale_bar"}
+    # 齐备（layout 面）→ 零 finding
+    full = {"layout": {"components": [
+        {"id": f"c{i}", "type": t} for i, t in enumerate(
+            ("title", "north_arrow", "scale_bar"))]}, "exports": ["pdf"]}
     assert check_publication_components(ch, full) == []
 
 

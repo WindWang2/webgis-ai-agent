@@ -153,6 +153,24 @@ def test_string_values_capped_and_nonfinite_float_normalized():
     assert recs[1]["depth"] == "nan"  # 非 strict-JSON 字面量不得入记录
 
 
+def test_nonfinite_duration_normalized_to_string(caplog):
+    """信封 duration_s 的 NaN/Inf 归一为字符串（LoggingSink 严格 JSON）。"""
+    from app.lib.observability import LoggingSink
+
+    sink = RingSink()
+    register_sink(sink)
+    register_sink(LoggingSink())
+    with caplog.at_level(logging.INFO, logger="webgis.observability"):
+        emit_event("compute", "dispatch", status="completed",
+                   duration_s=float("nan"))
+        emit_event("compute", "dispatch", status="completed",
+                   duration_s=float("inf"))
+    recs = sink.snapshot(10)
+    assert [rec["duration_s"] for rec in recs] == ["nan", "inf"]
+    lines = [json.loads(rec.message) for rec in caplog.records]
+    assert [line["duration_s"] for line in lines] == ["nan", "inf"]
+
+
 def test_snapshot_zero_returns_empty():
     sink = RingSink()
     register_sink(sink)

@@ -205,7 +205,7 @@ class MissionStore:
 
     def list_unfinished(
         self, *, org_id: Optional[str] = None, limit: int = 100,
-        user_id: Optional[str] = None,
+        user_id: Optional[str] = None, newest_first: bool = False,
     ) -> List[C.MissionRecord]:
         active = [s.value for s in C.ACTIVE_STATES]
         try:
@@ -216,8 +216,13 @@ class MissionStore:
                     q = q.filter(GISMissionRow.org_id == str(org_id))
                 if user_id is not None:
                     q = q.filter(GISMissionRow.user_id == str(user_id))
+                order = (
+                    GISMissionRow.updated_at.desc()
+                    if newest_first
+                    else GISMissionRow.updated_at.asc()
+                )
                 rows = (
-                    q.order_by(GISMissionRow.updated_at.asc())
+                    q.order_by(order)
                     .limit(max(1, min(int(limit), 500)))
                     .all()
                 )
@@ -261,7 +266,7 @@ class MissionStore:
                 same = (row.lease_owner or "") == owner_tok
                 if held > now and not same:
                     return None
-                new_epoch = int(row.lease_epoch or 0) + 1
+                new_epoch = int(row.lease_epoch or 0) + (0 if same else 1)
                 updated = db.execute(
                     sa.update(GISMissionRow)
                     .where(
@@ -608,9 +613,10 @@ class MissionStore:
         now = self._now()
         task_map = dict(tasks or {})
         if len(task_map) > C.MAX_SWARM_TASKS:
-            # deterministic truncate by sorted key
-            keep = sorted(task_map.keys())[: C.MAX_SWARM_TASKS]
-            task_map = {k: task_map[k] for k in keep}
+            # Never silently drop tasks: an unexecuted task must not let the
+            # run report success from the remaining subset.
+            raise TransitionRejected(
+                f"TOO_MANY_SWARM_TASKS:{len(task_map)}>{C.MAX_SWARM_TASKS}")
         org_tok = str(org_id or "")
         if not org_tok:
             raise TransitionRejected("ORG_REQUIRED")
@@ -698,7 +704,8 @@ class MissionStore:
                 if str(exc) != "CAS_LOST":
                     raise
                 last_cas = exc
-        assert last_cas is not None
+        if last_cas is None:  # defensive: unreachable while the loop raises CAS_LOST
+            raise FencingError("CAS_LOST")
         raise last_cas
 
     def _settle_swarm_task_once(
@@ -787,7 +794,8 @@ class MissionStore:
                     raise FencingError("CAS_LOST")
                 db.commit()
             got = self.get_swarm_run(swarm_run_id)
-            assert got is not None
+            if got is None:
+                raise TransitionRejected("SWARM_RUN_NOT_FOUND")
             return got
         except (FencingError, TransitionRejected):
             raise

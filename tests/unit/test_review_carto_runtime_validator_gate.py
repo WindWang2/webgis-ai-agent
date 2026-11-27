@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import multiprocessing
+import os
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -40,6 +45,105 @@ async def test_cp14_same_session_serialized(monkeypatch):
     state = _tracking(monkeypatch, v)
     await asyncio.gather(*(v.validate_runtime("same") for _ in range(3)))
     assert state["per_peak"]["same"] == 1
+
+
+def test_cp14_same_session_serialized_across_event_loops(monkeypatch, tmp_path):
+    state = {"active": 0, "peak": 0}
+    state_lock = threading.Lock()
+    first_entered = threading.Event()
+    second_started = threading.Event()
+    release = threading.Event()
+
+    async def fake(self, session_id, probes_path=None):
+        with state_lock:
+            state["active"] += 1
+            state["peak"] = max(state["peak"], state["active"])
+        first_entered.set()
+        while not release.is_set():
+            await asyncio.sleep(0.01)
+        with state_lock:
+            state["active"] -= 1
+        return {"ok": True}
+
+    monkeypatch.setattr(rv.RuntimeValidator, "_validate_runtime_unlocked", fake)
+    monkeypatch.setattr(rv.mapspec_store, "get_session_dir", lambda _sid: tmp_path)
+
+    def run(first):
+        async def invoke():
+            if not first:
+                second_started.set()
+            return await rv.RuntimeValidator().validate_runtime("same")
+        return asyncio.run(invoke())
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(run, True)
+        try:
+            assert first_entered.wait(2.0)
+            second = pool.submit(run, False)
+            assert second_started.wait(2.0)
+            time.sleep(0.2)
+        finally:
+            release.set()
+        assert first.result(timeout=5.0) == {"ok": True}
+        assert second.result(timeout=5.0) == {"ok": True}
+    assert state["peak"] == 1
+
+
+def _cp14_process_worker(session_dir, first_entered, second_started, release,
+                         state_lock, active, peak, is_second):
+    async def fake(self, session_id, probes_path=None):
+        with state_lock:
+            active.value += 1
+            peak.value = max(peak.value, active.value)
+        first_entered.set()
+        while not release.is_set():
+            await asyncio.sleep(0.01)
+        with state_lock:
+            active.value -= 1
+        return {"ok": True}
+
+    async def invoke():
+        if is_second:
+            second_started.set()
+        return await rv.RuntimeValidator().validate_runtime("same")
+
+    rv.mapspec_store.get_session_dir = lambda _sid: session_dir
+    rv.RuntimeValidator._validate_runtime_unlocked = fake
+    asyncio.run(invoke())
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="cross-process test requires fork")
+def test_cp14_same_session_serialized_across_processes(tmp_path):
+    ctx = multiprocessing.get_context("fork")
+    first_entered = ctx.Event()
+    second_started = ctx.Event()
+    release = ctx.Event()
+    state_lock = ctx.Lock()
+    active = ctx.Value("i", 0)
+    peak = ctx.Value("i", 0)
+    args = (tmp_path, first_entered, second_started, release,
+            state_lock, active, peak)
+
+    first = ctx.Process(target=_cp14_process_worker, args=(*args, False))
+    second = ctx.Process(target=_cp14_process_worker, args=(*args, True))
+    try:
+        first.start()
+        assert first_entered.wait(2.0)
+        second.start()
+        assert second_started.wait(2.0)
+        time.sleep(0.2)
+        release.set()
+        first.join(5.0)
+        second.join(5.0)
+        assert first.exitcode == 0
+        assert second.exitcode == 0
+        assert peak.value == 1
+    finally:
+        release.set()
+        for process in (first, second):
+            if process.pid is not None and process.is_alive():
+                process.terminate()
+                process.join(5.0)
 
 
 async def test_cp14_cancel_holds_guard_until_orphan_finishes(monkeypatch, tmp_path):

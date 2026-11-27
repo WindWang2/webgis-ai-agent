@@ -564,7 +564,7 @@ def validate_render_observation(
                         "rendered with data"
                     ),
                 ))
-        elif "charts" not in observation:
+        elif not charts:
             findings.append(MapCompletionFinding(
                 code=F_CHART_DATA_MISSING,
                 severity="warning",

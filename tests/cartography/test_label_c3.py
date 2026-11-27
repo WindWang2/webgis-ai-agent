@@ -144,3 +144,10 @@ def test_label_solve_perf_budget(n: int, budget_s: float) -> None:
     assert elapsed < budget_s, (
         f"{n} 要素标注求解 {elapsed:.2f}s 超预算 {budget_s}s —— 性能回归"
     )
+
+
+def test_wrap_latin_empty_input_returns_one_empty_line() -> None:
+    """空串/纯空白也必须返回 1..max_lines 行（与 cjk_char 分支一致）。"""
+    assert wrap_label_multilingual("", wrap_mode="latin_word") == [""]
+    assert wrap_label_multilingual("   ", wrap_mode="latin_word") == [""]
+    assert wrap_label_multilingual("", wrap_mode="auto") == [""]

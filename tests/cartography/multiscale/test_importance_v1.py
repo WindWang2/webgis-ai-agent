@@ -171,3 +171,44 @@ class TestBandSelection:
         d = derive_importance_model(ROAD_SCHEMA, ROAD_DIST, feature_count=2760)
         with pytest.raises(ValueError):
             kept_values_for_band(d.selected, "galaxy", DEFAULT_KEEP_RANKS)
+
+
+class TestNoneBucketNotCountedAsNonNull:
+    """P2：None 桶（缺失值）计入 sum(dist.values()) 会让覆盖率虚高。"""
+
+    def test_computational_path_excludes_none_bucket(self):
+        dist = {"道路等级": {"国道": 10, "省道": 20, None: 100}}
+        schema = _field_schema({"道路等级": "string"})
+        d = derive_importance_model(schema, dist, feature_count=200)
+        assert d.selected is not None
+        # 非空 = 30/200；把 None 桶计入会得到 130/200
+        assert d.selected.non_null_coverage == round(30 / 200, 6)
+        assert d.selected.distinct_values == 2  # None 不是 distinct 值
+
+    def test_user_override_path_excludes_none_bucket(self):
+        dist = {"道路等级": {"国道": 10, "省道": 20, None: 100}}
+        d = derive_importance_model(
+            ROAD_SCHEMA, dist, feature_count=200,
+            user_field="道路等级", user_value_order=["国道", "省道"],
+        )
+        assert d.selected is not None
+        assert d.selected.evidence == "user_override"
+        assert d.selected.non_null_coverage == round(30 / 200, 6)
+
+
+def test_negative_keep_rank_rejected():
+    """负 K 不得静默从词表尾部切片（fail-closed）。"""
+    d = derive_importance_model(ROAD_SCHEMA, ROAD_DIST, feature_count=2760)
+    assert d.selected is not None
+    with pytest.raises(ValueError, match="must be >= 0"):
+        kept_values_for_band(d.selected, "city", {"city": -1})
+
+
+def test_hyphenated_field_name_matches_specific_synonym():
+    """road-class 按文档承诺去连字符后命中 roadclass（而非泛化的 class）。"""
+    schema = _field_schema({"road-class": "string"})
+    dist = {"road-class": {"motorway": 5, "trunk": 8, "primary": 3}}
+    d = derive_importance_model(schema, dist, feature_count=16)
+    assert d.selected is not None
+    assert d.selected.matched_field_synonym == "roadclass"
+    assert "synonym:roadclass" in d.selected.reason_codes

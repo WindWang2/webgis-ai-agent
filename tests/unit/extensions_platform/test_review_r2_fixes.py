@@ -237,3 +237,160 @@ class TestBrokerDeathTypedCrash:
                 {"type": "broker_request", "id": "b1", "op": "secret_get",
                  "payload": {"ref": "x"}}
             )
+
+
+class TestWorkerClientLockDiscipline:
+    """P2：WorkerProcess 的 stdin 写面与握手等待必须守 ``_lock`` 纪律。
+
+    - 握手**等待**不持锁（review #2145 同型修正）：整个 startup_timeout_s
+      持锁会把并发 shutdown()/call()/health() 全堵在锁外；等待期 call 类
+      准入被 _starting 门禁 typed 拒绝（协议要求握手帧先行，不得与握手帧
+      交错写坏通道）；
+    - broker_response / stream_credit / stream_cancel 写 stdin 必须持锁：
+      与 shutdown 写、彼此之间并发会帧字节交错，损坏 RPC 通道。
+    """
+
+    def _worker(self, tmp_path) -> "WorkerProcess":
+        from app.extensions_platform.worker.client import WorkerProcess
+
+        pack = tmp_path / "acme.pack.dir"
+        pack.mkdir(exist_ok=True)
+        return WorkerProcess(
+            pack_dir=pack,
+            extension_id="acme.pack",
+            namespace="acme",
+            name="pack",
+            fingerprint="0" * 64,
+            grants=[],
+            settings={},
+            startup_timeout_s=5.0,
+            call_timeout_s=5.0,
+            broker_handler=lambda op, payload: (True, {"value": 1}),
+        )
+
+    def test_broker_response_write_holds_lock(self, tmp_path):
+        import threading
+
+        from app.extensions_platform.worker.protocol import decode_frame
+
+        worker = self._worker(tmp_path)
+
+        class RecordingStdin:
+            def __init__(self):
+                self.sent: list[dict] = []
+
+            def write(self, data: bytes) -> int:
+                self.sent.append(decode_frame(data))
+                return len(data)
+
+            def flush(self) -> None:
+                return None
+
+        proc = type(
+            "P", (), {"pid": 0, "poll": lambda self: None, "stdin": RecordingStdin()},
+        )()
+        worker._proc = proc
+        # 主线程持锁：未修复时 _dispatch_broker 不持锁即写，会立即完成。
+        assert worker._lock.acquire()
+        done = threading.Event()
+
+        def _dispatch() -> None:
+            worker._dispatch_broker(
+                {"type": "broker_request", "id": "b1", "op": "x", "payload": {}}
+            )
+            done.set()
+
+        pump = threading.Thread(target=_dispatch, daemon=True)
+        pump.start()
+        try:
+            assert not done.wait(0.3), (
+                "broker_response write must not bypass _lock (frame interleave)"
+            )
+        finally:
+            worker._lock.release()
+        assert done.wait(5.0)
+        assert proc.stdin.sent[-1]["type"] == "broker_response"
+
+    def test_start_wait_does_not_hold_lock_and_gates_calls(self, tmp_path, monkeypatch):
+        """握手等待不持锁；等待期 call 被 typed 拒绝；握手后门禁解除。"""
+        import subprocess
+        import threading
+        import time
+
+        from app.extensions_platform.diagnostics import ExtensionPlatformError
+        from app.extensions_platform.worker.protocol import (
+            WORKER_PROTOCOL_VERSION,
+            encode_frame,
+        )
+
+        worker = self._worker(tmp_path)
+        handshake_ok = encode_frame(
+            {"type": "handshake_ok", "protocol": WORKER_PROTOCOL_VERSION, "tools": []}
+        )
+
+        class DelayedStdout:
+            """首个 read 阻塞到 serve()，之后 EOF（帧已交付）。"""
+
+            def __init__(self):
+                self._release = threading.Event()
+                self._served = False
+
+            def serve(self) -> None:
+                self._release.set()
+
+            def read(self, n: int = -1) -> bytes:
+                if self._served:
+                    return b""
+                self._release.wait(timeout=5.0)
+                self._served = True
+                return handshake_ok
+
+            read1 = read
+
+        class FakeStdin:
+            def __init__(self):
+                self.sent: list[bytes] = []
+
+            def write(self, data: bytes) -> int:
+                self.sent.append(data)
+                return len(data)
+
+            def flush(self) -> None:
+                return None
+
+        stdout = DelayedStdout()
+        proc = type(
+            "P",
+            (),
+            {
+                "pid": 999,
+                "poll": lambda self: None,
+                "stdin": FakeStdin(),
+                "stdout": stdout,
+                "stderr": None,
+                "kill": lambda self: None,
+                "wait": lambda self, timeout=None: 0,
+            },
+        )()
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: proc)
+
+        starter = threading.Thread(target=worker.start, daemon=True)
+        starter.start()
+        time.sleep(0.15)  # 进入握手等待
+        try:
+            # 等待中另一线程必须能立刻拿到 _lock（未修复时被 startup_timeout_s 堵死）。
+            assert worker._lock.acquire(timeout=1.0), (
+                "start() must not hold _lock across the handshake wait"
+            )
+            worker._lock.release()
+            # 等待期 call 被 typed 拒绝（不与握手帧交错写坏 RPC 通道）。
+            with pytest.raises(ExtensionPlatformError) as excinfo:
+                worker.call("acme_tool", {})
+            assert excinfo.value.diagnostic.code == DiagnosticCode.WORKER_STARTUP_TIMEOUT
+        finally:
+            stdout.serve()
+        starter.join(timeout=5.0)
+        assert not starter.is_alive()
+        assert worker._starting is False
+        assert worker.tools == []
+        assert proc.stdin.sent, "handshake frame must still be written under the lock"

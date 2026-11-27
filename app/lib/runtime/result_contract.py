@@ -128,8 +128,8 @@ def _collect_refs(result: Any, budget: int = 64) -> Tuple[str, ...]:
             return
         if isinstance(node, dict):
             for k, v in node.items():
-                if isinstance(v, str) and (
-                    v.startswith(_REF_PREFIX) or (k in _REF_KEYS and v.startswith("ref:"))
+                if isinstance(v, str) and v and (
+                    v.startswith(_REF_PREFIX) or k in _REF_KEYS
                 ):
                     if v not in refs:
                         refs.append(v)
@@ -173,9 +173,12 @@ def inspect_tool_result(result: Any) -> ToolResultView:
             str(result[k])[:120] for k in _ARTIFACT_HINT_KEYS
             if isinstance(result, dict) and result.get(k)
         )
+        raw_warnings = result.get("warnings") if isinstance(result, dict) else None
+        if isinstance(raw_warnings, str):
+            raw_warnings = (raw_warnings,)
         warnings = tuple(
-            str(w)[:200] for w in (result.get("warnings") or [])[:8]
-        ) if isinstance(result, dict) else ()
+            str(w)[:200] for w in (raw_warnings or [])[:8]
+        )
         return ToolResultView(
             ok=True,
             semantic_type=semantic,

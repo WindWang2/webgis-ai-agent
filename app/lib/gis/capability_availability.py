@@ -379,9 +379,9 @@ def compile_availability_snapshot(
 
     # 声明态能力：只有声明、没有真实可执行工具 → declared_only（tool_id 空）。
     tool_backed_caps = {r.capability_id for r in records if r.capability_id}
-    for cid in sorted(cap_reg.all_ids):
-        if cid in tool_backed_caps:
-            continue
+    declared_ids = [cid for cid in sorted(cap_reg.all_ids)
+                    if cid not in tool_backed_caps]
+    for cid in declared_ids:
         cap = cap_reg.get(cid)
         records.append(AvailabilityRecord(
             capability_id=cid,
@@ -398,7 +398,13 @@ def compile_availability_snapshot(
         if len(records) >= max_records:
             break
 
-    truncated = len(records) > max_records
+    # 超预算 break 时 len(records) 恰等于 max_records（不是 >），旧判据
+    # `len(records) > max_records` 恒 False —— 被丢掉的声明态能力既不进
+    # records 也不进 diagnostics，快照谎称完整。按「声明的 declared_only
+    # 是否全部在场」重算截断旗并披露丢弃数。
+    emitted_caps = {r.capability_id for r in records if r.capability_id}
+    omitted_declared = [cid for cid in declared_ids if cid not in emitted_caps]
+    truncated = len(records) > max_records or bool(omitted_declared)
     kept = tuple(records[:max_records])
     counts: dict[str, int] = {s: 0 for s in AVAILABILITY_STATUS_VOCABULARY}
     for rec in kept:
@@ -409,6 +415,9 @@ def compile_availability_snapshot(
         diagnostics.append("conformance_reports_truncated")
     if truncated:
         diagnostics.append(f"records_truncated_to_{max_records}")
+    if omitted_declared:
+        diagnostics.append(
+            f"declared_only_capabilities_omitted_{len(omitted_declared)}")
     if not cert_digest:
         diagnostics.append("certification_index_absent:not_evaluated")
 

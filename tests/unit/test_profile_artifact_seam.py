@@ -113,6 +113,12 @@ async def test_profile_ref_minted_and_component_upserted(tmp_path):
         assert raw.get("mapspec_fingerprint") == cartographic_fingerprint(
             raw.get("mapspec")
         )
+        # 组件突变产生新代后，render_work 信封必须投影新指纹/新修订，
+        # 不得沿用层挂载时的旧 lifecycle 值。
+        envelope = raw.get("render_work")
+        assert isinstance(envelope, dict), "render_work envelope must be attached"
+        assert envelope["mapspec_fingerprint"] == raw["mapspec_fingerprint"]
+        assert envelope["mapspec_revision"] == raw["mutation_revision"]
     finally:
         if os.path.exists(raster):
             os.unlink(raster)

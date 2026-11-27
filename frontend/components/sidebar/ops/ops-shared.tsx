@@ -33,8 +33,13 @@ export function formatBytes(n: number | null | undefined): string {
 export function formatDuration(seconds: number | null | undefined): string {
   if (seconds == null || !Number.isFinite(seconds)) return '—';
   if (seconds < 60) return `${seconds.toFixed(seconds < 10 ? 1 : 0)}s`;
-  const m = Math.floor(seconds / 60);
-  const s = Math.round(seconds % 60);
+  let m = Math.floor(seconds / 60);
+  let s = Math.round(seconds % 60);
+  // 四舍五入可能得到 60s —— 进位到分钟，避免 "1m60s"。
+  if (s === 60) {
+    s = 0;
+    m += 1;
+  }
   if (m < 60) return `${m}m${s > 0 ? `${s}s` : ''}`;
   const h = Math.floor(m / 60);
   return `${h}h${m % 60 > 0 ? `${m % 60}m` : ''}`;

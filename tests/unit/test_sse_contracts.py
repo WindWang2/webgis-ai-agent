@@ -129,8 +129,18 @@ class TestEmitterPayloadShapes:
 
     def test_step_error_omits_absent_optionals(self, em):
         d = _data(em.step_error("task-1", "step-1", "t", "e"))
-        for absent in ("failure_class", "recovery_action", "error_class"):
+        for absent in ("failure_class", "recovery_action"):
             assert absent not in d
+        # INV-7：错误事件必须携带 error_class（step 语境缺省 tool_error）。
+        assert d["error_class"] == "tool_error"
+
+    def test_task_error_defaults_error_class(self, em):
+        d = _data(em.task_error("task-1", "boom"))
+        assert d["error_class"] == "internal_error"
+        assert _data(em.task_error("task-1", "boom", error_class="turn_timeout"))[
+            "error_class"
+        ] == "turn_timeout"
+
 
     def test_step_result_optionals(self, em):
         d = _data(em.step_result("task-1", "s", "t", {"ok": True}))

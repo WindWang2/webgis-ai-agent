@@ -14,6 +14,7 @@
 """
 import shutil
 import uuid
+from types import SimpleNamespace
 
 import pytest
 
@@ -281,6 +282,92 @@ def test_layer_missing_for_bound_planned_layer():
     }
     findings = validate_layers(_chapter(layer_id="poi-main"), mapspec)
     assert any(f.code == F_LAYER_MISSING for f in findings)
+
+
+def test_result_layer_without_source_key_is_source_missing():
+    """LLM 经 webgis_layer_upsert 手写结果层（无 source 键 / source=""）
+    → 必须报 source_missing。此前 `if src and ...` 门让零 finding 逃逸：
+    无数据的结果层照样「在场 + 可见」→ 假 complete（obligations 闸 2 的
+    工具路径绕过）。"""
+    for layer in (
+        {"id": "poi-main", "type": "circle"},                 # 无 source 键
+        {"id": "poi-main", "type": "circle", "source": ""},   # 空串 source
+    ):
+        mapspec = {"layers": [layer], "sources": [{"id": "s"}]}
+        findings = validate_layers(_chapter(), mapspec)
+        assert any(f.code == F_SOURCE_MISSING for f in findings), layer
+
+
+def test_basemap_only_spec_is_not_a_result_layer():
+    """纯展示规格（仅可见 basemap/label 子层，无 source 数据层）→ 必须报
+    no_result_layer（空白地图不得假过）。此前对**全部**图层判可见。"""
+    mapspec = {
+        "layers": [
+            {"id": "bg", "type": "background"},
+            {"id": "labels", "type": "symbol",
+             "layout": {"visibility": "visible"}},
+        ],
+        "sources": [],
+    }
+    findings = validate_layers({}, mapspec)
+    assert any(f.code == F_NO_RESULT_LAYER for f in findings)
+
+
+def test_non_dict_layer_layout_does_not_raise():
+    """手写层的 layout 为字符串（真值非 dict）→ 按无 layout 处理，绝不抛
+    AttributeError 穿透 _validate_all（终验会被宽 except 静默跳过）。"""
+    mapspec = {
+        "layers": [{"id": "poi-main", "source": "s", "type": "circle",
+                    "layout": "none"}],
+        "sources": [{"id": "s"}],
+    }
+    findings = validate_layers(_chapter(), mapspec)
+    assert isinstance(findings, list)
+    assert not any(f.code == F_LAYER_HIDDEN for f in findings)
+
+
+def test_non_dict_layout_and_options_do_not_raise():
+    """mapspec.layout 为字符串 / 组件 options 为字符串 → validator 族
+    isinstance 防御：绝不抛 AttributeError（触发条件：webgis_layout_set
+    只校验 id/type 为 str；webgis_layer_upsert 内层键零校验）。"""
+    from app.services.gis_harness.completion.validators.semantics import (
+        validate_semantics,
+    )
+
+    mapspec = {
+        "layers": [{"id": "poi-main", "source": "s", "type": "circle"}],
+        "sources": [{"id": "s"}],
+        "layout": "not-a-dict",
+    }
+    assert validate_components(mapspec, required_slots=[["title"]],
+                               layer_ids=["poi-main"]) is not None
+    assert validate_semantics(
+        _chapter(), mapspec, required_slots=[["title"]]) is not None
+    mapspec["layout"] = {"components": [
+        {"id": "legend-main", "type": "legend", "options": "not-a-dict"},
+    ]}
+    assert validate_components(mapspec, required_slots=[["legend"]],
+                               layer_ids=["poi-main"]) is not None
+    assert validate_semantics(
+        _chapter(), mapspec, required_slots=[["legend"]]) is not None
+
+
+def test_non_dict_provenance_does_not_raise():
+    """层 provenance 为字符串 → semantics validator 的 CRS 投影按缺席处理
+    （此前 `(ly.get("provenance") or {}).get(...)` 抛 AttributeError）。"""
+    from app.services.gis_harness.completion.validators.semantics import (
+        validate_semantics,
+    )
+
+    mapspec = {
+        "layers": [{"id": "poi-main", "source": "s", "type": "circle",
+                    "provenance": "not-a-dict"}],
+        "sources": [{"id": "s"}],
+    }
+    records = {"ref:geojson-x": SimpleNamespace(crs="EPSG:4326")}
+    findings = validate_semantics(_chapter(), mapspec, required_slots=[],
+                                  records=records)
+    assert isinstance(findings, list)
 
 
 # ── component 校验 ────────────────────────────────────────────────────
@@ -615,6 +702,88 @@ async def test_empty_result_disclosed_as_warning_not_failure(clean_session):
     assert result.status == STATUS_COMPLETE
 
 
+@pytest.mark.asyncio
+async def test_single_run_repairs_beyond_disclosure_cap_reach_durable_memory(
+        clean_session):
+    """单轮 >MAX_DISCLOSED_REPAIRS(6) 条修复必须全量进 durable
+    repair_memory：披露面（repairs）有界 ≤6，但记忆面不得在源处被截断 ——
+    否则多出的修复永不进记忆，后续轮 prior_repairs 缺项 → 重新对抗用户
+    已覆盖的修复（map_product_block all_repairs 契约明示此回归面）。"""
+    from app.services.gis_harness.completion.pipeline import MAX_DISCLOSED_REPAIRS
+    from app.services.gis_harness.map_completion import MAX_REPAIR_MEMORY
+
+    ref = await _store_ref(clean_session)
+    # 多结果层 + 全隐藏 + 零组件 → 单轮可修复发现 >6（show_layer×N +
+    # add_component×N）。
+    chapter = _chapter(bound_ref=ref)
+    chapter["map_layers"] = [
+        {"role": "primary", "layer_id": f"ly-{i}", "enabled": True}
+        for i in range(5)
+    ]
+    engine = MapSpecLifecycleEngine()
+    await engine.apply_mutation(clean_session, InitProjectIntent())
+    for i in range(5):
+        await engine.apply_mutation(
+            clean_session,
+            UpsertLayerIntent(
+                layer={
+                    "id": f"ly-{i}",
+                    "source": f"s-ly-{i}",
+                    "type": "circle",
+                    "paint": {"circle-color": "#00f"},
+                    "layout": {"visibility": "none"},
+                },
+                source_data=_geojson(),
+            ),
+        )
+    # 先跑一次拿全量 repairs_applied（披露帽不再吞掉它们）
+    result = await run_map_finalization(clean_session, chapter=chapter)
+    assert len(result.repairs_applied) > MAX_DISCLOSED_REPAIRS, (
+        f"单轮修复数 {len(result.repairs_applied)} 未超过披露帽 —— 场景不足，"
+        "回归测试失去意义")
+    assert len(result.to_dict()["repairs"]) <= MAX_DISCLOSED_REPAIRS
+
+    # 干净会话重放同一场景：maybe_finalize 内部单轮完成全部修复 → durable
+    # 记忆面必须收全量（≤MAX_REPAIR_MEMORY），披露面仍 ≤6。
+    from app.services.session_plan import load_session_plan
+
+    sid2 = f"mcf-session-{uuid.uuid4().hex[:8]}"
+    await session_data_manager.clear_session(sid2)
+    try:
+        ref2 = await _store_ref(sid2)
+        chapter2 = _chapter(bound_ref=ref2)
+        chapter2["map_layers"] = list(chapter["map_layers"])
+        engine2 = MapSpecLifecycleEngine()
+        await engine2.apply_mutation(sid2, InitProjectIntent())
+        for i in range(5):
+            await engine2.apply_mutation(
+                sid2,
+                UpsertLayerIntent(
+                    layer={
+                        "id": f"ly-{i}",
+                        "source": f"s-ly-{i}",
+                        "type": "circle",
+                        "paint": {"circle-color": "#00f"},
+                        "layout": {"visibility": "none"},
+                    },
+                    source_data=_geojson(),
+                ),
+            )
+        await _save_plan(sid2, chapter2)
+        await maybe_finalize_map_product(sid2, force=True)
+        plan = await load_session_plan(sid2)
+        block = plan.gis_chapter["map_product"]
+        assert len(block["repair_memory"]) > MAX_DISCLOSED_REPAIRS
+        assert set(block["repair_memory"]) >= set(result.repairs_applied)
+        assert len(block["repair_memory"]) <= MAX_REPAIR_MEMORY
+        assert len(block["repairs"]) <= MAX_DISCLOSED_REPAIRS
+    finally:
+        await session_data_manager.clear_session(sid2)
+        d = BASE_STORAGE_DIR / sid2
+        if d.exists():
+            shutil.rmtree(d, ignore_errors=True)
+
+
 # ── maybe_finalize：幂等门 + 章节块 + 投影 ───────────────────────────
 
 
@@ -662,6 +831,58 @@ async def test_maybe_finalize_persists_block_and_projection_line(clean_session):
 @pytest.mark.asyncio
 async def test_maybe_finalize_no_chapter_returns_none(clean_session):
     assert await maybe_finalize_map_product(clean_session) is None
+
+
+@pytest.mark.asyncio
+async def test_concurrent_finalizer_repair_memory_not_lost(
+        clean_session, monkeypatch):
+    """修复记忆合并必须读**锁内 fresh 章节**：stored 是锁外快照，并发终验
+    在该窗口落块时其 repair_memory 会被静默丢弃（lost update —— goal/
+    revision/rows/render-seq 四道守卫都不覆盖 repair_memory 键）。"""
+    import copy
+
+    from app.services import session_plan as sp
+    from app.services.gis_harness.completion import pipeline as finalizer_pipeline
+
+    ref = await _store_ref(clean_session)
+    chapter = _chapter(bound_ref=ref)
+    await _seed_mapspec(clean_session)
+    await _save_plan(clean_session, chapter)
+
+    original = await sp.load_session_plan(clean_session)
+    concurrent_chapter = copy.deepcopy(original.gis_chapter)
+    concurrent_chapter["map_product"] = {
+        "status": STATUS_COMPLETE,
+        "repair_memory": ["concurrent-repair-a", "concurrent-repair-b"],
+        "repairs": ["concurrent-repair-a"],
+    }
+    calls = {"n": 0}
+    real_load = sp.load_session_plan
+
+    async def _fake_load(session_id):
+        calls["n"] += 1
+        if calls["n"] >= 2:
+            # 锁内 fresh 读取 → 见到并发终验刚落下的块
+            plan = copy.deepcopy(original)
+            plan.gis_chapter = copy.deepcopy(concurrent_chapter)
+            return plan
+        return await real_load(session_id)
+
+    captured: dict = {}
+    real_block = finalizer_pipeline.map_product_block
+
+    def _capture_block(*args, **kwargs):
+        captured["all_repairs"] = list(kwargs.get("all_repairs") or [])
+        return real_block(*args, **kwargs)
+
+    monkeypatch.setattr(sp, "load_session_plan", _fake_load)
+    monkeypatch.setattr(finalizer_pipeline, "map_product_block", _capture_block)
+    result = await maybe_finalize_map_product(clean_session)
+    assert result is not None and result.status == STATUS_COMPLETE
+    assert calls["n"] >= 2, "锁内 fresh 读取未发生（场景失效）"
+    # 并发落块的修复记忆必须进合并集（lost update 回归）
+    assert "concurrent-repair-a" in captured["all_repairs"]
+    assert "concurrent-repair-b" in captured["all_repairs"]
 
 
 @pytest.mark.asyncio
@@ -877,6 +1098,29 @@ async def test_read_stored_map_product_carries_session_id(clean_session):
     assert stored["status"] == STATUS_COMPLETE
 
 
+@pytest.mark.asyncio
+async def test_display_confirmation_unavailable_defaults_auto_true(
+        clean_session, monkeypatch):
+    """确认面导入/调用抛异常 → display_confirmed 按 auto 模式默认语义
+    True（同处注释与 display_mode 默认值；此前置 False = 任务完成披露
+    假阴性）。"""
+    import app.services.gis_harness.display_confirmation as dc
+
+    ref = await _store_ref(clean_session)
+    chapter = _chapter(bound_ref=ref)
+    await _seed_mapspec(clean_session)
+    await _save_plan(clean_session, chapter)
+    await maybe_finalize_map_product(clean_session)
+
+    async def _boom(*args, **kwargs):
+        raise RuntimeError("display confirmation unavailable")
+
+    monkeypatch.setattr(dc, "is_display_confirmed", _boom)
+    stored = await read_stored_map_product(clean_session)
+    assert stored is not None
+    assert stored["display_confirmed"] is True
+
+
 # ── 契约 ──────────────────────────────────────────────────────────────
 
 
@@ -979,3 +1223,48 @@ async def test_transient_descriptor_error_is_not_expiry(clean_session):
         sd_module.session_data_manager.get_ref_descriptor = original  # type: ignore[assignment]
     assert not any(f.code == F_ARTIFACT_EXPIRED for f in result.findings)
     assert result.status != STATUS_FAILED
+
+
+# ── 全量审查 P3：终验/兜底校验加固 ───────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_zero_max_passes_still_validates_once(clean_session):
+    """max_passes=0 表示零修复轮，不是零校验：层缺失必须落 failed，不得
+    未经任何校验就 STATUS_COMPLETE。"""
+    ref = await _store_ref(clean_session)
+    chapter = _chapter(bound_ref=ref)
+    engine = MapSpecLifecycleEngine()
+    await engine.apply_mutation(clean_session, InitProjectIntent())
+    result = await run_map_finalization(
+        clean_session, chapter=chapter, max_passes=0)
+    assert result.status != STATUS_COMPLETE
+    assert result.findings
+
+
+def test_stale_overlay_check_tolerates_unhashable_ref(monkeypatch):
+    """MapSpec source.ref 为 list/dict 时不得 TypeError 崩掉终验。"""
+    from app.services.gis_harness.completion.map_verification import (
+        _check_stale_overlays,
+    )
+
+    mapspec = {
+        "layers": [{"id": "stray", "source": "s-list"}],
+        "sources": {"s-list": {"ref": ["not", "a", "string"]}},
+    }
+    assert _check_stale_overlays({}, mapspec, {}) == []
+    mapspec["sources"]["s-list"]["ref"] = {"nested": True}
+    assert _check_stale_overlays({}, mapspec, {}) == []
+
+
+def test_execution_fallback_ignores_optional_rows(monkeypatch):
+    """无图兜底与图路径同口径：optional 行 pending/failed 不阻塞。"""
+    import app.services.gis_harness.plan_graph as pg
+
+    def _boom(_chapter):
+        raise RuntimeError("graph build failed")
+
+    monkeypatch.setattr(pg, "build_plan_graph", _boom)
+    chapter = _chapter(req_status="pending", step_status="failed",
+                       optional=True)
+    assert validate_execution(chapter) == []

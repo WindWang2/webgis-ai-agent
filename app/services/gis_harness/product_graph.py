@@ -288,7 +288,9 @@ def build_product_graph(
     # （状态 = enabled 投影；图例/插图是信息性 facet —— 见 _STAT_KINDS 注）
     chart_seen = False
     legend_seen = False
-    for comp in ((mapspec or {}).get("layout") or {}).get("components") or []:
+    spec_layout = (mapspec or {}).get("layout") if isinstance(mapspec, dict) else None
+    layout = spec_layout if isinstance(spec_layout, dict) else {}
+    for comp in (layout.get("components") or []):
         if not isinstance(comp, dict):
             continue
         ctype = str(comp.get("type") or "")
@@ -418,7 +420,11 @@ def build_product_graph(
             ))
 
     # export facet：模板导出画像（信息性 —— 导出动作本身不由计划真相追踪）
-    export_profile = (chapter.get("template_selection") or {}).get("export_profile")
+    template_selection = chapter.get("template_selection")
+    export_profile = (
+        template_selection.get("export_profile")
+        if isinstance(template_selection, dict) else None
+    )
     if isinstance(export_profile, dict) and export_profile.get("formats"):
         graph.nodes.append(
             ProductNode(
@@ -719,20 +725,6 @@ def build_facet_completion(
             facet.required = str(node.metadata.get("spec_required") or "") == "1"
         elif node.kind == KIND_ANNOTATION:
             facet.component_ids = [node.key]
-            # v2（Scenario F）：chart facet 的 chartRef 在 ref descriptor
-            # 里查无证据（artifact 缺失/过期被逐出）→ needs_repair —— 只
-            # 该 chart 面板欠修，不把整图判死。descriptors 缺席（无证据
-            # 输入）→ 不虚构，维持 enabled 投影状态。
-            if (
-                node.kind == KIND_CHART
-                and node.artifact_ref
-                and descriptors
-                and node.artifact_ref not in descriptors
-            ):
-                facet.status = FS_NEEDS_REPAIR
-                facet.render_status = "issues"
-            if node.kind == KIND_CHART:
-                facet.required = contract.chart_required
         elif node.kind in (KIND_LEGEND, KIND_INSET):
             # 必需性由契约决定：组合模板 required 槽位（density_map 的
             # colorbar）→ required；缺省 informational —— 在场即构成，

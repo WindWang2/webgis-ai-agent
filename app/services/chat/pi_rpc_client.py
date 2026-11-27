@@ -31,6 +31,7 @@ import re
 import subprocess
 import tempfile
 import time
+import weakref
 from pathlib import Path
 from typing import Any, NamedTuple, Optional
 
@@ -152,6 +153,27 @@ PI_AGENT_DIR = REPO_ROOT / ".pi" / "agent"
 DEFAULT_SESSION_DIR = REPO_ROOT / ".pi" / "sessions"
 BUNDLED_PI_PROVIDER = "webgis"
 
+def _env_int(name: str, default: int) -> int:
+    """Positive-int env with a safe fallback (import-time; never raise)."""
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "CONFIG-04: ignoring invalid %s=%r, using default %s", name, raw, default,
+        )
+        return default
+    if value <= 0:
+        logger.warning(
+            "CONFIG-04: ignoring non-positive %s=%r, using default %s",
+            name, raw, default,
+        )
+        return default
+    return value
+
+
 # REVIEW-P2 (Pi subprocess trust boundary):
 # Cap a single stdout line at 16 MiB. Pi is a trusted subprocess, but "trusted"
 # does not mean "well-behaved under every condition" — a runaway tool payload,
@@ -159,7 +181,7 @@ BUNDLED_PI_PROVIDER = "webgis"
 # otherwise buffer indefinitely in the reader thread and OOM the worker.
 # 16 MiB is well above any legitimate AgentSessionEvent we have observed
 # (typical tool-execution-end events are <10 KiB even with geojson refs).
-MAX_STDOUT_LINE_BYTES = int(os.environ.get("PI_MAX_STDOUT_LINE_BYTES", 16 * 1024 * 1024))
+MAX_STDOUT_LINE_BYTES = _env_int("PI_MAX_STDOUT_LINE_BYTES", 16 * 1024 * 1024)
 
 # Cap the event queue at 1024 entries. A disconnected or slow SSE consumer
 # would otherwise let events accumulate without bound; the previous unbounded
@@ -167,7 +189,7 @@ MAX_STDOUT_LINE_BYTES = int(os.environ.get("PI_MAX_STDOUT_LINE_BYTES", 16 * 1024
 # indefinitely. On overflow we drop new events and log — the alternative
 # (blocking the reader) backpressures Pi's stdout pipe and can hang the
 # subprocess, which is worse.
-MAX_EVENT_QUEUE_SIZE = int(os.environ.get("PI_MAX_EVENT_QUEUE_SIZE", 1024))
+MAX_EVENT_QUEUE_SIZE = _env_int("PI_MAX_EVENT_QUEUE_SIZE", 1024)
 
 # ── v1.6.0 stderr 诊断行识别（观测面增量）────────────────────────────────
 # vendor/packages/coding-agent/src/modes/diagnostics-stderr.ts（v1.6.0）：
@@ -376,7 +398,15 @@ class PiRpcClient:
         # `trap 'kill 0' TERM INT` covers graceful pod termination at the
         # container level; this hook covers the application level. SIGKILL/OOM
         # is uncatchable and remains a deployment-level concern (tini/init).
-        atexit.register(self._cleanup_on_exit)
+        # 弱引用注册：atexit 不得强引用实例（否则每个构造过的 client 永不 GC）。
+        _self_ref = weakref.ref(self)
+
+        def _atexit_cleanup() -> None:
+            obj = _self_ref()
+            if obj is not None:
+                obj._cleanup_on_exit()
+
+        atexit.register(_atexit_cleanup)
 
     @property
     def stderr_diagnostics(self) -> "PiStderrDiagnostics":
@@ -795,6 +825,11 @@ class PiRpcClient:
         finally:
             if self._process is proc:
                 self._process = None
+            # P2：reader 的 finally 代际守卫在 _process 清空后必然 return，跳过
+            # _fail_all_pending —— stop() 自身必须无条件收口在飞 RPC，否则调用方
+            # 只能等满 PI_RPC_TIMEOUT（默认 300s）。
+            if getattr(self, "_pending_requests", None) is not None:
+                self._fail_all_pending("Pi process stopped")
 
         if self._reader_task:
             self._reader_task.cancel()
@@ -948,7 +983,7 @@ class PiRpcClient:
                     # AgentSessionEvent: has "type" but no "id"
                     elif "type" in obj and "id" not in obj:
                         self._enqueue_event(obj)
-                except json.JSONDecodeError:
+                except (json.JSONDecodeError, UnicodeDecodeError):
                     logger.warning(f"[PiRpcClient] Invalid JSON: {line[:200]}")
         except asyncio.CancelledError:
             raise
@@ -1126,8 +1161,9 @@ class PiRpcClient:
 
         try:
             await _write_line_locked()
-        except (BrokenPipeError, OSError) as e:
-            # 写失败：立刻回收 pending 项（无响应会来解它）。
+        except (BrokenPipeError, OSError, ValueError) as e:
+            # 写失败：立刻回收 pending 项（无响应会来解它）。ValueError 覆盖
+            # stop() 已关 stdin 后并发写的 "I/O operation on closed file"。
             self._pending_requests.pop(request_id, None)
             future.cancel()
             raise PiRpcError(f"Pi pipe error: {e}")
@@ -1190,5 +1226,5 @@ class PiRpcClient:
         async with self._stdin_write_lock:
             try:
                 await self._write_stdin_line(proc, line)
-            except (BrokenPipeError, OSError) as e:
+            except (BrokenPipeError, OSError, ValueError) as e:
                 raise PiRpcError(f"Pi pipe error (ui response): {e}")

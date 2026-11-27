@@ -272,7 +272,8 @@ class ArtifactContract(BaseModel):
 
         结构稳定、字段硬上限；`data_schema` 只出字段名列表（≤12），统计
         只出已内联键名。整体 JSON 序列化超过 max_chars 时逐级降级
-        （去 schema → 去诊断 → 去指纹），仍超则截断 diagnostics 文本。
+        （去字段 → 去栅格 → 去指纹），仍超则收缩文本字段并丢弃可选键
+        —— 最终视图绝不超 max_chars。
         """
         view: Dict[str, Any] = {
             "artifact_id": self.artifact_id,
@@ -319,11 +320,30 @@ class ArtifactContract(BaseModel):
             except (TypeError, ValueError):
                 return max_chars + 1
 
-        for drop in (None, "fields", "raster", "diagnostics", "fingerprint"):
+        for drop in (None, "fields", "raster", "fingerprint"):
             if drop is not None:
                 view.pop(drop, None)
             if _size(view) <= max_chars:
                 break
+        # 最终截断：降级后仍超预算（超长 artifact_id/storage_ref 或调用方
+        # 传入小 max_chars）→ 先收缩自由文本，再丢弃可选键，保证硬上限。
+        for key in ("storage_ref", "artifact_id", "crs", "stable_identity", "produced_by"):
+            if _size(view) <= max_chars:
+                break
+            value = view.get(key)
+            if isinstance(value, str) and len(value) > 1:
+                keep = max(len(value) - (_size(view) - max_chars), 1)
+                if keep < len(value):
+                    view[key] = value[:keep]
+        for key in (
+            "size_bytes", "feature_count", "extent", "parents_count", "version",
+            "fingerprint", "stable_identity", "produced_by", "subtype", "crs",
+            "storage_ref", "quality_hint", "persistence", "lifecycle", "role",
+            "artifact_type",
+        ):
+            if _size(view) <= max_chars:
+                break
+            view.pop(key, None)
         return view
 
     def quality_status_hint(self) -> str:

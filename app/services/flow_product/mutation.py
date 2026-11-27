@@ -123,9 +123,16 @@ async def apply_flow_product(ctx: MutationContext) -> MutationPlan | MapSpecResu
             "temporalProfile": None,
         }
         source["profile"] = profile
-        profile_json = json.dumps(
-            profile, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
-        ).encode()
+        try:
+            profile_json = json.dumps(
+                profile, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
+            ).encode()
+        except ValueError:
+            return _refusal(
+                ctx, "FLOW_PRODUCT_INVALID",
+                f"OD flow artifact {ref} profile contains non-finite numbers.",
+                "Create a fresh preview; no partial edge/node/direction product was applied.",
+            )
         source["profile_fingerprint"] = "profile-sha256:" + hashlib.sha256(profile_json).hexdigest()
 
     loaded = ctx.loaded or {}

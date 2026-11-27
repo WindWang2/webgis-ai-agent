@@ -46,11 +46,15 @@ def _expired(value: Optional[datetime]) -> bool:
 
 def _mp_key(authority_id: str) -> Optional[tuple[str, int]]:
     """map product 权威 id 编码 ``mp:<project_id>:<version_no>`` → 解析。"""
-    parts = str(authority_id or "").split(":")
-    if len(parts) != 3 or parts[0] != "mp":
+    raw = str(authority_id or "")
+    if not raw.startswith("mp:"):
+        return None
+    # project_id 本身可含冒号（indexer 直接拼接）—— 只按最后一个冒号切分。
+    project, sep, version = raw[3:].rpartition(":")
+    if not sep:
         return None
     try:
-        return parts[1], int(parts[2])
+        return project, int(version)
     except ValueError:
         return None
 

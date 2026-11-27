@@ -1,6 +1,7 @@
 """健康检查路由"""
 
 import logging
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Optional
@@ -22,6 +23,9 @@ router = APIRouter()
 _LLM_CACHE_TTL = 30.0
 _llm_last_check = 0.0
 _llm_last_result = False
+# 与 SRE 缓存同纪律：TTL 快照 + 写侧串行，避免多个 loop/线程并发探测
+# 时重复打 LLM 并交错写「检查时刻/结果」这对字段。
+_llm_check_lock = threading.Lock()
 
 # ADR-0282：/health 无鉴权。entry 是否已构建只看文件系统；
 # 不得在请求路径上调用 pi_vendor_identity（那会 fork git/node）。
@@ -45,21 +49,26 @@ def _check_llm():
     now = time.monotonic()
     if now - _llm_last_check < _LLM_CACHE_TTL:
         return _llm_last_result
-    try:
-        import httpx
-        from app.core.egress import assert_egress_allowed
+    with _llm_check_lock:
+        # 双检：等锁期间另一个线程可能已刷新缓存。
+        now = time.monotonic()
+        if now - _llm_last_check < _LLM_CACHE_TTL:
+            return _llm_last_result
+        try:
+            import httpx
+            from app.core.egress import assert_egress_allowed
 
-        base_url = settings.LLM_BASE_URL.rstrip("/")
-        # ADR-0202：allowlist 模式下公网 LLM 探针是策略拒绝（typed），
-        # 归一为 llm down，而不是伪装成网络事故。
-        assert_egress_allowed(f"{base_url}/models", dependency_id="llm_chat")
-        resp = httpx.head(f"{base_url}/models", timeout=3.0)
-        _llm_last_result = resp.status_code < 500
-    except Exception as e:
-        _llm_last_result = False
-        logger.warning("Health check failed: LLM unreachable: %s", e)
-    _llm_last_check = now
-    return _llm_last_result
+            base_url = settings.LLM_BASE_URL.rstrip("/")
+            # ADR-0202：allowlist 模式下公网 LLM 探针是策略拒绝（typed），
+            # 归一为 llm down，而不是伪装成网络事故。
+            assert_egress_allowed(f"{base_url}/models", dependency_id="llm_chat")
+            resp = httpx.head(f"{base_url}/models", timeout=3.0)
+            _llm_last_result = resp.status_code < 500
+        except Exception as e:
+            _llm_last_result = False
+            logger.warning("Health check failed: LLM unreachable: %s", e)
+        _llm_last_check = now
+        return _llm_last_result
 
 
 def _check_redis():
@@ -167,8 +176,8 @@ def health_check() -> HealthResponse:
         # workers can be down (sessions on them degrade to ChatEngine) while
         # the badge still says "pi". Disclose the per-worker split so the
         # badge can be reconciled against reality.
-        pi_workers_alive=None,
-        pi_vendor=None,
+        pi_workers_alive=_pi_workers_alive(),
+        pi_vendor=_pi_vendor_summary(),
         # PI-06（ADR-0286 D3）：三态 + 有界原因码（降级不冒充）。
         agent_runtime_mode=_mode,
         agent_runtime_reason=_mode_reason,

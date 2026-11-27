@@ -190,20 +190,26 @@ class TorchScriptProvider:
             try:
                 with _TorchNoGrad(torch):
                     if model.device == DEVICE_CUDA:
-                        module, device_tag = self._module_on(
-                            model, torch, f"cuda:{device_index}"
-                        )
-                        # 多 GPU 亲和：输入张量随模块同设备（CPU 张量喂 CUDA
-                        # 模块 = RuntimeError）。
-                        outputs = module(torch.from_numpy(pixels).to(device_tag))
+                        # 模块迁移 + 调用必须原子：并发 infer 指定不同
+                        # device_index 时，非原子的 read-modify-write 会在
+                        # 两卡间反复迁移（错设备执行 / RuntimeError）。
+                        with self._lock:
+                            module, device_tag = self._module_on(
+                                model, torch, f"cuda:{device_index}"
+                            )
+                            # 多 GPU 亲和：输入张量随模块同设备（CPU 张量喂 CUDA
+                            # 模块 = RuntimeError）。
+                            outputs = module(torch.from_numpy(pixels).to(device_tag))
                     else:
                         outputs = model.state["module"](torch.from_numpy(pixels))
+                raw = self._to_numpy(outputs, torch)
+                # 多任务 descriptor 按「引擎解析的请求任务」映射（缺失 = 首任务）。
+                task = ctx.extras.get("task") or model.descriptor.task_types[0]
+                return map_dl_outputs(task, raw, model.descriptor, batch)
+            except ProviderError:
+                raise
             except Exception as exc:  # noqa: BLE001 — 运行时错误分类
                 raise _classify_torch_error(exc) from exc
-            raw = self._to_numpy(outputs, torch)
-            # 多任务 descriptor 按「引擎解析的请求任务」映射（缺失 = 首任务）。
-            task = ctx.extras.get("task") or model.descriptor.task_types[0]
-            return map_dl_outputs(task, raw, model.descriptor, batch)
         finally:
             with self._lock:
                 self._in_flight -= 1

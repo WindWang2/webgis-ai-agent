@@ -194,3 +194,93 @@ async def test_network_od_matrix_under_cap_reaches_engine(monkeypatch):
     )
     assert result["status"] == "success"
     assert result["summary"]["pair_count"] == 4
+
+
+# ─── 3. service_area breaks cap: explicit rejection, error envelope ──────────
+
+
+@pytest.mark.asyncio
+async def test_network_service_area_rejects_oversized_breaks(monkeypatch):
+    """breaks beyond the 32-break semantic cap must be rejected with the
+    file-uniform {"type":"error"} envelope (mirrors the od_matrix cap above) —
+    never a raised ValueError — and the engine must not run."""
+    from app.tools import network_tools as nt
+    from app.tools.registry import ToolRegistry
+
+    calls = {"solve": 0}
+
+    class _StubEngine:
+        async def solve_service_area(self, **kwargs):
+            calls["solve"] += 1
+            raise AssertionError("engine must not run for oversized breaks")
+
+    monkeypatch.setattr(nt, "NetworkGraphEngine", lambda: _StubEngine())
+    reg = ToolRegistry()
+    nt.register_network_tools(reg)
+    tool_fn = reg._tools["network_service_area"]
+
+    result = await tool_fn(
+        network={},
+        facilities=[{"type": "Point", "coordinates": [116.0, 39.0]}],
+        breaks=[float(i) for i in range(33)],
+        profile="driving",
+    )
+    assert result["type"] == "error"
+    assert "breaks" in result["message"]
+    assert calls["solve"] == 0, "cap must be enforced before the engine runs"
+
+
+@pytest.mark.asyncio
+async def test_network_service_area_empty_breaks_returns_error_envelope(monkeypatch):
+    """breaks=[] (below the 1-break floor) must also return the error envelope —
+    the lower bound of the same check must not escape as a ValueError."""
+    from app.tools import network_tools as nt
+    from app.tools.registry import ToolRegistry
+
+    class _StubEngine:
+        async def solve_service_area(self, **kwargs):
+            raise AssertionError("engine must not run for empty breaks")
+
+    monkeypatch.setattr(nt, "NetworkGraphEngine", lambda: _StubEngine())
+    reg = ToolRegistry()
+    nt.register_network_tools(reg)
+    tool_fn = reg._tools["network_service_area"]
+
+    result = await tool_fn(
+        network={},
+        facilities=[{"type": "Point", "coordinates": [116.0, 39.0]}],
+        breaks=[],
+        profile="driving",
+    )
+    assert result["type"] == "error"
+    assert "breaks" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_network_service_area_under_cap_reaches_engine(monkeypatch):
+    """Requests within the 1-32 break cap still reach the engine and return
+    normally (the cap is a bound, not a behavior change for valid input)."""
+    from app.tools import network_tools as nt
+    from app.tools.registry import ToolRegistry
+    from app.services.network.models import NetworkAnalysisResult
+
+    class _FakeEngine:
+        async def solve_service_area(self, **kwargs):
+            return NetworkAnalysisResult(
+                analysis_type="service_area",
+                summary={"break_count": len(kwargs["breaks_minutes"])},
+            )
+
+    monkeypatch.setattr(nt, "NetworkGraphEngine", _FakeEngine)
+    reg = ToolRegistry()
+    nt.register_network_tools(reg)
+    tool_fn = reg._tools["network_service_area"]
+
+    result = await tool_fn(
+        network={},
+        facilities=[{"type": "Point", "coordinates": [116.0, 39.0]}],
+        breaks=[5.0, 10.0, 15.0],
+        profile="driving",
+    )
+    assert result["status"] == "success"
+    assert result["summary"]["break_count"] == 3

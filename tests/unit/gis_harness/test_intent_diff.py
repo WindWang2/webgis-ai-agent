@@ -248,3 +248,23 @@ def test_output_is_bounded():
     assert len(diff.lost) <= 32
     bounded = diff.to_bounded_dict()
     assert len(bounded["lost"]) <= 32
+
+
+def test_cleared_algorithm_is_algorithm_dimension():
+    """P3：新行清空 resolved_algorithm 也是算法维变化（不得降级为 data）。"""
+    old = _chapter(reqs=[
+        _req("cap", status="available", ref="ref:1", alg="a1")])
+    new = _chapter(reqs=[_req("cap", alg="")])
+    diff = diff_chapters(old, new)
+    assert diff.lost == [{
+        "capability": "cap",
+        "dimension": "algorithm",
+        "detail": "a1->",
+    }]
+
+
+def test_large_int_params_do_not_collide_in_signature():
+    """P3：>2^53 的整数参数不得因 float 转换收敛为同一签名。"""
+    a = _req("x", params={"v": 2 ** 53})
+    b = _req("x", params={"v": 2 ** 53 + 1})
+    assert semantic_row_signature(a) != semantic_row_signature(b)

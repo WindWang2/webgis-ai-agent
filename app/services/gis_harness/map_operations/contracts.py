@@ -25,6 +25,7 @@ Track A（情境化地图交互 · 操作事务 · 可验证终验）的表现�
 """
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -237,6 +238,49 @@ class MapOperationEffect(BaseModel):
             raise ValueError("placement 必须是有界对象（≤16 键）")
         if "enabled" in v and not isinstance(v["enabled"], bool):
             raise ValueError("enabled 必须是布尔")
+        return v
+
+    @field_validator("center")
+    @classmethod
+    def _check_center(cls, v: Optional[List[float]]) -> Optional[List[float]]:
+        """视口中心必须是有限 WGS84 经纬度（zoom/bearing/pitch 同纪律）。
+
+        只校验长度拦不住 NaN/Inf 与越界值：它们会经 ``_viewport_after``
+        静默写进 MapSpec view，而不是走 validation_rejected。
+        """
+        if v is None:
+            return v
+        lon, lat = float(v[0]), float(v[1])
+        if not (math.isfinite(lon) and math.isfinite(lat)):
+            raise ValueError(f"center 必须是有限数（收到 {v!r}）")
+        if not -180.0 <= lon <= 180.0 or not -90.0 <= lat <= 90.0:
+            raise ValueError(
+                f"center 越界（lon ±180 / lat ±90）：{[lon, lat]}"
+            )
+        return v
+
+    @field_validator("bbox")
+    @classmethod
+    def _check_bbox(cls, v: Optional[List[float]]) -> Optional[List[float]]:
+        """bbox 必须有限、落在经纬度范围且不倒置（west<=east / south<=north）。
+
+        倒置 bbox 经 ``_bbox_view`` 得 span=1e-9 → zoom 夹到 18、中心取
+        中点，错误视口被静默写进 MapSpec view 而非 validation_rejected。
+        """
+        if v is None:
+            return v
+        west, south, east, north = (float(x) for x in v[:4])
+        box = [west, south, east, north]
+        if not all(math.isfinite(x) for x in box):
+            raise ValueError(f"bbox 必须是有限数（收到 {box!r}）")
+        if not (-180.0 <= west <= 180.0 and -180.0 <= east <= 180.0):
+            raise ValueError(f"bbox 经度越界（±180）：{box}")
+        if not (-90.0 <= south <= 90.0 and -90.0 <= north <= 90.0):
+            raise ValueError(f"bbox 纬度越界（±90）：{box}")
+        if west > east or south > north:
+            raise ValueError(
+                f"bbox 倒置（需 west<=east / south<=north）：{box}"
+            )
         return v
 
 

@@ -127,7 +127,8 @@ test.describe('journey-8 移动档主流程（≤768px）', () => {
     // 5) 地图画布保持全屏可见（mobile 档 inset 恒 0：无桌面左栏推挤）
     await expectMapReady(page);
     const box = await page.locator('#map-canvas').boundingBox();
-    expect(box?.x ?? 0).toBeLessThan(8);
+    expect(box, '#map-canvas 必须存在').not.toBeNull();
+    expect(box!.x).toBeLessThan(8);
   });
 
   test('mock：390px 顶栏无横向溢出，「设置」按钮可达（#1667）', async ({ page }) => {

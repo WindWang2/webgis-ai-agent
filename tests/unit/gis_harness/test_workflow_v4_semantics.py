@@ -236,6 +236,48 @@ def test_diff_obligation_disclosure_change() -> None:
     assert any(e.kind == "obligation_change" for e in d.entries)
 
 
+def test_diff_removed_node_marks_surviving_downstream() -> None:
+    """review P2-22：移除节点的 target 必须投影到新图存活的下游节点。
+
+    真实 to_bounded_dict 形状的边端点带端口后缀（"node.port"）—— 旧实现拿
+    裸 node_id 比对带后缀的 from，恒返回空串：下游不被标为重算，陈旧产物
+    复用。
+    """
+    from app.services.gis_harness.workflow_v4.diff import diff_workflow_packages
+    _, p = _package_for("成都小学的分布情况")
+    old_dag = {
+        "nodes": [
+            {"node_id": "cap:a", "kind": "analysis", "algorithm_id": "x.v1",
+             "depends_on": []},
+            {"node_id": "cap:b", "kind": "analysis", "algorithm_id": "x.v1",
+             "depends_on": ["cap:a"]},
+        ],
+        "edges": [{"from": "cap:a.output", "to": "cap:b.input"}],
+        "primary_output": "cap:b",
+    }
+    new_dag = {
+        "nodes": [
+            {"node_id": "cap:b", "kind": "analysis", "algorithm_id": "x.v1",
+             "depends_on": []},
+        ],
+        "edges": [],
+        "primary_output": "cap:b",
+    }
+    cf = p.compiled_form.copy()
+    cf["typed_dag"] = old_dag
+    nf = p.compiled_form.copy()
+    nf["typed_dag"] = new_dag
+    d = diff_workflow_packages(
+        p.model_copy(update={"compiled_form": cf}),
+        p.model_copy(update={"compiled_form": nf}),
+    )
+    removed = [e for e in d.entries
+               if e.kind == "dag_structure_change" and e.old == "cap:a"]
+    assert len(removed) == 1
+    assert removed[0].change.target == "cap:b", (
+        "移除 cap:a 后，仅靠 depends_on 相连的 cap:b 必须被标为重算目标")
+
+
 # ── Wave 10：获取声明 + 制图义务 ─────────────────────────────────────────
 
 def test_acquisition_declares_ordered_alternatives_never_fetch() -> None:
@@ -260,6 +302,12 @@ def test_acquisition_bound_role_local_feasible() -> None:
     assert plan.roles[0].feasible_channels == ["local", "derived"]
     # user_upload 恒为可行候选（是否真实提供归 runtime）
     assert not plan.synthetic_demo_allowed
+
+
+def test_acquisition_dict_without_status_defaults_to_unresolved() -> None:
+    """P3：缺 status 键的 dict 不得把字符串 "None" 当解析态。"""
+    plan = plan_acquisition([{"role": "subject", "acquisition": "local"}])
+    assert plan.roles[0].resolution_status == "unresolved"
 
 
 def test_carto_rate_requires_denominator_blocks_on_missing() -> None:

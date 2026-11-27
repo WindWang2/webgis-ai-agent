@@ -151,7 +151,9 @@ export async function fetchFeaturePage(params: FeaturePageParams): Promise<Featu
     featureCount: raw.feature_count ?? null,
     bboxMode: raw.bbox_mode === 'coarse' ? 'coarse' : null,
     totalMatching: raw.total_matching ?? null,
-    isComplete: raw.pagination?.is_complete ?? !raw.pagination?.has_more,
+    // 缺省朝「不完整」：无 has_more 却带 next_cursor 的响应不得同时报
+    // isComplete=true 与 nextCursor 非空（自相矛盾）。
+    isComplete: raw.pagination?.is_complete ?? (!raw.pagination?.has_more && !raw.pagination?.next_cursor),
     truncated: Boolean(raw.pagination?.truncated),
     reasonCodes: raw.reason_codes ?? [],
     idMode: raw.id_mode === 'native' || raw.id_mode === 'positional' || raw.id_mode === 'mixed'

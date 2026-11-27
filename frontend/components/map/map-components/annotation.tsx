@@ -99,9 +99,12 @@ function AnchoredCallout({
   const flipX = fx > 0.6;
   const flipY = fy < 0.4;
   const cardTransform = `translate(${flipX ? 'calc(-100% - 26px)' : '26px'}, ${flipY ? 'calc(-100% - 10px)' : '10px'})`;
-  // 引线终点：anchor 朝卡片方向的固定比例偏移（同一象限规则）
+  // 引线终点：anchor 朝卡片方向的固定比例偏移（同一象限规则）。
+  // 注意坐标系：SVG/canvas 的 y 向下为正 —— flipY（卡片在锚点上方）时终点
+  // y 必须**减小**（向上），否则引线恒背向卡片（导出侧 drawAnchoredCalloutBox
+  // 的 by + (flipY ? boxH : 0) 同语义）。
   const endFx = fx + (flipX ? -0.08 : 0.08);
-  const endFy = (1 - fy) + (flipY ? 0.06 : -0.06);
+  const endFy = (1 - fy) + (flipY ? -0.06 : 0.06);
   return (
     <div
       data-testid="spec-chrome-annotation-callout"

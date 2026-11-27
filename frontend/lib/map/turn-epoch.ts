@@ -14,7 +14,11 @@ export function currentTurnEpoch(): number {
 export function bumpTurnEpoch(): number {
   epoch += 1;
   for (const listener of listeners) {
-    listener();
+    try {
+      listener();
+    } catch {
+      /* 单个监听器故障不得阻断其余订阅者，也不得打断调用方的取消/发送流程 */
+    }
   }
   return epoch;
 }

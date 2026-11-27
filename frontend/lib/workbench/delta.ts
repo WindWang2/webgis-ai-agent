@@ -76,6 +76,11 @@ export function applyWorkbenchDelta(doc: WorkbenchDocV5, delta: WorkbenchDelta):
 
   // 1. setGroups：create / 部分字段 patch。
   for (const patch of delta.setGroups ?? []) {
+    // parentId 引用存在性（与 membershipSet 同口径）：悬空父会被 normalize
+    // 静默提为根，畸形/广播 delta 因此丢失组织态且无从暴露。
+    if (patch.parentId != null && groupsById[patch.parentId] == null) {
+      throw new WorkbenchDeltaError(`setGroups parent group ${patch.parentId} does not exist.`);
+    }
     const existing = groupsById[patch.id];
     if (existing == null) {
       if (patch.name == null || patch.name === '') {

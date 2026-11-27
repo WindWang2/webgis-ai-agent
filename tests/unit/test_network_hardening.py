@@ -126,6 +126,38 @@ def test_build_graph_networkdataset_no_contamination():
     builder.clear_cache()
 
 
+def test_graph_cache_budget_counts_edge_geometry_and_properties(monkeypatch):
+    """Eviction must count the per-edge GeoJSON geometry and properties dict.
+
+    The old budget (512 B/node + 1 KB/edge) omitted the payload entirely:
+    two entries whose properties alone are ~20 KB each stayed cached under a
+    test-tightened budget.
+    """
+    import app.services.network.graph_builder as gb_mod
+
+    def _heavy_fc(x0):
+        return _fc([{
+            "type": "Feature",
+            "geometry": {
+                "type": "LineString",
+                "coordinates": [[x0, 0.0], [x0 + 0.01, 0.0]],
+            },
+            "properties": {"name": "x" * 20000, "highway": "residential"},
+        }])
+
+    builder = NetworkGraphBuilder()
+    builder.clear_cache()
+    # Old node/edge-only estimate: 2 * (2 * 512 + 2 * 1024) = 6144 B, so both
+    # entries fit in 60 KB. Payload-aware estimate is ~44 KB per entry.
+    monkeypatch.setattr(gb_mod, "_CACHE_BUDGET_BYTES", 60_000, raising=False)
+    try:
+        builder.build_graph(_heavy_fc(0.0), use_cache=True)
+        builder.build_graph(_heavy_fc(5.0), use_cache=True)
+        assert len(builder._cache) == 1
+    finally:
+        builder.clear_cache()
+
+
 # --------------------------------------------------------------------------- #
 # Legacy isochrone: edge-buffer, not convex hull (N-F01, N-F08)
 # --------------------------------------------------------------------------- #
@@ -229,3 +261,13 @@ def test_nearest_neighbor_basic_distance_symmetric_property():
     assert abs(lon) < 1.0 and abs(lat) < 1.0, (
         "nearest_neighbor must emit WGS84, not UTM metres"
     )
+
+
+def test_build_graph_unrecognized_dict_type_raises():
+    """A dict that is neither a GeoJSON FeatureCollection nor Feature used to
+    fall through to features=[] and return a 0-node graph as if the network
+    were empty; it must be a typed input error instead."""
+    with pytest.raises(ValueError, match="FeatureCollection"):
+        NetworkGraphBuilder().build_graph(
+            {"type": "Topology", "features": [_line_feature(0.0, 0.0, 1.0, 1.0)]}
+        )

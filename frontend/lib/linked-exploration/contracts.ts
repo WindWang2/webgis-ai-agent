@@ -84,10 +84,11 @@ export function conditionToWhere(cond: ExplorationCondition): FilterAst {
     return { op: 'or', terms: leaves };
   }
   const terms: FilterAst[] = [];
-  if (cond.gte !== undefined) terms.push({ op: 'gte', field: cond.field, value: cond.gte });
-  if (cond.gt !== undefined) terms.push({ op: 'gt', field: cond.field, value: cond.gt });
-  if (cond.lte !== undefined) terms.push({ op: 'lte', field: cond.field, value: cond.lte });
-  if (cond.lt !== undefined) terms.push({ op: 'lt', field: cond.field, value: cond.lt });
+  if (cond.gte !== undefined && cond.gte !== null) terms.push({ op: 'gte', field: cond.field, value: cond.gte });
+  if (cond.gt !== undefined && cond.gt !== null) terms.push({ op: 'gt', field: cond.field, value: cond.gt });
+  if (cond.lte !== undefined && cond.lte !== null) terms.push({ op: 'lte', field: cond.field, value: cond.lte });
+  if (cond.lt !== undefined && cond.lt !== null) terms.push({ op: 'lt', field: cond.field, value: cond.lt });
+  if (terms.length === 0) throw new Error('区间条件必须至少包含一个边界');
   return terms.length === 1 ? terms[0] : { op: 'and', terms };
 }
 

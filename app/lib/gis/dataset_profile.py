@@ -337,9 +337,9 @@ class DatasetProfile(BaseModel):
         if isinstance(profile_numeric, list):
             numeric = [str(x) for x in profile_numeric] or numeric
         if isinstance(profile_binary, list):
-            binary = [str(x) for x in profile_binary]
+            binary = [str(x) for x in profile_binary] or binary
         if isinstance(profile_categorical, list):
-            categorical = [str(x) for x in profile_categorical]
+            categorical = [str(x) for x in profile_categorical] or categorical
         has_time = p.get("hasTimeField")
         obs = p.get("temporalObservationCount")
         # review R2 MAJOR-4：尊重输入画像的 fields_status —— 非 explicit
@@ -417,7 +417,15 @@ class DatasetProfile(BaseModel):
         fields_truncated = False
         if vector is not None:
             source_fields = getattr(vector, "fields", None)
-            row_count = int(getattr(vector, "row_count", 0) or 0)
+            # 未知 ≠ 0：row_count 缺席/None 保持 None，避免凭空产出
+            # feature_count=0 → is_empty=True 的「空数据集」证据。
+            raw_row_count = getattr(vector, "row_count", None)
+            row_count = (
+                int(raw_row_count)
+                if isinstance(raw_row_count, int)
+                and not isinstance(raw_row_count, bool)
+                else None
+            )
             geometry_types = [str(g) for g in (getattr(vector, "geometry_types", None) or [])]
             scanned_rows = int(getattr(vector, "scanned_rows", 0) or 0)
             temporal_fields = [str(t) for t in (getattr(vector, "temporal_fields", None) or [])]
@@ -532,20 +540,28 @@ class DatasetProfile(BaseModel):
     def from_artifact_record(cls, record: Any) -> "DatasetProfile":
         """ArtifactRecord（registry 记录或其 to_dict）→ 画像（O(1)）。"""
         r = record
-        metadata = getattr(r, "metadata", None) or (r.get("metadata") if isinstance(r, dict) else None) or {}
+        is_dict = isinstance(r, dict)
+        metadata = getattr(r, "metadata", None) or (r.get("metadata") if is_dict else None) or {}
         artifact_type = getattr(r, "artifact_type", None)
-        if artifact_type is None and isinstance(r, dict):
+        if artifact_type is None and is_dict:
             artifact_type = r.get("artifact_type")
+
+        def _field(key: str, default: Any = None) -> Any:
+            # dict 形 record（to_dict 投影）与对象形 record 同权 —— 只认
+            # 属性时 dict 的 feature_count/bbox/crs 恒为空，画像静默丢失
+            # 要素数与空间范围。
+            return r.get(key, default) if is_dict else getattr(r, key, default)
+
         geom_types = metadata.get("geometry_types") or []
         return cls(
             source="artifact_record",
             artifact_type=str(artifact_type or ""),
-            feature_count=getattr(r, "feature_count", None),
+            feature_count=_field("feature_count"),
             geometry_types=[str(t) for t in geom_types][:MAX_GEOMETRY_TYPES]
             if isinstance(geom_types, list)
             else [],
-            bbox=list(getattr(r, "bbox", None) or []) or None,
-            crs=str(getattr(r, "crs", "") or ""),
+            bbox=list(_field("bbox") or []) or None,
+            crs=str(_field("crs") or ""),
             fields_status="unknown",
         )
 

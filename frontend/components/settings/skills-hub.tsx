@@ -58,7 +58,6 @@ export function SkillsHub() {
   const loadSkills = (opts?: { forceRefresh?: boolean; signal?: AbortSignal }) => {
     getSkills(opts)
       .then((skillsList) => {
-        if (!skillsList.length && !opts?.forceRefresh) return;
         setSkills(
           skillsList.map((sk) => ({
             id: sk.name,
@@ -108,9 +107,21 @@ export function SkillsHub() {
     }
   };
 
-  const pickFromUploadState = upload.status !== 'idle'
-    ? `${upload.status === 'uploading' ? t('settings.skills.uploading') : upload.status === 'success' ? 'Uploaded' : 'Failed'}`
-    : 'Upload Custom Skill';
+  // 上传成功后回 idle：此前 success 态永不退出，按钮会永久粘在结果标签上。
+  useEffect(() => {
+    if (upload.status !== 'success') return;
+    const timer = setTimeout(() => setUpload({ status: 'idle' }), 5000);
+    return () => clearTimeout(timer);
+  }, [upload]);
+
+  // 按钮标签只描述当前可执行的动作，终态结果由按钮下方的状态行展示：
+  // 去掉硬编码英文的 'Uploaded' / 'Failed' / 'Upload Custom Skill'。
+  const pickFromUploadState =
+    upload.status === 'uploading'
+      ? t('settings.skills.uploading')
+      : upload.status === 'error'
+        ? t('settings.skills.uploadFailed')
+        : t('settings.skills.uploadCta');
 
   /* Group skills by category */
   const grouped = skills.reduce<Record<string, typeof skills>>((acc, sk) => {
@@ -133,7 +144,7 @@ export function SkillsHub() {
 
   return (
     <div className="flex flex-col gap-5">
-      <STitle title="Skills Hub" sub={t('settings.skills.subtitle')} />
+      <STitle title={t('settings.skills.title')} sub={t('settings.skills.subtitle')} />
 
       {sortedCategories.map((category) => (
         <div key={category}>

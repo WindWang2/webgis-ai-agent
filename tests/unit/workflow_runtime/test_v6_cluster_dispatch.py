@@ -94,6 +94,34 @@ def test_worker_register_heartbeat_and_profile_filter(factory):
     assert set(caps["profiles"]) <= {"raster", "celery"}
 
 
+def test_list_active_filters_before_limit_and_counts_late_worker(factory):
+    """超过 64 个不匹配 active 行不得遮住后面的 capable worker。"""
+    reg = CL.WorkerRegistry(factory=factory)
+    for i in range(CL.MAX_WORKERS_LISTED):
+        assert reg.register(f"w-other-{i:02d}", capabilities={"cpu": 1})
+    assert reg.register(
+        "w-raster",
+        capabilities={"cpu": 2, "profiles": {"raster": 3},
+                      "backends": ["durable"]})
+
+    active = reg.list_active()
+    assert len(active) == CL.MAX_WORKERS_LISTED
+    assert reg.list_active(profile="raster", backend="durable")[0][
+        "worker_id"] == "w-raster"
+    assert reg.total_active_slots("raster") == 3
+
+
+def test_total_active_slots_counts_beyond_list_limit(factory):
+    """槽位总量不能继承 list_active 的 64 行展示上限。"""
+    reg = CL.WorkerRegistry(factory=factory)
+    for i in range(CL.MAX_WORKERS_LISTED + 1):
+        assert reg.register(
+            f"w-raster-{i:02d}",
+            capabilities={"cpu": 1, "profiles": {"raster": 1}})
+    assert len(reg.list_active(profile="raster")) == CL.MAX_WORKERS_LISTED
+    assert reg.total_active_slots("raster") == CL.MAX_WORKERS_LISTED + 1
+
+
 def test_worker_sweep_dead_and_revive_requires_register(factory):
     import datetime as _dt
 

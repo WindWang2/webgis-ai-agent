@@ -174,3 +174,39 @@ sys.stdout.write(json.dumps({
     out.validate_for(batch)
     assert int(out.class_probabilities[0].argmax(axis=0)[0, 0]) == 1
     provider.unload(model)
+
+
+def test_malformed_worker_array_is_typed_provider_error(tmp_path):
+    """畸形 b64 / shape 与字节数不符：必须 typed ProviderError，不得裸逃逸。"""
+    import base64
+    import json
+    from types import SimpleNamespace
+
+    from app.lib.modelops.errors import ProviderError
+    from app.services.modelops.providers.subprocess_adapter import (
+        SubprocessWorkerProvider,
+    )
+    from app.services.modelops.providers.base import InferenceContext
+
+    provider = SubprocessWorkerProvider("malformed", str(tmp_path / "worker.py"))
+    model = SimpleNamespace(
+        descriptor=SimpleNamespace(task_types=("semantic_segmentation",))
+    )
+    ctx = InferenceContext(run_id="p3-subprocess")
+
+    bad_b64 = json.dumps(
+        {
+            "class_probabilities_b64": "!!!not-base64!!!",
+            "class_probabilities_b64_shape": [1, 2, 2, 2],
+        }
+    ).encode()
+    bad_shape = json.dumps(
+        {
+            "class_probabilities_b64": base64.b64encode(b"\x00" * 16).decode(),
+            "class_probabilities_b64_shape": [1, 2, 100, 100],
+        }
+    ).encode()
+
+    for raw in (bad_b64, bad_shape):
+        with pytest.raises(ProviderError, match="malformed class_probabilities_b64"):
+            provider._parse_response(model, None, ctx, raw)

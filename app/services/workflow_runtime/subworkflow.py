@@ -114,9 +114,15 @@ class SubworkflowExecutor:
         if parent_row is not None and parent_row.get("cancel_requested"):
             return {"ok": False, "error_code": "SUBWORKFLOW_CANCELLED"}
         # deadline 继承（V6）：子 ≤ 父剩余时间（嵌套链不再重置时钟）
-        remaining_s = float(parent.get("remaining_s") or 0.0)
-        child_deadline = min(self.deadline_s, remaining_s) \
-            if remaining_s > 0 else self.deadline_s
+        remaining_raw = parent.get("remaining_s")
+        remaining_s = (float(remaining_raw)
+                       if remaining_raw is not None else None)
+        if remaining_s is not None and remaining_s <= 0:
+            # 父时限已耗尽：不给子全新时限（子 ≤ 父剩余的不变量）
+            return {"ok": False,
+                    "error_code": "SUBWORKFLOW_DEADLINE_EXHAUSTED"}
+        child_deadline = (min(self.deadline_s, remaining_s)
+                          if remaining_s is not None else self.deadline_s)
         # 深度 + 环守卫（visited = 祖先链上的包指纹/包 id 集）
         visited = list(parent_visited or [])
         if parent.get("package_id") not in visited:
@@ -215,6 +221,36 @@ class SubworkflowExecutor:
                 run_token=f"sw-{child['instance_id'][-12:]}",
                 package_fingerprint=child["package_fingerprint"])
         except Exception as exc:  # noqa: BLE001
+            # 子实例显式收口：driver.run 异常可能发生在 run-lease 保护段
+            # 之外 —— 标 FAILED + 释放租约，不留 RUNNING 孤儿等恢复清扫。
+            try:
+                fresh = await _asyncio.to_thread(
+                    self.service.store.get_instance,
+                    child["instance_id"], self.owner_scope)
+                if fresh is not None and fresh.get(
+                        "status") not in C.INSTANCE_TERMINAL_STATUSES:
+                    from datetime import datetime, timezone
+
+                    await _asyncio.to_thread(
+                        self.service.store.update_instance,
+                        child["instance_id"],
+                        owner_scope=self.owner_scope,
+                        expected_revision=fresh.get("revision"),
+                        fields={
+                            "status": C.InstanceStatus.FAILED,
+                            "terminal_at": datetime.now(timezone.utc)
+                            .replace(tzinfo=None),
+                            "error_code": "SUBWORKFLOW_RUN_FAIL",
+                            "error_detail": str(exc)[:255]})
+                await _asyncio.to_thread(
+                    self.service.store.release_run_lease,
+                    child["instance_id"],
+                    owner_scope=self.owner_scope,
+                    token=f"sw-{child['instance_id'][-12:]}")
+            except Exception:  # noqa: BLE001 — 收口失败不掩盖原始错误
+                logger.warning(
+                    "[WorkflowRuntime] subworkflow child finalize failed "
+                    "instance=%s", child["instance_id"], exc_info=True)
             return {"ok": False, "error_code": "SUBWORKFLOW_RUN_FAIL",
                     "detail": str(exc)[:120],
                     "child_instance_id": child["instance_id"],

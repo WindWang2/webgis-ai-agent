@@ -12,7 +12,7 @@
 import { useSyncExternalStore } from 'react';
 import { apiFetch } from '@/lib/api/transport';
 import { getMapSpecSessionCursor, getMapSpecLiveGeneration } from '@/lib/mapspec/session-cursor';
-import { getSelection, getSelectionGeneration, publishSelection } from '@/lib/selection/selection-store';
+import { MAX_SELECTED_IDS, getSelection, getSelectionGeneration, publishSelection } from '@/lib/selection/selection-store';
 
 export interface ClaimedScope {
   kind: 'feature_ids' | 'feature_single' | 'aoi' | 'none';
@@ -237,7 +237,7 @@ function replaySelectionFromScope(view: SituationView): void {
       publishSelection('select', {
         source: 'map',
         layer_id: scope.layer_id,
-        selected_ids: scope.feature_ids.slice(0, 50),
+        selected_ids: scope.feature_ids.slice(0, MAX_SELECTED_IDS),
         id_field: scope.id_field,
       });
     } else if (scope.kind === 'feature_single') {

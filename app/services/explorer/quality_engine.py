@@ -103,7 +103,7 @@ class QualityEngine:
             target_area = (ts[2] - ts[0]) * (ts[3] - ts[1])
             score = inter_area / target_area if target_area > 0 else 0.0
             return round(min(1.0, score), 4)
-        except (ValueError, IndexError):
+        except (ValueError, IndexError, AttributeError):
             return 0.0
 
     def calc_field_score(
@@ -121,10 +121,12 @@ class QualityEngine:
         """计算地理编码精度分数"""
         if not geocoded_results:
             return 0.0
-        # 有精确坐标的比例
+        # 有精确坐标的比例（0.0 是赤道/本初子午线上的合法坐标，不能按假值排除）
         has_precise = sum(
             1 for r in geocoded_results
-            if r.get("lat") and r.get("lon") and r.get("precision") != "district"
+            if r.get("lat") is not None
+            and r.get("lon") is not None
+            and r.get("precision") != "district"
         )
         return round(has_precise / len(geocoded_results), 4)
 

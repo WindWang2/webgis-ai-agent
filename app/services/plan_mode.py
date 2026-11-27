@@ -16,7 +16,6 @@
 from __future__ import annotations
 
 import asyncio
-import hmac
 import json
 import logging
 import re
@@ -27,6 +26,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
+from app.core.signing import hmac_equals
 from app.services.session_data import session_data_manager
 from app.services.llm_result_formatter import MSG_MAX_CHARS, is_error_like_result
 from app.services.planning.deps import MissingRefError, resolve_arg_refs
@@ -394,7 +394,7 @@ def _confirmation_covers(plan_data: dict, plan_id: str, tier3_steps: list[str]) 
         return False
     approved = {str(s) for s in (approval.get("steps") or [])}
     return (bool(tier3_steps) and set(tier3_steps) <= approved
-            and hmac.compare_digest(str(approval.get("args_fingerprint") or ""), _confirmation_fingerprint(plan_data, tier3_steps)))
+            and hmac_equals(str(approval.get("args_fingerprint") or ""), _confirmation_fingerprint(plan_data, tier3_steps)))
 
 
 async def approve_destructive_confirmation(
@@ -424,7 +424,9 @@ async def approve_destructive_confirmation(
                 "code": "CONFIRMATION_NOT_PENDING",
                 "message": "该计划没有待确认的破坏性步骤",
             }
-        if not hmac.compare_digest(
+        # hmac_equals：端点传入的非 ASCII challenge_id 会让裸 compare_digest
+        # 抛 TypeError（500 而非 CONFIRMATION_MISMATCH）——统一 fail-closed。
+        if not hmac_equals(
             str(pending.get("challenge_id")), str(challenge_id or "")
         ):
             return {
@@ -448,7 +450,7 @@ async def approve_destructive_confirmation(
             }
         steps = list(pending.get("steps") or [])
         fingerprint = _confirmation_fingerprint(plan_data, steps)
-        if not hmac.compare_digest(str(pending.get("args_fingerprint") or ""), fingerprint):
+        if not hmac_equals(str(pending.get("args_fingerprint") or ""), fingerprint):
             return {
                 "success": False,
                 "code": "CONFIRMATION_MISMATCH",

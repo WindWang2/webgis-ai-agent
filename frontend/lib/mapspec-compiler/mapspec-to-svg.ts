@@ -261,6 +261,9 @@ function parseColor(c: unknown): [number, number, number] | null {
   const s = c.trim().toLowerCase();
   if (s.startsWith("#")) {
     const hex = s.slice(1);
+    // P3：非十六进制字符（如 "#xyz"）parseInt 得 NaN，仍是「真值」数组，
+    // 会绕过下面的插值回落产出 fill="#NaNNaNNaN"。非法串一律不认。
+    if (!/^(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/.test(hex)) return null;
     if (hex.length === 3) {
       return [
         parseInt(hex[0] + hex[0], 16),
@@ -351,7 +354,9 @@ function evaluateMapLibreExpression(
   const op = val[0];
   if (op === 'case') {
     for (let i = 1; i + 1 < val.length; i += 2) if (evaluateFilterBounded(val[i], { properties: props ?? {} }) === true) return val[i + 1];
-    return val[val.length - 1] ?? fallback;
+    // P3：合法 case 长度为偶数（2n+2，末项是 fallback）；奇数长度是缺
+    // fallback 的畸形表达式 —— 末项是 output，不能当兜底值。
+    return val.length % 2 === 0 ? (val[val.length - 1] ?? fallback) : fallback;
   }
   if (op === "literal") return val[1] !== undefined ? val[1] : fallback;
   if (op === "interpolate" || op === "interpolate-hcl" || op === "interpolate-lab") {
@@ -393,7 +398,9 @@ function evaluateMapLibreExpression(
       const label = val[i];
       if ((Array.isArray(label) ? label : [label]).some((item) => inputVal === item || String(inputVal) === String(item))) return val[i + 1];
     }
-    return val.length >= 3 ? val[val.length - 1] : fallback;
+    // P3：合法 match 长度为奇数（2n+3，末项是 fallback）；偶数长度是缺
+    // fallback 的畸形表达式 —— 末项是 label 的 output，不能当兜底值。
+    return (val.length - 2) % 2 === 1 ? (val[val.length - 1] ?? fallback) : fallback;
   }
   return fallback;
 }
@@ -419,8 +426,15 @@ export function resolvePaintValue(
   }
   const z = Number.isFinite(zoom) ? (zoom as number) : activeExportZoom;
   if (Array.isArray(val)) {
-    if (val.length > 0 && typeof val[0] === "string" && MAPLIBRE_EXPR_OPS.has(val[0])) {
-      return evaluateMapLibreExpression(val, props, z, fallback);
+    if (val.length > 0 && typeof val[0] === "string") {
+      if (MAPLIBRE_EXPR_OPS.has(val[0])) {
+        return evaluateMapLibreExpression(val, props, z, fallback);
+      }
+      // P2（review）：词表外算子（get/coalesce/to-* 等）不得原样 String()
+      // 进 SVG 属性（fill="get,c" 非法颜色，浏览器静默回落黑）。能按要素
+      // 求值就求值，否则 fail-open 回落缺省值。
+      const evaluated = expressionInput(val, props, z);
+      return evaluated !== undefined ? evaluated : fallback;
     }
     return val;
   }
@@ -548,6 +562,9 @@ export function resolvePaintValue(
 
 function validGeographicCoordinates(value: unknown): boolean {
   if (!Array.isArray(value)) return false;
+  // P3：空数组的 every 恒真，曾让 coordinates: [] 通过校验并在原点绘制，
+  // 绕过 layer_coordinates_invalid 披露。空坐标不是合法地理位置。
+  if (value.length === 0) return false;
   if (typeof value[0] === 'number') return value.length >= 2 && Number.isFinite(value[0]) && Number.isFinite(value[1]) && Math.abs(value[0]) <= 180 && Math.abs(value[1]) <= 90;
   return value.every(validGeographicCoordinates);
 }
@@ -638,7 +655,12 @@ function g40PointTransform(
   dpiScale: number,
 ): { inner: string; size: [number, number] } {
   const [vw, vh] = doc.viewbox ?? [24, 24];
-  const s = (params.size_px / Math.max(vw, vh)) * dpiScale;
+  // P2（review）：size_px 缺省时 Number(undefined) → NaN → scale(NaN)，
+  // 按 SVG 规范整个 <use> 不渲染（点符号静默丢失）。缺省/非法值回落
+  // 文档化缺省 16px（与 Python 孪生 symbol_asset_svg 同值）。
+  const rawSizePx = Number(params.size_px ?? 16);
+  const sizePx = Number.isFinite(rawSizePx) ? rawSizePx : 16;
+  const s = (sizePx / Math.max(vw, vh)) * dpiScale;
   const anchor = params.anchor ?? "center";
   const hx: Record<string, number> = { left: -vw / 2, center: 0, right: vw / 2 };
   const vy: Record<string, number> = { top: -vh / 2, center: 0, bottom: vh / 2 };
@@ -675,10 +697,14 @@ function g40PatternDef(
   const spacing = Number(params.spacing_px ?? 12) * dpiScale * Number(params.pattern_scale ?? 1);
   const strokeW = Number(params.stroke_width_px ?? 1.5) * dpiScale;
   const angle = Number(params.angle_deg ?? 45);
-  const fg = String(params.fg_color ?? "#334155");
-  const bg = String(params.bg_color ?? "transparent");
+  // P2（review）：spec 方 fg_color/bg_color 直接进属性 —— 含引号即可突破
+  // 属性注入 SVG 标记；统一走 escapeSvgAttr（与 paint 值同通道）。
+  const fgRaw = String(params.fg_color ?? "#334155");
+  const bgRaw = String(params.bg_color ?? "transparent");
+  const fg = escapeSvgAttr(fgRaw);
+  const bg = escapeSvgAttr(bgRaw);
   const transform = angle ? ` patternTransform="rotate(${angle.toFixed(3)})"` : "";
-  const bgRect = bg !== "transparent" && bg !== "none"
+  const bgRect = bgRaw !== "transparent" && bgRaw !== "none"
     ? `<rect x="0" y="0" width="${spacing.toFixed(3)}" height="${spacing.toFixed(3)}" fill="${bg}" stroke="none"/>` : "";
   const type = doc.pattern?.type ?? "hatch";
   let content: string;
@@ -699,7 +725,7 @@ function g40PatternDef(
     // N5：svg_tile 不应用 patternTransform（tile 自带取向；与 Python/live
     // 同规则）。R3-2：背景矩形按完整周期尺寸且置于 scale 组**外**（与
     // Python bg_full 对齐 —— 此前 spacing 方形在组内双重缩放 + 只盖局部）。
-    const bgFull = bg !== "transparent" && bg !== "none"
+    const bgFull = bgRaw !== "transparent" && bgRaw !== "none"
       ? `<rect x="0" y="0" width="${periodW.toFixed(3)}" height="${periodH.toFixed(3)}" fill="${bg}" stroke="none"/>`
       : "";
     g40Defs.set(patternId, `<pattern id="${patternId}" patternUnits="userSpaceOnUse" width="${periodW.toFixed(3)}" height="${periodH.toFixed(3)}">${bgFull}<g transform="scale(${sx} ${sy})">${body}</g></pattern>`);
@@ -1042,7 +1068,12 @@ function compileMapSpecToSvgBody(
       inlineData?: { type?: string; features?: unknown[] };
       data?: { type?: string; features?: unknown[] };
     } | undefined;
-    if (!src) return;
+    if (!src) {
+      // H02：source 条目缺失（layer.source / 窗源覆盖指向不存在的 id）不得
+      // 静默消失 —— 与下方 ref 未水合分支同码表披露。
+      options.onDiagnostic?.("layer_ref_unavailable", String(layer.id ?? ""));
+      return;
+    }
 
     const paint = layer.paint || {};
 
@@ -1060,7 +1091,15 @@ function compileMapSpecToSvgBody(
           String(layer.id ?? ""), numericStyleId,
         );
         if (snapshot && snapshot.startsWith("data:image/")) {
-          elementsSvg += `<image x="${fmtNum(minX)}" y="${fmtNum(minY)}" width="${fmtNum(maxX - minX)}" height="${fmtNum(maxY - minY)}" href="${escapeSvgAttr(snapshot)}" opacity="${opacity}" preserveAspectRatio="none" />\n`;
+          // G20 review：放置矩形必须是**画布像素**（project 后的
+          // scaledPadding 矩形），不是经纬度值 —— minX/minY/maxX-minX 是度
+          // 数值，直接当 x/y/width/height 会把离线快照画到画布外/错尺寸
+          // （与上方瓦片分支同一投影口径：bounds + scaledPadding）。
+          const snapX = scaledPadding;
+          const snapY = scaledPadding;
+          const snapW = scaledWidth - scaledPadding * 2;
+          const snapH = scaledHeight - scaledPadding * 2;
+          elementsSvg += `<image x="${fmtNum(snapX)}" y="${fmtNum(snapY)}" width="${fmtNum(snapW)}" height="${fmtNum(snapH)}" href="${escapeSvgAttr(snapshot)}" opacity="${opacity}" preserveAspectRatio="none" />\n`;
         } else {
           // 复用既有权威词表码（layer_ref_unavailable = 未水合的层不得静默
           // 消失），detail 明确 G20 数值栅格需要离线快照。
@@ -1174,8 +1213,16 @@ function compileMapSpecToSvgBody(
             options.onDiagnostic?.("symbol_asset_unavailable", String(g40Binding.asset_id ?? ""));
           } else {
             const params = resolved.params as Record<string, any>;
-            const digestKey = String(resolved.doc.content_digest).slice(7, 19);
-            const defsId = `cartoasset-${digestKey}-${stableKeyOf(resolved.params)}`;
+            // P3：digest 缺失/过短时 slice(7,19) 退化为同一常量（如 "ed"），
+            // 多份不同资产塌成同一 defsId，g40Defs.has 命中后渲染错误图元。
+            // 取不到有效摘要时改用文档内容的稳定键。
+            const rawDigest = String(resolved.doc.content_digest ?? "");
+            const digestKey = rawDigest.length > 7
+              ? rawDigest.slice(7, 19)
+              : stableKeyOf(resolved.doc);
+            // P2（review）：content_digest 为 spec 方可控值，未转义即注入
+            // <g id> / <use href="#..."> 属性（引号/尖括号可突破标记）。
+            const defsId = `cartoasset-${escapeSvgAttr(digestKey)}-${stableKeyOf(resolved.params)}`;
             const ok = g40PointDef(defsId, resolved.doc, typeof params.color === "string" ? params.color : undefined);
             if (!ok) {
               options.onDiagnostic?.("symbol_asset_def_budget", String(layer.id ?? ""));
@@ -1317,7 +1364,7 @@ function compileMapSpecToSvgBody(
             return;
           }
           const params = resolved.params as Record<string, number | string>;
-          const patId = `cartoap-${String(resolved.doc.content_digest).slice(7, 19)}-${stableKeyOf(resolved.params)}`;
+          const patId = `cartoap-${escapeSvgAttr(String(resolved.doc.content_digest).slice(7, 19))}-${stableKeyOf(resolved.params)}`;
           const ok = g40PatternDef(patId, resolved.doc, params, dpiScale);
           if (!ok) {
             options.onDiagnostic?.("symbol_asset_def_budget", String(layer.id ?? ""));
@@ -1339,7 +1386,7 @@ function compileMapSpecToSvgBody(
           const dStr = ringPaths.join(" ");
           if (g40PatId) {
             if (g40Bg !== "transparent" && g40Bg !== "none") {
-              elementsSvg += `<path d="${dStr}" fill="${g40Bg}" fill-rule="evenodd" stroke="none" />\n`;
+              elementsSvg += `<path d="${dStr}" fill="${escapeSvgAttr(g40Bg)}" fill-rule="evenodd" stroke="none" />\n`;
             }
             elementsSvg += `<path d="${dStr}" fill="url(#${g40PatId})" fill-rule="evenodd" stroke="${g40Outline}" stroke-width="${outlineWidth}" />\n`;
             return;

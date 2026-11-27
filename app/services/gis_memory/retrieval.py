@@ -95,7 +95,7 @@ def _subject_bonus(record_subject: str, ctx: MemoryQueryContext) -> tuple[float,
         if lowered == probe:
             bonus = max(bonus, 3.0)
             reasons.append(f"subject_exact:{subject}")
-        elif probe in lowered or lowered in probe:
+        elif lowered and (probe in lowered or lowered in probe):
             bonus = max(bonus, 1.5)
             reasons.append(f"subject_partial:{subject}")
     text = ctx.query_text.strip().lower()

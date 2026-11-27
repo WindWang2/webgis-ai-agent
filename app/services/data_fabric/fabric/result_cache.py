@@ -23,6 +23,8 @@ from typing import Any, Dict, Iterable, Optional
 
 logger = logging.getLogger(__name__)
 
+from app.services.data_fabric.fabric.connection_registry import _GLOBAL_SCOPE_KEY
+
 _NEGATIVE_TTL_S = 30.0
 _NEGATIVE_MAX_ENTRIES = 64
 #: 可负缓存的 typed 错误码（其余错误绝不缓存）。
@@ -222,8 +224,8 @@ class FederatedResultCache:
         fingerprints: Dict[str, str],
         scope_key: str,
     ) -> None:
-        if scope_key == "org:_|owner:_|proj:_":
-            return  # 全局域禁入（R-M2）
+        if scope_key == _GLOBAL_SCOPE_KEY:
+            return  # 全局域禁入（R-M2）—— 用规范常量，勿硬编码字面量
         if not isinstance(payload, dict) or payload.get("status") != "success":
             return
         rows = payload.get("rows")

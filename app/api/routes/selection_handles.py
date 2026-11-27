@@ -105,13 +105,24 @@ async def create_selection_handle(
     resolved = await session_data_manager.resolve_alias(session_id, ref_id)
     if resolved:
         ref_id = resolved
+    # 先鉴权并在 ref 缺失时给 404（不泄露 revision 面），再谈 revision guard。
+    fc = await _authorized_fc(session_id, ref_id, owner_token)
     current_revision = await _current_revision(session_id, ref_id)
-    if v is not None and current_revision is not None and int(v) != int(current_revision):
+    if current_revision is None:
+        # 无 revision snapshot 就没有 A22 的失效依据 —— 创建后陈旧 handle
+        # 会永久有效。fail-closed 而不是静默跳过 guard。
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "selection_revision_unavailable",
+                "message": "ref 缺少数值型 content_revision，无法建立 revision guard",
+            },
+        )
+    if v is not None and int(v) != int(current_revision):
         raise HTTPException(
             status_code=409,
             detail={"error": "revision_conflict", "current_revision": current_revision},
         )
-    fc = await _authorized_fc(session_id, ref_id, owner_token)
     try:
         entry = await create_selection(
             session_id, ref_id, current_revision, scope, fc.get("features", []))
@@ -134,9 +145,14 @@ async def create_selection_handle(
 
 
 async def _validated_handle(
-    session_id: str, ref_id: str, handle: str, owner_token: Optional[str]
+    session_id: str, ref_id: str, handle: str, owner_token: Optional[str],
+    *, need_fc: bool = True,
 ):
-    """handle 三重绑定 + revision 一致性 + ref 授权（每次消费都重新鉴权）。"""
+    """handle 三重绑定 + revision 一致性 + ref 授权（每次消费都重新鉴权）。
+
+    ``need_fc=False`` 供纯元数据消费面使用：授权走 descriptor 快通道，
+    不读取/解析整个 FC 载荷（大选择集元数据轮询不白读一次全量数据）。
+    """
     _check_ref_id(ref_id)
     resolved = await session_data_manager.resolve_alias(session_id, ref_id)
     if resolved:
@@ -146,8 +162,15 @@ async def _validated_handle(
     except SelectionHandleError as exc:
         _raise_selection_error(exc)
     current_revision = await _current_revision(session_id, ref_id)
-    if (entry.revision is not None and current_revision is not None
-            and int(entry.revision) != int(current_revision)):
+    if current_revision is None:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "selection_revision_unavailable",
+                "message": "ref 当前 revision 不可读，无法证明选择集新鲜",
+            },
+        )
+    if entry.revision is None or int(entry.revision) != int(current_revision):
         # 数据刷新/编辑使 revision 前进：旧 scope 的全集不再可信（A22）
         handle_store.release(session_id, ref_id, handle)
         raise HTTPException(
@@ -159,7 +182,15 @@ async def _validated_handle(
                 "current_revision": current_revision,
             },
         )
-    fc = await _authorized_fc(session_id, ref_id, owner_token)
+    if need_fc:
+        fc = await _authorized_fc(session_id, ref_id, owner_token)
+    else:
+        res = await session_data_manager.get_ref_descriptor_authorized(
+            session_id, ref_id, owner_token=owner_token)
+        if not res.success:
+            status_code = 403 if res.error_type == "PermissionDenied" else 404
+            raise HTTPException(status_code=status_code, detail=res.error or "数据不可用")
+        fc = None
     return entry, fc
 
 
@@ -173,7 +204,8 @@ async def get_selection_handle(
 ) -> Response:
     """handle 元数据：count/completeness/revision/scope 摘要（不含要素）。"""
     await _layer_data_budget(session_id)
-    entry, _fc = await _validated_handle(session_id, ref_id, handle, owner_token)
+    entry, _fc = await _validated_handle(
+        session_id, ref_id, handle, owner_token, need_fc=False)
     payload = {
         "handle": entry.handle,
         "count": entry.count,

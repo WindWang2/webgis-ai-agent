@@ -80,8 +80,12 @@ def validate_gis_library(
                 issues.append(
                     f"family_conformance:{verdict.family}:"
                     f"{verdict.step_id}:{verdict.reason_code}")
-    except Exception:  # noqa: BLE001 — 对账缺席不阻断全库校验
-        pass
+    except Exception as exc:  # noqa: BLE001 — 对账缺席按违规披露（同图闸）
+        # 不静默 pass：execution_compiler 导入断裂 / audit 抛错时该闸整体
+        # 消失 → 悬空引用被报为通过。与 capability_graph /
+        # capability_conformance 两闸同语义：校验不可用 = 违规行进列表。
+        logger.warning("family_conformance: validation unavailable: %s", exc)
+        issues.append(f"family_conformance: validation unavailable: {exc}")
 
     # ── V3：GIS Task Ontology 引用完整性（capability/artifact/map model
     #    /data role/task family 全部对账单一事实源）──────────────────────

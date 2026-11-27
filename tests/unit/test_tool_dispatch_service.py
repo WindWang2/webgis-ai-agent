@@ -437,6 +437,45 @@ async def test_heatmap_raster_enters_mapspec_review(service, fake_registry, clea
 
 
 @pytest.mark.asyncio
+async def test_heatmap_raster_png_write_runs_off_event_loop(
+    service, fake_registry, clean_session, monkeypatch,
+):
+    import threading
+
+    from app.services import raster_store
+
+    png = (
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQ"
+        "AAAABJRU5ErkJggg=="
+    )
+    fake_registry.dispatch.return_value = {
+        "type": "heatmap_raster",
+        "image": f"data:image/png;base64,{png}",
+        "bbox": [116.0, 39.0, 117.0, 40.0],
+        "command": "add_heatmap_raster",
+    }
+    loop_thread = threading.get_ident()
+    write_threads = []
+    real_save_png = raster_store.save_png
+
+    def record_save_png(*args):
+        write_threads.append(threading.get_ident())
+        return real_save_png(*args)
+
+    monkeypatch.setattr(raster_store, "save_png", record_save_png)
+
+    result = await service.dispatch(
+        _tc("heatmap_data", {"render_type": "raster"}, tc_id="heat_off_loop"),
+        clean_session,
+        set(),
+    )
+
+    assert result.status == "ok"
+    assert len(write_threads) == 1
+    assert write_threads[0] != loop_thread
+
+
+@pytest.mark.asyncio
 async def test_heatmap_raster_command_satisfies_frontend_contract(
     service, fake_registry, clean_session,
 ):
@@ -613,6 +652,41 @@ async def test_guardrail_block_releases_dedup_slot(
     )
     assert r2.status == "ok"
     assert fake_registry.dispatch.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_store_exception_releases_dedup_slot(
+    service, fake_registry, clean_session, monkeypatch,
+):
+    """store() 抛异常（执行段之外的 await）也必须释放 dedup 占位：
+    本 turn 同参重试不得被谎报为「并发在飞」。"""
+    fake_registry.dispatch.return_value = {
+        "type": "FeatureCollection",
+        "features": [{
+            "geometry": {"type": "Point", "coordinates": [116.4, 39.9]},
+            "properties": {},
+        }],
+        "summary": "1 point",
+    }
+    real_store = session_data_manager.store
+    outage = True
+
+    async def store_with_outage(sid, data, prefix="data"):
+        if outage and prefix == "geojson":
+            raise ConnectionError("session store down")
+        return await real_store(sid, data, prefix=prefix)
+
+    monkeypatch.setattr(session_data_manager, "store", store_with_outage)
+    executed: set = set()
+    tc = _tc("search_poi", {"q": "school"}, tc_id="call_store_outage")
+    with pytest.raises(ConnectionError):
+        await service.dispatch(tc, clean_session, executed)
+    assert executed == set(), "store failure must release the dedup slot"
+
+    outage = False
+    retried = await service.dispatch(tc, clean_session, executed)
+    assert retried.status == "ok"
+    assert "[重复调用拦截]" not in retried.llm_payload
 
 
 def test_tool_name_normalization_table():

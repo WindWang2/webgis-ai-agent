@@ -226,10 +226,15 @@ def validate_geocompute_events(events: List[Dict[str, Any]]) -> List[TraceGap]:
     for e in events:
         if e.get("event") == "node_attempt_failed":
             attempts = e.get("attempts")
-            if attempts is not None and int(attempts) < 1:
-                gaps.append(TraceGap(
-                    "RETRY_RELATION_INCONSISTENT", "MAJOR",
-                    f"attempt_failed with attempts={attempts}"))
+            if attempts is not None:
+                try:
+                    attempts_ok = int(attempts) >= 1
+                except (TypeError, ValueError):
+                    attempts_ok = False  # 非数字 attempts = 认证缺口，不是崩溃
+                if not attempts_ok:
+                    gaps.append(TraceGap(
+                        "RETRY_RELATION_INCONSISTENT", "MAJOR",
+                        f"attempt_failed with attempts={attempts}"))
     gaps.extend(_redaction_gaps(events))
     return gaps
 

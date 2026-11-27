@@ -2,8 +2,8 @@
 
 ``diff_situation(before, after)`` 产出**分组**的稳定变更契约，供
 SessionPlan / ExecutionGraph / Goal evaluator / turn 投影消费：
-- 变更按 (context, fact) 坐标分组，kind ∈ added/removed/value_changed/
-  status_changed；
+- 变更按 (context, fact) 坐标分组，kind ∈ value_changed/status_changed
+  （iter_facts 枚举固定 schema，before/after 坐标集恒等，无 added/removed）；
 - **revision 单调性**：after.identity.revision 字典序 < before 时
   ``regressed=True`` —— 迟到的 SSE/前端观察不能把状态倒退（DC-5），
   ``advance_snapshot`` 对 regressed 快照拒收（会话快照只前进）；
@@ -123,12 +123,6 @@ def diff_situation(
     for coordinate in sorted(set(before_facts) | set(after_facts)):
         old = before_facts.get(coordinate)
         new = after_facts.get(coordinate)
-        if old is None and new is not None:
-            changes.append(FactChange(coordinate[0], coordinate[1], CHANGE_ADDED, old, new))
-            continue
-        if old is not None and new is None:
-            changes.append(FactChange(coordinate[0], coordinate[1], CHANGE_REMOVED, old, new))
-            continue
         if old is None or new is None:
             continue
         if old.status != new.status:

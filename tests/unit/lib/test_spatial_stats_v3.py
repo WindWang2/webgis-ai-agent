@@ -441,6 +441,36 @@ def test_local_join_count_permutation_determinism():
     assert all(0.0 < p <= 1.0 for p in ps)
 
 
+def test_local_join_count_conditional_pool_fixes_focal_to_one():
+    """条件置换池必须固定 y_i=1（其余 n−1 位带 n₁−1 个 1）。
+
+    只取 pb_i=0 的 draw 采样的是「焦点为 0、其余仍带 n₁ 个 1」的零假设：
+    邻居中 1 的期望被抬高 n₁/(n₁−1) 倍 → p 系统性偏大、共位簇漏报。
+    手算 golden（1×4 rook 行，y=[1,1,0,0]）：
+    - 焦点 cell1（邻居 {cell0, cell2}，观测 LJC=1）：条件零下 3 种等可能
+      安排有 2 种邻居和 ≥1 → 渐近 p=2/3（旧实现该焦点 p≡1）；
+    - 焦点 cell0（邻居仅 {cell1}）：3 种安排只有 1 种邻居和 ≥1 → 渐近
+      p=1/3（旧实现 ≈0.65，偏大）。
+    """
+    fc = _grid_fc(1, 4, lambda r, c: {"bin": 1.0 if c in (0, 1) else 0.0})
+    res = local_join_count_narrated(fc, "bin", weights_scheme="rook",
+                                    permutations=999)
+    assert res.success, res.summary
+    props = [f["properties"] for f in res.data["features"]]
+    assert 0.2 < props[0]["p_value"] < 0.5, props[0]["p_value"]
+    assert 0.6 < props[1]["p_value"] < 0.9, props[1]["p_value"]
+    # y=0 位置 LJC≡0、p≡1（不在 1-簇族内）
+    assert props[2]["p_value"] == 1.0 and props[3]["p_value"] == 1.0
+
+    # 漏报修复：5×5 网格内嵌 2×2 的 1 块（n₁=4）→ BH 后应检出共位簇
+    # （旧零分布下 BH q≈0.087 > 0.05，整块被漏报）
+    fc_cluster = _grid_fc(5, 5, lambda r, c: {
+        "bin": 1.0 if (r < 2 and c < 2) else 0.0})
+    res_c = local_join_count_narrated(fc_cluster, "bin",
+                                      weights_scheme="rook", permutations=999)
+    assert res_c.data["significant_count"] >= 1
+
+
 # ── stats.bivariate_local_moran ──────────────────────────────────────
 
 def test_bivariate_local_moran_labels_and_determinism():
@@ -551,6 +581,25 @@ def test_weights_diagnostics_island_detection():
     assert res_q.data["connected_components"]["count"] == 1
 
 
+def test_weights_diagnostics_contract_does_not_require_numeric_field():
+    """权重诊断只吃几何/方案，不需要数值字段：科学前置不得声明
+    numeric_field_required（否则与契约「无必填统计字段」冲突）。"""
+    from app.lib.gis.algorithm_registry import get_algorithm_registry
+
+    algo = get_algorithm_registry().get("stats.weights_diagnostics")
+    assert algo is not None
+    assert "numeric_field_required" not in algo.scientific_preconditions
+
+
+def test_general_g_references_getis_ord_1992():
+    """General G 出自 Getis & Ord (1992)，不是 Ord & Getis (1995)。"""
+    from app.lib.gis.algorithm_registry import get_algorithm_registry
+
+    algo = get_algorithm_registry().get("stats.general_g")
+    assert algo is not None
+    assert algo.method_references == ["getis_ord1992"]
+
+
 # ── spatial.hotspot.local：significance_method 附加参数 ─────────────
 
 def _hotspot_fc():
@@ -618,6 +667,8 @@ def test_hotspot_uncertainty_evidence_block():
     assert blk["method"] == "analytic_normal"
     assert blk["permutations"] is None
     assert blk["multiple_testing"] == "BH-FDR"
+    # 证据块 p_value 经 6 位收敛，但非零小值不得被舍入成 0.0
+    # （p 值 0 是无效陈述 —— StatisticalSignificance 用 _r6_p 保留原量级）。
     assert 0.0 < blk["p_value"] <= 1.0
     # max|Gi*| 与 min p 同位配对（双侧正态 p 的自洽性守卫；容差 =
     # 属性通道舍入：gi_star 舍 4 位、p_value 舍 6 位）

@@ -192,6 +192,25 @@ def test_behavioral_discovery_real_dispatch(tmp_path):
     assert "beta_tool" not in hits, "提及 ≠ dispatch"
 
 
+def test_behavioral_discovery_excludes_gate_files(tmp_path):
+    """闸文件（tests/quality/）里的字面量 dispatch 不得伪证行为覆盖。"""
+    gate_dir = tmp_path / "tests" / "quality"
+    gate_dir.mkdir(parents=True)
+    (gate_dir / "test_gate.py").write_text(
+        "async def test_gate():\n"
+        "    await registry.dispatch('gamma_tool', {})\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tests" / "test_real.py").write_text(
+        "async def test_real():\n"
+        "    await registry.dispatch('alpha_tool', {})\n",
+        encoding="utf-8",
+    )
+    hits = discover_behavioral_dispatch(root=tmp_path)
+    assert hits.get("alpha_tool") == ["tests/test_real.py"]
+    assert "gamma_tool" not in hits, "闸文件自指污染行为证据"
+
+
 def test_behavior_level_vocabulary():
     b = {"alpha": ["t.py"]}
     assert behavior_level("alpha", b, ["t.py"]) == "dispatch"

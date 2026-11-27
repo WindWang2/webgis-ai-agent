@@ -54,6 +54,23 @@ vi.mock('@/lib/api/transport', () => {
   return { apiFetch: vi.fn(), ApiError };
 });
 
+// ref 通道可被编排为拒绝（调用点契约：拒绝必须落 unavailable 终态 —— 与
+// chapter-artifact 的 chart 分支同构，#2160 模式）。默认委托原实现，
+// 不影响既有 apiFetch 通道断言。
+const loadChartArtifactMock = vi.hoisted(() => ({
+  fn: vi.fn(),
+  orig: null as null | ((ref: string) => Promise<unknown>),
+}));
+vi.mock('@/lib/map-components/chart-artifact', async (importOriginal) => {
+  const orig = await importOriginal<typeof import('@/lib/map-components/chart-artifact')>();
+  loadChartArtifactMock.orig = orig.loadChartArtifact;
+  return {
+    ...orig,
+    loadChartArtifact: (...args: Parameters<typeof orig.loadChartArtifact>) =>
+      loadChartArtifactMock.fn(...args),
+  };
+});
+
 import { renderComponent } from './index';
 import { getComponentRenderer } from './registry';
 import { resetChartArtifactCache } from '@/lib/map-components/chart-artifact';
@@ -85,6 +102,8 @@ beforeEach(() => {
   apiFetchMock.mockReset();
   resetChartArtifactCache();
   setMapSpecSessionCursor(undefined);
+  loadChartArtifactMock.fn.mockReset();
+  loadChartArtifactMock.fn.mockImplementation((ref: string) => loadChartArtifactMock.orig!(ref));
 });
 
 describe('elevation_profile renderer', () => {
@@ -170,6 +189,17 @@ describe('elevation_profile renderer', () => {
     await waitFor(() => {
       expect(screen.getByText('剖面数据不可用（ref 未绑定）')).toBeTruthy();
     });
+  });
+
+  it('profileRef 通道拒绝 → unavailable 占位（不永驻 loading、不冒未处理拒绝）', async () => {
+    // 修复前：.then 无 .catch —— 拒绝时 alive 失效、setFetched 永不调用，
+    // 状态永驻 loading（文档承诺的不可用占位不可达）。
+    loadChartArtifactMock.fn.mockRejectedValueOnce(new Error('channel rejected'));
+    renderPanel({ profileRef: 'ref:profile-reject' });
+    await waitFor(() => {
+      expect(screen.getByText('剖面数据不可用（ref 未绑定）')).toBeTruthy();
+    });
+    expect(screen.queryByTestId('elevation-profile-chart')).toBeNull();
   });
 
   it('compact variant → data-variant=compact', () => {

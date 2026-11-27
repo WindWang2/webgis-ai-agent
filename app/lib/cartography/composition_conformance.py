@@ -65,6 +65,9 @@ _MAX_MESSAGE = 200
 #: 未声明导出目标时的默认核查面（png 是最低保真导出义务）。
 _DEFAULT_EXPORT_TARGETS: Tuple[str, ...] = ("png",)
 
+#: 单次 parity 核查的导出目标上界（超出必须显式披露截断）。
+_MAX_EXPORT_TARGETS = 6
+
 _SEVERITY_RANK: Dict[str, int] = {"error": 0, "warning": 1}
 
 
@@ -113,9 +116,9 @@ def _export_targets_of(
 ) -> Tuple[str, ...]:
     """显式参数 > 契约声明 > 默认 png（与设计文档同优先级）。"""
     if export_targets is not None:
-        return tuple(str(t) for t in export_targets)[:6]
+        return tuple(str(t) for t in export_targets)[:_MAX_EXPORT_TARGETS]
     if contract is not None and contract.export_targets:
-        return tuple(contract.export_targets)[:6]
+        return tuple(contract.export_targets)[:_MAX_EXPORT_TARGETS]
     return _DEFAULT_EXPORT_TARGETS
 
 
@@ -156,6 +159,17 @@ def _export_parity_issues(
     renderer_reg = get_component_renderer_registry()
     exempt = set(EXPORT_PARITY_EXEMPT_TYPES) | {"design_candidates"}
     issues: List[ConformanceIssue] = []
+    declared_targets = (
+        tuple(str(t) for t in export_targets) if export_targets is not None
+        else tuple(contract.export_targets) if contract is not None else ()
+    )
+    if len(declared_targets) > len(targets):
+        issues.append(ConformanceIssue(
+            code="export_targets_truncated", severity="warning",
+            message=(f"导出目标声明 {len(declared_targets)} 个，仅核查前 "
+                     f"{len(targets)} 个（{', '.join(targets)}）")[:_MAX_MESSAGE],
+            ids=[],
+        ))
     for ctype in sorted(by_type):
         if ctype in exempt:
             continue  # 豁免单源（ADR-0211）：basemap 由导出管线自身消费

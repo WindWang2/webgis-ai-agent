@@ -153,6 +153,17 @@ describe('TemporalTimeController', () => {
     expect(start).toHaveBeenCalledTimes(1);
   });
 
+  it('焦点在倍速 select / seek 滑块上时 Space 与方向键不被容器劫持', () => {
+    commitSpec(temporal);
+    render(<TemporalTimeController />);
+
+    fireEvent.keyDown(screen.getByTestId('temporal-rate'), { key: ' ' });
+    expect(commitUserTemporal).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(screen.getByTestId('temporal-seek'), { key: 'ArrowRight' });
+    expect(commitUserTemporal).not.toHaveBeenCalled();
+  });
+
   it.each([false, true])('play toggle follows reduced-motion changes from %s', (initialReducedMotion) => {
     vi.mocked(usePrefersReducedMotion).mockReturnValue(initialReducedMotion);
     commitSpec(temporal);

@@ -289,3 +289,27 @@ def test_r2_n2_degrade_reason_clear_does_not_steal_agent_ownership():
                            value="SCENE_USER_TERRAIN_NO_DEM", actor="agent",
                            turn=3)
     assert applied and doc3.intent.scene.degrade_reason == "SCENE_USER_TERRAIN_NO_DEM"
+
+
+def test_genesis_seeds_both_camera_axis_locks():
+    """反证（review P2）：同一话语既表达 pitch 又表达 bearing 时，两个轴
+    的 scene_camera 锁都必须存活 —— _upsert 按 scope 整体替换会把先播种
+    的 pitch 锁删掉，该偏好失去 user-wins 保护。"""
+    doc = build_document("俯仰角45度，朝正北方向看", _core())
+    assert doc.intent.scene.camera_pitch is not None
+    assert doc.intent.scene.camera_bearing is not None
+    axes = {(lock.scope, lock.value) for lock in doc.intent.locks}
+    assert ("scene_camera", "pitch") in axes
+    assert ("scene_camera", "bearing") in axes
+    # 两个轴都受锁保护：agent 改任一方都被拒
+    with pytest.raises(PatchConflict):
+        _patch(doc, path="scene.camera_pitch", value=60.0, actor="agent",
+               op_id="agent-pitch", turn=2)
+    with pytest.raises(PatchConflict):
+        _patch(doc, path="scene.camera_bearing", value=90.0, actor="agent",
+               op_id="agent-bearing", turn=3)
+    # 用户重表达仍可改（锁只挡 agent，不挡 owner）
+    doc2, applied_user = _patch(
+        doc, path="scene.camera_bearing", value=90.0, actor="user",
+        op_id="user-bearing", turn=4)
+    assert applied_user is True

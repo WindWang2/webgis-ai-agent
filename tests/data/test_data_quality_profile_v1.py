@@ -191,3 +191,45 @@ class TestReviewGateOrdering:
             semantic_issues=[],
             semantic_run=["timezone_missing"])
         assert p.gate == "ready"
+
+
+class TestIssueDigestCoverage:
+    def test_digest_covers_semantic_issues_beyond_first_32(self):
+        """第 33+ 条语义 issue 的差异必须改变 profile_digest（不得只摘要前 32）。"""
+        lib = _lib_report([
+            QualityIssue(code=QualityIssueCode.NULL_HEAVY_FIELD,
+                         severity="info", field=f"lib{i}")
+            for i in range(32)
+        ])
+        digests = []
+        for field in ("a", "b"):
+            p = build_data_quality_profile(
+                target_ref="ref:64", lib_report=lib,
+                semantic_issues=[QualityIssue(
+                    code=QualityIssueCode.UNIT_AMBIGUOUS,
+                    severity="info", field=field)])
+            assert len(p.issues) == 33
+            digests.append(p.profile_digest)
+        assert digests[0] != digests[1]
+
+    def test_plain_string_issue_codes_do_not_crash(self):
+        # model_construct 可绕过枚举校验（code 保持普通字符串）；
+        # 同文件其它投影已用 getattr 防御，提案路径必须同等防御。
+        issue = QualityIssue.model_construct(
+            code="null_heavy_field", severity="warning", field="f",
+            message="", repairable=False)
+        p = build_data_quality_profile(
+            target_ref="ref:str", semantic_issues=[issue])
+        assert p.gate == "degraded"
+        assert any(pr["reason_code"] == "null_heavy_field" for pr in p.proposals)
+
+
+def test_bounded_value_samples_caps_distinct_fields():
+    from app.services.data_quality.profile import (
+        _MAX_SAMPLE_FIELDS,
+        _bounded_value_samples,
+    )
+
+    feat = {"properties": {f"f{i}": i for i in range(_MAX_SAMPLE_FIELDS + 50)}}
+    samples = _bounded_value_samples([feat])
+    assert len(samples) == _MAX_SAMPLE_FIELDS

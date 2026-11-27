@@ -30,7 +30,8 @@ async def app_and_signals(tmp_path, monkeypatch):
     app.include_router(upload_routes.router, prefix="/api/v1")
 
     # 记录调用 parse_vector 时所在的线程 id
-    signals = {"main_thread": threading.get_ident(), "parse_thread": None}
+    signals = {"main_thread": threading.get_ident(), "parse_thread": None,
+               "save_meta_thread": None}
 
     def fake_parse_vector(temp_path, upload_dir, upload_id):
         signals["parse_thread"] = threading.get_ident()
@@ -88,7 +89,11 @@ async def app_and_signals(tmp_path, monkeypatch):
 
     monkeypatch.setattr(upload_routes, "parse_vector", fake_parse_vector)
     monkeypatch.setattr(upload_routes, "async_db_session", fake_ctx)
-    monkeypatch.setattr(upload_routes, "save_meta", lambda *a, **k: None)
+
+    def fake_save_meta(*_a, **_k):
+        signals["save_meta_thread"] = threading.get_ident()
+
+    monkeypatch.setattr(upload_routes, "save_meta", fake_save_meta)
 
     yield app, signals
 
@@ -113,4 +118,8 @@ async def test_upload_runs_parse_in_executor_thread(app_and_signals, client):
     assert signals["parse_thread"] is not None
     assert signals["parse_thread"] != signals["main_thread"], (
         "parse_vector 必须在 worker 线程执行，不能阻塞主事件循环"
+    )
+    assert signals["save_meta_thread"] is not None
+    assert signals["save_meta_thread"] != signals["main_thread"], (
+        "save_meta 必须在 worker 线程执行，不能阻塞主事件循环"
     )

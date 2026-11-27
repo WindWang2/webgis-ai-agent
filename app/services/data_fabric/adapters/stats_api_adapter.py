@@ -126,10 +126,12 @@ class StatsApiAdapter(GeospatialDataSourceAdapter):
             raise SourceBadResponseError(f"stats_api returned non-JSON body: {e}") from e
 
     @staticmethod
-    def _rows_to_features(rows: List[Any], decl: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _rows_to_features(rows: List[Any], decl: Dict[str, Any], start: int = 0) -> List[Dict[str, Any]]:
+        # start = 已累积行数：缺省 id 用 row-{start+i}，翻页时跨页不重复
+        # （此前每页 enumerate 从 0 起编 → 无 id 字段的源跨页 id 碰撞）。
         lat_f, lon_f = decl.get("lat_field"), decl.get("lon_field")
         features: List[Dict[str, Any]] = []
-        for i, row in enumerate(rows):
+        for i, row in enumerate(rows, start=start):
             if not isinstance(row, dict):
                 continue
             geometry = None
@@ -214,6 +216,7 @@ class StatsApiAdapter(GeospatialDataSourceAdapter):
 
         features: List[Dict[str, Any]] = []
         total_matched: Optional[int] = None
+        row_offset = 0
         page = 1
         hit_row_cap = False
         hit_page_cap = False
@@ -231,15 +234,26 @@ class StatsApiAdapter(GeospatialDataSourceAdapter):
                     details={"dataset": dataset_id},
                 )
             if isinstance(rows, dict):
-                # {results:[…], total:n} shaped bodies
-                total_matched = rows.get("total", total_matched)
+                # {results:[…], total:n} shaped bodies —— total 须归一为 int
+                # （API 可能以字符串返回；否则下方 total_matched > len(features)
+                # 抛 TypeError 使整个 query 500，且 total_matching 带入字符串）。
+                raw_total = rows.get("total", total_matched)
+                if isinstance(raw_total, bool):
+                    total_matched = None
+                elif isinstance(raw_total, int):
+                    total_matched = raw_total if raw_total >= 0 else None
+                elif isinstance(raw_total, str) and raw_total.strip().isdigit():
+                    total_matched = int(raw_total.strip())
+                else:
+                    total_matched = None
                 rows = rows.get("results") or rows.get("data") or []
             if not isinstance(rows, list):
                 raise SourceBadResponseError(
                     "items_path did not resolve to a list",
                     details={"dataset": dataset_id},
                 )
-            features.extend(self._rows_to_features(rows, decl))
+            features.extend(self._rows_to_features(rows, decl, start=row_offset))
+            row_offset += len(rows)
             got_full_page = len(rows) >= page_size
             if len(features) >= row_limit:
                 hit_row_cap = True

@@ -492,3 +492,45 @@ def test_layout_collision_pass_has_no_fix():
     check = _check(_spec(components), "LAYOUT_COLLISION")
     assert check.status == "pass"
     assert not check.suggested_fix
+
+
+# ── V4：自愈容量口径 = 列单位累加 + zone_occupancy（与 V3 同口径）────────
+
+
+def test_v4_selfheal_respects_width_unit_capacity():
+    """P2：_load 按组件计数（而非 width_units 累加）可把组件放进已满槽。
+
+    top-left 容量 2：width=2 件先占满；width=1 件被 V3 抑制 → V4 自愈
+    不得再把它塞进 top-left（那会超出 V3 单位口径容量）。
+    """
+    zones = ("top-left", "top-center", "top-right",
+             "bottom-left", "bottom-center", "bottom-right")
+    caps = {z: 2 for z in zones}
+    # 六槽各用 width=2 灌满（12 单位 = 全部容量），thin 无处可放 → V3 抑制
+    # → V4 自愈：按组件计清会把 top-left 当作只用掉 1 单位而塞进 thin。
+    participants = [_p4(f"wide{i}", "legend", z, width=2, optional=False)
+                    for i, z in enumerate(zones)]
+    participants.append(_p4("thin", "legend", "top-left", optional=True))
+    sol = solve_layout_v4(participants, page_profile="viewport", zone_capacity=caps)
+    loads: Dict[str, int] = {}
+    for p in sol.placements:
+        loads[p.zone] = loads.get(p.zone, 0) + p.width_units
+    assert all(load <= 2 for load in loads.values()), f"超容: {loads}"
+    assert loads.get("top-left", 0) == 2
+
+
+def test_v4_selfheal_respects_zone_occupancy():
+    """P2：自愈忽略 zone_occupancy（环境占用）时会把组件放进已占槽。"""
+    from app.lib.cartography.layout_solver import LayoutConstraints
+
+    participants = [
+        _p4("a", "legend", "top-left", optional=False),
+        _p4("b", "legend", "top-left", optional=True),
+    ]
+    caps = {z: 2 for z in ("top-left", "top-center", "top-right",
+                           "bottom-left", "bottom-center", "bottom-right")}
+    cons = LayoutConstraints(zone_occupancy={"top-left": 2})
+    sol = solve_layout_v4(participants, page_profile="viewport",
+                          zone_capacity=caps, constraints=cons)
+    assert all(p.zone != "top-left" for p in sol.placements), (
+        "环境占用已满的槽不得再收容自愈组件")

@@ -80,6 +80,30 @@ def test_classification_metrics():
     assert out["balanced_accuracy"] == 0.75
 
 
+def test_segmentation_metrics_rejects_out_of_range_labels():
+    with pytest.raises(ValueError, match="labels must be in"):
+        segmentation_metrics(np.array([[0, 2]]), np.array([[0, 1]]), num_classes=2)
+    with pytest.raises(ValueError, match="labels must be in"):
+        segmentation_metrics(np.array([[0, 1]]), np.array([[0, 3]]), num_classes=2)
+
+
+def test_classification_metrics_rejects_out_of_range_labels():
+    with pytest.raises(ValueError, match="labels must be in"):
+        classification_metrics([0, 2], [0, 1], num_classes=2)
+    with pytest.raises(ValueError, match="labels must be in"):
+        classification_metrics([0, 1], [0, -1], num_classes=2)
+
+
+def test_miou_penalizes_spuriously_predicted_classes():
+    """真值中缺席但预测出现的类必须计 0（否则 mIoU/macro-F1 虚高）。"""
+    y_true = np.array([[0, 0]])
+    y_pred = np.array([[0, 1]])
+    m = segmentation_metrics(y_true, y_pred, num_classes=2)
+    # class0 IoU=1/2；class1 support=0 但被预测 → IoU=0/F1=0 参与平均。
+    assert m.miou == pytest.approx(0.25, abs=1e-6)
+    assert m.macro_f1 == pytest.approx(1 / 3, abs=1e-6)
+
+
 def test_spatial_blocked_split_deterministic_and_disjoint():
     s1 = spatial_blocked_split(64, 64, block_size_px=16, num_folds=3)
     s2 = spatial_blocked_split(64, 64, block_size_px=16, num_folds=3)

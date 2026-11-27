@@ -106,6 +106,23 @@ def test_repair_matrix_matches_frozen(golden_matrix) -> None:
     assert build_repair_matrix() == golden_matrix
 
 
+def test_changed_count_no_double_count_after_middle_deletion() -> None:
+    """P3：删除中间要素不得因 zip 签名错位把未变更的后继要素重复计入
+    changed（旧逻辑 = 长度差 1 + 错位对位差异 1 = 2，真实变更数 = 1）。"""
+    from app.services.spatial_repair_matrix import _changed_count, _pt
+
+    before = {"features": [_pt(116.0, 39.0), _pt(120.0, 40.0), _pt(121.0, 41.0)]}
+    # 中间要素被删：后继要素签名整体前移，只有被删的 1 个算变更
+    after = {"features": [_pt(116.0, 39.0), _pt(121.0, 41.0)]}
+    assert _changed_count(before, after) == 1
+    # 重复要素合并（删/并）：同样只有 1 个变更（旧逻辑错位多算成 2）
+    dup = {"features": [_pt(116.0, 39.0), _pt(116.0, 39.0), _pt(121.0, 41.0)]}
+    assert _changed_count(dup, after) == 1
+    # 等长修改路径不受影响：逐位签名差仍按 1 个变更计
+    same_len = {"features": [_pt(116.0, 39.0), _pt(120.0, 40.0), _pt(122.0, 42.0)]}
+    assert _changed_count(before, same_len) == 1
+
+
 def test_repair_matrix_mapped_effective_sample(golden_matrix) -> None:
     """关键映射实测有效（抽样锁定：EMPTY→remove_empty、DUP→deduplicate、
     SELF_INTERSECTION→make_valid）。"""

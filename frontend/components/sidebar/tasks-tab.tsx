@@ -56,6 +56,7 @@ function formatElapsed(job: JobView, now: number): string {
   const start = new Date(startedAt).getTime();
   if (Number.isNaN(start)) return '—';
   const end = job.finished_at ? new Date(job.finished_at).getTime() : now;
+  if (Number.isNaN(end)) return '—';
   const seconds = Math.max(0, Math.round((end - start) / 1000));
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);

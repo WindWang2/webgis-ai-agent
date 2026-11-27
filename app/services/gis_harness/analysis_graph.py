@@ -82,16 +82,18 @@ def _product_nodes(
     descriptors: Optional[Dict[str, Any]] = None,
     observation: Optional[Dict[str, Any]] = None,
     current_revision: int = 0,
+    facets: Optional[List[Any]] = None,
 ) -> List[Dict[str, Any]]:
     """ProductGraph facets → 有界产品节点（完成度 + 渲染证据）。"""
-    from app.services.gis_harness.product_graph import build_facet_completion
+    if facets is None:
+        from app.services.gis_harness.product_graph import build_facet_completion
 
-    facets = build_facet_completion(
-        chapter, mapspec,
-        descriptors=descriptors,
-        observation=observation,
-        current_revision=current_revision,
-    )
+        facets = build_facet_completion(
+            chapter, mapspec,
+            descriptors=descriptors,
+            observation=observation,
+            current_revision=current_revision,
+        )
     nodes: List[Dict[str, Any]] = []
     for f in facets[:_MAX_PRODUCT_NODES]:
         nodes.append({
@@ -113,11 +115,18 @@ def _product_nodes(
     return nodes
 
 
+def _plan_attr(plan: Any, name: str, default: Any = "") -> Any:
+    """plan 字段读取（build_analysis_graph 显式支持 dict plan）。"""
+    if isinstance(plan, dict):
+        return plan.get(name, default)
+    return getattr(plan, name, default)
+
+
 def _goal_node(
     plan: Any,
     chapter: Optional[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    goal = getattr(plan, "user_goal", "") or (chapter or {}).get("query", "")
+    goal = _plan_attr(plan, "user_goal", "") or (chapter or {}).get("query", "")
     warnings: List[Dict[str, Any]] = []
     for w in (chapter or {}).get("methodology_warnings") or []:
         if isinstance(w, dict):
@@ -135,12 +144,12 @@ def _goal_node(
         "id": "goal",
         "kind": "goal",
         "label": _bounded(goal, 200),
-        "query": _bounded(getattr(plan, "user_goal", ""), 200),
+        "query": _bounded(_plan_attr(plan, "user_goal", ""), 200),
         "recipe_id": str((chapter or {}).get("recipe_id") or ""),
         "plan_id": str((chapter or {}).get("plan_id") or ""),
         "status": str((chapter or {}).get("status") or ""),
-        "superseded": bool(getattr(plan, "superseded", False)),
-        "replaced": bool(getattr(plan, "replaced", False)),
+        "superseded": bool(_plan_attr(plan, "superseded", False)),
+        "replaced": bool(_plan_attr(plan, "replaced", False)),
         "methodology_warnings": warnings,
     }
     # Workflow V2（Goal C / C8）：workflow 契约摘要作为 goal 节点的可解释
@@ -199,19 +208,17 @@ def build_analysis_graph(
         graph["notes"].append("no session plan chapter — call webgis_map_intent")
         return graph
 
-    execution = _execution_nodes(chapter)
-    product = _product_nodes(
-        chapter, mapspec,
-        descriptors=descriptors,
-        observation=observation,
-        current_revision=current_revision,
-    )
-    goal = _goal_node(plan, chapter)
-
-    # 统一确定性下一动作（执行债 → 产品债 → 观察债 → 收尾债）。
-    next_action: Optional[Dict[str, Any]] = None
+    # 执行/产品投影与 next_action/goal_graph 同纪律：畸形章节（下游
+    # 投影抛错）按缺席降级，绝不逃出「绝不抛给调用方」的承诺。
+    execution: List[Dict[str, Any]] = []
     try:
-        from app.services.gis_harness.action_intent import resolve_next_gis_action
+        execution = _execution_nodes(chapter)
+    except Exception:  # noqa: BLE001 — 执行投影是增值视图，缺席不阻断
+        execution = []
+        graph["notes"].append("execution projection failed")
+    product: List[Dict[str, Any]] = []
+    facets: Optional[List[Any]] = None
+    try:
         from app.services.gis_harness.product_graph import build_facet_completion
 
         facets = build_facet_completion(
@@ -220,7 +227,25 @@ def build_analysis_graph(
             observation=observation,
             current_revision=current_revision,
         )
-        action = resolve_next_gis_action(chapter, facets)
+        product = _product_nodes(
+            chapter, mapspec,
+            descriptors=descriptors,
+            observation=observation,
+            current_revision=current_revision,
+            facets=facets,
+        )
+    except Exception:  # noqa: BLE001 — 产品投影同上
+        product = []
+        graph["notes"].append("product projection failed")
+    goal = _goal_node(plan, chapter)
+
+    # 统一确定性下一动作（执行债 → 产品债 → 观察债 → 收尾债）。
+    next_action: Optional[Dict[str, Any]] = None
+    try:
+        from app.services.gis_harness.action_intent import resolve_next_gis_action
+
+        action = (resolve_next_gis_action(chapter, facets)
+                  if facets is not None else None)
         if action is not None:
             next_action = {
                 "facet_id": action.facet_id,
@@ -252,7 +277,7 @@ def build_analysis_graph(
         graph["notes"].append(goal_graph.summary_line())
     except Exception:  # noqa: BLE001 — 方法骨架是增值投影，缺席不阻断
         graph["goal_graph"] = None
-    if getattr(plan, "superseded", False):
+    if _plan_attr(plan, "superseded", False):
         graph["notes"].append("plan superseded by a newer goal")
     return graph
 
@@ -277,7 +302,11 @@ async def build_analysis_graph_for_session(session_id: str) -> Dict[str, Any]:
         from app.services.mapspec_store import mapspec_store
 
         mapspec = await mapspec_store.get_mapspec(session_id)
-        current_revision = int((mapspec or {}).get("revision") or 0)
+        try:
+            current_revision = int((mapspec or {}).get("revision") or 0)
+        except (TypeError, ValueError):
+            # revision 非数字只丢修订号，不丢 MapSpec 证据。
+            current_revision = 0
     except Exception:  # noqa: BLE001
         mapspec = None
     try:

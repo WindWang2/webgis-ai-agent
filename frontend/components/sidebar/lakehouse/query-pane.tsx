@@ -205,15 +205,66 @@ export function QueryPane({ sessionId, ownerToken, objectIdHint, onHintConsumed 
     (rec: LakehouseQueryRecord) => {
       setForm((f) => {
         const base = { ...f, ref: rec.ref };
+        const p = (rec.request && typeof rec.request === 'object' ? rec.request : {}) as Record<string, unknown>;
+        const asRecord = (v: unknown): Record<string, unknown> =>
+          v && typeof v === 'object' ? (v as Record<string, unknown>) : {};
+        const tags = (v: unknown) => (Array.isArray(v) ? v.map(String).join(', ') : '');
+        const arrayText = (v: unknown) => (Array.isArray(v) ? v.map(String).join(', ') : '');
         if (rec.kind === 'window') {
-          const p = rec.request as { time?: [number, number]; y?: [number, number]; x?: [number, number] };
+          const w = p as { time?: [number, number]; y?: [number, number]; x?: [number, number] };
           return { ...base, mode: 'window', window: {
-            time: p.time ? p.time.join(', ') : '',
-            y: p.y ? p.y.join(', ') : '',
-            x: p.x ? p.x.join(', ') : '',
+            time: w.time ? w.time.join(', ') : '',
+            y: w.y ? w.y.join(', ') : '',
+            x: w.x ? w.x.join(', ') : '',
           } };
         }
-        return base;
+        if (rec.kind === 'labeled') {
+          const slices = asRecord(p.index_slices);
+          return { ...base, mode: 'labeled', labeled: {
+            ...f.labeled,
+            time: tags(p.time),
+            band: tags(p.band),
+            polarization: tags(p.polarization),
+            vertical: tags(p.vertical),
+            model: tags(p.model),
+            scenario: tags(p.scenario),
+            bbox: arrayText(p.bbox),
+            indexSlices: Object.entries(slices)
+              .map(([dim, range]) => `${dim}: ${arrayText(range)}`)
+              .join('; '),
+            maxCells: typeof p.max_cells === 'number' ? p.max_cells : f.labeled.maxCells,
+          } };
+        }
+        if (rec.kind === 'scan') {
+          const ref = typeof p.ref === 'string' ? p.ref : rec.ref;
+          return { ...base, ref, mode: 'scan', scan: {
+            ref,
+            bbox: arrayText(p.bbox),
+            columns: tags(p.columns),
+            maxRows: typeof p.max_rows === 'number' ? p.max_rows : f.scan.maxRows,
+          } };
+        }
+        if (rec.kind === 'revise') {
+          const update = asRecord(Array.isArray(p.updates) ? p.updates[0] : null);
+          return { ...base, mode: 'revise', revise: {
+            ...f.revise,
+            title: typeof p.title === 'string' ? p.title : f.revise.title,
+            band: typeof update.band === 'string' ? update.band : '',
+            timeIndex: typeof update.time_index === 'number' ? update.time_index : 0,
+            source: typeof update.source === 'string' ? update.source : '',
+          } };
+        }
+        const source = asRecord(Array.isArray(p.sources) ? p.sources[0] : null);
+        const ref = typeof source.source === 'string' ? source.source : rec.ref;
+        return { ...base, ref, mode: 'rs', rs: {
+          ...f.rs,
+          title: typeof p.title === 'string' ? p.title : f.rs.title,
+          time: typeof source.time === 'string' ? source.time : '',
+          source: ref,
+          role: typeof source.role === 'string' ? source.role : f.rs.role,
+          band: typeof source.band === 'string' ? source.band : '',
+          polarization: typeof source.polarization === 'string' ? source.polarization : '',
+        } };
       });
     },
     [],

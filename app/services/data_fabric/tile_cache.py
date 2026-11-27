@@ -152,33 +152,45 @@ class TileBuildCoalescer(Generic[_T]):
 
     def __init__(self, max_inflight: int = 512, wait_timeout_s: float = 30.0):
         self._inflight: "Dict[Hashable, concurrent.futures.Future]" = {}
+        # worker 线程与每请求独立 loop 共用同一实例：leader 判定/登记/移除
+        # 必须原子（无锁 dict 会让同键并发双方都当 leader）。
+        self._inflight_lock = threading.Lock()
         self._max_inflight = max_inflight
         self._wait_timeout_s = wait_timeout_s
 
     async def run(self, key: Hashable, builder: Callable[[], Awaitable[_T]]) -> _T:
-        leader = key not in self._inflight
-        if leader and len(self._inflight) >= self._max_inflight:
-            # 有界降级：不打进 in-flight 表，直接自己构建（dict 操作在同一
-            # loop 上无竞态）。
+        with self._inflight_lock:
+            shared = self._inflight.get(key)
+            leader = shared is None
+            over_capacity = leader and len(self._inflight) >= self._max_inflight
+            if leader and not over_capacity:
+                shared = concurrent.futures.Future()
+                self._inflight[key] = shared
+        if over_capacity:
+            # 有界降级：不打进 in-flight 表，直接自己构建。
             return await builder()
         if leader:
-            fut: "concurrent.futures.Future" = concurrent.futures.Future()
-            self._inflight[key] = fut
             try:
                 result = await builder()
                 # 后到者等待超时走 shield 降级（不取消本 future），故 set_*
                 # 不会撞上已取消的槽；仍防御性抑制，领导者绝不因 follower
                 # 的取消而失败。
                 with contextlib.suppress(concurrent.futures.InvalidStateError):
-                    fut.set_result(result)
+                    shared.set_result(result)
                 return result
             except BaseException as exc:
                 with contextlib.suppress(concurrent.futures.InvalidStateError):
-                    fut.set_exception(exc)
+                    if isinstance(exc, asyncio.CancelledError):
+                        # 领导者被取消（客户端断连）→ 取消共享槽而非把
+                        # CancelledError 塞进去；follower 收到取消后自行构建。
+                        shared.cancel()
+                    else:
+                        shared.set_exception(exc)
                 raise
             finally:
-                self._inflight.pop(key, None)
-        follower_fut = self._inflight[key]
+                with self._inflight_lock:
+                    self._inflight.pop(key, None)
+        follower_fut = shared
         wrapped = asyncio.wrap_future(follower_fut)
 
         def _consume(f: "asyncio.Future") -> None:
@@ -197,6 +209,12 @@ class TileBuildCoalescer(Generic[_T]):
         except (asyncio.TimeoutError, TimeoutError):
             # 领导者构建超过等待上限：后到者自行构建（诚实降级，不悬挂）。
             return await builder()
+        except asyncio.CancelledError:
+            if follower_fut.cancelled():
+                # 共享槽因 leader 被取消而取消：本请求自行构建，绝不连带
+                # 失败（异常按请求逐份传播）。
+                return await builder()
+            raise
 
     def inflight_keys(self) -> int:
         return len(self._inflight)

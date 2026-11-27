@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -89,6 +90,31 @@ def test_artificial_regression_is_blocked_100pct():
     assert all(not v.waived for v in violations)
     assert violations[0].delta_pct == pytest.approx(50.0)
     assert violations[1].delta_pct == pytest.approx(50.0)  # low_bad 方向取劣化幅度
+
+
+@pytest.mark.parametrize(
+    ("direction", "observed"),
+    [("high_bad", 2.0), ("low_bad", -2.0)],
+)
+def test_zero_baseline_nonzero_delta_is_strict_json(direction, observed):
+    baselines = [
+        Baseline(
+            scene_id=GLOBAL_SCOPE,
+            check_id="carto.count.items",
+            value=0.0,
+            direction=direction,
+            status="active",
+        ),
+    ]
+    violations = evaluate_ratchet(
+        [Observation(GLOBAL_SCOPE, "carto.count.items", observed)],
+        baselines,
+    )
+
+    assert len(violations) == 1
+    payload = violations[0].to_dict()
+    assert payload["delta_pct"] > 0
+    json.dumps(payload, allow_nan=False)
 
 
 def test_improvement_and_noise_pass():

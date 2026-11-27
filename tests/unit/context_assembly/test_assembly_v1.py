@@ -189,6 +189,31 @@ async def test_known_window_enforce_omits_with_reason(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_gis_context_card_gate_skips_build_without_session(monkeypatch):
+    calls = {"n": 0}
+
+    class _CardText(str):
+        source_scope = {"scope": "session", "scope_id": "s1"}
+
+    async def _fake_card(*a, **k):
+        calls["n"] += 1
+        return _CardText("CARD-BODY"), None
+
+    import app.services.gis_context.hotpath as hotpath
+    monkeypatch.setattr(hotpath, "assemble_gis_context_card", _fake_card)
+    from app.services.context_assembly.providers import GisContextCardProvider
+
+    provider = GisContextCardProvider()
+    facts = SharedTurnFacts()
+    assert await provider.build(TurnContextRequest(session_id=""), facts) == []
+    assert calls["n"] == 0
+
+    items = await provider.build(TurnContextRequest(session_id="s1"), facts)
+    assert calls["n"] == 1
+    assert items[0].content == "CARD-BODY"
+
+
+@pytest.mark.asyncio
 async def test_harness_state_block_rendered_when_turn_found(monkeypatch):
     from types import SimpleNamespace
 

@@ -40,6 +40,7 @@ import {
   formatDistance,
   formatArea,
 } from '@/lib/map-kit/navigation'
+import { emitMeasurementCreated } from '@/lib/interaction/bus'
 import {
   getSketchState,
   getSketchSnapshot,
@@ -246,6 +247,13 @@ export function MapToolbarHUD({
           geometry: { type: 'Point', coordinates: end.slice() },
           properties: { label: measurementSummary.formatted, color: 'transparent', kind: 'measure_label' },
         })
+        // 与 map-panel 受控路径的 IR 事件对等：非受控保存也必须上报测量创建。
+        emitMeasurementCreated({
+          measureKind: 'distance',
+          value: measurementSummary.rawValue,
+          unit: 'km',
+          segmentCount: points.length - 1,
+        })
       } else if (measurementSummary.type === 'area') {
         const ring = points.slice()
         if (ring[0][0] !== ring[ring.length - 1][0] || ring[0][1] !== ring[ring.length - 1][1]) {
@@ -256,12 +264,20 @@ export function MapToolbarHUD({
           geometry: { type: 'Polygon', coordinates: [ring] },
           properties: { label: t('map.toolbar.measureAreaLabel', { value: measurementSummary.formatted }), kind: 'measure_polygon' },
         })
-        const cx = ring.reduce((s, p) => s + p[0], 0) / ring.length
-        const cy = ring.reduce((s, p) => s + p[1], 0) / ring.length
+        // 质心用去重后的顶点（ring 已闭合，首点重复一次）—— 含重复首点
+        // 并除以 n+1 会给首点双倍权重，标签点偏移（与 map-panel 同口径）。
+        const cx = ring.slice(0, -1).reduce((s, p) => s + p[0], 0) / (ring.length - 1)
+        const cy = ring.slice(0, -1).reduce((s, p) => s + p[1], 0) / (ring.length - 1)
         store.addAnnotation({
           type: 'Feature',
           geometry: { type: 'Point', coordinates: [cx, cy] },
           properties: { label: measurementSummary.formatted, color: 'transparent', kind: 'measure_label' },
+        })
+        emitMeasurementCreated({
+          measureKind: 'area',
+          value: measurementSummary.rawValue,
+          unit: 'km2',
+          segmentCount: ring.length - 1,
         })
       }
       setMeasureMode('none')

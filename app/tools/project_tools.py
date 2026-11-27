@@ -156,6 +156,25 @@ def register_project_tools(registry: ToolRegistry) -> None:
                 for s in steps
                 if str(s.get("tool_name") or "") not in known_tools
             })
+            # Missing/empty tool_name would KeyError at s["tool_name"] below (or
+            # surface as an empty "" entry in the unknown list) — disclose it as
+            # a structured error instead, naming the offending step.
+            missing_tool_name = [
+                str(s.get("step_id") or "?")
+                for s in steps
+                if not str(s.get("tool_name") or "")
+            ]
+            if missing_tool_name:
+                return {
+                    "success": False,
+                    "error": (
+                        "steps are missing tool_name: " + ", ".join(missing_tool_name)
+                    ),
+                    "correction_hint": (
+                        "every step needs a registered tool id as tool_name; "
+                        "nothing was saved"
+                    ),
+                }
             recipe = WorkflowCreate(
                 name=workflow_name,
                 description=description,
@@ -286,7 +305,11 @@ def register_project_tools(registry: ToolRegistry) -> None:
                     db=db, project_id=project_id, user_id=user_id, org_id=org_id
                 )
                 if not project:
-                    return {"status": "error", "message": f"Project {project_id} not found or permission denied"}
+                    return {
+                        "success": False,
+                        "status": "error",
+                        "message": f"Project {project_id} not found or permission denied",
+                    }
                 if from_run_id and from_step:
                     run = run_sync(WorkflowEngine.rerun_from_step(
                         db=db,
@@ -352,9 +375,8 @@ def register_project_tools(registry: ToolRegistry) -> None:
         # audit_dataset handles crs=None by falling back to GeoJSON crs member
         # or EPSG:4326 (GIS-15); a hard default here would shadow that fallback.
         # Keep behaviour: no crs supplied -> let service decide.
-        effective_crs = crs if crs is not None else None
         report = SpatialQualityEngine.audit_dataset(
-            geojson_data=geojson, crs=effective_crs, dataset_id=dataset_id
+            geojson_data=geojson, crs=crs, dataset_id=dataset_id
         )
         return report.to_dict()
 

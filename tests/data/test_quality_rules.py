@@ -5,6 +5,8 @@
 """
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from app.services.data_quality.rule_functions import (
@@ -172,6 +174,9 @@ def test_primary_key_uniqueness():
     assert out.status == "fail"
     assert out.metric["duplicate_keys"] == 1 and out.metric["missing"] == 1
     assert out.affected_count == 2
+    # 与 duplicate_features 的「超额行数」不同口径 → 键名必须区分。
+    assert out.metric["duplicate_group_rows"] == 2
+    assert "duplicate_rows" not in out.metric
 
 
 def test_fk_referential():
@@ -202,6 +207,40 @@ def test_field_type_drift_mixed_and_expected():
     assert any(k == "b" for k in out2.metric["detail"])
 
 
+def test_field_type_drift_expected_reports_partial_incompatibility():
+    """声明 number 但半数是 string：存在不兼容类型即漂移，不能等全不兼容。"""
+    feats = [_feat(None, {"b": 1}), _feat(None, {"b": 2}),
+             _feat(None, {"b": "text"})]
+    out = RULE_FUNCTIONS["field_type_drift"](
+        _ctx(feats, params={"expected_types": {"b": "number"}}))
+    assert out.status == "warn"
+    assert "b" in out.metric["detail"]
+
+
+def test_null_rate_worst_field_tie_is_process_stable():
+    """并列空值率的最差字段不得随字符串哈希随机化漂移。"""
+    import os
+    import subprocess
+    import sys
+
+    code = (
+        "from app.services.data_quality.rule_functions import "
+        "RuleEvalContext, rule_null_rate;"
+        "feats=[{'properties':{f'f{i}': None for i in range(8)}} for _ in range(3)];"
+        "print(rule_null_rate(RuleEvalContext(features=feats)).metric['worst_field'])"
+    )
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))))
+    outs = set()
+    for seed in ("0", "1", "2"):
+        env = dict(os.environ, PYTHONHASHSEED=seed)
+        proc = subprocess.run([sys.executable, "-c", code], cwd=repo_root,
+                              capture_output=True, text=True, env=env)
+        assert proc.returncode == 0, proc.stderr
+        outs.add(proc.stdout.strip())
+    assert outs == {"f7"}, outs
+
+
 def test_temporal_gaps():
     feats = [
         _feat(None, {"t": "2026-01-01T00:00:00"}),
@@ -227,6 +266,14 @@ def test_attribute_encoding_detects_mojibake():
     assert clean.status == "pass"
 
 
+def test_attribute_encoding_nordic_ring_letter_not_mojibake():
+    # 单个合法 "å" 不应被判乱码（重复标记曾令 hits>=2，推高 ratio 至 fail）
+    feats = [_feat(None, {"name": "åre"}), _feat(None, {"name": "ål"})]
+    out = RULE_FUNCTIONS["attribute_encoding"](
+        _ctx(feats, params={"max_mojibake_ratio": 0.02}))
+    assert out.status == "pass"
+
+
 def test_topology_adjacency_detects_overlap_and_bounded_skip():
     a = _feat(_poly([[0, 0], [0, 2], [2, 2], [2, 0], [0, 0]]))
     b = _feat(_poly([[1, 1], [1, 3], [3, 3], [3, 1], [1, 1]]))
@@ -238,6 +285,14 @@ def test_topology_adjacency_detects_overlap_and_bounded_skip():
     skipped = RULE_FUNCTIONS["topology_adjacency"](
         _ctx(many, params={"max_polygons": 200}))
     assert skipped.status == "skipped" and "bounded_skip" in skipped.message
+
+
+def test_topology_adjacency_honors_deadline():
+    a = _feat(_poly([[0, 0], [0, 2], [2, 2], [2, 0], [0, 0]]))
+    b = _feat(_poly([[1, 1], [1, 3], [3, 3], [3, 1], [1, 1]]))
+    out = RULE_FUNCTIONS["topology_adjacency"](RuleEvalContext(
+        features=[a, b], deadline_monotonic=time.monotonic() - 1.0))
+    assert out.status == "skipped" and "budget" in out.message
 
 
 def test_mixed_geometry_types():

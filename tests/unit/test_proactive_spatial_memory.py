@@ -314,6 +314,29 @@ def test_sync_org_loads_only_tenant_rows(factory):
     assert "A 园区" not in titles
 
 
+def test_resync_loads_full_scope_budget_beyond_store_page_cap(factory):
+    """project 预算 400 行 > get_active_memories 的 200 行硬上限：
+    resync 必须加载超出旧 200 行窗口的 active 记忆，且不得按截断页
+    prune 掉仍在架的旧条目（否则会被永久踢出索引）。"""
+    with factory() as db:
+        earliest = [
+            _seed(db, _place(
+                f"存量项目地块{i:03d}", scope=SCOPE_PROJECT,
+                scope_id="proj-1"))[0].id
+            for i in range(200)
+        ]
+    r = pr.ProactiveRetriever(db_factory=factory)
+    assert r.sync_org("org-a", project_id="proj-1") == 200
+    with factory() as db:
+        for i in range(20):
+            _seed(db, _place(
+                f"新增项目地块{i:03d}", scope=SCOPE_PROJECT,
+                scope_id="proj-1"))
+    assert r.sync_org("org-a", project_id="proj-1") == 220
+    missing = [mid for mid in earliest if r.index.get("org-a", mid) is None]
+    assert missing == [], "仍在架的旧 active 行不得因 200 行加载窗口被 prune"
+
+
 def test_awake_touches_hit_counts_for_consolidation(factory):
     with factory() as db:
         (row,) = _seed(db, _place("我司园区"))

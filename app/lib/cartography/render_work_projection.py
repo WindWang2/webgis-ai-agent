@@ -184,10 +184,16 @@ def project_render_work(
 
     label_total = sum(_count_labels(ly) for ly in visible_layers)
 
-    # 栅格面：栅格/地形源逐个入账；imageSize 缺失按画布面积保守计。
+    # 栅格面：仅**可见层实际绑定**的栅格/地形源入账（未绑定或只被隐藏层
+    # 引用的源不产生渲染工作）；imageSize 缺失按画布面积保守计。
+    referenced_source_ids = {
+        str(ly.get("source") or "") for ly in visible_layers
+    }
     raster_layer_count = 0
     raster_pixels = 0
-    for src in source_map.values():
+    for sid, src in source_map.items():
+        if str(sid) not in referenced_source_ids:
+            continue
         if not isinstance(src, dict) or src.get("type") not in _RASTER_SOURCE_TYPES:
             continue
         raster_layer_count += 1

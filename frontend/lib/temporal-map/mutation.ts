@@ -76,6 +76,16 @@ export function commitUserTemporal(patch: TemporalPatch): Promise<TemporalCommit
       if (!isAttached()) {
         return { outcome: 'failed', error: new Error('session detached') };
       }
+      // 软拒绝（HTTP 200 + success:false）不得当成成功提交：不推进 revision、
+      // 不落 committed spec，按 failed 上报（correction_hint 尽力透出）。
+      if (data.success === false) {
+        emitTemporalIr(patch, mutationId, 'failed');
+        const hint = data.correction_hint || data.status;
+        return {
+          outcome: 'failed',
+          error: new Error(hint ? `temporal mutation rejected: ${hint}` : 'temporal mutation rejected'),
+        };
+      }
       if (typeof data.mutation_revision === 'number') {
         setMapSpecRevision(data.mutation_revision);
       }

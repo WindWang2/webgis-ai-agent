@@ -383,8 +383,10 @@ class AlgorithmRegistry:
         self._tool_to_algorithms_cache: Optional[Dict[str, List[str]]] = None
         self._by_id: Dict[str, AlgorithmDescriptor] = {}
         self._by_capability: Dict[str, List[str]] = {}
+        self._mutation_revision = 0
 
     def load_builtins(self) -> None:
+        self._mutation_revision += 1
         self._by_id.clear()
         self._by_capability.clear()
         for algo in _load_seed_algorithms():
@@ -404,6 +406,7 @@ class AlgorithmRegistry:
             candidates.sort(
                 key=lambda aid: (self._by_id[aid].priority, aid),
             )
+        self._mutation_revision += 1
 
     def get(self, algorithm_id: str) -> Optional[AlgorithmDescriptor]:
         return self._by_id.get(algorithm_id)
@@ -423,6 +426,7 @@ class AlgorithmRegistry:
                     self._by_capability.pop(cap, None)
         self._tool_to_capability_cache = None
         self._tool_to_algorithms_cache = None
+        self._mutation_revision += 1
         return True
 
     def has(self, algorithm_id: str) -> bool:
@@ -749,21 +753,31 @@ class AlgorithmRegistry:
     ) -> List[str]:
         """测试节点存在性（文件 + AST 级逐段校验；确定性、零导入）。"""
         import ast
-        import os
+        from pathlib import Path
 
         issues: List[str] = []
-        if not os.path.isdir("tests"):
+        # 仓库根锚定（P3）：相对 CWD 的 "tests" 探测会在进程从别处启动时
+        # 静默跳过全部节点校验（fail-open，VALIDATED/PRODUCTION 的可审计
+        # 承诺空转）。此处以本文件位置推导仓库根；部署形态不含 tests/ 时
+        # 才回退 CWD 布局探测，两者都没有才跳过。
+        repo_root = Path(__file__).resolve().parents[3]
+        if (repo_root / "tests").is_dir():
+            base = repo_root
+        elif Path("tests").is_dir():
+            base = Path(".")
+        else:
             return issues
         for node in nodes:
             path, _, func = node.partition("::")
-            if not path.startswith("tests/") or not os.path.exists(path):
+            target = base / path
+            if not path.startswith("tests/") or not target.exists():
                 if path.startswith("tests/"):
                     issues.append(
                         f"algorithm {algo.id}: {kind} file missing: {path}")
                 continue
             if func:
                 try:
-                    tree = ast.parse(open(path, encoding="utf-8").read())
+                    tree = ast.parse(target.read_text(encoding="utf-8"))
                 except (OSError, SyntaxError):
                     continue
                 names = {

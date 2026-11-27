@@ -457,8 +457,8 @@ def register_spatial_tools(registry: ToolRegistry):
            ),
            args_model=HeatmapDataArgs,
            # #996: raster/grid 路径内部投递 Celery（run_heatmap_generation
-           # .apply_async 后 task.get(timeout=120) 同步等结果）——重工具显式
-           # 标 heavy + 显式墙钟预算（120s 任务等待；TimeoutError/WorkerLostError
+           # .apply_async 后 task.get(timeout=300) 同步等结果）——重工具显式
+           # 标 heavy + 显式墙钟预算（300s 任务等待；TimeoutError/WorkerLostError
            # 不再进程内回退，ImportError/未投递才回退，#1386 R01）。
            cost="heavy", timeout=300.0,
            side_effect="deterministic_compute",
@@ -609,7 +609,7 @@ def register_spatial_tools(registry: ToolRegistry):
             task = run_heatmap_generation.apply_async(
                 kwargs={"features": features, "cell_size": cell_size, "radius": bandwidth, "render_type": render_type, "palette": palette, "declared_crs": declared_crs}
             )
-            result = task.get(timeout=120)
+            result = task.get(timeout=300.0)
         except ImportError as exc:
             # Broker/library missing — task was never submitted; in-process is safe.
             logger.warning(

@@ -83,4 +83,23 @@ describe('chart artifact 失败 TTL', () => {
     vi.setSystemTime(new Date('2026-10-20T00:00:31Z'));
     expect(getCachedChartArtifact('ref:chart-3')).toBeUndefined();
   });
+
+  it('HTTP 200 但 chart 载荷非法：同样写入失败 TTL 负缓存，不逐次重发请求', async () => {
+    // adaptChartData 返回 null（type 不在词表）→ 与网络失败同享退避窗口。
+    apiFetchMock.mockResolvedValueOnce({ chart: { type: 'not-a-chart-kind' } });
+    await expect(loadChartArtifact('ref:chart-bad')).resolves.toBeNull();
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
+
+    // TTL 内：同步读为「已拉取（失败）」；异步路径复用 null，不再发请求。
+    vi.setSystemTime(new Date('2026-10-20T00:00:10Z'));
+    expect(getCachedChartArtifact('ref:chart-bad')).toBeNull();
+    await expect(loadChartArtifact('ref:chart-bad')).resolves.toBeNull();
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
+
+    // 超过 TTL：允许重试并恢复。
+    vi.setSystemTime(new Date('2026-10-20T00:00:31Z'));
+    apiFetchMock.mockResolvedValueOnce({ chart: CHART });
+    await expect(loadChartArtifact('ref:chart-bad')).resolves.toEqual(CHART);
+    expect(apiFetchMock).toHaveBeenCalledTimes(2);
+  });
 });

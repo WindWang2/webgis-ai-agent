@@ -82,6 +82,26 @@ describe('design_candidates renderer', () => {
     expect(screen.getAllByTestId('design-candidate-row')).toHaveLength(1);
   });
 
+  it('如实披露 digest 的 blocked / honored 列表（不再静默丢弃）', () => {
+    const el = renderComponent({
+      id: 'design-candidates-lists',
+      type: 'design_candidates',
+      enabled: true,
+      position: 'top-left',
+      priority: 49,
+      options: {
+        design: {
+          candidates: [{ m: 'visual_heatmap', f: 'density_surface', s: 'suitable' }],
+          blocked: ['blocked-rule-x'],
+          honored: ['honored-rule-y'],
+        },
+      },
+    } as never, {} as never);
+    render(<>{el}</>);
+    expect(screen.getByTestId('design-blocked').textContent).toContain('blocked-rule-x');
+    expect(screen.getByTestId('design-honored').textContent).toContain('honored-rule-y');
+  });
+
   it('renders empty state on bad/absent payload (defensive)', () => {
     for (const options of [{}, { design: null }, { design: { candidates: [] } }]) {
       const el = renderComponent({

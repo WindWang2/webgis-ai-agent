@@ -124,6 +124,26 @@ describe('resolveComponentLayout — user-wins（user > agent > auto）', () => 
       { kind: 'floating-floating', a: 'f1', b: 'f2' },
     ]);
   });
+
+  it('user 浮动盒压中大面板上半区：按面板族估算高度识别碰撞并侧让', () => {
+    // table_panel 典型高约 240px → bottom-right 槽区 y≈[548,788]；
+    // user 盒在 y[560,640] 只与上半区相交。缺省 90px 估算（y≈[698,788]）
+    // 会漏判碰撞，既不侧让也不披露 floating-anchor。
+    const result = resolveComponentLayout(
+      [
+        p({ id: 'table', type: 'table_panel' }), // auto → bottom-right
+        p({
+          id: 'user-panel', type: 'chart_panel', floating: true, origin: 'user',
+          anchor: 'none',
+          rect: { x: 1000, y: 560, width: 160, height: 80 },
+        }),
+      ],
+      { width: 1200, height: 800 },
+    );
+    const table = result.slots.get('table')!;
+    expect(table.fallbackFrom).toBe('bottom-right');
+    expect(table.slot).toBe('bottom-center');
+  });
 });
 
 describe('Scenario H fallback 规则：槽高预算容量裁决（v2）', () => {

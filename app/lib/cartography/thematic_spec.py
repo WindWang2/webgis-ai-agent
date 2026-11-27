@@ -257,7 +257,12 @@ def build_graduated_spec(
     if in_log_space:
         breaks = [float(10.0 ** b) for b in breaks]
 
-    min_val, max_val = min(values), max(values)
+    # 色带归一化域必须与分类域同源：clip_p99 生效时 breaks 已按**裁剪后**的
+    # 值域计算，若 min/max 仍取未裁剪 values，离群极值把 [min,max] 撑大后各
+    # 类中点归一化趋 0 → 颜色全塌向色带底端（近单色图）。log 策略的
+    # classify_input 在 log 空间，breaks 已回原域，故仍用 values。
+    color_domain = classify_input if clip_policy == "clip_p99" else values
+    min_val, max_val = min(color_domain), max(color_domain)
     palette_colors = resolve_thematic_colors(palette, len(breaks) - 1, breaks, min_val, max_val)
     # print 上下文的降饱和是**渲染要求**（纸张媒体），作用于输出色本身；
     # CVD 模拟仅用于可分辨校验（CVD 用户看到的是真实色，不模拟输出）。

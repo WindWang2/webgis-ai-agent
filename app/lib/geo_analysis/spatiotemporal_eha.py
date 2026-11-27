@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Sequence
 import numpy as np
 from scipy.spatial import cKDTree
 
+from app.lib.cancellation import checkpoint
 from app.lib.gis.crs_safety import classify_crs
 from app.lib.gis.scientific_errors import (
     DegenerateData,
@@ -66,6 +67,10 @@ _MAX_EHA_LOCATIONS = 20000
 
 #: 最长期数（防滥用；正常空间时序立方远低于此）。
 _MAX_EHA_PERIODS = 2000
+
+#: n×T 乘积上限（P2 修复）：n 与 T 各自设限不约束乘积 —— 20000×2000 下
+#: z/p/q 三个 n×T 嵌套 Python list ≈6GB（另有 3×320MB 矩阵）。先拒后分配。
+_MAX_EHA_CELLS = 4_000_000
 
 _TINY_P = 1e-16
 
@@ -192,6 +197,16 @@ def emerging_hotspot_narrated(
             limit=f"T <= {_MAX_EHA_PERIODS}",
             correction_hint="aggregate to coarser periods (weeks instead of days)",
         )
+    # 乘积守卫（P2 修复）：先拒后分配 —— n×T 决定 z/p/q 三个 n×T 产物
+    # 的体积，单维上限不约束乘积（20000×2000 ≈ 6GB 嵌套 list）。
+    if n * n_periods > _MAX_EHA_CELLS:
+        raise ResourceScaleMismatch(
+            f"EHA emits 3 n×T z/p/q matrices at {n}×{n_periods} cells",
+            estimated=f"{n * n_periods:,} cells × 3 (z/p/q)",
+            limit=f"n×T <= {_MAX_EHA_CELLS:,}",
+            correction_hint="coarsen the binning or aggregate to coarser "
+                           "periods (both n and T bounds still apply)",
+        )
     if not 0.0 < float(alpha) < 1.0:
         raise ValueError(f"alpha must be within (0, 1), got {alpha}")
     if crs and classify_crs(crs) == "geographic":
@@ -251,6 +266,7 @@ def emerging_hotspot_narrated(
     q_mat = np.ones((n, n_periods))
     degenerate_periods: List[int] = []
     for t in range(n_periods):
+        checkpoint()
         x = mat[:, t]
         x_bar = float(x.mean())
         s = float(x.std(ddof=0))
@@ -259,7 +275,11 @@ def emerging_hotspot_narrated(
             continue
         numerators = np.asarray(w @ x).ravel() - x_bar * sum_w
         denominators = s * safe_inner
-        z = np.where(denominators > 0, numerators / denominators, 0.0)
+        # 0/0（W 退化箱，denom_inner=0）的 NaN/inf 中间值被 np.where
+        # 丢弃，但 numpy 默认会为此发 RuntimeWarning —— errstate 静默
+        # （诚实路径：z=0 + 下方 warnings 披露，不是隐藏错误）。
+        with np.errstate(divide="ignore", invalid="ignore"):
+            z = np.where(denominators > 0, numerators / denominators, 0.0)
         p = np.maximum(2.0 * norm.sf(np.abs(z)), _TINY_P)
         z_mat[:, t] = z
         p_mat[:, t] = p
@@ -279,6 +299,7 @@ def emerging_hotspot_narrated(
     mk_dn = np.zeros(n, dtype=bool)
     n_trend_available = 0
     for i in range(n):
+        checkpoint()
         try:
             mk = mann_kendall(z_mat[i, :], alpha)
         except InsufficientSamples:
@@ -314,6 +335,14 @@ def emerging_hotspot_narrated(
         category_counts[c] = category_counts.get(c, 0) + 1
 
     warnings: List[str] = []
+    if not (denom_inner > 0).any():
+        # distance_band 超过全框跨度 → W 全 1（每箱 Σw=n、Σw²=n）→
+        # 每箱 denom_inner=0：Gi* 分母恒 0，z 全 0、p/q 全 1，所有箱被判
+        # no_pattern。该结局必须显式披露，不得静默（P2 修复）。
+        warnings.append(
+            f"distance_band={distance_band:.1f} m 覆盖全部箱对（W 全 1，"
+            "Gi* 权重零方差）—— 所有箱 z=0、p/q=1，分类全为 no_pattern；"
+            "减小 distance_band 以获得有空间对比的权重")
     if degenerate_periods:
         warnings.append(
             f"期 {degenerate_periods} 各箱计数全同（零方差）——该期 Gi* 无 "

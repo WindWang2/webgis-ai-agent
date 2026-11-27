@@ -156,9 +156,6 @@ class ComponentComposer:
                     options["layerId"] = layer_bindings[ctype]
                 elif "primary" in layer_bindings:
                     options["layerId"] = layer_bindings["primary"]
-                if title_text and not options.get("title"):
-                    # legend title defaults to short map title
-                    pass
 
             # apply overrides
             if ctype in overrides and isinstance(overrides[ctype], dict):
@@ -237,7 +234,10 @@ class ComponentComposer:
                 tpl = tmpl_reg.get(template_id)
                 if tpl:
                     variant = tpl.variant
-                    options = {"layerId": layer_id, **dict(tpl.default_options)}
+                    # 逐层绑定后设：模板默认项不得覆盖本实例的 layerId
+                    # （与单实例路径 :144-158 同序）。
+                    options = {**dict(tpl.default_options),
+                               "layerId": layer_id}
                     style = dict(tpl.default_style)
             if role == "primary":
                 comp_id = self._LEGEND_PRIMARY_IDS.get(chosen, f"{chosen.replace('_', '-')}-primary")

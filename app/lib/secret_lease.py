@@ -316,7 +316,9 @@ def set_secret_lease_manager(manager: Optional[SecretLeaseManager]) -> None:
 
 def set_secret_provider(provider: Optional[SecretProvider]) -> None:
     """注入进程级 secret provider(唯一注入点;None = 回落 env adapter)。"""
-    get_secret_lease_manager().set_provider(provider)
+    get_secret_lease_manager().set_provider(
+        EnvSecretProvider() if provider is None else provider
+    )
 
 
 def current_secret_leases() -> Tuple[SecretLease, ...]:

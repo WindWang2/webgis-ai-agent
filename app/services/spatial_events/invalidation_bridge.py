@@ -131,7 +131,7 @@ class InvalidationBridge:
         out: Dict[str, List[str]] = {}
         for r in rows:
             out.setdefault(r.instance_id, []).append(r.node_id)
-        return {k: sorted(v)[:8] for k, v in out.items()}
+        return {k: sorted(v) for k, v in out.items()}
 
     async def apply_to_workflow(self, event: Dict[str, Any]) -> List[Dict[str, Any]]:
         """对受影响实例投递节点级 PendingChange(data, data_hook)。
@@ -139,7 +139,10 @@ class InvalidationBridge:
         诚实边界：事件必须携带可解析 ref（payload.ref / payload_ref）；
         无 ref 或实例内无匹配节点 → 记 skipped，绝不全图盲标 STALE。
         """
-        from app.services.workflow_runtime.contracts import PendingChange
+        from app.services.workflow_runtime.contracts import (
+            MAX_APPLY_CHANGES,
+            PendingChange,
+        )
 
         if event.get("kind") not in INVALIDATION_KINDS:
             return []
@@ -186,18 +189,23 @@ class InvalidationBridge:
                 for nid in node_ids
             ]
             try:
-                res = await svc.apply_changes(
-                    inst["instance_id"],
-                    changes,
-                    owner_scope=inst["owner_scope"],
-                    source="data_hook",
-                )
+                # 单次 apply_changes 上限 MAX_APPLY_CHANGES；超出则分批，
+                # 否则整批 too_many_changes → 匹配节点全不标 STALE。
+                summaries = []
+                for start in range(0, len(changes), MAX_APPLY_CHANGES):
+                    res = await svc.apply_changes(
+                        inst["instance_id"],
+                        changes[start:start + MAX_APPLY_CHANGES],
+                        owner_scope=inst["owner_scope"],
+                        source="data_hook",
+                    )
+                    summaries.append(_bounded_result(res))
                 results.append(
                     {
                         "instance_id": inst["instance_id"],
                         "ok": True,
                         "seeded_nodes": node_ids,
-                        "summary": _bounded_result(res),
+                        "summary": _merge_summaries(summaries),
                     }
                 )
             except Exception as e:  # noqa: BLE001 — 单实例失败不阻断其余
@@ -246,6 +254,20 @@ class InvalidationBridge:
                 "[spatial_events] evidence invalidation failed: %s", e
             )
             return {"skipped": True, "error": str(e)[:120]}
+
+
+def _merge_summaries(parts: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """多批 apply_changes 结果合并（deferred 任一为真；列表拼接）。"""
+    out: Dict[str, Any] = {}
+    for part in parts:
+        for key, val in part.items():
+            if key == "deferred":
+                out["deferred"] = bool(out.get("deferred")) or bool(val)
+            elif isinstance(val, list):
+                out.setdefault(key, []).extend(val)
+            else:
+                out.setdefault(key, val)
+    return out
 
 
 def _bounded_result(res: Any) -> Dict[str, Any]:

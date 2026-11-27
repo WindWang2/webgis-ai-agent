@@ -547,3 +547,105 @@ async def test_stale_observation_does_not_clear_ledger(clean_session, monkeypatc
     state = await session_data_manager.get_map_state(clean_session)
     ledger = state.get(REPAIR_STATE_KEY) or {}
     assert ledger.get("passes"), "stale observation must not reset the pass ledger"
+
+
+# ── review P2：ledger 分代 + 轮内 CAS 基线推进 ────────────────────────
+
+
+def _two_layer_chapter():
+    return {
+        "plan_id": "plan-test",
+        "query": "成都小学分布",
+        "data_requirements": [
+            {"capability": "poi_query", "status": "available", "bound_ref": "ref:a"},
+            {"capability": "poi_query", "status": "available", "bound_ref": "ref:b"},
+        ],
+        "analysis_steps": [],
+        "map_layers": [
+            {"role": "primary", "layer_id": "poi-a", "enabled": True,
+             "source_capability": "poi_query"},
+            {"role": "secondary", "layer_id": "poi-b", "enabled": True,
+             "source_capability": "poi_query"},
+        ],
+        "template_selection": {},
+    }
+
+
+def _two_layer_mapspec():
+    return {
+        "layers": [
+            {"id": "poi-a", "source": "s-a", "type": "circle",
+             "layout": {"visibility": "visible"}},
+            {"id": "poi-b", "source": "s-b", "type": "circle",
+             "layout": {"visibility": "visible"}},
+        ],
+        "sources": {"s-a": {"type": "geojson", "ref_id": "ref:a"},
+                    "s-b": {"type": "geojson", "ref_id": "ref:b"}},
+        "layout": {"components": []},
+    }
+
+
+async def test_spec_content_change_resets_pass_budget(clean_session, monkeypatch):
+    """反证（review P2）：ledger 的 fingerprint 字段只写不读 —— 轮数按
+    distinct 计划全局累计，spec 编辑后的新发散仍被旧 passes 压制
+    （len(passes)>=2 直接判 exhausted 不尝试）。"""
+    await _patch_mutations(monkeypatch)
+    revision = await _seed_revision(clean_session)
+    kwargs = dict(
+        chapter=_chapter(), mapspec=_mapspec(), descriptors=_descriptors(),
+        current_revision=revision)
+    for _ in range(MAX_RUNTIME_REPAIR_PASSES + 1):
+        last = await run_runtime_repair(
+            clean_session,
+            map_state=await session_data_manager.get_map_state(clean_session),
+            observation=_observation(revision), **kwargs)
+    assert last.exhausted, "同一发散计划达上限必须 exhausted"
+
+    # spec 内容变化（新 observation fingerprint 代次）→ 预算重置
+    fresh_obs = _observation(revision)
+    fresh_obs["mapspec_fingerprint"] = "fp-next-generation"
+    fresh = await run_runtime_repair(
+        clean_session,
+        map_state=await session_data_manager.get_map_state(clean_session),
+        observation=fresh_obs, **kwargs)
+    assert not fresh.exhausted, "spec 内容变化必须重置预算（新代次有新预算）"
+    assert fresh.applied
+
+
+async def test_reassert_chain_advances_cas_baseline(clean_session, monkeypatch):
+    """反证（review P2）：一轮内 ≥2 个 reassert 目标时逐层提交复用同一
+    expected_revision → 第 2 个起 CAS superseded 且无 else 分支静默丢弃
+    （组件 loop 同病；配合 ledger 上限，第 3 个起永远修不到）。"""
+    from app.services.gis_world_state import mutation as mutation_mod
+
+    seen: list = []
+
+    class _Res:
+        is_error = False
+        superseded = False
+        mutation_revision = 0
+
+    async def fake_apply(sid, intent, **kwargs):
+        rev = int(kwargs.get("expected_revision") or 0)
+        seen.append(rev)
+        res = _Res()
+        res.mutation_revision = rev + 1
+        return res
+
+    monkeypatch.setattr(mutation_mod, "apply_gis_mutation", fake_apply)
+    revision = await _seed_revision(clean_session)
+    outcome = await run_runtime_repair(
+        clean_session,
+        chapter=_two_layer_chapter(),
+        mapspec=_two_layer_mapspec(),
+        descriptors={"ref:a": {"feature_count": 2}, "ref:b": {"feature_count": 2}},
+        observation=_observation(revision),
+        current_revision=revision,
+        map_state=await session_data_manager.get_map_state(clean_session),
+    )
+    assert len(seen) == 2, seen
+    # CAS 基线逐层推进（第二个期望第一个之后的 revision）
+    assert seen[0] == revision
+    assert seen[1] == revision + 1
+    assert outcome.applied == [
+        "reassert_spec_layer:poi-a", "reassert_spec_layer:poi-b"]

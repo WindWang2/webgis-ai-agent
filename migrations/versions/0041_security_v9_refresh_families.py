@@ -36,10 +36,14 @@ def upgrade() -> None:
         sa.Column('current_jti', sa.String(length=32), nullable=False),
         sa.Column('reuse_detected', sa.Boolean(), nullable=False,
                   server_default=sa.false()),
-        sa.Column('created_at', sa.DateTime(), nullable=False,
-                  server_default=sa.text('CURRENT_TIMESTAMP')),
-        sa.Column('rotated_at', sa.DateTime(), nullable=False,
-                  server_default=sa.text('CURRENT_TIMESTAMP')),
+        # 时钟源单一化（与 0022/0024/0026 同款纪律）：不设服务端缺省 —— PG 的
+        # CURRENT_TIMESTAMP 落到 TIMESTAMP WITHOUT TIME ZONE 是**会话本地墙钟**，
+        # 而 expires_at 由应用侧 UTC 生成（db_model.py 的 created_at/rotated_at
+        # 同样只有 ORM UTC 缺省、无 server_default）。两个时钟源混用会让
+        # expires_at 比较整体偏移一个时区差，直接削弱本表承载的 reuse_detected
+        # 防盗用重放控制。故三列一律由应用侧 UTC 写入。
+        sa.Column('created_at', sa.DateTime(), nullable=False),
+        sa.Column('rotated_at', sa.DateTime(), nullable=False),
         sa.Column('expires_at', sa.DateTime(), nullable=False),
         sa.UniqueConstraint('family_id', name='uq_refresh_family_id'),
     )

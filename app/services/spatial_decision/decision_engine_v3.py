@@ -76,7 +76,18 @@ class DecisionEngineV3:
                     raw_matrix[crit.id][alt.id] = None
                     missing_count += 1
                 else:
-                    raw_matrix[crit.id][alt.id] = float(val)
+                    # LLM-generated attributes are not guaranteed to be numeric;
+                    # treat an unparseable value as missing evidence instead of
+                    # letting float() bubble out of solve_problem().
+                    try:
+                        raw_matrix[crit.id][alt.id] = float(val)
+                    except (TypeError, ValueError, OverflowError):
+                        logger.warning(
+                            "Criterion '%s' value %r for alternative '%s' is not numeric; treating as missing.",
+                            crit.id, val, alt.id,
+                        )
+                        raw_matrix[crit.id][alt.id] = None
+                        missing_count += 1
 
             if missing_count == len(problem.alternatives) and crit.is_core:
                 evidence_gaps.append(
@@ -194,7 +205,10 @@ class DecisionEngineV3:
                         sample_raw_matrix[crit.id][alt.id] = val_s
                         sample_alt_metrics[alt.id][crit.id] = val_s
 
-                # Check if parameters affect other constraint metric keys or attributes
+                # Check if parameters affect other constraint metric keys or attributes.
+                # Only perturb values that the deterministic stage actually has:
+                # inventing a draw for an attribute the alternative never declared
+                # would let a fail-closed constraint pass only inside the MC loop.
                 for param_id, draws in param_draws.items():
                     for alt in problem.alternatives:
                         if param_id not in sample_alt_metrics[alt.id]:
@@ -207,8 +221,6 @@ class DecisionEngineV3:
                                 else:
                                     rel_delta = (p_val - mean_p) / max(abs(mean_p), 1.0)
                                     sample_alt_metrics[alt.id][param_id] = float(base_val) * (1.0 + rel_delta)
-                            else:
-                                sample_alt_metrics[alt.id][param_id] = float(draws[s])
 
                 # Evaluate constraints per sample s
                 sample_feasible_mask: Dict[str, bool] = {}
@@ -232,8 +244,16 @@ class DecisionEngineV3:
                             raw_values=sample_raw_matrix[crit.id],
                             criterion=crit,
                         )
-                    except Exception:
-                        sample_norm_matrix[crit.id] = {alt.id: 0.0 for alt in problem.alternatives}
+                    except NormalizationError as ne:
+                        # Do not fabricate a 0.0 score for every alternative: omit
+                        # the criterion for this draw (same effect as the
+                        # deterministic pass, which also excluded it) and keep
+                        # unexpected exceptions visible rather than swallowing them.
+                        logger.warning(
+                            "MC sample %d: normalization failed for criterion '%s': %s; criterion omitted for this draw.",
+                            s, crit.id, ne,
+                        )
+                        continue
 
                 # Evaluate sample MCDA scores
                 if problem.mcda_method.lower() == "topsis":
@@ -540,9 +560,14 @@ class DecisionEngineV3:
             row = [f"{crit.name} ({crit.unit})" if crit.unit else crit.name, crit.direction.value, w_str]
             for alt in problem.alternatives:
                 raw_v = scores[alt.id].raw_metrics.get(crit.id)
-                norm_v = scores[alt.id].normalized_scores.get(crit.id, 0.0)
+                norm_v = scores[alt.id].normalized_scores.get(crit.id)
                 if raw_v is not None:
-                    cell = f"{raw_v} (得: {norm_v:.2f})"
+                    if norm_v is not None:
+                        cell = f"{raw_v} (得: {norm_v:.2f})"
+                    else:
+                        # Normalization failed for this criterion: it was never
+                        # computed, so do not dress it up as a 0.00 score.
+                        cell = f"{raw_v} (得: 未计算)"
                 else:
                     cell = "缺失"
                 row.append(cell)

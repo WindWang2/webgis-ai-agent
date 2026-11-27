@@ -93,7 +93,9 @@ export function recoverFirstPartyTileAuth(status: number | undefined, retry: () 
     } finally {
       tileAuthRecovery = null;
     }
-  })();
+  })().catch(() => {
+    /* best-effort recovery: refresh/retry 失败不得产生 unhandled rejection */
+  });
 }
 
 export function _resetTileAuthRecoveryForTests(): void {

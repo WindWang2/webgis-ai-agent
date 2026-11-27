@@ -44,17 +44,6 @@ _MAPSPEC_REVISION_KEY = "_cartographic_mutation_revision"  # lifecycle_engine.py
 #: H09 — user-edit projection vocabulary. ``hide`` is intentionally absent:
 #: the existing ``user_hidden_layers`` path owns it (ADR-0215 D6); this
 #: projection captures everything else the user durably decided.
-_EDIT_PRESENTATION_KINDS = {
-    "PatchLayerPresentationIntent": "presentation",
-    "PatchLayerStyleIntent": "presentation",
-    "PatchComponentIntent": "presentation",
-    "RemoveComponentIntent": "presentation",
-    "DuplicateComponentIntent": "presentation",
-    "RebindComponentIntent": "presentation",
-    "ApplyVisualHealPatchIntent": "presentation",
-    "RestoreStyleIntent": "presentation",
-    "SetLayoutIntent": "presentation",
-}
 _EDIT_KIND_BY_INTENT = {
     "PatchLayerPresentationIntent": "show",     # visible=True / opacity
     "PatchLayerStyleIntent": "restyle",
@@ -369,6 +358,12 @@ def observe_session(
             if obs.aoi_bbox is None:
                 viewport = getattr(geo, "viewport", None)
                 obs.aoi_bbox = _bounds_of(getattr(viewport, "value", None))
+                # Same discipline as the state/mapspec path above: the snapshot
+                # viewport is the *frontend observed* viewport (gis_situation
+                # compiler.py), which moves on every pan. Marking it as a
+                # viewport keeps a pan from reading as an analysis-extent
+                # drift (AOI_CHANGED) in diff_against.
+                obs.aoi_is_viewport = obs.aoi_bbox is not None
             scope = getattr(geo, "scope_name", None)
             sval = getattr(scope, "value", None)
             if isinstance(sval, str):

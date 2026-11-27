@@ -111,7 +111,11 @@ class ToolExecutionPipeline:
         """
         start_time = time.monotonic()
         tool_call_id = tc.get("id") or ""
-        func_info = tc.get("function", {})
+        func_info = tc.get("function")
+        if not isinstance(func_info, dict):
+            # provider 可下发 "function": null / 非映射；不得裸 AttributeError
+            # 穿出本函数（同函数其余错误路径都返回 is_error 结果）。
+            func_info = {}
         tool_name = func_info.get("name") or "unknown_tool"
         raw_args = func_info.get("arguments", {})
 

@@ -98,6 +98,26 @@ def test_hermetic_missions_have_independent_clocks_and_do_not_change_process_env
     assert dict(os.environ) == original_env
 
 
+def test_evidence_corpus_guards_survive_python_optimization():
+    import subprocess
+    import sys
+    code = '''from app.evaluation import evidence_corpus as corpus
+original = corpus.GISBenchmarkCase
+def duplicate(**kwargs):
+    kwargs['id'] = 'EV-duplicate'
+    return original(**kwargs)
+corpus.GISBenchmarkCase = duplicate
+try:
+    corpus.build_evidence_corpus()
+except ValueError:
+    pass
+else:
+    raise RuntimeError('duplicate guard disabled')
+'''
+    result = subprocess.run([sys.executable, "-O", "-c", code], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+
+
 def test_corpus_guards_survive_python_optimization():
     import subprocess
     import sys

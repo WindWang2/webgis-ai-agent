@@ -9,6 +9,8 @@
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 import rasterio
@@ -89,6 +91,48 @@ async def test_build_session_cube_end_to_end(data_dir, time_slices):
     assert manifest["kind"] == "zarr_cube"
     assert manifest["owner_scope"] == {"session_id": "sess-cube"}
     assert len(manifest["source_refs"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_build_session_cube_lineage_and_fingerprint_disclosure(
+    data_dir, time_slices,
+):
+    """#2143 N28 改名残留：``fingerprints`` 未定义 → publish 参数求值即抛
+    NameError（被宽 except 吞成 publish_failed），返回前的
+    ``content_fingerprints`` 再把 NameError 抛给调用方 —— 成功路径从未
+    返回 ref/cube_id。本测试锁：发布真的执行、血缘 = 输入栅格内容指纹、
+    披露键 = 源路径 → 指纹。"""
+    import hashlib
+
+    res = await build_session_cube(
+        "sess-lin-fp", time_sources=time_slices, title="T",
+    )
+    assert res["success"] is True
+    assert res["ref"].startswith("ref:cube/")
+    assert res["cube_id"]
+    # publish 必须真的跑过（不是被吞掉的 publish_failed）。
+    assert res["durable"] == "published"
+    assert len(res["data_object_id"]) == 64
+
+    digests = [
+        hashlib.sha256(Path(step["source"]).read_bytes()).hexdigest()
+        for step in time_slices
+    ]
+    # 血缘：每个输入栅格一条 fingerprint 边（时间步顺序）。
+    from app.services.lakehouse.data_object import resolve_data_object
+
+    manifest = resolve_data_object(res["data_object_id"])
+    assert manifest["source_refs"] == [f"fingerprint:{d}" for d in digests]
+    assert manifest["payload"]["input_fingerprints"] == {
+        str(Path(step["source"])): d for step, d in zip(time_slices, digests)
+    }
+    assert manifest["input_fingerprint"].startswith("reuse:")
+    # 公开返回形状：源路径 → 内容指纹（未改 API）。
+    assert res["content_fingerprints"] == {
+        str(Path(step["source"])): d for step, d in zip(time_slices, digests)
+    }
+    assert res["times"] == ["2024-01", "2024-02", "2024-03"]
+    assert res["steps"] == 3
 
 
 @pytest.mark.asyncio

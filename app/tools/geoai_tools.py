@@ -154,8 +154,8 @@ def register_geoai_tools(registry: ToolRegistry) -> None:
             audit: Optional[dict] = compiled["audit"]
         elif points or boxes:
             prompt = PromptSpec(
-                points=tuple(tuple(map(float, p)) for p in (points or [])),
-                boxes=tuple(tuple(map(float, b)) for b in (boxes or [])),
+                points=_coerce_prompt_geometry(points, "points", 2),
+                boxes=_coerce_prompt_geometry(boxes, "boxes", 4),
             )
             artifact_id = None
             audit = None
@@ -369,6 +369,42 @@ def register_geoai_tools(registry: ToolRegistry) -> None:
             "details_truncated": len(items) > len(per_chip),
             "run_id": result.run_id,
         }
+
+
+def _coerce_prompt_geometry(
+    values: Optional[List[List[float]]], kind: str, arity: int
+) -> tuple:
+    """points/boxes 数值化 + 元数校验；畸形输入 → typed 失败。
+
+    裸 ``map(float, p)`` 会让非数值/不等长 prompt 抛未捕获的
+    ValueError/TypeError，绕过本模块 typed 失败 + correction_hint 契约。
+    """
+    from app.lib.modelops.errors import ModelOpsError
+
+    if not values:
+        return ()
+    example = "[x,y]" if arity == 2 else "[x,y,w,h]"
+    hint = f"pass {kind} as [[x,y],…] with exactly {arity} numbers per entry ({example})"
+    if not isinstance(values, (list, tuple)):
+        raise ModelOpsError(
+            f"{kind} prompt must be a list of {arity}-number entries",
+            correction_hint=hint,
+        )
+    coerced: List[tuple] = []
+    for entry in values:
+        if not isinstance(entry, (list, tuple)) or len(entry) != arity:
+            raise ModelOpsError(
+                f"{kind} prompt entry {entry!r} must be exactly {arity} numbers",
+                correction_hint=hint,
+            )
+        try:
+            coerced.append(tuple(float(v) for v in entry))
+        except (TypeError, ValueError) as exc:
+            raise ModelOpsError(
+                f"{kind} prompt entry {entry!r} is not numeric: {exc}",
+                correction_hint=hint,
+            ) from exc
+    return tuple(coerced)
 
 
 def _replace_prompt_crs(request, *, geographic: bool):

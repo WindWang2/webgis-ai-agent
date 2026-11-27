@@ -184,12 +184,15 @@ def new_fact_id() -> str:
 
 
 _STORE: Optional[FactsStore] = None
+_STORE_LOCK = threading.Lock()
 
 
 def get_facts_store() -> FactsStore:
     global _STORE
     if _STORE is None:
-        _STORE = FactsStore()
+        with _STORE_LOCK:
+            if _STORE is None:
+                _STORE = FactsStore()
     return _STORE
 
 

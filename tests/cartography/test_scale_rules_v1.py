@@ -98,6 +98,11 @@ class TestDensePointActions:
         assert d.boundary_detail == "generalized"
         assert d.aggregation_hint.startswith("admin")
 
+    def test_none_geometry_tolerated(self):
+        d = scale_actions(zoom=6.0, feature_count=100, geometry=None)
+        assert d.point_candidates == []
+        assert not d.is_dense_points
+
 
 class TestVocabularyAlignment:
     @pytest.mark.parametrize("model_id", POINT_REPRESENTATION_IDS)

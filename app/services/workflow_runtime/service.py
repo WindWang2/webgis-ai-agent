@@ -553,8 +553,7 @@ class WorkflowRuntimeService:
             raise WorkflowRuntimeError("NODE_NOT_RETRYABLE",
                                        f"state={state}")
         attempts = int(row.get("attempts", 0))
-        if not force and policy.attempts_exhausted(attempts) \
-                and state in (C.NodeState.FAILED,):
+        if not force and policy.attempts_exhausted(attempts):
             raise WorkflowRuntimeError(
                 "RETRY_EXHAUSTED", f"attempts={attempts}")
         # 终态实例复活（CAS；竞争失败 = 他写手先行 → busy）
@@ -675,7 +674,7 @@ class WorkflowRuntimeService:
             if not actives:
                 return None
             results = []
-            for inst in actives[:2]:
+            for inst in actives:
                 dag = await self._instance_dag(inst)
                 targets = _capability_nodes(dag, capability)
                 roles = await self._role_nodes_for_capability(

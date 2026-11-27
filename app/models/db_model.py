@@ -58,7 +58,9 @@ class Layer(Base):
     """图层表 - 支持 Vector/Raster/Tile 三种类型"""
     __tablename__ = "layers"
     
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    # SQLite 只把「INTEGER PRIMARY KEY」当 rowid 别名（自增）；BIGINT 主键不
+    # 自增，不显式给 id 的插入会 NOT NULL 失败（与 AnalysisTask.id 同款 variant）。
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
     org_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
     creator_id = Column(String(255), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     name = Column(String(255), nullable=False, index=True)

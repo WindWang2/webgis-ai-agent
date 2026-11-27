@@ -38,8 +38,6 @@ MAX_LOCKS = 2000
 #: delta 载荷字节上限（总线与持久化通道各自预算中的 delta 份额）。
 MAX_DELTA_BYTES = 64 * 1024
 
-_RESERVED_DOC_KEYS = frozenset({"version", "groups", "membership", "lockedLayerIds", "mode", "_rev"})
-
 
 class DeltaError(ValueError):
     """delta 非法（结构/引用/冲突/超限）——调用方映射 400。"""

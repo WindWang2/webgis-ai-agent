@@ -1133,6 +1133,38 @@ class TestC1ClearSessionNoResurrect:
         ), "in-memory orphan repair did not run during clear (P1)"
 
     @pytest.mark.asyncio
+    async def test_clear_session_keeps_local_marker_until_straggler_drains(
+        self, engine, monkeypatch
+    ):
+        """P2: quiesce 超时后 straggler turn 仍在清理路径 —— 本地 clearing
+        标记不得立刻丢弃，否则其写库会复活已删除的会话行；turn 排空后再清。"""
+        sid = "sess-p2-straggler-marker"
+        engine._clear_quiesce_timeout = 0.01
+        release_turn = asyncio.Event()
+
+        async def straggler():
+            await release_turn.wait()
+
+        turn_task = asyncio.create_task(straggler())
+        engine._active_turn_tasks[sid] = turn_task
+        db_ctx, svc = _mock_history_delete(deleted=True)
+        with db_ctx as mock_db_ctx, svc, patch(
+            "app.services.chat.execution_engine.session_data_manager"
+        ) as mock_sdm:
+            _enter_db_ctx(mock_db_ctx)
+            mock_sdm.clear_session = AsyncMock()
+            ok = await engine.clear_session(sid)
+        assert ok is True
+        assert sid in engine._clearing_sessions, (
+            "local clearing marker dropped while the cancelled turn was still "
+            "draining its cleanup (P2)"
+        )
+        release_turn.set()
+        await asyncio.wait_for(turn_task, timeout=5)
+        await asyncio.sleep(0)
+        assert sid not in engine._clearing_sessions
+
+    @pytest.mark.asyncio
     async def test_new_turn_refused_while_session_clearing(self, engine, monkeypatch):
         """P1: a NEW turn POSTed while clear_session is mid-flight must be
         refused cleanly (SessionClearingError), not raced into the delete."""
@@ -1415,9 +1447,128 @@ class TestP1AbandonedWaiterRegistration:
             await asyncio.wait_for(clear_task, timeout=5)
             await asyncio.wait_for(a_task, timeout=5)
 
+    @pytest.mark.asyncio
+    async def test_dead_middle_waiter_does_not_clobber_later_registration(
+        self, engine, monkeypatch
+    ):
+        """P2（turn_registration.abandon_active_turn_registration）：同会话
+        ≥3 并发 —— A 持锁进入 turn 主体（注册=A），B 早注册后等锁，C 再注册
+        （注册=C），B 死于锁等待。B 退出时不得以 prior=A 覆写 C 的注册：
+        覆写后 clear_session 的 quiesce 只见 A，即将进入 turn 主体的 C 不被
+        等待 —— 正是模块 docstring 声称已消除的 quiesce 空窗（在飞消息可
+        复活已删会话）。
+        """
+        sid = "sess-p2-waiter-clobber"
+        load_started = asyncio.Event()
+        release_load = asyncio.Event()
+
+        async def slow_get_or_create_session(session_id, user_id=None):
+            load_started.set()
+            await release_load.wait()
+            return []
+
+        async def fake_call_llm(*a, **k):
+            return {"choices": [{"message": {"role": "assistant", "content": "done"}}]}
+
+        monkeypatch.setattr(engine, "_get_or_create_session", slow_get_or_create_session)
+        monkeypatch.setattr(engine, "_call_llm", fake_call_llm)
+
+        db_ctx, svc = _mock_history_delete(deleted=True)
+        with db_ctx as mock_db_ctx, svc, patch(
+            "app.services.chat.execution_engine.session_data_manager"
+        ) as mock_sdm:
+            _enter_db_ctx(mock_db_ctx)
+            mock_sdm.set_session_clearing = AsyncMock()
+            mock_sdm.clear_session = AsyncMock()
+
+            # turn A：持锁运行中（注册=A）
+            a_task = asyncio.create_task(engine.chat("A", session_id=sid))
+            await asyncio.wait_for(load_started.wait(), timeout=5)
+            assert engine._active_turn_tasks.get(sid) is a_task
+
+            # turn B：早注册（覆盖 A）后等锁
+            b_task = asyncio.create_task(engine.chat("B", session_id=sid))
+            await asyncio.sleep(0.1)
+            assert engine._active_turn_tasks.get(sid) is b_task
+
+            # turn C：再注册（覆盖 B）后等锁 —— 必须保住这个注册
+            c_task = asyncio.create_task(engine.chat("C", session_id=sid))
+            await asyncio.sleep(0.1)
+            assert engine._active_turn_tasks.get(sid) is c_task
+
+            # B 死于锁等待
+            b_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await b_task
+
+            # 注册表必须仍是 C（而不是被 B 的 prior=A 覆写）
+            assert engine._active_turn_tasks.get(sid) is c_task, (
+                "dead middle waiter restored prior over the LATER waiter's "
+                "registration — clear_session quiesce would miss C (P2)"
+            )
+
+            # quiesce 仍等得到在跑者：clear 挂在 quiesce、marker 保持
+            clear_task = asyncio.create_task(engine.clear_session(sid))
+            await asyncio.sleep(0.1)
+            assert sid in engine._clearing_sessions, (
+                "clear_session crossed the quiesce point — the waiting turn "
+                "was invisible after the middle waiter died (P2)"
+            )
+            release_load.set()
+            await asyncio.wait_for(clear_task, timeout=5)
+            await asyncio.wait_for(a_task, timeout=5)
+            # C 在 clear 之后才拿到锁 → 被 clearing 守卫干净拒绝（不是竞进删除）
+            with pytest.raises(ee_mod.SessionClearingError):
+                await asyncio.wait_for(c_task, timeout=5)
+
+
+class TestP2MaybePlanEnvDegradation:
+    """P2（execution_engine._maybe_plan）：map state 摘要读取
+    （session_data / Redis）抖动必须降级为空环境摘要。该 await 原在本方法
+    的 try 之外 —— 异常穿透令非流式整回合失败，且 tracker 任务创建后永远
+    停在 running（泄漏；流式路径有 fail_task 兜底，非流式没有）。"""
+
+    @pytest.mark.asyncio
+    async def test_non_streaming_turn_survives_map_state_jitter(
+        self, engine, monkeypatch
+    ):
+        sid = "sess-p2-mapstate-jitter"
+
+        async def _boom(session_id):
+            raise RuntimeError("redis jitter")
+
+        async def fake_call_llm(*a, **k):
+            return {"choices": [{"message": {"role": "assistant", "content": "done"}}]}
+
+        monkeypatch.setattr(engine, "_get_map_state_summary", _boom)
+        monkeypatch.setattr(engine, "_call_llm", fake_call_llm)
+        # fixture 把 _maybe_plan 整个 stub 掉了 —— 换回真实实现（修复点在它内部），
+        # 并 stub 掉规划编排，避免测试触发真实 LLM 规划调用。
+        monkeypatch.setattr(
+            engine, "_maybe_plan",
+            ee_mod.ChatExecutionEngine._maybe_plan.__get__(engine, type(engine)),
+        )
+        monkeypatch.setattr(
+            "app.services.chat.plan_orchestrator.plan_orchestrator.restore_plan",
+            AsyncMock(return_value=None),
+        )
+        monkeypatch.setattr(
+            "app.services.chat.plan_orchestrator.plan_orchestrator.orchestrate_plan",
+            AsyncMock(return_value=None),
+        )
+
+        result = await engine.chat("你好", session_id=sid)
+
+        assert result["content"] == "done", (
+            "map state summary jitter failed the whole non-streaming turn (P2)"
+        )
+        statuses = [t.status for t in engine.tracker.list_by_session(sid)]
+        assert statuses and all(s is not TaskStatus.running for s in statuses), (
+            f"tracker task leaked in running after the jitter: {statuses} (P2)"
+        )
+
 
 class TestC1BoundedCancelCleanup:
-    # NOTE: the straggler tool below deliberately IGNORES cancellation (the
     # while-loop re-waits on CancelledError). That models a tool whose worker
     # genuinely cannot be interrupted — a thread parked in a long GIS compute
     # on runtimes where cancelling an asyncio.to_thread task does not retire

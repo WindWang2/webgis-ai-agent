@@ -117,9 +117,6 @@ class FieldResolution(BaseModel):
 _TRAILING_CATEGORY_RE = re.compile(r"(类型|类别|种类|categories?|types?|classification)$", re.I)
 _TRAILING_COUNT_RE = re.compile(r"(数量|个数|数目|总数|总量|数|counts?|numbers?)$", re.I)
 _DENSITY_TAIL_RE = re.compile(r"(密度|densities?|density)$", re.I)
-_MEASURE_SUFFIX_RE = re.compile(
-    r"(的)?(数量|个数|数目|总数|密度|分布|数|总量|count|number|density)$", re.I
-)
 _DENSITY_PHRASE_RE = re.compile(
     r"(每平方公里|每平方千米|每万平方米|地均|per\s+square\s+kilometer|"
     r"per\s+km²?|population\s+density|人口密度)", re.I

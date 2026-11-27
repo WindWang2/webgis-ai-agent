@@ -1343,8 +1343,8 @@ def retrieval_eval_report(
     over_abstain_denom = 0
     over_abstained = 0
     conf_sum = 0.0
-    # 校准桶：bucket → [hit_sum, n]（10 桶；仅非 oos 命中案例）
-    cal_buckets: Dict[int, List[int]] = {}
+    # 校准桶：bucket → [hit_sum, n, confidence_sum]（10 桶；仅非 oos 命中案例）
+    cal_buckets: Dict[int, List[float]] = {}
     by_kind: Dict[str, List[Dict[str, float]]] = {}
 
     for case in cases:
@@ -1382,18 +1382,22 @@ def retrieval_eval_report(
             # top1 命中率；只对命中分桶会把 ECE 退化为 1-平均置信度且
             # 检测不到「高置信度选错」（审查 R1 M2）
             b = min(9, int(conf * 10))
-            bucket = cal_buckets.setdefault(b, [0, 0])
+            bucket = cal_buckets.setdefault(b, [0.0, 0.0, 0.0])
             bucket[0] += 1 if hit1 else 0
             bucket[1] += 1
+            bucket[2] += conf
         for name in ranked[:5]:
             if name in must_not:
                 invalid += 1
                 break
         if must_not:
             must_not_total += 1
-        for k, acc in ((5, r5_vals), (10, r10_vals)):
-            top = set(ranked[:k])
-            acc.append(len(top & valid) / len(valid) if valid else 1.0)
+        # 无合法工具的 oos 案例不进入召回分母（否则空 valid 集恒记
+        # 满分，虚涨 recall@5/10）。
+        if valid:
+            for k, acc in ((5, r5_vals), (10, r10_vals)):
+                top = set(ranked[:k])
+                acc.append(len(top & valid) / len(valid))
         for name in names:
             try:
                 desc = registry.descriptor(name)
@@ -1423,10 +1427,10 @@ def retrieval_eval_report(
     # （全非 oos 案例入桶 —— 高置信度 miss 必须推高 ECE）
     ece = 0.0
     total_bucketed = sum(b[1] for b in cal_buckets.values())
-    for b, (hits_, cnt) in sorted(cal_buckets.items()):
+    for b, (hits_, cnt, conf_sum_b) in sorted(cal_buckets.items()):
         if cnt == 0 or total_bucketed == 0:
             continue
-        mean_conf_b = (b + 0.5) / 10.0
+        mean_conf_b = conf_sum_b / cnt
         ece += abs(hits_ / cnt - mean_conf_b) * (cnt / total_bucketed)
     return RetrievalEvalReport(
         cases=len(cases),

@@ -28,6 +28,7 @@ Protocol → adapter mapping:
 """
 from __future__ import annotations
 
+import threading
 import time
 
 import logging
@@ -243,6 +244,9 @@ class SourceRegistryService:
         self._loaded: Dict[str, _LoadedSource] = {}  # source_id → entry
         self._snapshots: Dict[Path, float] = {}
         self._last_reload_check = 0.0
+        # 热重载与读路径共享：_loaded/_snapshots 只能整体换入/整体读，
+        # 绝不「先清空再解析」—— 否则并发 get() 会读到空注册表。
+        self._lock = threading.RLock()
 
     # -- loading ---------------------------------------------------------------
 
@@ -254,24 +258,35 @@ class SourceRegistryService:
         return candidate if candidate.exists() else None
 
     def load(self) -> "SourceRegistryService":
-        """(Re)load every YAML in the sources dir. Loud on any failure."""
+        """(Re)load every YAML in the sources dir. Loud on any failure.
+
+        解析写入本地暂存、**全部成功后才整体换入**（评审 P2：原实现先清空
+        ``_loaded`` 再逐文件解析，任一 YAML 校验失败抛错离开会把整个注册表
+        掏空，之后每次 ``get()`` 都报 ``unknown source_id (known: [])``）。
+        """
         directory = self._resolve_dir()
-        self._loaded = {}
-        self._snapshots = {}
         if directory is None:
+            with self._lock:
+                self._loaded = {}
+                self._snapshots = {}
             logger.warning("[SourceRegistry] sources dir missing: %s", DEFAULT_SOURCES_DIR)
             return self
         files = sorted(directory.glob("*.yaml")) + sorted(directory.glob("*.yml"))
+        loaded: Dict[str, _LoadedSource] = {}
+        snapshots: Dict[Path, float] = {}
         for path in files:
             source = self._parse_file(path)
-            if source.source_id in self._loaded:
+            if source.source_id in loaded:
                 raise SourceRegistryError(
                     path,
                     f"duplicate source_id '{source.source_id}' "
-                    f"(first declared in {self._loaded[source.source_id].path.name})",
+                    f"(first declared in {loaded[source.source_id].path.name})",
                 )
-            self._loaded[source.source_id] = _LoadedSource(path, source)
-            self._snapshots[path] = path.stat().st_mtime
+            loaded[source.source_id] = _LoadedSource(path, source)
+            snapshots[path] = path.stat().st_mtime
+        with self._lock:
+            self._loaded = loaded
+            self._snapshots = snapshots
         return self
 
     def _parse_file(self, path: Path) -> SourceDefinition:
@@ -303,16 +318,27 @@ class SourceRegistryService:
         for key in source.auth.env_keys:
             if not re_env_name(key):
                 raise SourceRegistryError(path, f"auth.env_keys entry '{key}' is not a valid env var name")
-        # options must not smuggle credential-looking plaintext
-        for opt_key, value in source.options.items():
-            lowered = str(opt_key).lower()
-            if any(tok in lowered for tok in ("secret", "password", "token", "api_key")):
-                if isinstance(value, str) and not value.startswith("${"):
-                    raise SourceRegistryError(
-                        path,
-                        f"options.{opt_key} looks like a credential and must use ${{ENV_VAR}} "
-                        "(no plaintext secrets in the registry)",
-                    )
+        # options must not smuggle credential-looking plaintext (top level and
+        # nested maps such as options.headers — Authorization/Cookie 等)。
+        credential_tokens = (
+            "secret", "password", "token", "api_key", "access_key",
+            "authorization", "cookie",
+        )
+
+        def _check(mapping: Dict[Any, Any], prefix: str) -> None:
+            for opt_key, value in mapping.items():
+                lowered = str(opt_key).lower()
+                if any(tok in lowered for tok in credential_tokens):
+                    if isinstance(value, str) and not value.startswith("${"):
+                        raise SourceRegistryError(
+                            path,
+                            f"{prefix}.{opt_key} looks like a credential and must use "
+                            "${ENV_VAR} (no plaintext secrets in the registry)",
+                        )
+                if isinstance(value, dict):
+                    _check(value, f"{prefix}.{opt_key}")
+
+        _check(source.options, "options")
 
     def reload_if_changed(self, *, force: bool = True) -> bool:
         """Hot reload: true if any file changed/added/removed and reload ran."""
@@ -324,11 +350,20 @@ class SourceRegistryService:
         if directory is None:
             return False
         files = set(directory.glob("*.yaml")) | set(directory.glob("*.yml"))
-        if set(self._snapshots) != files:
+        with self._lock:
+            snapshots = self._snapshots
+        if set(snapshots) != files:
             self.load()
             return True
         for path in files:
-            if path.stat().st_mtime != self._snapshots.get(path):
+            try:
+                mtime = path.stat().st_mtime
+            except OSError:
+                # 文件在 glob 与 stat 之间被删除：按「已变更」触发重载（load()
+                # 重新 glob，健康源不受影响），绝不让 FileNotFoundError 穿出。
+                self.load()
+                return True
+            if mtime != snapshots.get(path):
                 self.load()
                 return True
         return False
@@ -337,17 +372,20 @@ class SourceRegistryService:
 
     def get(self, source_id: str) -> SourceDefinition:
         self.reload_if_changed(force=False)
-        entry = self._loaded.get(source_id)
+        with self._lock:
+            entry = self._loaded.get(source_id)
+            known = sorted(self._loaded)
         if entry is None:
             raise SourceRegistryError(
                 self._resolve_dir() or Path("<none>"),
-                f"unknown source_id '{source_id}' (known: {sorted(self._loaded)})",
+                f"unknown source_id '{source_id}' (known: {known})",
             )
         return entry.source
 
     def list_sources(self, protocol: Optional[str] = None) -> List[SourceDefinition]:
         self.reload_if_changed(force=False)
-        sources = [e.source for e in self._loaded.values()]
+        with self._lock:
+            sources = [e.source for e in self._loaded.values()]
         if protocol:
             sources = [s for s in sources if s.protocol == protocol]
         return sources

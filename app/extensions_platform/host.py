@@ -1586,6 +1586,18 @@ class ExtensionHost:
     ) -> None:
         """worker 崩溃/超时：回滚投影 → COMPATIBLE（可重新激活）；
         连续崩溃达到上限 → QUARANTINED（运维介入）。"""
+        # 本方法由工具代理线程调用（_worker_proxy / invoke_model_provider），
+        # 与 discover/activate/deactivate 并发：持 _lifecycle 串行化对
+        # _records 的遍历与改写（_deactivate_for_revocation 的
+        # sorted(self._records) 与 discover 的插入竞态 → RuntimeError 或
+        # 状态更新丢失/写错对象）。RLock 可重入：吊销路径（已持锁）调用
+        # _deactivate_for_revocation 不受影响。
+        with self._lifecycle:
+            self._on_worker_death_locked(record, diagnostic)
+
+    def _on_worker_death_locked(
+        self, record: ExtensionRecord, diagnostic: ExtensionDiagnostic
+    ) -> None:
         if record.worker is not None:
             record.worker.kill()
             record.worker = None
@@ -1790,6 +1802,14 @@ class ExtensionHost:
         return diagnostics
 
     def unload(self, extension_id: str) -> list[ExtensionDiagnostic]:
+        # 卸载改写 _records 状态与 sys.modules（_purge_modules）：不持锁时
+        # 并发 discover() 会把 DISCOVERED 状态的记录替换成新对象（保留表
+        # 不含 DISCOVERED），本方法随后只改孤儿 record（状态更新丢失），
+        # reload 后续全程操作孤儿。持 _lifecycle 与 discover/activate 串行。
+        with self._lifecycle:
+            return self._unload_locked(extension_id)
+
+    def _unload_locked(self, extension_id: str) -> list[ExtensionDiagnostic]:
         record = self._records.get(extension_id)
         if record is None:
             return [
@@ -1814,6 +1834,21 @@ class ExtensionHost:
         return []
 
     def reload(
+        self,
+        extension_id: str,
+        activate: bool = True,
+        allow_downgrade: bool = False,
+    ) -> list[ExtensionDiagnostic]:
+        # 与 unload 同闸：reload 全程（deactivate → unload → 重读 manifest/
+        # 信任裁决 → 状态改写 → activate）必须在 _lifecycle 下完成，否则
+        # 并发 discover 换掉记录后本方法只改孤儿对象。RLock 可重入，内部
+        # deactivate/unload/activate 的再入不受影响。
+        with self._lifecycle:
+            return self._reload_locked(
+                extension_id, activate=activate, allow_downgrade=allow_downgrade,
+            )
+
+    def _reload_locked(
         self,
         extension_id: str,
         activate: bool = True,
@@ -1995,6 +2030,14 @@ class ExtensionHost:
           新版本破坏 → DEPENDENCY_CONFLICT，升级被拒，旧版继续运行。
         通过后委托 reload（deactivate → unload → 重读 → activate）。
         """
+        # 与 reload 同闸：预检 + reload 全程在 _lifecycle 下（reload 自身
+        # 持锁，RLock 可重入）。
+        with self._lifecycle:
+            return self._upgrade_locked(extension_id, allow_downgrade=allow_downgrade)
+
+    def _upgrade_locked(
+        self, extension_id: str, allow_downgrade: bool = False
+    ) -> list[ExtensionDiagnostic]:
         record = self._records.get(extension_id)
         if record is None:
             return [

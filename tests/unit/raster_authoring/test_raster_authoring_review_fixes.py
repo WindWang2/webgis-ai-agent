@@ -160,6 +160,50 @@ async def test_export_download_is_always_a_signed_capability(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["sidecar", "owner"])
+async def test_failed_delivery_removes_orphan_artifact(
+    tmp_path, monkeypatch, failure
+):
+    """P3：sidecar/owner 写失败时已落盘产物必须删除，不留无主孤儿文件。"""
+    import app.services.export_paths as ep
+    import app.services.export_storage as es
+
+    root = tmp_path / "exports"
+    root.mkdir()
+    monkeypatch.setattr(ep, "exports_root", lambda: root, raising=False)
+    monkeypatch.setattr(ep, "ensure_exports_root", lambda: root, raising=False)
+
+    real_persist = es.persist_export_file
+
+    def flaky_persist(filename, content, ext):
+        if failure == "sidecar" and filename.endswith(".sidecar.json"):
+            raise OSError("disk full")
+        return real_persist(filename, content, ext)
+
+    monkeypatch.setattr(es, "persist_export_file", flaky_persist)
+    if failure == "owner":
+        def flaky_owner(filename, principal, **_kwargs):
+            raise OSError("owner receipt failed")
+
+        monkeypatch.setattr(es, "set_export_owner", flaky_owner)
+
+    artifact = {
+        "extension": ".png",
+        "bytes": b"\x89PNG\r\n\x1a\nfrozen",
+        "media_type": "image/png",
+        "sidecar": {"layers": [{"style_id": "s1", "statement": "b1"}], "limits": {}},
+        "frozen_revision": "rev-1",
+        "frozen": {"omitted_layers": []},
+        "embedded": True,
+    }
+    with pytest.raises(OSError):
+        await persist_snapshot_artifact(
+            "sess-delivery", artifact, principal="user-1"
+        )
+    assert list(root.iterdir()) == []
+
+
+@pytest.mark.asyncio
 async def test_wide_band_probe_is_truncated_and_disclosed(owner_root, session_id):
     """复审 P2-①：>16 波段源省略 bands 时按预算截断并如实披露，不再 413。"""
     from app.services.raster_authoring import probe_raster

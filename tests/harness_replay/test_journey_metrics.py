@@ -14,6 +14,22 @@ def _rows(trace):
     )}
 
 
+def test_non_finite_values_do_not_enter_rows():
+    """NaN/inf 不得流入 ratchet 观测行（float('nan') 不是有限数）。"""
+    rows = _rows({
+        "timing_ms": {"total": float("nan")},
+        "llm_usage": {"total_tokens": float("inf")},
+    })
+    assert "replay.duration_ms" not in rows
+    assert "replay.token_total" not in rows
+
+
+def test_unknown_arg_bytes_never_makes_total_negative():
+    """arg_bytes=-1 是未知哨兵：总量只累加已知非负值。"""
+    rows = _rows({"tool_calls": [{"arg_bytes": -1, "is_error": False}]})
+    assert rows["replay.arg_bytes_total"] == 0.0
+
+
 def test_missing_render_has_no_pass_score_and_records_integrity_findings():
     rows = _rows(_build().to_dict())
 

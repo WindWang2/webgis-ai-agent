@@ -65,6 +65,34 @@ describe('RuntimeInspector', () => {
     await waitFor(() => expect(screen.getByText('运行时实例加载失败')).toBeInTheDocument());
   });
 
+  it('renders every binding violation, not just the first', async () => {
+    const fetcher = vi.fn().mockResolvedValue({
+      ...instance,
+      nodes: [{
+        node_id: 'cap:multi', state: 'BLOCKED', attempts: 1, error_code: '',
+        reused: false, binding_violations: ['CRS_CLASS_MISMATCH', 'MISSING_DATASET'],
+      }],
+      explain: undefined,
+    });
+    render(<RuntimeInspector instanceId="wi-1" fetcher={fetcher} />);
+    await waitFor(() => expect(screen.getByTestId('wf-node-cap:multi')).toHaveTextContent('BLOCKED'));
+    expect(screen.getByText('CRS_CLASS_MISMATCH, MISSING_DATASET')).toBeInTheDocument();
+  });
+
+  it('renders all recompute/reuse explanations, not just the first two', async () => {
+    const fetcher = vi.fn().mockResolvedValue({
+      ...instance,
+      explain: {
+        why_recomputed: ['rc-1', 'rc-2', 'rc-3'],
+        why_reused: ['ru-1', 'ru-2', 'ru-3'],
+        blocked: [],
+      },
+    });
+    render(<RuntimeInspector instanceId="wi-1" fetcher={fetcher} />);
+    await waitFor(() => expect(screen.getByText(/rc-3/)).toBeInTheDocument());
+    expect(screen.getByText(/ru-3/)).toBeInTheDocument();
+  });
+
   it('shows empty state for a node-less instance', async () => {
     const fetcher = vi.fn().mockResolvedValue({ ...instance, nodes: [] });
     render(<RuntimeInspector instanceId="wi-1" fetcher={fetcher} />);

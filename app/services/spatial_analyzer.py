@@ -159,7 +159,16 @@ class SpatialAnalyzer:
         # consumers then misread metres as degrees. Honor + re-declare it.
         declared_crs = extract_declared_crs(features)
         gdf = gpd.GeoDataFrame.from_features(feat_list, crs=declared_crs or "EPSG:4326")
-        filtered_gdf = gdf.query(query)
+        try:
+            filtered_gdf = gdf.query(query)
+        except (NameError, KeyError, TypeError, ValueError) as exc:
+            # 未定义列 / 空 FC 无列 / 类型不匹配均由 pandas 在 query 内抛出，
+            # 按 GeoAnalysisResult 契约结构化失败（而非依赖外层装饰器兜底）。
+            return GeoAnalysisResult(
+                False, None,
+                f"Invalid filter query '{query}': {exc}",
+                error_type="ValidationError",
+            )
         summary = f"Filtered {len(feat_list)} features to {len(filtered_gdf)} using query: {query}"
         out_fc = filtered_gdf.__geo_interface__
         if isinstance(out_fc, dict):
@@ -532,7 +541,11 @@ class SpatialAnalyzer:
         # EPSG:4326 (mirrors #599 clip/overlay passthrough). Previously only
         # the features list was forwarded and the crs was dropped at the
         # tool boundary.
-        fc_payload: dict = features if isinstance(features, dict) else {"type": "FeatureCollection", "features": feat_list}
+        fc_payload: dict = (
+            {**features, "features": feat_list}
+            if isinstance(features, dict)
+            else {"type": "FeatureCollection", "features": feat_list}
+        )
         with rasterio_env():
             stats = zonal_statistics(fc_payload, valid_path)
 

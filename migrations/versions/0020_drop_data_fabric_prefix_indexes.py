@@ -65,7 +65,13 @@ def upgrade() -> None:
             op.execute(f"DROP INDEX IF EXISTS {name}")
 
     if _is_sqlite():
-        op.create_index(_CREATOR_INDEX, _CREATOR_TABLE, [_CREATOR_COLUMN])
+        # create_all  coexistence guard：ix_knowledge_documents_creator_id 由
+        # knowledge_documents 模型声明，create_all 自举的库上已建同名索引，
+        # 无守卫即 already exists（PG 分支有 IF NOT EXISTS）。
+        if _CREATOR_INDEX not in {
+            i["name"] for i in sa_inspect(bind).get_indexes(_CREATOR_TABLE)
+        }:
+            op.create_index(_CREATOR_INDEX, _CREATOR_TABLE, [_CREATOR_COLUMN])
     else:
         op.execute(
             f"CREATE INDEX IF NOT EXISTS {_CREATOR_INDEX} "

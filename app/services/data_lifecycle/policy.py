@@ -31,6 +31,9 @@ DEFAULT_TIER_THRESHOLDS = {"warm_after_s": 86_400, "cold_after_s": 604_800}
 #: 单次 assess 的 upsert 总帽（防御巨型目录把事务拖爆）。
 MAX_UPSERTS_PER_ASSESS = 2000
 
+#: ``_upsert_object`` 的「调用方未预取登记行」哨兵（避免重复 SELECT）。
+_ROW_NOT_LOADED = object()
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -225,7 +228,7 @@ def assess(
                     "last_used_at": obj.last_used_at.isoformat() if obj.last_used_at else None,
                 })
             if persist and upserted < MAX_UPSERTS_PER_ASSESS:
-                _upsert_object(db, obj, tier, now)
+                _upsert_object(db, obj, tier, now, row=previous)
                 upserted += 1
         if persist:
             db.commit()
@@ -256,12 +259,14 @@ def assess(
     return summary
 
 
-def _upsert_object(db: Any, obj: Any, tier: str, now: datetime) -> None:
+def _upsert_object(db: Any, obj: Any, tier: str, now: datetime,
+                   *, row: Any = _ROW_NOT_LOADED) -> None:
     from app.models.data_lifecycle import LifecycleObject
 
-    row = db.query(LifecycleObject).filter_by(
-        kind=obj.kind, object_id=obj.object_id
-    ).one_or_none()
+    if row is _ROW_NOT_LOADED:
+        row = db.query(LifecycleObject).filter_by(
+            kind=obj.kind, object_id=obj.object_id
+        ).one_or_none()
     if row is None:
         row = LifecycleObject(
             kind=obj.kind,

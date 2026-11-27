@@ -304,7 +304,10 @@ def test_bounded_payload_includes_requirement_rows():
 
 def test_delivery_prefix_forgery_rejected():
     """评审 F1c：format=csv-forged 的完成回执（无 sha256）不得经子串绑定
-    冒充 csv 交付而 fulfilled —— fail-closed artifact_unverified。"""
+    冒充 csv 交付而 fulfilled。回执选择改为 detail 内 fmt= token **精确**
+    匹配（G28 A16 子串匹配缺陷修复）后，伪造在**选择层**即被拒
+    （export_receipt_absent —— 该格式确无回执）；旧实现先子串绑定、再靠
+    身份闸 fail-closed artifact_unverified。两条路径都不 fulfilled。"""
     chapter = {"query": "q", "intent": {"export_intents": ["csv"]},
                "analysis_steps": []}
     bundle = {"session_id": "s1", "families": {
@@ -316,7 +319,7 @@ def test_delivery_prefix_forgery_rejected():
                                         receipts=bundle)
     v = next(v for v in report.requirements if v.requirement_id == "export:csv")
     assert v.verdict.value != "fulfilled"
-    assert v.failed_rule == "artifact_unverified"
+    assert v.failed_rule in ("export_receipt_absent", "artifact_unverified")
 
 
 def test_frame_summary_forgery_fail_closed():
@@ -355,3 +358,48 @@ def test_frame_summary_forgery_fail_closed():
     report0 = evaluate_goal_satisfaction(_chapter(), map_product=forged0)
     map_v0 = next(v for v in report0.requirements if v.requirement_id == "map")
     assert map_v0.verdict.value == "partial"
+
+
+# ── G28 A16：交付回执行选择 = detail 内 fmt= token 精确匹配 ──────────────
+
+def test_delivery_receipt_selection_matches_fmt_token_exactly():
+    """export:geojson 需求不得被 fmt=geojsonseq 回执背书（子串匹配曾把
+    用错格式的回执判 FULFILLED）。"""
+    from app.services.gis_harness.goal_satisfaction.evaluator import (
+        _eval_export_requirement,
+    )
+    from app.services.gis_harness.goal_satisfaction.contracts import (
+        GoalRequirement,
+        RequirementState,
+    )
+
+    req = GoalRequirement(
+        id="r-export-geojson", kind="export", export_format="geojson",
+        delivery_expected=True)
+    bundle = {"session_id": "s1", "families": {
+        "edit": [], "compute": [], "import": [], "raster": [], "refresh": [],
+        "delivery": [{"delivery_id": "d-seq", "job_id": "j-seq",
+                      "format": "geojsonseq", "status": "completed",
+                      "filename": "a.geojsonseq", "row_count": 3,
+                      "content_sha256": "x" * 64, "scope_missing_ids": []}]}}
+    chapter = {"query": "q", "intent": {"export_intents": ["geojson"]},
+               "analysis_steps": []}
+    evidence = build_evidence_registry(chapter, _product(), None,
+                                       receipts=bundle)
+    out = _eval_export_requirement(req, evidence, receipts=bundle)
+    assert out.verdict == RequirementState.NOT_EVALUATED
+    assert "export_receipt_absent" in out.missing
+    assert out.failed_rule == "export_receipt_absent"
+
+    # 同族精确格式在场 → 正常绑定（不再是 absent）
+    bundle_ok = {"session_id": "s1", "families": {
+        "edit": [], "compute": [], "import": [], "raster": [], "refresh": [],
+        "delivery": [{"delivery_id": "d-gj", "job_id": "j-gj",
+                      "format": "geojson", "status": "completed",
+                      "filename": "a.geojson", "row_count": 3,
+                      "content_sha256": "y" * 64, "scope_missing_ids": []}]}}
+    evidence_ok = build_evidence_registry(chapter, _product(), None,
+                                          receipts=bundle_ok)
+    out_ok = _eval_export_requirement(req, evidence_ok, receipts=bundle_ok)
+    assert "export_receipt_absent" not in out_ok.missing
+    assert out_ok.failed_rule != "export_receipt_absent"

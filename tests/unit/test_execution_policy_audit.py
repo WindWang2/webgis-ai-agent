@@ -45,6 +45,20 @@ def test_inline_timeout_ineffective_info():
     assert any(f.code == "inline_timeout_ineffective" for f in findings)
 
 
+def test_inline_zero_timeout_is_declared():
+    findings = audit_registration(
+        "t", _noop, ToolExecutionPolicy.INLINE, "light", 0.0
+    )
+    assert any(f.code == "inline_timeout_ineffective" for f in findings)
+
+
+def test_heavy_zero_timeout_is_explicit():
+    findings = audit_registration(
+        "t", _noop, ToolExecutionPolicy.THREAD, "heavy", 0.0
+    )
+    assert not any(f.code == "heavy_no_explicit_timeout" for f in findings)
+
+
 def test_heavy_without_timeout_info():
     findings = audit_registration("t", _noop, ToolExecutionPolicy.THREAD, "heavy", None)
     assert any(f.code == "heavy_no_explicit_timeout" for f in findings)
@@ -52,6 +66,22 @@ def test_heavy_without_timeout_info():
 
 def test_clean_tool_has_no_findings():
     assert audit_registration("t", _anoop, ToolExecutionPolicy.ASYNC, "light", None) == []
+
+
+def test_invalid_execution_policy_is_error():
+    reg = ToolRegistry()
+    reg.register(
+        name="invalid_policy", description="probe", func=_noop,
+        execution_policy=ToolExecutionPolicy.THREAD,
+    )
+    reg.metadata("invalid_policy")["execution_policy"] = "not-a-policy"
+    findings = audit_registry_policies(reg)
+    assert any(
+        f.tool == "invalid_policy"
+        and f.code == "invalid_execution_policy"
+        and f.severity is Severity.ERROR
+        for f in findings
+    )
 
 
 def test_error_findings_filter():

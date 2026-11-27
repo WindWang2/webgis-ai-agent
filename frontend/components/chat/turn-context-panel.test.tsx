@@ -7,7 +7,7 @@
  * - 面板渲染状态徽标（not_sent/queued/handled/unknown 各自的诚实文案）
  *   与源去向清单（展开时按 session+turn 拉取完整回执）。
  */
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { TurnContextPanel } from '@/components/chat/turn-context-panel';
 import { attachTurnContextReceipt, type ChatStreamMessage } from '@/lib/chat/message-reducer';
@@ -148,5 +148,55 @@ describe('TurnContextPanel', () => {
           || screen.getByText(/limited coverage/i),
       ).toBeTruthy();
     });
+  });
+
+  // 反复 flush effect：未修复时 loading 翻转会让 effect 重跑，重试次数爆炸式增长
+  async function flushEffects(times = 6): Promise<void> {
+    for (let i = 0; i < times; i++) {
+      await act(async () => { await Promise.resolve(); });
+    }
+  }
+
+  it('stops after one attempt and leaks no unhandled rejection when the fetch fails', async () => {
+    const rejections: unknown[] = [];
+    const onUnhandled = (reason: unknown) => { rejections.push(reason); };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      fetchTurnReceipt.mockRejectedValue(new Error('boom'));
+      render(<TurnContextPanel sessionId="s1" summary={summary()} />);
+      fireEvent.click(screen.getByTestId('turn-context-receipt-toggle'));
+      await flushEffects();
+      // 失败后既不无限重试，也不把拒绝抛给 `void load()`
+      expect(fetchTurnReceipt).toHaveBeenCalledTimes(1);
+      expect(rejections).toEqual([]);
+      // 无回执时诚实呈现 coverage limited，而不是卡在 loading
+      expect(screen.getByTestId('turn-context-receipt-missing')).toBeTruthy();
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
+  it('does not spin when the receipt comes back empty (404/legacy → null)', async () => {
+    fetchTurnReceipt.mockResolvedValue(null);
+    render(<TurnContextPanel sessionId="s1" summary={summary()} />);
+    fireEvent.click(screen.getByTestId('turn-context-receipt-toggle'));
+    await flushEffects();
+    expect(fetchTurnReceipt).toHaveBeenCalledTimes(1);
+  });
+
+  it('still refetches on manual refresh and on re-expand', async () => {
+    fetchTurnReceipt.mockResolvedValue(null);
+    render(<TurnContextPanel sessionId="s1" summary={summary()} />);
+    const toggle = screen.getByTestId('turn-context-receipt-toggle');
+    fireEvent.click(toggle);
+    await waitFor(() => expect(fetchTurnReceipt).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByTestId('turn-context-receipt-refresh'));
+    await waitFor(() => expect(fetchTurnReceipt).toHaveBeenCalledTimes(2));
+    await flushEffects();
+    fireEvent.click(toggle); // 收起
+    fireEvent.click(toggle); // 再展开
+    await waitFor(() => expect(fetchTurnReceipt).toHaveBeenCalledTimes(3));
+    await flushEffects();
+    expect(fetchTurnReceipt).toHaveBeenCalledTimes(3);
   });
 });

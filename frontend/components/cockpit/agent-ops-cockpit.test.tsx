@@ -269,6 +269,53 @@ describe('AgentOpsCockpit — Oracle 行为', () => {
  * 方向键/Home/End（activation-on-focus）+ tabpanel 关联（与 ops-console、
  * lakehouse 子页签同一配方）。
  */
+describe('AgentOpsCockpit — 投影字段健壮性（P3）', () => {
+  it('resources 视图展示仅存在于 retry_cost 的维度', async () => {
+    mocked.getCockpitMission.mockResolvedValue({
+      ...missionDetail,
+      mission: {
+        ...missionDetail.mission,
+        resource_budget: {
+          quota: {} as Record<string, number>,
+          consumed: {} as Record<string, number>,
+          reserved: {} as Record<string, number>,
+          retry_cost: { retry_tokens: 7 },
+        },
+      },
+    });
+    render(<AgentOpsCockpit sessionId="sess-1" ownerToken="tok" />);
+    await flush(0);
+    fireEvent.click(screen.getByTestId('cockpit-mission-m-1'));
+    await flush(0);
+    fireEvent.click(screen.getByTestId('cockpit-view-resources'));
+    await flush(0);
+
+    const table = screen.getByTestId('cockpit-resources-table');
+    expect(within(table).getByText('retry_tokens')).toBeInTheDocument();
+    expect(within(table).getByText('7')).toBeInTheDocument();
+  });
+
+  it('claim 缺少 confidence 键 → evidence 视图仍完整渲染', async () => {
+    mocked.getCockpitSessionEvidence.mockResolvedValue({
+      ...envelope({
+        session_id: 'sess-1', present: true, truncated: false,
+        claims: [{
+          claim_id: 'c1', claim_type: 'density', subject: '成都市', predicate: '', value: 12.5,
+          value_text: '', unit: '个/km²', comparator: '', method: '',
+          supporting_evidence_refs: ['e1'], contradicting_evidence_refs: [], status: 'supported', narrative: '',
+        }],
+        edges: [], stats: { claims: 1, edges: 0 },
+      }),
+    } as unknown as cockpitApi.CockpitEvidenceView);
+    render(<AgentOpsCockpit sessionId="sess-1" ownerToken="tok" />);
+    await flush(0);
+    fireEvent.click(screen.getByTestId('cockpit-view-evidence'));
+    await flush(0);
+
+    expect(screen.getByText('成都市')).toBeInTheDocument();
+  });
+});
+
 describe('AgentOpsCockpit — 视图 tablist 键盘导航（#1747）', () => {
   it('roving tabindex + Arrow/Home/End + tabpanel 关联', async () => {
     render(<AgentOpsCockpit sessionId="sess-1" ownerToken="tok" />);

@@ -82,6 +82,19 @@ def _bands_from_request(request: Mapping[str, Any], source: RasterSource) -> tup
             correction_hint=f"Choose 1-based indexes within 1..{source.band_count}.",
             details={"band_count": source.band_count},
         )
+    # 4+ 波段同样必须在契约层拒绝：mode 由波段数派生（1→single，3→rgb），
+    # 放行会让图例 ("R","G","B")[i] 越界、渲染静默丢弃第 4 波段。
+    if len(values) > 3:
+        raise RasterExpressionError(
+            "BAND_COUNT_UNSUPPORTED",
+            f"{len(values)}-band expressions are not supported; RGB needs exactly three bands",
+            field="bands",
+            correction_hint=(
+                f"This source has {source.band_count} band(s). Choose mode='single' with one band, "
+                "or mode='rgb' with exactly three 1-based band indexes (repeats allowed)."
+            ),
+            details={"band_count": source.band_count},
+        )
     mode = "single" if len(values) == 1 else "rgb"
     return mode, values
 

@@ -387,6 +387,8 @@ def _codec_set_layout(req: Any) -> MutationIntent:
     return SetLayoutIntent(
         legend=req.legend, controls=req.controls, margins=req.margins,
         components=req.components,
+        component_links=getattr(req, "component_links", None),
+        composition=getattr(req, "composition", None),
         frames=getattr(req, "frames", None),
         print_layout=getattr(req, "print_layout", None),
     )

@@ -28,6 +28,32 @@ def test_n1_invalid_calendar_date_is_predicate_error():
     assert node.value.startswith("2024-01-02")
 
 
+def test_n1b_temporal_naive_value_with_aware_predicate_is_evaluable():
+    """数据集时间值 naive、谓词值带 Z/偏移 → 本地过滤必须可求值（不 500）。
+
+    仓库约定 naive=UTC（DB 存 naive-UTC）：两侧归一到 aware-UTC 后比较。
+    修复前混用直接抛 TypeError。
+    """
+    from app.services.data_fabric.query.predicates import evaluate_temporal
+
+    before = temporal_from_dict({"op": "before", "field": "t", "value": "2024-01-02T03:04:05Z"})
+    assert evaluate_temporal(before, {"t": "2024-01-01T00:00:00"}) is True
+    assert evaluate_temporal(before, {"t": "2024-01-03T00:00:00"}) is False
+    # aware 数据值 vs naive（date-only）谓词值
+    during = temporal_from_dict({"op": "during", "field": "t", "start": "2024-01-01", "end": "2024-01-02"})
+    assert evaluate_temporal(during, {"t": "2024-01-01T12:00:00Z"}) is True
+    assert evaluate_temporal(during, {"t": "2024-01-03T00:00:00Z"}) is False
+    # date 对象（非 datetime）同样不得与 datetime 谓词值相撞
+    from datetime import date
+
+    assert evaluate_temporal(before, {"t": date(2024, 1, 1)}) is True
+    assert evaluate_temporal(before, {"t": date(2024, 1, 5)}) is False
+    # 同侧一致的既有语义不变（naive vs naive / aware vs aware）
+    after = temporal_from_dict({"op": "after", "field": "t", "value": "2024-01-01T00:00:00"})
+    assert evaluate_temporal(after, {"t": "2024-06-01T00:00:00"}) is True
+    assert evaluate_temporal(after, {"t": "2024-06-01T00:00:00Z"}) is True
+
+
 def test_n2_canonical_float_nonfinite_does_not_raise():
     assert _canonical_value(1.0) == 1
     assert _canonical_value(float("inf")) == float("inf")

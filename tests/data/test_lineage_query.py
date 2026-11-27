@@ -111,12 +111,34 @@ class TestSessionLineage:
         assert node.artifact_subtype == "stats_table"
         assert node.lifecycle == "ready"
 
+    def test_view_node_cap_keeps_edge_endpoints_in_nodes(self):
+        from app.services.artifact_registry import ArtifactRecord
+
+        records = {
+            "ref:src": ArtifactRecord(
+                artifact_id="ref:src", artifact_type="feature_collection", producer_tool="upload"
+            ),
+            "ref:mid": ArtifactRecord(
+                artifact_id="ref:mid", artifact_type="feature_collection", producer_tool="reproject",
+                inputs=["ref:src"],
+            ),
+            "ref:leaf": ArtifactRecord(
+                artifact_id="ref:leaf", artifact_type="feature_collection", producer_tool="aggregate",
+                inputs=["ref:mid"],
+            ),
+        }
+        view = SessionLineageQuery(records).view("ref:leaf", max_nodes=1)
+        node_ids = {node.artifact_id for node in view.nodes}
+        assert view.truncated
+        assert all(edge.from_id in node_ids and edge.to_id in node_ids for edge in view.edges)
+
     async def test_replacement_edge_in_view(self):
         sid = "lin-repl"
         await _build(sid)
         view = await session_lineage(sid, "ref:kde-v2")
-        repl = [e for e in view.edges if e.kind == "replacement"]
-        assert repl and repl[0].from_id == "ref:kde-v1"
+        node_ids = {node.artifact_id for node in view.nodes}
+        assert "ref:kde-v1" not in node_ids
+        assert all(edge.from_id in node_ids and edge.to_id in node_ids for edge in view.edges)
 
     async def test_missing_artifact_returns_none(self):
         assert await session_lineage("lin-miss", "ref:ghost") is None

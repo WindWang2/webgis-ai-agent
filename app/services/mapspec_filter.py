@@ -95,12 +95,15 @@ def evaluate_filter(expr: Any, feature: GeoJSONFeature) -> bool:
                 return evaluate_filter(expr[i + 1], feature)
         return evaluate_filter(expr[-1], feature)
     right = value(expr[2])
-    if op == "in":
-        return isinstance(right, list) and any(equal(left, item) for item in right)
+    # 旧式裸键（adapter 发射的 ["==","$type",t] / ["in","$type",…]）：必须
+    # 先于 in 解析 —— in 提前返回，否则 ["in","$type",…] 恒判 False，整层
+    # 要素被静默排除。
     if expr[1] == "$type":
         left = geometry_type
     elif expr[1] == "$id":
         left = feature.get("id")
+    if op == "in":
+        return isinstance(right, list) and any(equal(left, item) for item in right)
     if op in ("==", "!="):
         # MapLibre 语义（G46 联合筛选对齐）：缺失属性与显式 null 都取 null；
         # null == null → true；null == 5 → false；null != 5 → true。

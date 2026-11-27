@@ -487,6 +487,23 @@ def test_multipolygon_encoding():
         assert _shoelace(ll) < 0  # every polygon exterior CCW (geographic)
 
 
+def test_null_coordinates_skipped_not_crash():
+    """Supported types with null coordinates are skipped, not a TypeError."""
+    coords = [116.40, 39.90]
+    z = 3
+    x, y = _tile_of(z, coords[0], coords[1])
+    features = [
+        _feature("MultiPoint", None),
+        _feature("LineString", None),
+        _feature("MultiLineString", None),
+        _feature("Polygon", None),
+        _feature("MultiPolygon", None),
+        _feature("Point", coords),
+    ]
+    layer = _decode_tile(encode_tile(features, z, x, y))[0]
+    assert len(layer["features"]) == 1
+
+
 # ─── skipped geometries ─────────────────────────────────────────────────────
 
 

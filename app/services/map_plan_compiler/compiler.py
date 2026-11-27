@@ -351,7 +351,11 @@ def compile_plan(
     # ── 汇总 + 统一铸号（相位内保持插入序；step 全局单调）───────────────
     ordered: List[PlanMutation] = []
     for phase_bucket in (present, patches, component_mutations, removals):
-        ordered.extend(phase_bucket)
+        # review P1：同层整层 upsert 必须先于 presentation patch —— upsert
+        # 是整层替换且载荷携带 current 呈现面（无 visibility），后发会把
+        # patch 刚落定的可见性/透明度一起回退（stable sort：其余次序不变）。
+        ordered.extend(sorted(phase_bucket,
+                              key=lambda m: m.intent != "upsert_layer"))
     final: List[PlanMutation] = []
     namespace = digest_of({"ir": ir_fp, "base_revision": base_revision, "base_fingerprint": base_fp})[:24]
     for i, m in enumerate(ordered, start=1):

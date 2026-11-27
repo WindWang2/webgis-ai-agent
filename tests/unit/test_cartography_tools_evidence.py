@@ -320,6 +320,43 @@ async def test_layout_set_forwards_evidence(registry, clean_session):
     assert res["layout"]["legend"]["title"] == "T"
 
 
+# ─── webgis_state_get: auto-init fallback failure must not fake success ──
+
+
+@pytest.mark.asyncio
+async def test_state_get_init_failure_returns_failure_evidence(
+    registry, clean_session, monkeypatch
+):
+    """webgis_state_get auto-inits an empty project when none exists. If that
+    init fails (engine refusal / storage error), the tool must forward the
+    adapter's failure evidence (success:False + message) instead of hardcoding
+    success:True with mapspec:None — and must not KeyError when the result
+    carries no mapspec key."""
+
+    async def _init_refused(session_id, *args, **kwargs):
+        return {
+            "success": False,
+            "mapspec": None,
+            "is_compiled": False,
+            "message": "lifecycle engine refused init",
+        }
+
+    monkeypatch.setattr(mapspec_store, "init_project", _init_refused)
+    res = await registry.dispatch("webgis_state_get", {}, session_id=clean_session)
+    assert res["success"] is False, "failed auto-init must not report success"
+    assert res["mapspec"] is None
+    assert "refused" in res["message"]
+
+    async def _init_keyless(session_id, *args, **kwargs):
+        return {"success": False, "message": "init produced no mapspec key"}
+
+    monkeypatch.setattr(mapspec_store, "init_project", _init_keyless)
+    res2 = await registry.dispatch("webgis_state_get", {}, session_id=clean_session)
+    assert res2["success"] is False
+    assert res2["mapspec"] is None
+    assert "no mapspec key" in res2["message"]
+
+
 # ─── webgis_view_set: live camera moves (viewport sync + fly_to command) ──
 
 

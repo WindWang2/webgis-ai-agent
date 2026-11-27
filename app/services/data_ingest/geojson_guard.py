@@ -153,12 +153,23 @@ def validate_feature_collection(fc: Any) -> None:
     只做**结构性/数值性**检查，不做语义判断（CRS/bbox 诚实性由
     profiler/quality 既有面负责）。坐标与属性扫描独立预算，任何一路
     耗尽都是类型化拒绝——不存在静默跳过的路径。
+
+    扫描面覆盖整棵 FC 树：geometry 坐标走 ``_scan_geometry``、properties
+    及其余**全部**成员（feature 级 id/外来成员、FC 级键）走
+    ``_check_properties``——只扫 properties 会让其余成员的超大串/深嵌套
+    整体逃逸（上游仅剩总载荷帽）。
     """
     if not isinstance(fc, dict) or fc.get("type") != "FeatureCollection":
         return  # 形状判定是 detect 步的既有职责（UNSUPPORTED_SHAPE）
     features = fc.get("features")
     if not isinstance(features, list):
         return
+    # FC 级键（type/features 由本函数结构处理，不重复扫）：与 properties
+    # 同判据；错误无所属要素（feature_index 保持 -1）。
+    for key, value in fc.items():
+        if key in ("type", "features"):
+            continue
+        _check_properties(value)
     for idx, feature in enumerate(features):
         if not isinstance(feature, dict):
             continue
@@ -169,6 +180,15 @@ def validate_feature_collection(fc: Any) -> None:
         if props is not None:
             try:
                 _check_properties(props)
+            except GeojsonGuardError as e:
+                e.feature_index = idx
+                raise
+        # 其余要素级成员（id / 外来成员）：与 properties 同判据，不得逃逸。
+        for key, value in feature.items():
+            if key in ("geometry", "properties"):
+                continue
+            try:
+                _check_properties(value)
             except GeojsonGuardError as e:
                 e.feature_index = idx
                 raise

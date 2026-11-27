@@ -163,6 +163,41 @@ async def test_p4_scenario_compare_gathers_in_parallel(monkeypatch):
     assert res.get("type") != "error", res
 
 
+@pytest.mark.asyncio
+async def test_p4_scenario_compare_rejects_single_scenario_before_evaluation(monkeypatch):
+    """单个方案必须在评估和对比前被参数契约拒绝。"""
+    from app.services.spatial_decision.engine import DecisionEngine
+    from app.services.spatial_decision.comparison_engine import ScenarioComparisonEngine
+    from app.tools.spatial_decision_tools import register_spatial_decision_tools
+    from app.tools.registry import ToolRegistry, confirm_tier3
+
+    calls = []
+
+    async def _unexpected_evaluate(self, scenario_text, target_area_text, parameters,
+                                   baseline_data_ref, session_id):
+        calls.append("evaluate")
+        raise AssertionError("single-scenario comparison must not evaluate")
+
+    async def _unexpected_compare(self, results, session_id, optimization_goals=None):
+        calls.append("compare")
+        raise AssertionError("single-scenario comparison must not compare")
+
+    monkeypatch.setattr(DecisionEngine, "evaluate_decision", _unexpected_evaluate)
+    monkeypatch.setattr(ScenarioComparisonEngine, "compare_scenarios", _unexpected_compare)
+
+    reg = ToolRegistry()
+    register_spatial_decision_tools(reg)
+    with confirm_tier3():
+        res = await reg.dispatch(
+            "scenario_compare",
+            {"scenarios": [{"scenario": "方案A", "target_area": "成都"}]},
+            session_id="",
+        )
+
+    assert res.get("error_type") == "ValidationError", res
+    assert calls == []
+
+
 # ─── P-5（#878）: 栅格瓦片 ETag/304 ───────────────────────────────────────
 
 

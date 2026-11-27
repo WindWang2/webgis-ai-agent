@@ -135,6 +135,7 @@ describe('streaming output and operation feedback are announced', () => {
 
     // And the transcript container itself must NOT be a live region.
     const src = readCode('components/sidebar/chat-tab.tsx');
+    expect(src, 'chat-tab.tsx must still render messages.map').toContain('messages.map');
     const list = src.slice(src.indexOf('messages.map') - 400, src.indexOf('messages.map'));
     expect(list).not.toMatch(/aria-live/);
   });
@@ -270,7 +271,11 @@ describe('one status colour vocabulary', () => {
   it('does not paint a neutral count with the accent colour', () => {
     // `可见` was accent green, which reads as a status on a plain tally.
     const src = readCode('components/sidebar/layers-tab.tsx');
-    const stats = src.slice(src.indexOf('总图层'), src.indexOf('要素'));
+    const statsStart = src.indexOf('sidebar.layers.statTotal');
+    const statsEnd = src.indexOf('sidebar.layers.searchPlaceholder');
+    expect(statsStart, 'layers-tab.tsx must still render the stats header').toBeGreaterThan(-1);
+    expect(statsEnd, 'layers-tab.tsx must still render the search field after the stats').toBeGreaterThan(statsStart);
+    const stats = src.slice(statsStart, statsEnd);
     expect(stats).not.toMatch(/accent/);
   });
 });

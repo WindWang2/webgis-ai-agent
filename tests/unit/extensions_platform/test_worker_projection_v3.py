@@ -280,3 +280,55 @@ def test_worker_v3_api_1_1_still_rejects_class_sections(tmp_path):
                 "algorithms": [{"id": "algo_one", "description": ""}],
             }
         )
+
+
+def _tile_worker(rpc_value):
+    """最小 worker 句柄：provider RPC 返回固定载荷（None = worker 侧
+    provider 返回 None → RPC 载荷 null）。"""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        _namespace="v3demo",
+        _call_timeout_s=5.0,
+        call=lambda tool, args, **kw: rpc_value,
+    )
+
+
+class TestWorkerProviderTileProjection:
+    """P2：tiles mixin 的 get_tile 投影契约（M-7 错误映射 + extent 往返）。"""
+
+    def _adapter(self, rpc_value):
+        from app.extensions_platform.worker.projection_v3 import make_worker_provider_class
+
+        cls = make_worker_provider_class(
+            _tile_worker(rpc_value), {"source_type": "prov", "mixins": ("tiles",)}
+        )
+        return cls(
+            __import__("types").SimpleNamespace(source_type="v3demo_prov", name="t")
+        )
+
+    def test_get_tile_none_payload_is_typed_data_fabric_error(self):
+        """worker provider get_tile 返回 None → RPC 载荷 null：宿主侧必须
+        归一为 DataFabricError 子类（M-7 映射表），而非裸 AttributeError
+        逃逸到 data_fabric 消费端。"""
+        from app.services.data_fabric.errors import DataFabricError
+
+        adapter = self._adapter(None)
+        with pytest.raises(DataFabricError):
+            adapter.get_tile(0, 0, 0)
+
+    def test_get_tile_extent_round_trips_as_tuple(self):
+        """extent 经 JSON 帧（list）往返后归一回声明的 tuple 形状。"""
+        from app.extensions_platform.sdk.provider import TilePayload
+
+        adapter = self._adapter({
+            "data_hex": "89504e47",
+            "content_type": "image/png",
+            "extent": [0.0, 1.0, 2.0, 3.0],
+            "metadata": {"z": 0},
+        })
+        tile = adapter.get_tile(0, 0, 0)
+        assert isinstance(tile, TilePayload)
+        assert tile.data == bytes.fromhex("89504e47")
+        assert tile.extent == (0.0, 1.0, 2.0, 3.0)
+        assert tile.metadata == {"z": 0}

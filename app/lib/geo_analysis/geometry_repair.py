@@ -57,7 +57,6 @@ class GeometryRepairReport:
     checked: int = 0
     invalid: int = 0
     repaired: int = 0
-    failed: int = 0
     records: List[GeometryRepairRecord] = field(default_factory=list)
 
     @property
@@ -70,7 +69,6 @@ class GeometryRepairReport:
             "checked": self.checked,
             "invalid": self.invalid,
             "repaired": self.repaired,
-            "failed": self.failed,
             "area_delta_total": self.area_delta_total,
             "records_truncated": len(self.records) > 32,
             "records": [r.to_dict() for r in self.records[:32]],

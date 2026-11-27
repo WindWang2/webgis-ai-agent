@@ -129,3 +129,36 @@ def test_qualify_node_credentials_hard_fail():
     result = qualify_node(node, ctx)
     assert result.status == QualificationStatus.INELIGIBLE
     assert any(r.check == "credentials" for r in result.reasons)
+
+
+def test_qualify_node_permission_never_fails_open():
+    """required_permission 门 fail-open 回归：授予面整体缺席（两张 map
+    均空）时工具曾直接判 ELIGIBLE（权限未授予也放行）—— 必须落到
+    unknown 诚实披露（绝不冒充 eligible）。"""
+    from app.services.gis_harness.capability_graph import GraphNode, KIND_TOOL
+    from app.services.gis_harness.qualification_v8 import (
+        QualificationContext,
+        QualificationStatus,
+        qualify_node,
+    )
+
+    node = GraphNode(
+        "t", KIND_TOOL, "test",
+        extras={"required_permission": "ext_admin", "tier": 1},
+    )
+    bare = qualify_node(node, QualificationContext())
+    assert bare.status != QualificationStatus.ELIGIBLE
+    assert any(r.check == "required_permission" for r in bare.reasons)
+    # 显式授予（perm: 键 / dependency_available）→ eligible
+    granted = qualify_node(
+        node, QualificationContext(credentials_present={"perm:ext_admin": True}))
+    assert granted.status == QualificationStatus.ELIGIBLE
+    granted_dep = qualify_node(
+        node, QualificationContext(dependency_available={"ext_admin": True}))
+    assert granted_dep.status == QualificationStatus.ELIGIBLE
+    # 显式未授予 → ineligible（既有 deny 语义不变）
+    denied = qualify_node(
+        node, QualificationContext(credentials_present={"perm:ext_admin": False,
+                                                       "other": True}))
+    assert denied.status == QualificationStatus.INELIGIBLE
+    assert any(r.check == "required_permission" for r in denied.reasons)

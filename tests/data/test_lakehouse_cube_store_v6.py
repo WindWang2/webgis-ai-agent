@@ -272,6 +272,30 @@ def test_fork_failure_leaves_no_partial_revision(cube_store, tmp_path):
     assert target2.is_dir()
 
 
+def test_fork_staging_paths_are_unique_per_call(cube_store, tmp_path, monkeypatch):
+    """同一 target 的多次 fork 必须各自使用独立 staging 目录。
+
+    固定 staging 名（.{dst.name}.tmp）使并发 fork 互删对方 staging ——
+    残缺修订可能被 os.replace 发布。
+    """
+    from app.services.lakehouse import cube_store as cube_store_mod
+
+    store, _bd = cube_store
+    target = tmp_path / "rev_stage.zarr"
+    stages = []
+
+    def _capture(*, dst, **_kwargs):
+        stages.append(dst)
+        raise RuntimeError("capture-only")
+
+    monkeypatch.setattr(cube_store_mod, "_fork_revision_into", _capture)
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="capture-only"):
+            fork_cube_revision(store, target, updates={})
+    assert len(stages) == 2
+    assert stages[0] != stages[1]
+
+
 def test_publish_manifest_only_over_budget(cube_store):
     store, _bd = cube_store
     res = publish_cube(store, session_id="s9", blob_budget_bytes=0)

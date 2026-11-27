@@ -429,6 +429,37 @@ def test_change_detection_invalid_method_and_threshold():
         os.remove(pa); os.remove(pb)
 
 
+def test_change_detection_gcp_unaligned_b_structured_reject():
+    """GCP-only B：aligned_reader 无法 WarpedVRT（恒等仿射 → 全 NaN，#2239），
+    回退成原始未对齐数据集；此时仍按 A 的网格窗口读 B 就是错位像元差值
+    （静默错误）。必须结构化拒绝，不产看似有效的变化栅格。"""
+    from rasterio.control import GroundControlPoint
+
+    td = _td()
+    t1 = np.arange(16, dtype="float32").reshape(4, 4)
+    pa = _write(f"gcp_a_{uuid.uuid4().hex[:6]}.tif", t1, nodata=-9999.0)
+    pb = os.path.join(td, f"gcp_b_{uuid.uuid4().hex[:6]}.tif")
+    with rasterio.open(
+        pb, "w", driver="GTiff", height=4, width=4, count=1, dtype="float32",
+    ) as dst:
+        dst.write(t1 + 100.0, 1)
+        dst.gcps = (
+            [
+                GroundControlPoint(row=0.0, col=0.0, x=0.0, y=4.0, z=0.0),
+                GroundControlPoint(row=0.0, col=4.0, x=4.0, y=4.0, z=0.0),
+                GroundControlPoint(row=4.0, col=0.0, x=0.0, y=0.0, z=0.0),
+                GroundControlPoint(row=4.0, col=4.0, x=4.0, y=0.0, z=0.0),
+            ],
+            "EPSG:4326",
+        )
+    try:
+        with pytest.raises(RasterAlignmentError):
+            detect_raster_change(pa, pb)
+        assert not os.path.exists(pa.replace(".tif", "_change.tif"))
+    finally:
+        os.remove(pa); os.remove(pb)
+
+
 # ── 指纹 / descriptor / 复用（P8/P10）───────────────────────────────
 
 def test_writer_descriptor_no_reopen(read_spy):

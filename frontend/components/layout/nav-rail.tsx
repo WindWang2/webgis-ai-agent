@@ -176,7 +176,9 @@ export function NavRail({ variant = 'vertical' }: { variant?: 'vertical' | 'bott
   }, [mode, activeTab]);
 
   function onModeKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
-    const index = WORKBENCH_MODES.indexOf(mode);
+    const radios = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]'));
+    const focusedIndex = radios.indexOf(document.activeElement as HTMLButtonElement);
+    const index = focusedIndex >= 0 ? focusedIndex : WORKBENCH_MODES.indexOf(mode);
     let next: WorkbenchMode;
     switch (e.key) {
       case 'ArrowRight':
@@ -255,7 +257,13 @@ export function NavRail({ variant = 'vertical' }: { variant?: 'vertical' | 'bott
         {/* #1666：模式 radiogroup 方向随 variant 切换 —— 底部档 horizontal
             横向排布（修复前恒 flex-col，3 个模式按钮在 48px 底栏内纵向堆叠
             被裁剪）。竖排档维持 w-full 纵列。 */}
-        <div role="radiogroup" onKeyDown={onModeKeyDown} aria-orientation={variant === 'bottom' ? 'horizontal' : 'vertical'} aria-label={t('nav.workbenchMode')} className={variant === 'bottom' ? "flex flex-row items-center gap-1" : "flex w-full flex-col items-center gap-1"}>
+        <div
+          role="radiogroup"
+          aria-label={t('nav.workbenchMode')}
+          aria-orientation={variant === 'bottom' ? 'horizontal' : 'vertical'}
+          className={variant === 'bottom' ? "flex flex-row items-center gap-1" : "flex w-full flex-col items-center gap-1"}
+          onKeyDown={onModeKeyDown}
+        >
         {WORKBENCH_MODES.map((m) => {
           const ModeIcon = MODE_META[m].icon;
           const modeLabel = t(`modes.${m}`);

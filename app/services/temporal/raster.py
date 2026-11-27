@@ -150,7 +150,7 @@ class TemporalRasterEngine:
 
         for item in raster_series:
             rpath = item.get(raster_path_field) or item.get("raster_path") or item.get("file")
-            t_val = item.get("timestamp") or item.get("time") or item.get("datetime")
+            t_val = item.get("timestamp") or item.get("time") or item.get("datetime") or item.get("date")
 
             stats_res: Dict[str, Any] = {}
 

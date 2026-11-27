@@ -821,8 +821,6 @@ def seasonal_decompose_narrated(
             f"(n={n} < 2×period={2 * m})",
             correction_hint="extend the series or reduce the period",
         )
-    dropped = len(list(values)) - n
-
     half = (m - 1) // 2
     # 中心 MA：奇数窗口 → 窗口中心即观测时点；valid 区长度 n−2·half。
     trend_valid = np.convolve(vals, np.ones(m) / m, mode="valid")
@@ -877,7 +875,9 @@ def seasonal_decompose_narrated(
         "seasonal_indices": [round(float(v), 10) for v in seasonal_idx],
         "remainder": remainder,
         "n_valid_trend": int(trend_valid.size),
-        "dropped_nonfinite": int(dropped),
+        # Non-finite input raises above (never silently dropped), so this is
+        # structurally 0 — kept in the return shape for callers.
+        "dropped_nonfinite": 0,
         "method": "classical_centered_ma_decomposition",
         "disclosures": disclosures,
         "reference": "makridakis1998（classical decomposition；非 STL）",

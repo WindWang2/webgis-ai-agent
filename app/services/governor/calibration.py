@@ -80,19 +80,24 @@ class CalibrationStore:
     def record(self, tool_key: str, dim: Dimension,
                expected: float, actual: float) -> None:
         """记一个 (expected, actual) 样本（非法值静默丢弃）。"""
+        self._record(tool_key, dim, expected, actual)
+
+    def _record(self, tool_key: str, dim: Dimension,
+                expected: float, actual: float) -> bool:
+        """record 的实现；返回样本是否真的入账（满员/非法值 → False）。"""
         key = str(tool_key or "")[:MAX_KEY_LEN]
         if not key or expected is None or actual is None:
-            return
+            return False
         try:
             expected = float(expected)
             actual = float(actual)
         except (TypeError, ValueError):
-            return
+            return False
         if expected <= 0 or actual < 0:
-            return
+            return False
         if not (math.isfinite(expected) and math.isfinite(actual)):
             # NaN 已被上两行排除；inf 拒收（比值统计与 JSON 序列化都不容它）
-            return
+            return False
         with self._lock:
             dims = self._keys.get(key)
             if dims is None:
@@ -100,9 +105,10 @@ class CalibrationStore:
                     # 简单准入控制：满员时拒绝新键（已有键继续滚动）——
                     # 驱逐策略会把"最久未见"的键清掉，但校准面宁可保守：
                     # 新工具的漂移由 Prometheus 直方图兜底观测。
-                    return
+                    return False
                 dims = self._keys[key] = {}
             dims.setdefault(dim.value, _DimSamples()).add(expected, actual)
+        return True
 
     def record_usage(self, tool_key: str, usage: ResourceUsage,
                      estimate: Optional[ResourceEstimate]) -> int:
@@ -127,8 +133,8 @@ class CalibrationStore:
             if not dv.is_meaningful():
                 continue
             expected = dv.adjudged(dim=dim)
-            self.record(tool_key, dim, expected, actual)
-            recorded += 1
+            if self._record(tool_key, dim, expected, actual):
+                recorded += 1
         return recorded
 
     def stats(self, tool_key: Optional[str] = None) -> Dict[str, Dict]:

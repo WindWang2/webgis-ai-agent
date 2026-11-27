@@ -41,6 +41,17 @@ def test_cue_projection_per_scenario(entry):
             f"expect {expected!r}, got {got!r}")
 
 
+def test_intent_scenarios_isolated_from_caller_mutation():
+    """调用方改返回 entry 的内层 dict/list 不得污染模块级语料。"""
+    first = intent_scenarios()
+    first[0]["expected_cues"]["analysis_goals"].append("polluted")
+    first[0]["chain"]["cue"] = "polluted"
+    second = intent_scenarios()
+    assert second[0]["expected_cues"]["analysis_goals"] == []
+    assert second[0]["chain"]["cue"] == "now"
+    assert "s01" not in gap_summary().get("cue", [])
+
+
 def test_cues_deterministic():
     for entry in SCENARIOS:
         a = extract_scene3d_cues(entry["utterance"])

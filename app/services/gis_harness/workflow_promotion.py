@@ -138,13 +138,24 @@ def _bounded_intent(intent: Any) -> Dict[str, Any]:
     """Intent dump for recipe metadata (bounded depth — evidence, not payload)."""
     if not isinstance(intent, dict):
         return {}
-    try:
-        import json
 
-        loaded = json.loads(json.dumps(intent, ensure_ascii=False, default=str))
-    except Exception:  # noqa: BLE001
-        return {}
-    return loaded if isinstance(loaded, dict) else {}
+    def _walk(value: Any, depth: int) -> Any:
+        if depth >= _MAX_METADATA_INTENT_DEPTH:
+            return "…" if value not in (None, "", {}, []) else value
+        if isinstance(value, dict):
+            return {
+                str(k)[:64]: _walk(v, depth + 1)
+                for k, v in list(value.items())[:48]
+            }
+        if isinstance(value, (list, tuple)):
+            return [_walk(v, depth + 1) for v in list(value)[:48]]
+        if isinstance(value, str):
+            return value[:512]
+        if isinstance(value, bool) or value is None or isinstance(value, (int, float)):
+            return value
+        return str(value)[:64]
+
+    return _walk(intent, 0)
 
 
 def build_recipe_metadata(gis_chapter: Dict[str, Any]) -> Dict[str, Any]:
@@ -206,6 +217,20 @@ def promotion_blockers(gis_chapter: Dict[str, Any]) -> List[str]:
     return blockers
 
 
+def _unique_capability_count(chapter: Dict[str, Any]) -> int:
+    """章节里的唯一 capability 行数（与 build_recipe_steps 的去重口径一致）。"""
+    caps = set()
+    for row in list(chapter.get("data_requirements") or []) + list(
+        chapter.get("analysis_steps") or []
+    ):
+        if not isinstance(row, dict):
+            continue
+        cap = str(row.get("capability") or "").strip()
+        if cap:
+            caps.add(cap)
+    return len(caps)
+
+
 def build_workflow_recipe(
     gis_chapter: Dict[str, Any],
     *,
@@ -216,13 +241,18 @@ def build_workflow_recipe(
     """Successful SessionPlan chapter → WorkflowCreate (deterministic).
 
     Returns (recipe, blockers). recipe is None when the plan is not promotable
-    (see :func:`promotion_blockers`) or has no capability rows at all.
+    (see :func:`promotion_blockers`), is truncated at ``_MAX_STEPS``, or has no
+    capability rows at all.
     """
     chapter = gis_chapter or {}
     blockers = promotion_blockers(chapter)
     steps = build_recipe_steps(chapter)
     if blockers:
         return None, blockers
+    if _unique_capability_count(chapter) > _MAX_STEPS:
+        # 被 _MAX_STEPS 截断的配方不是完整晋升：诚实拒绝（blocker），而不是
+        # 把 64 步的残片当作全量配方返回。
+        return None, ["plan_truncated"]
     if not steps:
         return None, ["no_capability_rows"]
     metadata = build_recipe_metadata(chapter)

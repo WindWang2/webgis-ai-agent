@@ -166,6 +166,39 @@ async def test_tool_create_and_dispatch_roundtrip(registry, tmp_path, monkeypatc
         reset_filesystem_blob_store()
 
 
+async def test_tool_create_defaults_to_draft(registry, tmp_path, monkeypatch):
+    """未显式传 submit → 草稿（参数描述 default false = draft）。"""
+    from app.services.session_data import session_data_manager
+
+    s = f"sess-tool-{uuid.uuid4().hex[:8]}"
+    ref = await session_data_manager.store(s, SCHOOLS, prefix="geojson")
+
+    from app.services.feature_proposals import store as fp_store
+    from app.services.durable_blob_store import reset_filesystem_blob_store
+
+    st = fp_store.ProposalStore(base_dir=tmp_path)
+    monkeypatch.setattr("app.services.feature_proposals.service.proposal_store", st)
+    from app.services import project_artifact_promotion as pap
+
+    monkeypatch.setattr(pap, "content_store_root", lambda: tmp_path / "blobs")
+    reset_filesystem_blob_store()
+    try:
+        result = await registry.dispatch(
+            "vector_change_proposal_create",
+            {
+                "ref_id": ref,
+                "ops": [
+                    {"op": "set_fields", "wfids": ["s0"], "fields": {"capacity": 322}},
+                ],
+            },
+            session_id=s,
+        )
+        assert result.get("success") is True, result
+        assert result["status"] == "draft"
+    finally:
+        reset_filesystem_blob_store()
+
+
 async def test_tool_list_missing_session(registry):
     result = await registry.dispatch(
         "vector_change_proposal_list", {}, session_id=None,

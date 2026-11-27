@@ -140,10 +140,12 @@ export function collectRefsFromValue(value: unknown, seen = new Set<unknown>()):
 /**
  * 章节产物归属：消息文本提及的 ref 归该章节；mapstate（会话终态 mapspec）
  * 里剩余的 ref 追加到最后一个可见章节（产物附录），不丢任何产物。
+ * visibleChapterIds 为显示序的可见章节 id；缺省（旧调用）按派生序末章兜底。
  */
 export function assignChapterArtifacts(
   messages: Array<{ role: string; content: string }>,
   mapState: SessionMapState | null,
+  visibleChapterIds?: string[],
 ): Record<string, string[]> {
   const byChapter: Record<string, string[]> = {};
   const claimed = new Set<string>();
@@ -156,7 +158,10 @@ export function assignChapterArtifacts(
   });
   const rest = collectRefsFromValue(mapState).filter((r) => !claimed.has(r));
   if (rest.length && messages.length > 0) {
-    const last = chapterIdFor(messages.length - 1);
+    const fallback = chapterIdFor(messages.length - 1);
+    const last = visibleChapterIds?.length
+      ? visibleChapterIds[visibleChapterIds.length - 1]
+      : fallback;
     byChapter[last] = [...(byChapter[last] ?? []), ...rest];
   }
   return byChapter;

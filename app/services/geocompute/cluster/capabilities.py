@@ -185,8 +185,8 @@ def probe_capability() -> WorkerCapabilityProfile:
         try:
             mod = __import__(module)
             backends[name] = str(getattr(mod, "__version__", "") or "")
-            if backends[name]:
-                capabilities.append(name)
+            # import 成功即能力可用；版本号只是事实披露（缺失 ≠ 不可用）。
+            capabilities.append(name)
         except Exception:  # noqa: BLE001 - 未安装是事实不是错误
             backends[name] = ""
     gpu_cards = _probe_gpu_cards()

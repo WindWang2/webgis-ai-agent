@@ -180,7 +180,8 @@ def plan_acquisition(
         if not role:
             continue
         status = str(getattr(r, "status", "") or
-                     (r.get("status") if isinstance(r, dict) else "unresolved"))
+                     (r.get("status") if isinstance(r, dict) else "unresolved")
+                     or "unresolved")
         acquisition = str(getattr(r, "acquisition", "") or
                           (r.get("acquisition") if isinstance(r, dict) else "local")
                           or "local")

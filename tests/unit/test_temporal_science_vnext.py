@@ -239,7 +239,10 @@ def test_analyze_trend_method_branches():
     assert mk.trend_method == "mann_kendall"
     sig = mk.significance_evidence[0]
     assert sig["target"] == "mann_kendall"
-    assert sig["p_value"] == pytest.approx(mann_kendall(values)["p_value"], rel=1e-9)
+    # P3：证据块 p_value 经 StatisticalSignificance 字段级 6 位收敛 ——
+    # 与 mann_kendall 的全精度返回按 6 位口径对齐（此前证据块是全精度）。
+    assert sig["p_value"] == pytest.approx(
+        round(mann_kendall(values)["p_value"], 6), rel=1e-9)
     assert mk.direction == "increasing"
     # slope/intercept 等基类字段仍然在（Sen/OLS 同缺省路径计算）
     assert mk.slope == default.slope

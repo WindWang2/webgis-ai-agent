@@ -46,6 +46,12 @@ let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let inflight = false;
 let dirtyAfterInflight = false;
 let rebaseAttempts = 0;
+/**
+ * 会话代次：notifyWorkbenchSessionChanged / stopWorkbenchPersistence 每次
+ * 递增。提交在飞期间捕获，响应回来时复查 —— 迟到响应（旧会话的提交结果）
+ * 整体作废，不写基线、不水合、不广播、不 rebase（R1-M5 会话切换竞态）。
+ */
+let sessionEpoch = 0;
 let unsubscribe: (() => void) | null = null;
 let oversizeToastShown = false;
 
@@ -83,6 +89,8 @@ function currentDocJson(): string {
 /** 会话切换时调用（恢复流程）：重置武装门，此前排队的防抖提交全部作废。 */
 export function notifyWorkbenchSessionChanged(sessionId: string | null): void {
   targetSessionId = sessionId;
+  // 会话代次递增：在途提交的响应回来时按此作废（不得写进新会话）。
+  sessionEpoch += 1;
   armed = false;
   lastCommittedJson = '';
   lastWorkbenchRevision = -1;
@@ -185,6 +193,9 @@ async function commitNow(): Promise<void> {
   }
   const { sessionId } = getMapSpecSessionCursor();
   if (!sessionId || sessionId !== targetSessionId) return;
+  // 提交身份（会话代次）：响应回来时复查 —— 切换过会话即作废（见
+  // handleCommitResult）。
+  const commitEpoch = sessionEpoch;
   const s = useHudStore.getState();
   const doc: WorkbenchDocV5 = buildWorkbenchDoc(s);
   const json = JSON.stringify(doc);
@@ -223,7 +234,7 @@ async function commitNow(): Promise<void> {
         intent: 'patch_workbench_delta',
         delta,
       } as never);
-      const handled = handleCommitResult(result, doc, json, delta);
+      const handled = handleCommitResult(result, doc, json, delta, commitEpoch);
       if (handled) return;
     }
 
@@ -233,7 +244,7 @@ async function commitNow(): Promise<void> {
       doc,
       ...(lastWorkbenchRevision >= 0 ? { base_workbench_revision: lastWorkbenchRevision } : {}),
     } as never);
-    handleCommitResult(result, doc, json, null);
+    handleCommitResult(result, doc, json, null, commitEpoch);
   } catch (err) {
     // 其它错误保脏，由下一次组织态编辑或恢复重试驱动，不打断用户。
     devOnly.warn('[workbench-persist] commit failed (kept dirty):', err);
@@ -251,6 +262,9 @@ async function commitNow(): Promise<void> {
  * - 成功：写基线 + workbench CAS 锚点 + BC 广播（同浏览器快路径保留）；
  * - 409 superseded：回灌服务端真相 → 在飞 delta 于服务端 doc 上重放一次
  *   （bounded 单次 rebase，R1-M5）；再冲突 → 显式冲突态。
+ * `commitEpoch` = 提交发出时的会话代次；与会话当前代次不同 = 提交在飞期间
+ * 发生了会话切换，该响应属于旧会话 —— 整体作废（否则旧会话服务端 doc 会被
+ * 水合进新会话 store，rebase 也会把旧会话编辑提交进新会话）。
  * 返回 true = 已处理（含回灌后的重提交排程），调用方不再走全量路径。
  */
 function handleCommitResult(
@@ -258,7 +272,9 @@ function handleCommitResult(
   localDoc: WorkbenchDocV5,
   localJson: string,
   inflightDelta: WorkbenchDelta | null,
+  commitEpoch: number,
 ): boolean {
+  if (commitEpoch !== sessionEpoch) return true; // 迟到响应（旧会话）：丢弃
   const asRecord = result as
     | { status?: string; mutation_revision?: number; mapspec?: Record<string, unknown> }
     | undefined;
@@ -285,16 +301,21 @@ function handleCommitResult(
       lastCommittedJson = currentDocJson();
       lastWorkbenchRevision = serverRev;
       // bounded 单次 rebase：在飞编辑集在服务端 doc 上重放 → 重新提交。
-      // delta 通道用其自身在飞 delta；全量通道用「本地脏态 vs 服务端 doc」
-      // 的结构化 diff（R1-M4 —— 全量 409 不再静默丢弃本地编辑）。
-      let rebaseCandidate = inflightDelta;
-      if (rebaseCandidate == null && localDirty != null) {
+      // 在飞编辑集取「本地脏态 vs 服务端 doc」的结构化 diff（R1-M4）——
+      // 本地脏态含**提交在飞期间**用户的新编辑，而上面的
+      // hydrateWorkbenchDoc(serverDoc) 已把 store 覆盖；只用 inflightDelta
+      // 重放会把这些新编辑静默丢掉（delta 通道曾只认自己的在飞 delta，
+      // 全量通道一直用 localDirty 所以不丢）。delta 不可表达（mode 变更/
+      // 超限/引用非法）→ 回退在飞 delta（保持原回退语义）。
+      let rebaseCandidate: WorkbenchDelta | null = null;
+      if (localDirty != null) {
         try {
           rebaseCandidate = diffWorkbenchDocs(serverDoc, localDirty);
         } catch {
           rebaseCandidate = null;
         }
       }
+      if (rebaseCandidate == null) rebaseCandidate = inflightDelta;
       if (rebaseCandidate != null && rebaseAttempts < 1) {
         rebaseAttempts += 1;
         try {
@@ -407,6 +428,8 @@ export function stopWorkbenchPersistence(): void {
   dirtyAfterInflight = false;
   oversizeToastShown = false;
   rebaseAttempts = 0;
+  // 代次递增：拆卸后回来的提交响应同样按迟到作废。
+  sessionEpoch += 1;
   stopWorkbenchCollab();
 }
 

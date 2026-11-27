@@ -336,8 +336,10 @@ def derive_legend_items(legend_spec: Any) -> Optional[Dict[str, Any]]:
         return _finish("categorical")
 
     if spec_type == "graduated":
-        breaks = spec.get("breaks") or []
-        colors = spec.get("palette_colors") or []
+        breaks = spec.get("breaks")
+        breaks = breaks if isinstance(breaks, list) else []
+        colors = spec.get("palette_colors")
+        colors = colors if isinstance(colors, list) else []
         # breaks 不预过滤（R1-Min6：与 TS 同口径 —— 非数值在标签层折为 "—"）
         n = min(max(len(breaks) - 1, 0), len(colors))
         labels = spec.get("labels")

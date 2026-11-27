@@ -107,10 +107,14 @@ def _parse_declared_crs(geojson_data: Dict[str, Any]) -> Optional[str]:
         return None
     crs_member = geojson_data.get("crs")
     if isinstance(crs_member, dict):
-        props = crs_member.get("properties") or {}
-        name = props.get("name") or props.get("code")
-        if name:
-            return str(name)
+        props = crs_member.get("properties")
+        # 畸形 crs 成员（properties 为非 dict 真值，如字符串）按无声明处理，
+        # 绝不让 .get 抛 AttributeError 打穿门禁（evaluate_quality_gate 对
+        # 用户提交的 GeoJSON 直接调用本函数）。
+        if isinstance(props, dict):
+            name = props.get("name") or props.get("code")
+            if name:
+                return str(name)
     return None
 
 

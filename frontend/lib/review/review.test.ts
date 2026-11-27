@@ -8,6 +8,7 @@ import {
   reviewSetDetail,
   reviewSetMergeOutcome,
   reviewSetProposals,
+  reviewResetForSession,
   reviewSetSelected,
   reviewSetSession,
   reviewSetStatus,
@@ -64,6 +65,59 @@ describe('review store', () => {
     expect(live.status).toBe('ready');
     expect(live.proposals).toHaveLength(1);
     expect(live.proposals[0].proposal_id).toBe('rp_live');
+  });
+
+  it('reset 后、setSession 前：旧会话迟到列表响应被丢弃（不重填已重置 store）', () => {
+    // review P3：reviewResetForSession 之后、reviewSetSession 之前，store.sessionId
+    // 为 null，旧 stale 守卫全部失效 —— 旧会话迟到的列表响应会重新填充已重置的
+    // store，造成跨会话数据串显。
+    reviewSetSession('s1');
+    reviewResetForSession();
+    reviewSetProposals('s1', [
+      {
+        proposal_id: 'rp_stale', title: 'stale', status: 'submitted', risk: 'low',
+        base_revision: 1, author: { actor_id: 'u1', actor_kind: 'user', role: 'editor' },
+        updated_at: '2026-09-17T00:00:00+00:00',
+      },
+    ]);
+    const stale = getReviewState();
+    expect(stale.sessionId).toBeNull();
+    expect(stale.proposals).toHaveLength(0);
+    expect(stale.status).toBe('idle');
+
+    // 重新绑定新会话后写入面恢复正常（守卫不误伤后续轮次）。
+    reviewSetSession('s2');
+    reviewSetProposals('s2', [
+      {
+        proposal_id: 'rp_live', title: 'live', status: 'submitted', risk: 'low',
+        base_revision: 1, author: { actor_id: 'u1', actor_kind: 'user', role: 'editor' },
+        updated_at: '2026-09-17T00:00:00+00:00',
+      },
+    ]);
+    const live = getReviewState();
+    expect(live.sessionId).toBe('s2');
+    expect(live.status).toBe('ready');
+    expect(live.proposals).toHaveLength(1);
+    expect(live.proposals[0].proposal_id).toBe('rp_live');
+  });
+
+  it('reset 后、setSession 前：旧会话迟到详情响应被丢弃', () => {
+    // review P3：同一空窗内详情路径（selectedId 守卫）同样失效，旧详情不得
+    // 重新填充已重置的 store。
+    reviewSetSession('s1');
+    reviewSetSelected('rp_1');
+    reviewResetForSession();
+    reviewSetDetail({
+      proposal: { proposal_id: 'rp_1', title: 'stale' },
+      anchor_states: { rc_1: 'stale' },
+      conflict: false,
+      current_revision: 9,
+      base_revision: 7,
+      policy: { snapshot: {}, satisfied: false, counted_approvals: 0, blocking_reasons: ['x'] },
+    });
+    const s = getReviewState();
+    expect(s.detail).toBeNull();
+    expect(s.selectedId).toBeNull();
   });
 
   it('selected + detail + merge outcome 投影', () => {

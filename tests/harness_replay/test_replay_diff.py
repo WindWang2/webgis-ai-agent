@@ -199,3 +199,24 @@ class TestCliDiff:
             capture_output=True, text=True, timeout=300, cwd=str(repo))
         assert drifted.returncode == 1, drifted.stderr[-500:]
         assert "differential replay" in drifted.stderr
+
+    def test_cli_diff_unreadable_report_exits_2(self, tmp_path):
+        """--diff 指向不存在 / 非法 JSON → 约定退出码 2，不得裸 traceback。"""
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        repo = Path(__file__).resolve().parents[2]
+        missing = tmp_path / "absent.json"
+        invalid = tmp_path / "invalid.json"
+        invalid.write_text("{not json", encoding="utf-8")
+
+        for path in (missing, invalid):
+            proc = subprocess.run(
+                [sys.executable, str(repo / "scripts/replay_bench.py"),
+                 "--suite", "all", "--limit", "1", "--seed", "0",
+                 "--diff", str(path)],
+                capture_output=True, text=True, timeout=300, cwd=str(repo))
+            assert proc.returncode == 2, proc.stderr[-500:]
+            assert "Traceback" not in proc.stderr
+            assert f"cannot read --diff report {path}" in proc.stderr

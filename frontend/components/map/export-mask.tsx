@@ -5,7 +5,6 @@ import { useMemo, useEffect, useState, useRef } from 'react';
 export function ExportMask() {
   const t = useT();
   const settings = useHudStore(s => s.exportSettings);
-  const isDark = useHudStore(s => s.theme === 'dark');
   const [containerSize, setContainerSize] = useState({ w: 0, h: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -62,7 +61,7 @@ export function ExportMask() {
            此处再画一份会与 spec 标题重复且可能陈旧（Studio 曾与 Agent 各写一份）。 */}
        {/* Preview Watermark */}
        {settings.showWatermark && (
-         <div className="absolute bottom-4 right-4 pointer-events-none opacity-50 text-sm font-mono font-bold" style={{ color: isDark ? 'var(--text-primary)' : 'var(--text-primary)' }}>
+         <div className="absolute bottom-4 right-4 pointer-events-none opacity-50 text-sm font-mono font-bold" style={{ color: 'var(--text-primary)' }}>
            {t('map.export.generatedBy')}
          </div>
        )}

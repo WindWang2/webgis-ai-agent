@@ -1201,7 +1201,10 @@ async def _apply_tool_result_unlocked(
         # 元数据的 sha256[:16]），不存任何材料；续跑/replay 时比对当前
         # presence，失配即 stale（session_plan_credential_drift 披露归因）。
         gis["credential_presence_fingerprint"] = _credential_presence_fingerprint()
-        query = str(gis.get("query") or (raw.get("intent") or {}).get("query") or "")
+        _intent_payload = raw.get("intent")
+        if not isinstance(_intent_payload, dict):
+            _intent_payload = {}
+        query = str(gis.get("query") or _intent_payload.get("query") or "")
         new_key = goal_key(gis, query)
         old_key = goal_key(plan.gis_chapter, plan.user_goal)
         if plan.gis_chapter and old_key and new_key and old_key != new_key:
@@ -1242,7 +1245,12 @@ async def _apply_tool_result_unlocked(
             )
             if lock is not None and lock.lost:
                 return [], None
-            await save_session_plan(new, store=backend)
+            if not await save_session_plan(new, store=backend):
+                logger.error(
+                    "[SessionPlan] supersede persist rejected session=%s",
+                    session_id,
+                )
+                return [], None
             events.append(_superseded_event(old, new))
             events.append(_updated_event(new))
             return events, facts
@@ -1265,13 +1273,20 @@ async def _apply_tool_result_unlocked(
         plan.replaced = replaced
         if lock is not None and lock.lost:
             return [], None
-        await save_session_plan(plan, store=backend)
+        if not await save_session_plan(plan, store=backend):
+            logger.error(
+                "[SessionPlan] replace persist rejected session=%s",
+                session_id,
+            )
+            return [], None
         events.append(_updated_event(plan))
         return events, facts
 
     if tool_name == "webgis_map_product" and plan.gis_chapter is not None:
         merge_map_product_result(plan.gis_chapter, raw)
-        evidence = raw.get("map_product_evidence") or {}
+        evidence = raw.get("map_product_evidence")
+        if not isinstance(evidence, dict):
+            evidence = {}
         resolution = evidence.get("capability_resolution") or []
         done_caps = [
             str(item.get("capability"))
@@ -1287,7 +1302,12 @@ async def _apply_tool_result_unlocked(
         )
         if lock is not None and lock.lost:
             return [], None
-        await save_session_plan(plan, store=backend)
+        if not await save_session_plan(plan, store=backend):
+            logger.error(
+                "[SessionPlan] product persist rejected session=%s",
+                session_id,
+            )
+            return [], None
         events.append(_updated_event(plan))
         events.extend(_progress_event(plan, row) for row in changed)
         return events, None
@@ -1298,7 +1318,12 @@ async def _apply_tool_result_unlocked(
         merge_product_edit_result(plan.gis_chapter, raw)
         if lock is not None and lock.lost:
             return [], None
-        await save_session_plan(plan, store=backend)
+        if not await save_session_plan(plan, store=backend):
+            logger.error(
+                "[SessionPlan] product edit persist rejected session=%s",
+                session_id,
+            )
+            return [], None
         events.append(_updated_event(plan))
         return events, None
 
@@ -1310,7 +1335,14 @@ async def _apply_tool_result_unlocked(
     from app.services.session_data_protocol import is_unavailable_ref
     if is_unavailable_ref(geojson_ref):
         changed = _mark_progress(plan, hits, status="failed")
-        await save_session_plan(plan, store=backend)
+        if lock is not None and lock.lost:
+            return [], None
+        if not await save_session_plan(plan, store=backend):
+            logger.error(
+                "[SessionPlan] failed-ref persist rejected session=%s",
+                session_id,
+            )
+            return [], None
         return [_progress_event(plan, row) for row in changed], None
     changed = _mark_progress(
         plan, hits, status="complete", bound_ref=geojson_ref or ""
@@ -1319,7 +1351,12 @@ async def _apply_tool_result_unlocked(
         return [], None
     if lock is not None and lock.lost:
         return [], None
-    await save_session_plan(plan, store=backend)
+    if not await save_session_plan(plan, store=backend):
+        logger.error(
+            "[SessionPlan] progress persist rejected session=%s",
+            session_id,
+        )
+        return [], None
     # P1（ADR-0082）：成功绑定 ref 的能力行同步注册产物记录 —— capability/
     # tool/血缘上下文在此最完整（dispatch seam 只登记 ref 本身）。锁内
     # 直通（lock 透传跳过重取，避免非重入自锁）；失败降级为日志。

@@ -248,6 +248,43 @@ def test_clone_artifact_is_pointer_not_copy(db, tmp_path, monkeypatch):
         ) is None
 
 
+def test_clone_legacy_artifact_records_content_byte_size(db):
+    from app.models.project import Artifact
+    from app.services.artifact_revisions import (
+        clone_artifact,
+        head_revision,
+        project_quota_usage,
+    )
+
+    project_id = f"proj_{uuid.uuid4().hex[:8]}"
+    _mk_project(project_id)
+    art_id = f"art_{uuid.uuid4().hex[:8]}"
+    _mk_artifact(project_id, art_id)
+    sha = "2" * 64
+    with SessionLocal() as s:
+        art = s.get(Artifact, art_id)
+        art.metadata_json = {
+            "content_status": "promoted",
+            "content_location": "2222/" + "2" * 60 + ".json",
+            "content_payload_sha256": sha,
+            "content_summary": {"payload_bytes": 321},
+        }  # legacy promoted row: metadata head only, no revision row
+        s.commit()
+        before = project_quota_usage(s, project_id)
+        assert before["bytes"] == 321
+        clone = clone_artifact(
+            s, project_id=project_id, artifact_id=art_id, user_id="u_rev",
+        )
+        assert clone is not None
+        assert head_revision(s, clone.id).byte_size == 321
+
+    with SessionLocal() as s:
+        after = project_quota_usage(s, project_id)
+    assert after["revision_bytes"] == before["revision_bytes"] + 321
+    assert after["revision_bytes_by_artifact"][clone.id] == 321
+    assert after["max_per_artifact_revision_bytes"] == 321
+
+
 # ── round-1 review fixes：并发冲突路径（expunge 崩溃 / revision_no 撞号）──
 
 

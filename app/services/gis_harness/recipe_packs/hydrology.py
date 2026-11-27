@@ -6,6 +6,7 @@ from typing import List
 from app.services.gis_harness.recipe_packs._kit import (
     MAP_COMPONENTS_CONTINUOUS,
     boundary_role,
+    denominator_role,
     elevation_role,
     fb,
     obl,
@@ -145,7 +146,10 @@ _RECIPES: List[CartographyRecipe] = [
             "hydrology", "drainage_density",
             zh=["排水密度", "河网密度", "水系密度"],
             en=["drainage density"],
-            roles=[elevation_role(), boundary_role()],
+            # denominator_role 必须与 DATA_ROLE_MISSING_DENOMINATOR 回退
+            # 成对：缺 denominator 角色时该回退永不触发，缺分母仍按密度出图
+            # （本包其余回退均成对声明）。
+            roles=[elevation_role(), boundary_role(), denominator_role()],
             obligations=[
                 *HYDRO_OBLIGATIONS,
                 obl("drainage_density_denominator", "denominator",

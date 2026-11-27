@@ -17,6 +17,7 @@ local_file 同纪律——未声明即 typed unavailable，不做通配抓取）
 """
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import time
@@ -83,7 +84,9 @@ class GeojsonUrlAdapter(GeospatialDataSourceAdapter):
     def _fetch_fc(self) -> Dict[str, Any]:
         now = time.monotonic()
         if self._cache and (now - self._cache[0]) < _FETCH_CACHE_TTL:
-            return self._cache[1]
+            # 深拷贝：调用方（preview/query）可能原地改 properties；共享
+            # 缓存对象会被污染，影响 TTL 内后续读取。
+            return copy.deepcopy(self._cache[1])
         if not self.url:
             raise SourceUnreachableError(
                 "geojson_url source has no URL declared",
@@ -162,7 +165,7 @@ class GeojsonUrlAdapter(GeospatialDataSourceAdapter):
                 raise SourceBadResponseError(
                     "geojson url FeatureCollection has no features array")
             self._cache = (now, doc)
-            return doc
+            return copy.deepcopy(doc)
         finally:
             resp.close()
 
@@ -261,10 +264,30 @@ class GeojsonUrlAdapter(GeospatialDataSourceAdapter):
         )
 
     def health(self) -> DataFabricHealth:
-        reachable = self.probe()
+        """可达性健康检查：只读响应头，绝不为了探活下载整个 GeoJSON。"""
+        if not self.url:
+            return DataFabricHealth(
+                status="unhealthy",
+                message="remote GeoJSON source has no URL declared",
+            )
+        try:
+            resp = self.session.get(
+                self.url, timeout=query_timeout(), stream=True,
+            )
+            try:
+                reachable = resp.status_code < 400
+                message = (
+                    "remote GeoJSON reachable" if reachable
+                    else f"remote GeoJSON returned HTTP {resp.status_code}"
+                )
+            finally:
+                resp.close()
+        except Exception as e:  # noqa: BLE001 — health reports, never raises
+            reachable = False
+            message = f"remote GeoJSON unreachable: {e}"
         return DataFabricHealth(
             status="healthy" if reachable else "unhealthy",
-            message="remote GeoJSON reachable" if reachable else "unreachable",
+            message=message,
         )
 
 

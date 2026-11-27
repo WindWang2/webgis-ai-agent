@@ -504,7 +504,6 @@ def bind_procedure_to_plan(
                 sb = by_step.get(sid)
                 if sb is not None and dec.node_id not in sb.conditional_on:
                     sb.conditional_on.append(dec.node_id)
-                    sb.conditional_on = sb.conditional_on[:4]
 
     required_absent = [
         s.step_id for s in steps

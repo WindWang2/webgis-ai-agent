@@ -69,6 +69,7 @@ export function DataDeliveryDialog({
   projectId,
 }: DataDeliveryDialogProps) {
   const t = useT('dataDelivery');
+  const tCommon = useT('common');
   const addToast = useToastStore((s) => s.addToast);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   useDialogFocus({ open, containerRef: dialogRef, onEscape: onClose });
@@ -139,14 +140,18 @@ export function DataDeliveryDialog({
           if (signal.aborted) return null;
           setJob(view);
           if (TERMINAL.has(view.status)) return view;
-        } catch {
+        } catch (e) {
+          if (signal.aborted) return null;
+          // 轮询失败不能静默：任务已提交到服务端，必须告知用户去历史/任务中心查看。
+          const msg = e instanceof Error ? e.message : String(e);
+          addToast(`${t('submitted')} · ${tCommon('operationFailed')}: ${msg}`, 'error');
           return null;
         }
         await new Promise((r) => setTimeout(r, 1200));
       }
       return null;
     },
-    [],
+    [addToast, t, tCommon],
   );
 
   const submit = useCallback(async () => {
@@ -206,6 +211,15 @@ export function DataDeliveryDialog({
       setJob(null);
     }
   }, [open, source]);
+
+  // 格式/CRS/精度等任何影响 spec 的配置变更后，旧预览立即失效（并作废在飞
+  // 响应）：否则 submit 会用新 spec 搭配旧预览的 required_acknowledgments，
+  // 漏采阻断项与损失确认。
+  useEffect(() => {
+    epochRef.current += 1;
+    setPreview(null);
+    setPreviewing(false);
+  }, [format, targetCrs, allowUnknownCrs, precision, grouping, spreadsheetSafe]);
 
   if (!open || !source) return null;
 
@@ -283,7 +297,12 @@ export function DataDeliveryDialog({
               <input
                 value={precision}
                 placeholder={t('precisionHint')}
-                onChange={(e) => setPrecision(e.target.value)}
+                onChange={(e) => {
+                  // 只接受非负整数：非数字进入 spec 会让 Number() 产 NaN，
+                  // JSON 序列化为 null 后静默丢失 coordinate_precision。
+                  const raw = e.target.value;
+                  if (raw === '' || /^\d+$/.test(raw)) setPrecision(raw);
+                }}
                 inputMode="numeric"
                 className="w-full rounded-sm border border-edge-subtle bg-surface-raised px-2 py-1.5 text-body text-ink"
               />

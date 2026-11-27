@@ -115,3 +115,21 @@ def test_chart_kind_registry_honesty():
 
 def test_validate_design_system_clean():
     assert validate_design_system() == []
+
+
+def test_chart_state_machine_any_state_hides_and_dock_anchor_roundtrip():
+    """P2：任何态可直接隐藏；floating/docked/anchored 三态互转（含 anchored→docked）。
+
+    AGENT_CHART_OPERATIONS["close"] 空前置 = 任意态 → hidden，故
+    visible 态 close 不得被判非法。
+    """
+    from app.lib.cartography.chart_kinds import AGENT_CHART_OPERATIONS
+
+    assert can_transition("visible", "hidden")
+    assert AGENT_CHART_OPERATIONS["close"] == []  # 任意态 → hidden
+    assert can_transition("anchored", "docked")
+    assert can_transition("docked", "anchored")
+    # 任何**在场**态可直接折叠/隐藏（hidden 是终态：只能经 visible 回场）
+    for state in CHART_STATES - {"hidden"}:
+        assert can_transition(state, "collapsed"), state
+        assert can_transition(state, "hidden"), state

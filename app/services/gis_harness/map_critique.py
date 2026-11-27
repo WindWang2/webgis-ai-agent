@@ -58,9 +58,17 @@ _LABEL_COLLISION_KEYS: Tuple[str, ...] = (
 
 
 def _spec_components(mapspec: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """spec 组件面：canonical 形态在 ``layout.components``（MapSpecLayoutConfig；
+    与 tools_component/product_graph/runtime_bridge 同读径）。顶层
+    ``components`` 键只作手工/旧载荷兼容回落 —— 只读顶层会让真实 spec 的
+    出版组件恒判缺席（假阳性 warning + add_component 修复路由）。
+    """
     if not isinstance(mapspec, dict):
         return []
-    comps = mapspec.get("components")
+    layout = mapspec.get("layout")
+    comps = layout.get("components") if isinstance(layout, dict) else None
+    if comps is None:
+        comps = mapspec.get("components")
     return [c for c in (comps or []) if isinstance(c, dict)]
 
 
@@ -222,8 +230,8 @@ def check_publication_components(
     audit W6 点名的三件套，不重复别人的词表。"""
     if not _planned_layers(chapter):
         return []
-    if isinstance(mapspec, dict) and not _declares_publication_export(mapspec):
-        return []  # 交互-only 产品不做出版件要求（不对抗既有模板）
+    if not isinstance(mapspec, dict) or not _declares_publication_export(mapspec):
+        return []  # 无 spec / 交互-only 产品不做出版件要求（不对抗既有模板）
     present = _component_types(mapspec)
     findings: List[MapCompletionFinding] = []
     for comp_type in _PUBLICATION_COMPONENTS:

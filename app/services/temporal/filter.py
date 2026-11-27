@@ -7,7 +7,7 @@ or relative windows (e.g. 'last_7_days', 'past_3_months').
 import re
 import logging
 from datetime import datetime, timezone, timedelta
-from typing import Any, Optional, Union
+from typing import Any, List, Optional, Union
 
 from app.services.temporal.models import (
     TemporalFilter,
@@ -56,18 +56,25 @@ class TemporalFilterEngine:
         if m:
             val = int(m.group(2))
             unit = m.group(3)
-            if unit.startswith("hour"):
-                delta = timedelta(hours=val)
-            elif unit.startswith("day"):
-                delta = timedelta(days=val)
-            elif unit.startswith("week"):
-                delta = timedelta(weeks=val)
-            elif unit.startswith("month"):
-                delta = timedelta(days=val * 30)
-            elif unit.startswith("year"):
-                delta = timedelta(days=val * 365)
-            else:
-                delta = timedelta(days=val)
+            try:
+                if unit.startswith("hour"):
+                    delta = timedelta(hours=val)
+                elif unit.startswith("day"):
+                    delta = timedelta(days=val)
+                elif unit.startswith("week"):
+                    delta = timedelta(weeks=val)
+                elif unit.startswith("month"):
+                    delta = timedelta(days=val * 30)
+                elif unit.startswith("year"):
+                    delta = timedelta(days=val * 365)
+                else:
+                    delta = timedelta(days=val)
+            except OverflowError as exc:
+                # Unbounded N in last_<N>_<unit> overflowed timedelta instead
+                # of being rejected as an invalid window.
+                raise ValueError(
+                    f"Relative window is out of the supported timestamp range: '{window_str}'"
+                ) from exc
         else:
             # Fallbacks for standard presets
             if "24_hour" in clean_str or "1_day" in clean_str:
@@ -83,7 +90,13 @@ class TemporalFilterEngine:
             else:
                 raise ValueError(f"Unrecognized relative window format: '{window_str}'")
 
-        start_time = ref_time - delta
+        try:
+            start_time = ref_time - delta
+        except OverflowError as exc:
+            # delta may be representable while ref_time - delta is not.
+            raise ValueError(
+                f"Relative window is out of the supported timestamp range: '{window_str}'"
+            ) from exc
         return TimeInterval(
             start=TimeInstant.from_datetime(start_time),
             end=TimeInstant.from_datetime(ref_time),
@@ -128,6 +141,7 @@ class TemporalFilterEngine:
         # filter spec, then a discrete instant — in that precedence order.
         target_interval: Optional[TimeInterval] = None
         target_instant: Optional[TimeInstant] = None
+        target_values: List[TimeInstant] = []
 
         if relative_window:
             target_interval = self.parse_relative_window(relative_window, ref_time=ref_time)
@@ -166,10 +180,25 @@ class TemporalFilterEngine:
                     start=TimeInstant.from_datetime(datetime.min.replace(tzinfo=timezone.utc)),
                     end=end_inst, end_inclusive=not exclusive_end,
                 )
+            else:
+                # Neither supplied bound parsed: silently matching nothing
+                # (BETWEEN with no interval) must not be reported as success.
+                raise ValueError(
+                    f"temporal filter bounds could not be parsed: start={start!r}, end={end!r}"
+                )
         elif filter_spec:
             operator = filter_spec.operator
             target_instant = filter_spec.instant
             target_interval = filter_spec.interval
+            # A spec carrying only an instant (no interval) left the model's
+            # default BETWEEN with no range, so nothing ever matched. An
+            # instant is a discrete membership test.
+            if target_interval is None and target_instant is not None and operator in (
+                TemporalOperator.BETWEEN, TemporalOperator.IN_INTERVAL,
+            ):
+                operator = TemporalOperator.EQUALS
+            if filter_spec.values and target_interval is None and target_instant is None:
+                target_values = list(filter_spec.values)
         elif instant is not None:
             if not operator:
                 operator = TemporalOperator.EQUALS
@@ -202,7 +231,9 @@ class TemporalFilterEngine:
             t_epoch = inst.epoch_seconds
 
             match = False
-            if operator == TemporalOperator.EQUALS and target_instant:
+            if target_values:
+                match = any(abs(t_epoch - v.epoch_seconds) < 1.0 for v in target_values)
+            elif operator == TemporalOperator.EQUALS and target_instant:
                 match = abs(t_epoch - target_instant.epoch_seconds) < 1.0
             elif operator == TemporalOperator.BEFORE and target_instant:
                 match = t_epoch < target_instant.epoch_seconds

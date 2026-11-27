@@ -293,3 +293,87 @@ def test_determinism_invariant_to_current_dict_insertion_order():
     c_a = compile_plan(ir, current_a, base_revision=2)
     c_b = compile_plan(ir, current_b, base_revision=2)
     assert c_a.model_dump() == c_b.model_dump()
+
+
+# ── review P1：同层整层 upsert 与 presentation patch 的相位内次序 ──────
+
+@pytest.mark.cartography
+def test_merged_upsert_precedes_presentation_patch_same_layer():
+    """restyle 同时改分类数与可见性：整层 upsert 必须先于 presentation
+    patch —— upsert 载荷携带 current 呈现面（无 visibility），后发会把
+    patch 刚落定的可见性随整层替换一起回退。"""
+    ir = _ir(layer_intents=[LayerIntent(
+        intent_id="li-1", action="restyle", layer_id="pl-1", source_ref="ds:pop",
+        expected_visible=False,
+        blueprint=_blueprint(classification={"k": 6, "method": "quantile"}))])
+    current = {"sources": {"ds:pop": {}},
+               "layers": [{"id": "pl-1", "source": "ds:pop", "type": "fill",
+                           "visible": True,
+                           "paint": {"fill-color": "#333", "fill-opacity": 0.8},
+                           "legend_spec": {"classification": {"k": 5,
+                                                              "method": "quantile"}}}],
+               "layout": {}}
+    c = compile_plan(ir, current, base_revision=1)
+    assert [m.intent for m in c.mutations] == ["upsert_layer",
+                                               "patch_layer_presentation"]
+    assert c.mutations[1].payload == {"visible": False}
+    assert [m.step for m in c.mutations] == [1, 2]
+
+
+@pytest.mark.cartography
+def test_merged_upsert_precedes_presentation_patch_when_showing_layer():
+    """反向：现状隐藏、期望显示 —— patch（visible=True）同样必须后发，
+    否则 merged upsert 里的 current 隐藏形态把层按回去。"""
+    ir = _ir(layer_intents=[LayerIntent(
+        intent_id="li-1", action="restyle", layer_id="pl-1", source_ref="ds:pop",
+        expected_visible=True,
+        blueprint=_blueprint(classification={"k": 6, "method": "quantile"}))])
+    current = {"sources": {"ds:pop": {}},
+               "layers": [{"id": "pl-1", "source": "ds:pop", "type": "fill",
+                           "layout": {"visibility": "none"},
+                           "paint": {"fill-color": "#333", "fill-opacity": 0.8},
+                           "legend_spec": {"classification": {"k": 5,
+                                                              "method": "quantile"}}}],
+               "layout": {}}
+    c = compile_plan(ir, current, base_revision=1)
+    assert [m.intent for m in c.mutations] == ["upsert_layer",
+                                               "patch_layer_presentation"]
+    assert c.mutations[1].payload == {"visible": True}
+
+
+@pytest.mark.cartography
+def test_rebind_merged_upsert_precedes_presentation_patch():
+    """rebind 的 source 覆写 upsert 与可见性 patch 同层并存时的次序。"""
+    ir = _ir(layer_intents=[LayerIntent(
+        intent_id="li-1", action="rebind", layer_id="pl-1", source_ref="ds:new",
+        expected_visible=False)])
+    current = {"sources": {"ds:new": {}},
+               "layers": [{"id": "pl-1", "source": "ds:old", "type": "fill",
+                           "visible": True,
+                           "paint": {"fill-color": "#333"}}]}
+    c = compile_plan(ir, current, base_revision=1)
+    assert [m.intent for m in c.mutations] == ["upsert_layer",
+                                               "patch_layer_presentation"]
+    assert c.mutations[0].payload["layer"]["source"] == "ds:new"
+    assert c.mutations[1].payload == {"visible": False}
+
+
+@pytest.mark.cartography
+def test_merged_upsert_precedes_opacity_patch():
+    """透明度 patch 与 merged upsert 同层并存：upsert 先发，patch 落定
+    期望 opacity（整层替换回退透明度同理）。"""
+    ir = _ir(layer_intents=[LayerIntent(
+        intent_id="li-1", action="restyle", layer_id="pl-1", source_ref="ds:pop",
+        expected_opacity=0.3,
+        blueprint=_blueprint(classification={"k": 6, "method": "quantile"}))])
+    current = {"sources": {"ds:pop": {}},
+               "layers": [{"id": "pl-1", "source": "ds:pop", "type": "fill",
+                           "visible": True,
+                           "paint": {"fill-color": "#333", "fill-opacity": 0.8},
+                           "legend_spec": {"classification": {"k": 5,
+                                                              "method": "quantile"}}}],
+               "layout": {}}
+    c = compile_plan(ir, current, base_revision=1)
+    assert [m.intent for m in c.mutations] == ["upsert_layer",
+                                               "patch_layer_presentation"]
+    assert c.mutations[1].payload == {"opacity": 0.3}

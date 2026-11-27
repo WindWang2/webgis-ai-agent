@@ -125,6 +125,54 @@ class TestReceiptLifecycle:
         assert read["status"] == "submitted"
         assert read["disposition"] == "started"
 
+    async def test_concurrent_weaker_write_never_overwrites_submitted(self, db_env):
+        """review P2：monotonic 守卫必须原子 —— 若弱写者在强写者提交前读到
+        了 assembled，其写入也不得把已提交的 submitted 改写回 not_sent。"""
+        await store.record_assembly(
+            session_id="s1", turn_id="t1", assembly_mode="typed",
+            policy_version=0, digest="", payload={},
+        )
+
+        class _RacingSession:
+            """把竞争写者插入弱写者的「读取 → 提交」窗口内。"""
+
+            def __init__(self, inner, race):
+                self._inner = inner
+                self._race = race
+                self._fired = False
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+            async def _run_race(self):
+                if not self._fired:
+                    self._fired = True
+                    await self._race()
+
+            async def execute(self, statement, *args, **kwargs):
+                if getattr(statement, "is_update", False) or getattr(
+                    statement, "is_insert", False
+                ):
+                    await self._run_race()
+                return await self._inner.execute(statement, *args, **kwargs)
+
+            async def commit(self):
+                await self._run_race()
+                await self._inner.commit()
+
+        async with db_env() as raw:
+            racing = _RacingSession(
+                raw,
+                lambda: store.record_submitted("t1", disposition="started"),
+            )
+            weak_ok = await store.record_not_sent(
+                "t1", reason="pi_send_error", db=racing
+            )
+        assert weak_ok is False
+        read = await store.get_receipt("s1", "t1")
+        assert read["status"] == "submitted"
+        assert read["disposition"] == "started"
+
     async def test_unknown_after_assembled_process_death(self, db_env):
         await store.record_assembly(
             session_id="s1", turn_id="t1", assembly_mode="typed",

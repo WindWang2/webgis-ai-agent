@@ -1656,7 +1656,8 @@
     "visible>collapsed",
     "visible>docked",
     "visible>expanded",
-    "visible>floating"
+    "visible>floating",
+    "visible>hidden"
   ],
   "agentChartOperations": {
     "close": [],

@@ -62,6 +62,10 @@ describe('ChartCore', () => {
     expect(isChartTypeSupported('radar')).toBe(true);
     // violin planned：live 引擎未实现，词表诚实排除
     expect(isChartTypeSupported('violin')).toBe(false);
+    // 原型链键不是图表类型（`in` 会命中 Object.prototype）。
+    expect(isChartTypeSupported('toString')).toBe(false);
+    expect(isChartTypeSupported('constructor')).toBe(false);
+    expect(isChartTypeSupported('hasOwnProperty')).toBe(false);
   });
   it('caches computed theme colors to avoid repeated getComputedStyle calls (FRONT-11)', () => {
     clearThemeColorCache();

@@ -80,3 +80,24 @@ def test_store_then_lookup_roundtrip(tmp_path: Path) -> None:
     assert hit is not None
     stats = store.stats(owner_scope=_OWNER)
     assert stats["entries"] == 1
+
+
+def test_reuse_key_path_traversal_rejected(tmp_path: Path) -> None:
+    """key 直接拼进目录："/" / ".." 必须 typed 拒绝（不能穿越 owner 目录）。"""
+    import pytest
+
+    from app.lib.modelops.errors import ModelOpsError
+
+    store = ReuseStore(tmp_path, max_entries=8)
+    for bad_key in ("../escape", "a/b", ".."):
+        with pytest.raises(ModelOpsError, match="invalid reuse key"):
+            store.lookup(bad_key, owner_scope=_OWNER)
+        with pytest.raises(ModelOpsError, match="invalid reuse key"):
+            store.store(
+                bad_key,
+                owner_scope=_OWNER,
+                manifest={},
+                artifacts=[],
+            )
+        with pytest.raises(ModelOpsError, match="invalid reuse key"):
+            store.invalidate(bad_key, owner_scope=_OWNER)

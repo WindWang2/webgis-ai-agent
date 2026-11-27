@@ -88,6 +88,19 @@ def test_repair_preserves_bad_features_identifiers_and_finds_planned_outlier():
     assert any(row["op"] == "drop_outliers_or_flag" and row["features_affected"] == 1 for row in evidence)
 
 
+def test_attribute_normalization_unicode_superscript_does_not_crash():
+    """Unicode 上标 "²" 的 isdigit() 为 True 但 int("²") 抛 ValueError；
+    归一化必须降级为保留原字符串，而不是让整场修复崩溃。"""
+    from app.services.spatial_repair_pipeline import SpatialRepairPipeline
+
+    fc = {"type": "FeatureCollection", "features": [feature(1, code="²")]}
+    cleaned, _, _, _ = SpatialRepairPipeline._repair_impl(
+        fc, ops=["attribute_type_normalization"],
+        op_params={"attribute_type_normalization": {"fields": ["code"]}},
+    )
+    assert cleaned["features"][0]["properties"]["code"] == "²"
+
+
 def test_graph_cache_observes_mutation_speed_strings_and_grade_separation():
     from app.services.network.graph_builder import NetworkGraphBuilder
 

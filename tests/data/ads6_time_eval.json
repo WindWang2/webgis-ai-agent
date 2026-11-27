@@ -1,7 +1,7 @@
 {
  "version": "1.0",
  "reference_now": "2026-09-13",
- "n": 152,
+ "n": 151,
  "samples": [
   {
    "expr": "近五年",
@@ -422,13 +422,6 @@
    "start": "2024-10-01",
    "end": "2024-12-31",
    "granularity": "quarter"
-  },
-  {
-   "expr": "截至2025年12月",
-   "kind": "time",
-   "start": "0001-01-01",
-   "end": "2025-12-31",
-   "granularity": "year"
   },
   {
    "expr": "截至2025年12月",

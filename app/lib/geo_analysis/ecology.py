@@ -143,6 +143,7 @@ def hsi_score_features(
 
     score_cols: Dict[str, List[float]] = {}
     score_matrix_cols: List[np.ndarray] = []
+    non_finite_counts: List[int] = []
     for k, v in enumerate(variables):
         x = np.nan_to_num(var_values[k], nan=0.0)
         curve = str(v.get("curve") or "")
@@ -162,6 +163,8 @@ def hsi_score_features(
                 f"variable '{field_names[k]}': unknown curve {curve!r} "
                 "(expected trapezoid/gaussian)")
         # 非有限原始值的变量得分记 0 并在 meta 披露计数（不静默）。
+        non_finite_counts.append(
+            int(np.count_nonzero(~np.isfinite(var_values[k]))))
         s = np.where(np.isfinite(var_values[k]), s, 0.0)
         score_cols[f"hsi_{field_names[k]}"] = [round(float(t), 6) for t in s]
         var_scores = s
@@ -177,7 +180,6 @@ def hsi_score_features(
         hsi = np.where(any_zero, 0.0, np.exp(log_terms @ weights_norm))
 
     out_features = []
-    gdf.drop(columns="geometry", errors="ignore").to_dict("records")
     for i, f in enumerate(features):
         p = {
             "hsi": round(float(hsi[i]), 6),
@@ -201,6 +203,7 @@ def hsi_score_features(
                 "curve": str(variables[k].get("curve")),
                 "params": list(variables[k].get("params") or []),
                 "weight_normalized": round(float(weights_norm[k]), 6),
+                "non_finite_ignored": non_finite_counts[k],
             }
             for k in range(len(variables))
         ],
@@ -236,9 +239,10 @@ def landscape_metrics(
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """分类栅格景观格局指标（FRAGSTATS 口径，4 邻接）。
 
-    类级：PLAND（类面积占比 %）、NP（斑块数）、PD（斑块密度 /100ha）、
-    LPI（最大斑块占比 %）。景观级：ED（边缘密度 m/ha）、SHDI、SIDI、
-    PR（类丰富度）。nodata 像元不计面积、不产生边缘。
+    类级：PLAND（类面积占比 %）、NP（斑块数）、PD（斑块密度 /100ha，
+    分母为景观总面积——FRAGSTATS 口径）、LPI（最大斑块占比 %）。景观级：
+    ED（边缘密度 m/ha）、SHDI、SIDI、PR（类丰富度）。nodata 像元不计面积、
+    不产生边缘。
 
     返回 (逐类指标表 dict, meta dict)。护栏：≤ 50M 像元；类别 ≤ 256。
     """
@@ -247,6 +251,9 @@ def landscape_metrics(
     if not np.isfinite(cell_size) or cell_size <= 0:
         raise ValueError(f"cell_size must be positive (got {cell_size!r})")
     cs_x = float(cell_size_x) if cell_size_x is not None else float(cell_size)
+    if not np.isfinite(cs_x) or cs_x <= 0:
+        raise ValueError(
+            f"cell_size_x must be positive and finite (got {cell_size_x!r})")
     a = np.asarray(raster)
     if getattr(a, "ndim", 0) != 2:
         raise NoValidObservations(
@@ -314,8 +321,9 @@ def landscape_metrics(
             "pland_pct": round(pland, 4),
             "n_patches": n_patch,
             "patch_density_per_100ha": round(
-                n_patch / (patch_cells * cell_area_ha) * 100.0, 6)
-            if patch_cells else 0.0,
+                # PD 分母是**景观总面积**（FRAGSTATS 口径，与 LPI/PLAND 的
+                # 分母一致）——按类面积归一会让小类 PD 虚高、跨类不可比。
+                n_patch / total_area_ha * 100.0, 6),
             "lpi_pct": round(100.0 * _largest_patch_cells(
                 mask, structure) / float(valid.sum()), 4),
             "edge_density_m_per_ha": round(

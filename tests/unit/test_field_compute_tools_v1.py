@@ -182,3 +182,29 @@ class TestToolJourney:
              "session_id": sid},
             session_id=sid)
         assert out["success"] is False and out["code"] == "STALE_PLAN"
+
+
+class TestWaitMaxSContract:
+    """wait_max_s 的 schema 上界必须与运行时钳制一致（P3 api-contract：
+    曾声明 le=600 而运行时只等 60s，按 600 传入会静默少等）。"""
+
+    def test_args_model_rejects_above_runtime_cap(self):
+        from pydantic import ValidationError
+
+        from app.tools.field_compute_tools import FieldComputeApplyArgs
+
+        # 上界内仍照常接受（默认 20、边界 60）
+        assert FieldComputeApplyArgs(plan_id="p", wait_max_s=60).wait_max_s == 60
+        # 超过运行时钳制（60）的值必须被校验拒绝，而不是静默按 60 执行
+        with pytest.raises(ValidationError):
+            FieldComputeApplyArgs(plan_id="p", wait_max_s=600)
+
+    async def test_dispatch_over_cap_returns_validation_error(self, registry):
+        out = await registry.dispatch(
+            "field_compute_apply",
+            {"plan_id": "plan-absent", "wait_max_s": 600,
+             "session_id": "sess-fc-cap"},
+            session_id="sess-fc-cap")
+        assert out["success"] is False
+        assert out["code"] == "VALIDATION_ERROR"
+        assert "wait_max_s" in out["message"]

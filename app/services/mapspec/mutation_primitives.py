@@ -235,6 +235,14 @@ def _workbench_doc_error(doc: Any) -> Optional[str]:
         isinstance(k, str) and isinstance(v, str) for k, v in membership.items()
     ):
         return "workbench doc.membership must map layerId (str) -> groupId (str)."
+    dangling_groups = sorted({
+        gid for gid in membership.values() if gid not in id_set
+    })
+    if dangling_groups:
+        return (
+            "workbench doc.membership groupId must reference an existing "
+            f"group: {dangling_groups[:5]}"
+        )
     locked = doc.get("lockedLayerIds", [])
     if not isinstance(locked, list) or not all(isinstance(x, str) for x in locked):
         return "workbench doc.lockedLayerIds must be a list of strings."

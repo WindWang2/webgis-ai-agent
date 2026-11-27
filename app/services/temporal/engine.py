@@ -245,7 +245,12 @@ class TemporalEngine:
             from app.services.temporal.models import TemporalAnalysisResult
             features = dataset.get("features", []) if isinstance(dataset, dict) else dataset
             unit = agg_spec.interval_unit if agg_spec else "day"
-            metrics = [agg_spec.aggregation_func] if agg_spec else ["count"]
+            # A spec with only interval_unit carries aggregation_func=None;
+            # [None] made TemporalMetric(None) raise UnsupportedMethod. Fall
+            # back to the spec's own metrics (its model default is [mean]).
+            metrics = [agg_spec.aggregation_func] if agg_spec and agg_spec.aggregation_func else (
+                agg_spec.metrics if agg_spec else ["count"]
+            )
             targets = agg_spec.metric_fields if agg_spec else []
 
             aggregated_records = self.aggregate(
@@ -281,8 +286,16 @@ class TemporalEngine:
             feats_t1 = dataset_t1.get("features", []) if isinstance(dataset_t1, dict) else dataset_t1
             feats_t2 = dataset_t2.get("features", []) if isinstance(dataset_t2, dict) else dataset_t2
 
+            # Keep the FeatureCollection wrapper when present: compare_snapshots
+            # reads the declared `crs` off each snapshot, and a bare feature
+            # list loses it (projected coordinates then silently treated as
+            # EPSG:4326, corrupting centroid-shift distances).
+            snapshots = [
+                dataset_t1 if isinstance(dataset_t1, dict) and isinstance(dataset_t1.get("features"), list) else feats_t1,
+                dataset_t2 if isinstance(dataset_t2, dict) and isinstance(dataset_t2.get("features"), list) else feats_t2,
+            ]
             change_res = self.change_engine.compare_snapshots(
-                snapshots=[feats_t1, feats_t2],
+                snapshots=snapshots,
                 numeric_fields=metric_fields,
             )
 

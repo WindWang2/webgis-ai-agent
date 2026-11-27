@@ -176,3 +176,55 @@ def test_response_media_removal_is_breaking():
     changes = diff_openapi(old, new)
     kinds = {c.kind for c in changes if c.breaking}
     assert "response_media_removed" in kinds
+
+
+# ── P3 review：内联响应 schema 的 additive 规则 + 新组件可见性 ────────────
+
+
+def _inline_response(schema):
+    return {
+        "paths": {
+            "/a": {
+                "get": _op(responses={
+                    "200": {
+                        "description": "ok",
+                        "content": {"application/json": {"schema": schema}},
+                    }
+                })
+            }
+        }
+    }
+
+
+def test_inline_response_optional_field_addition_is_additive():
+    old = _inline_response({"type": "object", "properties": {"a": {"type": "string"}}})
+    new = _inline_response({
+        "type": "object",
+        "properties": {"a": {"type": "string"}, "b": {"type": "integer"}},
+    })
+    changes = diff_openapi(old, new)
+    assert not [c for c in changes if c.kind == "response_schema_changed" and c.breaking]
+    reported = [c for c in changes if c.kind == "response_schema_changed"]
+    assert reported and not reported[0].breaking
+
+
+def test_inline_response_field_removal_or_type_change_still_breaking():
+    old = _inline_response({"type": "object", "properties": {
+        "a": {"type": "string"}, "b": {"type": "string"}}})
+    removed = _inline_response({"type": "object", "properties": {"a": {"type": "string"}}})
+    retyped = _inline_response({"type": "object", "properties": {
+        "a": {"type": "integer"}, "b": {"type": "string"}}})
+    assert [c for c in diff_openapi(old, removed)
+            if c.kind == "response_schema_changed" and c.breaking]
+    assert [c for c in diff_openapi(old, retyped)
+            if c.kind == "response_schema_changed" and c.breaking]
+
+
+def test_added_schema_component_is_reported_additive():
+    old = {"paths": {}, "components": {"schemas": {}}}
+    new = {"paths": {}, "components": {"schemas": {
+        "NewItem": {"type": "object", "properties": {"a": {"type": "string"}}}}}}
+    changes = diff_openapi(old, new)
+    added = [c for c in changes if c.kind == "schema_added"]
+    assert added and not added[0].breaking
+    assert added[0].subject == "NewItem"

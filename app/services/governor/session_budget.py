@@ -263,7 +263,8 @@ class SessionBudgetLedger:
         if tokens <= 0:
             return
         with self._lock:
-            for scope, sid in (("turn", turn_id), ("session", session_id)):
+            for scope, sid in (("turn", turn_id), ("session", session_id),
+                               ("global", "global")):
                 if not sid:
                     continue
                 ledger = self._ledgers[scope].setdefault(sid, _ScopeLedger())

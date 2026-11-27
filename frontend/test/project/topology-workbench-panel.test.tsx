@@ -5,7 +5,7 @@
  * 用户决定面）→ 修复候选（归属选择披露）→ 复验闭环。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 
 const toastStore = { toasts: [] as unknown[], addToast: vi.fn(), removeToast: vi.fn() };
 vi.mock('@/components/ui/toast', () => ({
@@ -36,6 +36,13 @@ vi.mock('@/lib/store/useHudStore', () => ({
 }));
 
 import { TopologyWorkbenchPanel } from '@/components/sidebar/project/topology-workbench-panel';
+
+/** 可控 promise：手动 resolve 模拟「慢网 / 迟到」的请求。 */
+function deferred<T = unknown>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => { resolve = r; });
+  return { promise, resolve };
+}
 
 const RULESET = {
   id: 'rs-1', name: '地块拓扑', project_id: 'p1', session_id: 's1',
@@ -144,6 +151,42 @@ describe('TopologyWorkbenchPanel', () => {
     expect((await screen.findAllByText(/覆盖缺口/)).length).toBeGreaterThanOrEqual(1);
   });
 
+  it('加载运行失败的回退文案走 i18n（不显示原始英文串）', async () => {
+    twbApi.fetchRuns.mockRejectedValue({ name: 'AbortError' });
+    render(<TopologyWorkbenchPanel projectId="p1" sessionId="s1" authed />);
+    expect(await screen.findByText('加载失败：运行')).toBeInTheDocument();
+    expect(screen.queryByText('runs')).toBeNull();
+  });
+
+  it('加载问题队列失败的回退文案走 i18n（不显示原始英文串）', async () => {
+    twbApi.fetchFindings.mockRejectedValue({ name: 'AbortError' });
+    render(<TopologyWorkbenchPanel projectId="p1" sessionId="s1" authed />);
+    expect(await screen.findByText('加载失败：问题队列')).toBeInTheDocument();
+    expect(screen.queryByText('findings')).toBeNull();
+  });
+
+  it('创建规则集成功的 toast 走 i18n（不硬编码英文）', async () => {
+    twbApi.createRuleset.mockResolvedValue({ id: 'rs-2', current_version: 3 });
+    render(<TopologyWorkbenchPanel projectId="p1" sessionId="s1" authed />);
+    fireEvent.click(await screen.findByRole('button', { name: '创建规则集' }));
+    const form = await screen.findByTestId('twb-create-form');
+    fireEvent.click(within(form).getByRole('button', { name: '创建规则集' }));
+    await waitFor(() => expect(toastStore.addToast).toHaveBeenCalled());
+    const message = String(toastStore.addToast.mock.calls[0][0]);
+    expect(message).toContain('创建规则集');
+    expect(message).toContain('v3');
+  });
+
+  it('创建规则集失败的提示走 i18n（不显示原始英文串）', async () => {
+    twbApi.createRuleset.mockRejectedValue({ name: 'AbortError' });
+    render(<TopologyWorkbenchPanel projectId="p1" sessionId="s1" authed />);
+    fireEvent.click(await screen.findByRole('button', { name: '创建规则集' }));
+    const form = await screen.findByTestId('twb-create-form');
+    fireEvent.click(within(form).getByRole('button', { name: '创建规则集' }));
+    expect(await screen.findByText('操作失败：创建规则集')).toBeInTheDocument();
+    expect(screen.queryByText('create ruleset')).toBeNull();
+  });
+
   it('定位：点击 Locate 调用相机 setViewport（bbox → 视口）', async () => {
     render(<TopologyWorkbenchPanel projectId="p1" sessionId="s1" authed />);
     const btn = await screen.findAllByLabelText(/定位/);
@@ -203,6 +246,9 @@ describe('TopologyWorkbenchPanel', () => {
         }),
       }),
     ));
+    // 提交成功的 toast 走 i18n（不硬编码英文）
+    await waitFor(() => expect(toastStore.addToast).toHaveBeenCalled());
+    expect(String(toastStore.addToast.mock.calls[0][0])).toContain('排队中');
   });
 
   it('scope 拒绝的 typed 错误翻译为用户可读提示', async () => {
@@ -224,5 +270,71 @@ describe('TopologyWorkbenchPanel', () => {
     render(<TopologyWorkbenchPanel projectId="p1" sessionId="s1" authed />);
     fireEvent.click((await screen.findAllByRole('button', { name: /详情/ }))[0]);
     expect(await screen.findByText(/定位过期/)).toBeInTheDocument();
+  });
+
+  it('运行中轮询同时刷新问题队列（findings 不留旧数据）', async () => {
+    vi.useFakeTimers();
+    try {
+      twbApi.fetchRuns.mockResolvedValueOnce({ items: [{ ...RUN, status: 'running' }], total: 1 });
+      render(<TopologyWorkbenchPanel projectId="p1" sessionId="s1" authed />);
+      // 放行挂载链的 promise（rulesets → runs → findings）
+      for (let i = 0; i < 8; i += 1) {
+        await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+      }
+      expect(twbApi.fetchFindings).toHaveBeenCalled();
+      const before = twbApi.fetchFindings.mock.calls.length;
+      // 10s 轮询 tick：runs/runDetail/findings 三者必须同步刷新
+      await act(async () => { await vi.advanceTimersByTimeAsync(10_500); });
+      expect(twbApi.fetchFindings.mock.calls.length).toBeGreaterThan(before);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('慢网下先后点开两个问题：旧响应的证据/候选不覆盖新问题', async () => {
+    const pending = new Map<string, ReturnType<typeof deferred>>();
+    twbApi.fetchFindingWitness.mockImplementation((id: string) => {
+      const d = deferred();
+      pending.set(`w:${id}`, d);
+      return d.promise as Promise<never>;
+    });
+    twbApi.fetchRepairCandidates.mockImplementation((id: string) => {
+      const d = deferred();
+      pending.set(`c:${id}`, d);
+      return d.promise as Promise<never>;
+    });
+    render(<TopologyWorkbenchPanel projectId="p1" sessionId="s1" authed />);
+    const btns = await screen.findAllByRole('button', { name: /详情/ });
+    fireEvent.click(btns[0]); // f-1 先发
+    fireEvent.click(btns[1]); // f-2 后发（当前选中）
+    // f-1 的迟到响应后到 —— 必须被代次守卫丢弃
+    pending.get('w:f-1')!.resolve({
+      finding_id: 'f-1', witness: { type: 'Feature', geometry: { type: 'Polygon', coordinates: [] } },
+      witness_digest: 'wd', stale: false, locators: [],
+    });
+    pending.get('c:f-1')!.resolve({
+      candidates: [{
+        kind: 'fill_gap', description: 'STALE-f-1-candidate',
+        target_locators: [], preview_available: false, ownership_choice_required: true,
+        estimated_change: { unit: 'm2', expected: '≈ 1' },
+      }],
+    });
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.queryByText(/STALE-f-1-candidate/)).toBeNull();
+    // f-2 的响应到达 → 展示的是 f-2 的候选
+    pending.get('w:f-2')!.resolve({
+      finding_id: 'f-2', witness: { type: 'Feature', geometry: { type: 'Polygon', coordinates: [] } },
+      witness_digest: 'wd', stale: false, locators: [],
+    });
+    pending.get('c:f-2')!.resolve({
+      candidates: [{
+        kind: 'fill_gap', description: 'FRESH-f-2-candidate',
+        target_locators: [], preview_available: false, ownership_choice_required: true,
+        estimated_change: { unit: 'm2', expected: '≈ 2' },
+      }],
+    });
+    await act(async () => { await Promise.resolve(); });
+    expect(await screen.findByText(/FRESH-f-2-candidate/)).toBeInTheDocument();
+    expect(screen.queryByText(/STALE-f-1-candidate/)).toBeNull();
   });
 });

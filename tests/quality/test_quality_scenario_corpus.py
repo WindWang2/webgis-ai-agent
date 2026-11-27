@@ -166,6 +166,19 @@ def _run_one(case: GISBenchmarkCase):
         GISBenchmarkRunner().run_case(case))
 
 
+def test_missing_state_contract_fails_with_documented_assertion(monkeypatch):
+    """族缺 _STATE_CONTRACTS 行时必须走文档化 AssertionError（非裸 KeyError）。"""
+    import app.evaluation.quality_corpus as qc
+
+    family = qc.CONFORMANCE_FAMILIES[0]
+    monkeypatch.setattr(qc, "CONFORMANCE_FAMILIES", (family,))
+    contracts = dict(qc._STATE_CONTRACTS)
+    contracts.pop((family.family_id, qc.DATA_STATE_PROFILES[0].state_id))
+    monkeypatch.setattr(qc, "_STATE_CONTRACTS", contracts)
+    with pytest.raises(AssertionError, match="missing state contracts"):
+        qc.build_quality_scenario_corpus()
+
+
 @pytest.mark.asyncio
 async def test_field_fires_max_context_schema_bytes():
     """预算=1 必须触发 context schema 失败（真实 schema 字节数 > 0）。"""

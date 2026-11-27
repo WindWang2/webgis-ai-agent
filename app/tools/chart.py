@@ -11,6 +11,7 @@ from app.lib.cartography.chart_kinds import (
     CHART_KINDS,
     resolve_chart_kind as _resolve_chart_kind,
 )
+from app.lib.json_size import estimate_json_bytes
 from app.utils.best_effort import best_effort
 
 logger = logging.getLogger(__name__)
@@ -237,6 +238,12 @@ def generate_chart(chart_type: str = "", title: str = "", data: Any = "",
 
     # Accept pre-parsed list/dict (some LLM providers pass parsed args directly)
     if isinstance(data, (list, dict)):
+        # DoS protection: pre-parsed shapes (LLM providers passing parsed args;
+        # registry dereferencing ref: into the stored GeoJSON body) never flow
+        # through the raw-string check below — gate them here so the 100KB
+        # limit covers every input shape, not only JSON strings.
+        if estimate_json_bytes(data) > MAX_DATA_PAYLOAD_SIZE:
+            return {"error": f"Data payload too large (max {MAX_DATA_PAYLOAD_SIZE // 1024}KB)"}
         parsed_data = data
     elif isinstance(data, str) and data.strip().startswith("ref:"):
         return {"error": f"数据引用 {data.strip()[:40]} 未能解引用 —— 请确认是当前会话产出的 ref 后重试"}
@@ -445,7 +452,22 @@ async def _attach_chart_panel(
     inline_bytes = estimate_json_bytes(chart)
     if inline_bytes > 32 * 1024:
         from app.services.session_data import session_data_manager
+        from app.services.session_data_protocol import is_unavailable_ref
         ref_id = await session_data_manager.store(session_id, {"chart": chart}, prefix="chart")
+        # R2-2 (sibling of cartography_tools): a Redis outage makes store()
+        # return the unavailable-ref sentinel. Never write it into MapSpec
+        # options.chartRef — that is a phantom ref with no payload anywhere.
+        if is_unavailable_ref(ref_id):
+            return {
+                "map_chart_panel": {
+                    "attached": False,
+                    "inline": False,
+                    "bytes": inline_bytes,
+                    "layer_count_unchanged": True,
+                    "error": "会话存储暂时不可用，无法保存图表载荷；图表已生成，请稍后重试 attach_to_map。",
+                    "hint": "稍后重试 attach_to_map；或用 webgis_component_update(create=true, component_type=chart_panel)。",
+                },
+            }
         options["chartRef"] = ref_id
     else:
         options["chart"] = chart

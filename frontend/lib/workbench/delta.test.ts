@@ -52,6 +52,24 @@ describe('applyWorkbenchDelta', () => {
     expect(out.membership).toEqual({ l1: 'g1' });
   });
 
+  it('setGroups.parentId 必须指向已存在组（悬空父抛错，不透传给 normalize）', () => {
+    // 畸形/广播 delta：挂到不存在的父 —— 旧实现静默写入，normalize 再提为根。
+    expect(() =>
+      applyWorkbenchDelta(docA(), { setGroups: [{ id: 'g2', parentId: 'ghost' }] }),
+    ).toThrow(WorkbenchDeltaError);
+    expect(() =>
+      applyWorkbenchDelta(docA(), { setGroups: [{ id: 'g9', name: '新', parentId: 'ghost' }] }),
+    ).toThrow(WorkbenchDeltaError);
+    // 同 delta 内先建后挂合法（按 patch 次序校验，不过度收紧）。
+    const out = applyWorkbenchDelta(docA(), {
+      setGroups: [
+        { id: 'g9', name: '新' },
+        { id: 'g2', parentId: 'g9' },
+      ],
+    });
+    expect(out.groups.find((g) => g.id === 'g2')!.parentId).toBe('g9');
+  });
+
   it('绝对值语义：重放幂等（revision 门控采纳的安全前提）', () => {
     const d: WorkbenchDelta = {
       setGroups: [{ id: 'g2', collapsed: true }],

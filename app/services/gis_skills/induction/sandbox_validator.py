@@ -199,10 +199,13 @@ def _run_variant(compiled, scenario: Dict[str, Any],
     # 2) 参数 Schema：越界/类型错误值必须在此被拒
     try:
         compiled.build_parameter_model()(**params)
-    except ValidationError as exc:
+    except Exception as exc:  # noqa: BLE001 - 模型构建失败（保留名 TypeError
+        # 等）与校验失败同纪律：变体拒绝，不逃逸击穿批处理（同 157 行）。
+        detail = (exc.errors()[:1] if isinstance(exc, ValidationError)
+                  else str(exc))
         if expect == "reject":
             return finish(True, "param_schema rejected")
-        return finish(False, f"param_schema: {exc.errors()[:1]}")
+        return finish(False, f"param_schema: {detail}")
     if expect == "reject":
         return finish(False, "expected reject but schema accepted")
 

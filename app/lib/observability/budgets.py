@@ -64,6 +64,8 @@ def load_manifest(path: Optional[Path] = None) -> Dict[str, Budget]:
         raise ValueError("perf budget manifest must be {version, budgets: [...]}")
     budgets: Dict[str, Budget] = {}
     for entry in raw["budgets"]:
+        if not isinstance(entry, dict):
+            raise ValueError(f"invalid budget entry: {entry!r}")
         key = str(entry.get("key", "")).strip()
         limit = entry.get("limit_s")
         if not key or not isinstance(limit, (int, float)) or limit <= 0:

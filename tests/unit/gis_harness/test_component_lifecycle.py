@@ -285,3 +285,105 @@ class TestUserRemoveWinsOverRepair:
             spec,
         )
         assert applied == ["add_component:title"]
+
+
+class TestModelInvalidExistingComponents:
+    """SetLayout 只做 id/type 结构校验：模型非法或非对象的既有条目不得让
+    其余组件的 patch/remove/duplicate/rebind 整笔抛 ValidationError，也
+    不得在回写 layout.components 时被静默丢弃。"""
+
+    @staticmethod
+    def _loaded() -> dict:
+        return {
+            "sources": {},
+            "layers": [],
+            "layout": {
+                "components": [
+                    {
+                        "id": "bad", "type": "title", "priority": "high",
+                        "options": {"text": "B"},
+                    },
+                    {"id": "good", "type": "chart_panel", "priority": 5},
+                ],
+            },
+        }
+
+    @pytest.mark.parametrize("kind", ["patch", "remove", "duplicate", "rebind"])
+    async def test_model_invalid_sibling_is_preserved_and_not_fatal(self, kind):
+        from app.services.mapspec import (
+            DuplicateComponentIntent,
+            PatchComponentIntent,
+            RebindComponentIntent,
+            RemoveComponentIntent,
+        )
+        from app.services.mapspec import mutation_handlers as mh
+        from app.services.mapspec.mutation_contracts import (
+            MutationContext,
+            MutationPlan,
+        )
+
+        handler, intent = {
+            "patch": (
+                mh._handle_patchcomponent,
+                PatchComponentIntent(component_id="good", enabled=False),
+            ),
+            "remove": (
+                mh._handle_removecomponent,
+                RemoveComponentIntent(component_id="good"),
+            ),
+            "duplicate": (
+                mh._handle_duplicatecomponent,
+                DuplicateComponentIntent(component_id="good"),
+            ),
+            "rebind": (
+                mh._handle_rebindcomponent,
+                RebindComponentIntent(
+                    component_id="good", bindings={"chartRef": "ref:chart-good"},
+                ),
+            ),
+        }[kind]
+        out = await handler(MutationContext(
+            session_id="malformed-components",
+            intent=intent,
+            origin="agent",
+            loaded=self._loaded(),
+            pre_state={},
+            store=None,
+        ))
+        assert isinstance(out, MutationPlan), getattr(out, "error_msg", out)
+        comps = out.mapspec["layout"]["components"]
+        assert {
+            "id": "bad", "type": "title", "priority": "high",
+            "options": {"text": "B"},
+        } in comps
+        good_present = any(c.get("id") == "good" for c in comps)
+        assert good_present is (kind != "remove")
+
+    async def test_non_object_entry_is_preserved_not_silently_dropped(self):
+        from app.services.mapspec import RemoveComponentIntent
+        from app.services.mapspec import mutation_handlers as mh
+        from app.services.mapspec.mutation_contracts import (
+            MutationContext,
+            MutationPlan,
+        )
+
+        loaded = {
+            "sources": {},
+            "layers": [],
+            "layout": {
+                "components": [
+                    "opaque-entry",
+                    {"id": "good", "type": "chart_panel", "priority": 5},
+                ],
+            },
+        }
+        out = await mh._handle_removecomponent(MutationContext(
+            session_id="malformed-components",
+            intent=RemoveComponentIntent(component_id="good"),
+            origin="agent",
+            loaded=loaded,
+            pre_state={},
+            store=None,
+        ))
+        assert isinstance(out, MutationPlan), getattr(out, "error_msg", out)
+        assert "opaque-entry" in out.mapspec["layout"]["components"]

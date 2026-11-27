@@ -38,6 +38,7 @@ from app.lib.harness.visual_judge.snapshot_extractor import (
 from app.lib.harness.visual_judge.vlm_provider import (
     PROVIDER_GEMINI,
     PROVIDER_OPENAI_COMPATIBLE,
+    _DEFAULT_TIMEOUT_S,
     CriticOutputError,
     CriticTimeout,
     GeminiVLMClient,
@@ -315,7 +316,12 @@ def _configured_engine(items: Tuple[Tuple[str, str], ...]) -> VisualCriticEngine
         return VisualCriticEngine(client=None, client_absent_reason="not_configured")
     if is_placeholder_key(config["api_key"]):
         return VisualCriticEngine(client=None, client_absent_reason="no_api_key")
-    timeout = float(config["timeout_s"])
+    # 非法 timeout 配置不得冲破 fail-closed 契约（evaluate 永不抛）：
+    # 非数字按默认超时降级，配置错误只影响超时值。
+    try:
+        timeout = float(config["timeout_s"])
+    except (TypeError, ValueError):
+        timeout = _DEFAULT_TIMEOUT_S
     if provider == PROVIDER_GEMINI:
         client: VLMClient = GeminiVLMClient(
             config["base_url"], config["api_key"], config["model"], timeout)

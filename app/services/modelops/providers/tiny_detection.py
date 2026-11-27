@@ -115,6 +115,13 @@ class TinyDetectionProvider:
                 for cy in range(0, h, self._cell):
                     for cx in range(0, w, self._cell):
                         cell_img = img[cy: cy + self._cell, cx: cx + self._cell]
+                        # NaN 像元（nodata）不得成为 peak：max 返回 NaN 时
+                        # `peak < threshold` 为 False，且 min(1.0, nan)=1.0
+                        # → 会在 NaN 位置产出 score=1.0 的假检测。
+                        if not np.isfinite(cell_img).all():
+                            cell_img = np.where(
+                                np.isfinite(cell_img), cell_img, -np.inf
+                            )
                         peak = float(cell_img.max())
                         if peak < self._score_threshold:
                             continue

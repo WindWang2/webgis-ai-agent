@@ -216,6 +216,37 @@ def test_too_many_name_value_points_still_errors():
     assert "Too many data points" in result["error"]
 
 
+# ─── P3: 预解析 list/dict（含 registry 解引用的 ref 本体）也必须过 100KB 载荷门 ───
+
+def test_pre_parsed_list_over_payload_limit_errors():
+    """预解析 list 不得绕过 MAX_DATA_PAYLOAD_SIZE：点名长度无界即 DoS。"""
+    from app.tools.chart import MAX_DATA_PAYLOAD_SIZE
+
+    # 单点名 ~200KB：点数远低于 500 上限，未修复时直接生成图表
+    big = "x" * (MAX_DATA_PAYLOAD_SIZE * 2)
+    result = generate_chart(
+        chart_type="bar", title="T", data=[{"name": big, "value": 1}],
+    )
+    assert "error" in result
+    assert "too large" in result["error"]
+
+
+def test_pre_parsed_dict_over_payload_limit_errors():
+    """预解析 dict（FeatureCollection 本体，ref 解引用形态）同受 100KB 门约束。"""
+    from app.tools.chart import MAX_DATA_PAYLOAD_SIZE
+
+    big = "y" * (MAX_DATA_PAYLOAD_SIZE * 2)
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "properties": {"name": "a", "n": 1, "blob": big}},
+        ],
+    }
+    result = generate_chart(chart_type="bar", title="T", data=fc, y_field="n")
+    assert "error" in result
+    assert "too large" in result["error"]
+
+
 @pytest.mark.asyncio
 async def test_generate_chart_tool_samples_large_fc_off_loop():
     """#1388 P02: async 注册面同样先采样；映射在 to_thread 中执行。"""

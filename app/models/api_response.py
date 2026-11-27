@@ -32,9 +32,10 @@ class ApiResponse(BaseModel, Generic[T]):
     def ok(cls, data=None, message: str = "操作成功"):
         return cls(code="SUCCESS", success=True, message=message, data=data)
     
-    # ok() 的别名，保持向后兼容
+    # ok() 的别名；不能命名为 success()——与字段同名会被 pydantic v2
+    # 当成字段默认值并吞掉该字段（字段默认值/序列化/类方法全部失效）。
     @classmethod
-    def success(cls, data=None, message: str = "操作成功"):  # noqa: F811
+    def ok_response(cls, data=None, message: str = "操作成功"):
         return cls.ok(data=data, message=message)
     
     @classmethod

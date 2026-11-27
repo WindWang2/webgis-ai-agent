@@ -237,6 +237,8 @@ class SessionLineageQuery:
                 from_id=str(rec.replaces), to_id=artifact_id, kind="replacement",
                 producer_tool=_tool(artifact_id),
             ))
+        node_ids = {node.artifact_id for node in nodes.values()}
+        edges = [edge for edge in edges if edge.from_id in node_ids and edge.to_id in node_ids]
         return LineageView(
             root=artifact_id,
             scope="session",

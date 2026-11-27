@@ -41,6 +41,20 @@ def test_descriptor_secret_guard(tiny_desc_factory):
         tiny_desc_factory(provenance={"api_key": "sk-123"})
 
 
+def test_descriptor_secret_guard_scans_nested_lists(tiny_desc_factory):
+    """provenance 里 list 内 dict 的 secret 键同样被拒（不只顶层 dict）。"""
+    with pytest.raises(ValidationError, match="secret"):
+        tiny_desc_factory(provenance={"sources": [{"api_key": "sk-123"}]})
+
+
+def test_class_schema_nodata_class_must_be_a_class_index():
+    from app.lib.modelops.descriptor import ClassSchema
+
+    assert ClassSchema(classes=("bg", "water"), nodata_class=1).nodata_class == 1
+    with pytest.raises(ValidationError, match="nodata_class"):
+        ClassSchema(classes=("bg", "water"), nodata_class=2)
+
+
 def test_descriptor_segmentation_requires_class_schema(tiny_desc_factory):
     with pytest.raises(ValidationError):
         tiny_desc_factory(class_schema=None)
@@ -59,6 +73,21 @@ def test_descriptor_unknown_task_rejected(tiny_desc_factory):
 def test_descriptor_unseeded_policy_accepted_but_not_reuse_eligible(tiny_desc_factory):
     d = tiny_desc_factory(random_seed_policy="unseeded")
     assert d.random_seed_policy not in REUSE_ELIGIBLE_SEED_POLICIES
+
+
+def test_fingerprint_payload_includes_resource_declarations(tiny_desc_factory):
+    """资源声明（device_requirements/memory_estimate）同样进复用身份投影。"""
+    from app.lib.modelops.descriptor import DeviceRequirements, MemoryEstimate
+
+    base = tiny_desc_factory()
+    device_changed = tiny_desc_factory(
+        device_requirements=DeviceRequirements(required="cuda", min_vram_mb=8192)
+    )
+    memory_changed = tiny_desc_factory(
+        memory_estimate=MemoryEstimate(weights_bytes=4096)
+    )
+    assert base.fingerprint_payload() != device_changed.fingerprint_payload()
+    assert base.fingerprint_payload() != memory_changed.fingerprint_payload()
 
 
 # ── fingerprint：逐字段失效性（R1-M3 验收）───────────────────────────

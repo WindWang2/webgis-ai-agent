@@ -44,4 +44,11 @@ def capture_created_refs() -> Iterator[CreatedRefs]:
     try:
         yield current
     finally:
-        _current.reset(token)
+        # Tolerate a cross-context reset (mirrors evidence.bind_turn_evidence):
+        # set/reset can land in different copied Contexts when the manager is
+        # driven across asyncio tasks. Skipping is benign — the value stays
+        # isolated in the copied Context.
+        try:
+            _current.reset(token)
+        except (ValueError, LookupError):
+            pass

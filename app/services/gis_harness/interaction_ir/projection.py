@@ -17,6 +17,8 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional
 from typing_extensions import TypedDict
 
 from app.services.gis_harness.interaction_ir.contracts import (
+    COALESCE_REPLACE_PENDING,
+    INTERACTION_KINDS,
     MUTATION_LINKED_KINDS,
     SCHEMA_VERSION,
 )
@@ -43,7 +45,13 @@ MAX_RECENT_INTERACTIONS = 12
 MAX_OVERRIDES = 16
 MAX_ATTEMPTED = 8
 
-_RECENT_COALESCED_KINDS = frozenset({"viewport_settled"})
+#: recent 窗内同 kind 只保留最新一条的 ``replace_pending`` 合并类 —— 由
+#: contracts 词表派生（禁止手抄：手抄漏收 temporal_window_settled 时，反复
+#: 拖动时间轴会用同类事件占满 recent 窗，合并计数失真）。
+_RECENT_COALESCED_KINDS = frozenset(
+    spec.kind for spec in INTERACTION_KINDS.values()
+    if spec.coalesce == COALESCE_REPLACE_PENDING
+)
 _OVERRIDE_FIELDS = {
     "layer_visibility_changed": ("visible",),
     "layer_opacity_changed": ("opacity",),

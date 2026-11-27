@@ -292,7 +292,11 @@ async function toApiError(
 }
 
 /** Parse a success body, treating 204 / empty bodies as undefined (A-F-14). */
-async function parseBody<T>(response: Response): Promise<T> {
+async function parseBody<T>(
+  response: Response,
+  label?: string,
+  requestId?: string,
+): Promise<T> {
   if (response.status === 204) return undefined as T;
   // Prefer .text() so the same parse path handles both JSON and non-JSON
   // success bodies (the spec'd Response always has it). Some test doubles
@@ -301,7 +305,13 @@ async function parseBody<T>(response: Response): Promise<T> {
   if (typeof response.text === 'function') {
     const text = await response.text();
     if (!text) return undefined as T;
-    return JSON.parse(text) as T;
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      // A 200 with a proxy HTML / plain-text body is a contract violation, not
+      // a caller bug: surface it as a typed, non-retryable ApiError.
+      throw new ApiError(response.status, response.statusText, text, requestId, label);
+    }
   }
   if (typeof response.json === 'function') {
     return (await response.json()) as T;
@@ -361,17 +371,18 @@ async function apiFetchAttempt<T = unknown>(
   const requestId = options.requestId ?? newRequestId();
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const retryDelayMs = options.retryDelayMs ?? 200;
-  const { url, init } = buildRequest(path, options, method, requestId);
 
   let lastError: unknown;
   for (let attempt = 0; attempt < attempts; attempt++) {
     if (attempt > 0) await sleep(retryDelayMs);
+    // Rebuild per attempt so a token refreshed between attempts is picked up.
+    const { url, init } = buildRequest(path, options, method, requestId);
     try {
       const response = await timedFetch(url, init, timeoutMs, requestId);
       options.onResponse?.(response);
       if (!response.ok) throw await toApiError(response, options.label, requestId);
       if (options.parseJson === false) return undefined as T;
-      return await parseBody<T>(response);
+      return await parseBody<T>(response, options.label, requestId);
     } catch (err) {
       lastError = err;
       if (attempt === attempts - 1 || !isRetryable(err, method)) throw err;

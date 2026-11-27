@@ -43,35 +43,42 @@ async def persist_assembly_receipt(
     """
     from app.services import turn_context_store as store
 
-    if receipt is not None:
-        payload = receipt.as_bounded_dict()
-        mode = str(getattr(receipt, "mode", "typed") or "typed")
-        digest = str(getattr(receipt, "digest", "") or "")
-        policy_version = int(getattr(receipt, "policy_version", 0) or 0)
-    else:
-        payload = {
-            "schema": "ctx.receipt.v2",
-            "session_id": (session_id or "")[:48],
-            "turn_id": (turn_id or "")[:48],
-            "mode": "legacy",
-            "coverage": "limited",
-            "items": [],
-            "sources": [],
-            "note": "legacy assembly path — no typed receipt available",
-        }
-        mode = "legacy"
-        digest = ""
-        policy_version = 0
-    row_id = await store.record_assembly(
-        session_id=session_id, turn_id=turn_id, run_id=run_id,
-        org_id=org_id, project_id=project_id, user_id=user_id,
-        assembly_mode=mode, policy_version=policy_version,
-        digest=digest, payload=payload,
-    )
-    if row_id is None:
+    try:
+        if receipt is not None:
+            payload = receipt.as_bounded_dict()
+            mode = str(getattr(receipt, "mode", "typed") or "typed")
+            digest = str(getattr(receipt, "digest", "") or "")
+            policy_version = int(getattr(receipt, "policy_version", 0) or 0)
+        else:
+            payload = {
+                "schema": "ctx.receipt.v2",
+                "session_id": (session_id or "")[:48],
+                "turn_id": (turn_id or "")[:48],
+                "mode": "legacy",
+                "coverage": "limited",
+                "items": [],
+                "sources": [],
+                "note": "legacy assembly path — no typed receipt available",
+            }
+            mode = "legacy"
+            digest = ""
+            policy_version = 0
+        row_id = await store.record_assembly(
+            session_id=session_id, turn_id=turn_id, run_id=run_id,
+            org_id=org_id, project_id=project_id, user_id=user_id,
+            assembly_mode=mode, policy_version=policy_version,
+            digest=digest, payload=payload,
+        )
+        if row_id is None:
+            return None
+        read = await store.get_receipt(session_id, turn_id)
+        return read
+    except Exception as exc:  # noqa: BLE001 — C22：回执面绝不阻断 live turn
+        logger.warning(
+            "[turn-receipt] persist_assembly_receipt failed turn=%s: %s",
+            turn_id, exc,
+        )
         return None
-    read = await store.get_receipt(session_id, turn_id)
-    return read
 
 
 async def mark_not_sent(
@@ -82,9 +89,14 @@ async def mark_not_sent(
     stale ``assembled`` state after the durable row moved on)."""
     from app.services import turn_context_store as store
 
-    await store.record_not_sent(turn_id, reason=reason)
-    if session_id:
-        return await store.get_receipt(session_id, turn_id)
+    try:
+        await store.record_not_sent(turn_id, reason=reason)
+        if session_id:
+            return await store.get_receipt(session_id, turn_id)
+    except Exception as exc:  # noqa: BLE001 — C22：回执面绝不阻断 live turn
+        logger.warning(
+            "[turn-receipt] mark_not_sent failed turn=%s: %s", turn_id, exc
+        )
     return None
 
 
@@ -93,9 +105,14 @@ async def mark_submitted(
 ) -> Optional[Dict[str, Any]]:
     from app.services import turn_context_store as store
 
-    await store.record_submitted(turn_id, disposition=disposition)
-    if session_id:
-        return await store.get_receipt(session_id, turn_id)
+    try:
+        await store.record_submitted(turn_id, disposition=disposition)
+        if session_id:
+            return await store.get_receipt(session_id, turn_id)
+    except Exception as exc:  # noqa: BLE001 — C22：回执面绝不阻断 live turn
+        logger.warning(
+            "[turn-receipt] mark_submitted failed turn=%s: %s", turn_id, exc
+        )
     return None
 
 
@@ -104,16 +121,26 @@ async def mark_unknown(
 ) -> Optional[Dict[str, Any]]:
     from app.services import turn_context_store as store
 
-    await store.record_unknown(turn_id)
-    if session_id:
-        return await store.get_receipt(session_id, turn_id)
+    try:
+        await store.record_unknown(turn_id)
+        if session_id:
+            return await store.get_receipt(session_id, turn_id)
+    except Exception as exc:  # noqa: BLE001 — C22：回执面绝不阻断 live turn
+        logger.warning(
+            "[turn-receipt] mark_unknown failed turn=%s: %s", turn_id, exc
+        )
     return None
 
 
 async def mark_turn_outcome(turn_id: str, *, outcome: str) -> None:
     from app.services import turn_context_store as store
 
-    await store.record_turn_outcome(turn_id, outcome=outcome)
+    try:
+        await store.record_turn_outcome(turn_id, outcome=outcome)
+    except Exception as exc:  # noqa: BLE001 — C22：回执面绝不阻断 live turn
+        logger.warning(
+            "[turn-receipt] mark_turn_outcome failed turn=%s: %s", turn_id, exc
+        )
 
 
 def sse_payload(

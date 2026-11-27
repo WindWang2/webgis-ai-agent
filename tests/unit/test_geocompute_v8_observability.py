@@ -115,6 +115,29 @@ class TestMetricsV8Snapshot:
         assert util["capacity_units"] == 3
         assert util["ratio"] is not None
 
+    def test_leader_summary_excludes_standby(self, obs_env):
+        """standby 每 tick 也刷 worker 心跳，但无未过期 leadership lease →
+        不得混入 leader 计数。"""
+        from datetime import timedelta
+
+        from app.models.db_model import GeoComputeClusterWorker
+        from app.services.geocompute.cluster.store import _utcnow
+
+        store, factory, events, metrics = obs_env
+        store.upsert_worker("leader", role="coordinator", ttl_s=60)
+        store.upsert_worker("standby", role="coordinator", ttl_s=60)
+        with factory() as db:
+            db.query(GeoComputeClusterWorker).filter_by(
+                worker_id="standby"
+            ).update({
+                "lease_expires_at": _utcnow() - timedelta(seconds=1),
+                "heartbeat_at": _utcnow(),
+            })
+            db.commit()
+        summary = metrics._leader_summary()
+        assert summary["count"] == 1
+        assert summary["ids"] == ["leader"]
+
     def test_lineage_counts_events(self, obs_env):
         store, factory, events, metrics = obs_env
         rid = _run(store, "fp-lineage")

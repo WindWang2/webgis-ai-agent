@@ -12,11 +12,13 @@ verdict 词表（对齐既有三态纪律）：
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional
 
 from app.lib.storymap.brief_factcheck import check_facts
 from app.lib.storymap.brief_spec import MapBriefSpec
+from app.lib.storymap.story_compiler import _union_bbox
 
 VERDICTS = ("pass", "fail", "not_evaluated")
 OUTCOMES = ("blocked", "draft_exportable", "deliverable")
@@ -132,14 +134,14 @@ def run_preflight(
         items.append(PreflightItem(
             "numeric_consistency", "fail", True,
             "facts contradict authoritative/recomputed values", contradicted))
-    elif stats["warning"]:
-        items.append(PreflightItem(
-            "numeric_consistency", "pass", True,
-            f"{stats['warning']} facts with disclosure-level warnings"))
     elif unverified:
         items.append(PreflightItem(
             "numeric_consistency", "not_evaluated", True,
             "facts lack positive evidence (not verified)", unverified))
+    elif stats["warning"]:
+        items.append(PreflightItem(
+            "numeric_consistency", "pass", True,
+            f"{stats['warning']} facts with disclosure-level warnings"))
     else:
         items.append(PreflightItem(
             "numeric_consistency", "pass", True,
@@ -160,22 +162,32 @@ def run_preflight(
                 "mapspec fingerprint unavailable — static render deferred",
                 missing_fp))
         else:
-            # 镜头覆盖：产物 bbox 并集（缺席即不评）。
-            boxes = [
-                r.get("bbox") for r in records.values()
-                if isinstance(r.get("bbox"), (list, tuple)) and len(r.get("bbox")) == 4
-            ]
+            # 镜头覆盖：产物 bbox 并集（缺席即不评）。元素级校验：非数值/
+            # 非有限值不参与 —— float() 不得把预检变成 500，NaN 不得毒化比较。
+            boxes: List[List[float]] = []
+            for record in records.values():
+                raw = record.get("bbox")
+                if not (isinstance(raw, (list, tuple)) and len(raw) == 4):
+                    continue
+                try:
+                    box = [float(v) for v in raw]
+                except (TypeError, ValueError):
+                    continue
+                if all(math.isfinite(v) for v in box):
+                    boxes.append(box)
+            union = _union_bbox(boxes)
             outside: List[str] = []
-            if boxes:
-                west = min(float(b[0]) for b in boxes)
-                south = min(float(b[1]) for b in boxes)
-                east = max(float(b[2]) for b in boxes)
-                north = max(float(b[3]) for b in boxes)
+            if union:
+                # 跨 ±180° 的 bbox（e<w）已按展开域并集（camera_planner 同
+                # 语义，east 可越过 +180°）—— 镜头中心归一后按环域比较。
+                west, south, east, north = union
                 for block in map_blocks:
                     view = block.map_view
                     cx, cy = view.center[0], view.center[1]
                     span = max(360.0 / (2.0 ** max(0.0, view.zoom - 1)), 0.5)
-                    if not (west - span <= cx <= east + span
+                    lon_ok = ((cx - (west - span)) % 360.0
+                              <= (east + span) - (west - span))
+                    if not (lon_ok
                             and south - span / 2 <= cy <= north + span / 2):
                         outside.append(block.id)
             if outside:

@@ -202,6 +202,12 @@ export function TemporalTimeController() {
       role="group"
       aria-label={t('temporal.aria', { defaultValue: '地图时间轴' })}
       onKeyDown={(e) => {
+        // 焦点在表单控件（倍速 select / seek 滑块 / 按钮）时不得劫持原生键：
+        // Space 必须能打开下拉、方向键必须能调滑块，按钮的 Space/Enter 也必须
+        // 走原生激活（否则会二次触发播放切换）。
+        const target = e.target as HTMLElement | null;
+        const tag = target?.tagName?.toLowerCase();
+        if (tag === 'input' || tag === 'select' || tag === 'textarea' || tag === 'button' || target?.isContentEditable) return;
         if (e.key === ' ') { e.preventDefault(); onTogglePlay(); }
         else if (e.key === 'ArrowLeft') { e.preventDefault(); onStep(-1); }
         else if (e.key === 'ArrowRight') { e.preventDefault(); onStep(1); }

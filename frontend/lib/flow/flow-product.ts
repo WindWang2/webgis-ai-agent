@@ -415,7 +415,11 @@ export function buildPreviewMapSpec(
   const sources: MapSpec['sources'] = {};
   for (const [key, src] of Object.entries(fragment.sources ?? {})) {
     if (!src || src.type !== 'geojson') continue;
-    const isNode = key.includes('nodes');
+    // 后缀判定：family_id 自身含 "nodes"（如 x_nodes）时 edges 源键
+    // flow-x_nodes-edges-source 不得被误判为节点源。
+    // 后缀判定：family_id 自身含 "nodes"（如 x_nodes）时 edges 源键
+    // flow-x_nodes-edges-source 不得被误判为节点源。
+    const isNode = key.endsWith('-nodes-source');
     const data = isNode ? nodeGeoJson : edgeGeoJson;
     sources[key] = {
       type: 'geojson',

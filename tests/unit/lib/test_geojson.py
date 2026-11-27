@@ -1,4 +1,4 @@
-from app.utils.geojson import geojson_bbox
+from app.utils.geojson import geojson_bbox, summarize_feature_properties
 
 
 def test_geojson_bbox_deeply_nested_returns_none():
@@ -25,3 +25,17 @@ def test_geojson_bbox_feature_collection():
     }
     result = geojson_bbox(data)
     assert result == [-1, -2, 3, 4]
+
+
+def test_summarize_feature_properties_normalizes_non_dict_samples():
+    features = [
+        {"properties": {"name": "valid", "count": 1}},
+        {"properties": [{"name": "array"}]},
+        {"properties": "string"},
+    ]
+
+    typed_properties, sample = summarize_feature_properties(features, sample_size=3)
+
+    assert typed_properties == {"name": "string", "count": "number"}
+    assert sample == [{"name": "valid", "count": 1}, {}, {}]
+    assert all(isinstance(properties, dict) for properties in sample)

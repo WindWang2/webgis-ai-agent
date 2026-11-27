@@ -16,8 +16,9 @@
 
 算法（单遍贪心 + 均匀格网空间索引，同输入永远同输出）：
 
-1. 门控（按 (priority 升序, id 字典序) 逐要素）：空文本 → ``empty_text``；
-   zoom < min_zoom → ``below_min_zoom``（先判空文本后判 zoom）；
+1. 门控（按 (priority 升序, id 字典序) 逐要素）：空文本或 ``font_size<=0`` →
+   ``empty_text``；zoom < min_zoom → ``below_min_zoom``（先判空文本后判
+   zoom）；
 2. 候选生成：
    - point：8 方位 GIS 惯例序（``DECLUTTER_CANDIDATE_OFFSETS``，首选右上），
      offset = font_size × 0.75，角度 0，代价 = 序号；
@@ -242,7 +243,10 @@ def solve_labels(payload: LabelEngineInput) -> LabelSolution:
     suppressed: List[LabelPlacement] = []
     for f in ordered:
         anchor = _feature_anchor(f)
-        if not f.text.strip():
+        # font_size<=0 → 零/负尺寸标签框使格网失效（线标注更会除零：
+        # text_width=0 时 total/(text_width*1.5) 抛 ZeroDivisionError）——
+        # 同 empty_text 抑制，与导出孪生 label_collision 同口径。
+        if not f.text.strip() or f.font_size <= 0:
             suppressed.append(LabelPlacement(
                 feature_id=f.id, x=anchor[0], y=anchor[1], angle=0.0,
                 status="suppressed", reason="empty_text",

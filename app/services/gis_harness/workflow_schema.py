@@ -559,8 +559,16 @@ def evaluate_workflow_obligations(
                 )
                 report.obligations.append(ev)
                 continue
-            has_time = bool(rp.get("hasTimeField")) or _field_lower_contains(fields, _TIME_FIELD_HINTS)
             obs = rp.get("temporalObservationCount")
+            # review P2-21：观测计数在场同样是时间维度证据 —— 否则画像仅含
+            # temporalObservationCount（无 hasTimeField/时间字段名）时上面的
+            # 守卫已因计数在场放行，这里却判「时间维度不足」并误报「观测数
+            # 不足」（实际充足）。
+            has_time = (
+                bool(rp.get("hasTimeField"))
+                or _field_lower_contains(fields, _TIME_FIELD_HINTS)
+                or isinstance(obs, (int, float))
+            )
             min_obs = 2
             if obl.precondition_id.startswith("min_temporal_observations:"):
                 try:

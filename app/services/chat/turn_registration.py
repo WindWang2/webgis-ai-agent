@@ -58,7 +58,7 @@ def abandon_active_turn_registration(
     if entered or task is None:
         deregister_active_turn_task(tasks, session_id, task)
         return
-    if prior is not None and not prior.done():
+    if prior is not None and not prior.done() and tasks.get(session_id) is task:
         tasks[session_id] = prior
         return
     deregister_active_turn_task(tasks, session_id, task)

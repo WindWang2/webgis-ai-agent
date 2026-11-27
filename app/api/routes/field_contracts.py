@@ -58,7 +58,10 @@ async def list_contracts(
     ref_id: Optional[str] = Query(default=None),
     _conv: Conversation = Depends(require_owned_session),
 ) -> Dict[str, Any]:
-    return {"contracts": await fc_service.list_contracts(session_id, ref_id)}
+    try:
+        return {"contracts": await fc_service.list_contracts(session_id, ref_id)}
+    except FieldContractError as exc:
+        raise _http_error(exc) from exc
 
 
 @router.post("/sessions/{session_id}/field-contracts")
@@ -96,7 +99,10 @@ async def get_binding_status(
     ref_id: str,
     _conv: Conversation = Depends(require_owned_session),
 ) -> Dict[str, Any]:
-    return await contract_binding_status(session_id, ref_id)
+    try:
+        return await contract_binding_status(session_id, ref_id)
+    except FieldContractError as exc:
+        raise _http_error(exc) from exc
 
 
 @router.get("/sessions/{session_id}/field-contracts/{contract_id}")

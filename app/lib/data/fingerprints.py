@@ -28,18 +28,6 @@ from enum import Enum
 from typing import Any, Dict, Mapping, Optional, Sequence
 
 
-def _reject_non_finite(node: Any) -> None:
-    """NaN/Inf 在 canonical JSON 里不可往返（json.dumps 会输出非法字面量）→ 拒绝。"""
-    if isinstance(node, float) and not math.isfinite(node):
-        raise ValueError("non-finite float is not fingerprintable")
-    if isinstance(node, dict):
-        for v in node.values():
-            _reject_non_finite(v)
-    elif isinstance(node, (list, tuple)):
-        for v in node:
-            _reject_non_finite(v)
-
-
 def canonical_dumps(obj: Any) -> str:
     """V3 canonical JSON：sort_keys + 紧凑分隔符 + 集合排序。
 

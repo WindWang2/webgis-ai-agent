@@ -154,6 +154,46 @@ describe('usePagedLayerTable', () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
+  it('missing refId enters error state and recovers when identity returns', async () => {
+    const layer = makeLayer();
+    delete layer._refId;
+    const { rerender } = render(<Harness layer={layer} />);
+    await waitFor(() => {
+      expect(screen.getByTestId('status').textContent).toBe('error');
+      expect(screen.getByTestId('error').textContent).toContain('network');
+    });
+    expect(mockFetch).not.toHaveBeenCalled();
+
+    mockFetch.mockResolvedValue(pageOf([{ id: 'recovered', properties: { n: 1 } }]));
+    rerender(<Harness layer={makeLayer()} />);
+    await waitFor(() => expect(mockFetch).toHaveBeenCalled());
+    await waitFor(() => {
+      expect(screen.getByTestId('status').textContent).toBe('ready');
+      expect(screen.getByTestId('rows').textContent).toBe('recovered');
+    });
+  });
+
+  it('missing sessionId enters error state and recovers when identity returns', async () => {
+    act(() => setSessionIdentity(undefined, null));
+    const layer = makeLayer();
+    delete layer._tileUrl;
+    const { rerender } = render(<Harness layer={layer} />);
+    await waitFor(() => {
+      expect(screen.getByTestId('status').textContent).toBe('error');
+      expect(screen.getByTestId('error').textContent).toContain('network');
+    });
+    expect(mockFetch).not.toHaveBeenCalled();
+
+    act(() => setSessionIdentity('session-hooktest-00001', null));
+    mockFetch.mockResolvedValue(pageOf([{ id: 'recovered', properties: { n: 1 } }]));
+    rerender(<Harness layer={makeLayer()} />);
+    await waitFor(() => expect(mockFetch).toHaveBeenCalled());
+    await waitFor(() => {
+      expect(screen.getByTestId('status').textContent).toBe('ready');
+      expect(screen.getByTestId('rows').textContent).toBe('recovered');
+    });
+  });
+
   it('positions row ids from projected positional ids (idMode=positional)', async () => {
     mockFetch.mockResolvedValueOnce(pageOf(
       [{ id: 4, properties: { name: 'x' } }, { id: 7, properties: { name: 'y' } }],

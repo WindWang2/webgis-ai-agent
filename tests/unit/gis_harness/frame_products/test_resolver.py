@@ -173,6 +173,24 @@ class TestSharedExpression:
         assert res.document["layers"][0]["legend_spec"]["breaks"] == [0.0, 4.0, 8.0, 12.0]
         assert "shared_expression_not_computed" in res.disclosures
 
+    def test_non_numeric_breaks_refused_typed(self):
+        """shared_expression.breaks 含非数值 → typed FrameResolutionError
+        （裸 ValueError 会逃逸本模块的 typed 契约；NaN breaks 更会静默
+        产出 nan 图例标签）。"""
+        doc = _document()
+        doc["frame_product"]["shared_expression"]["breaks"] = [0.0, "x", 12.0]
+        with pytest.raises(FrameResolutionError) as ei:
+            resolve_frame_document(doc, "f-2022")
+        assert ei.value.code == "frame_shared_expression_invalid"
+
+    def test_nonfinite_breaks_refused_typed(self):
+        doc = _document()
+        doc["frame_product"]["shared_expression"]["breaks"] = [
+            0.0, float("nan"), 12.0]
+        with pytest.raises(FrameResolutionError) as ei:
+            resolve_frame_document(doc, "f-2022")
+        assert ei.value.code == "frame_shared_expression_invalid"
+
 
 class TestFrameOverrides:
     def test_layer_overrides_merge_per_key(self):

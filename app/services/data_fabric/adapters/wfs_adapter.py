@@ -488,11 +488,13 @@ class WFSAdapter(GeospatialDataSourceAdapter):
                     timeout=min(v2.execution.deadline_s, 30.0),
                     stream=True,
                 )
-                resp.raise_for_status()
                 chunks = []
                 total = 0
                 cap = 64 * 1024 * 1024
                 try:
+                    # raise_for_status 必须在 try 内：非 2xx(400/500) 时 stream=True
+                    # 的响应也经 finally 关闭，连接归还会话池（否则反复失败耗尽 pool）。
+                    resp.raise_for_status()
                     for chunk in resp.iter_content(chunk_size=256 * 1024):
                         if chunk:
                             total += len(chunk)

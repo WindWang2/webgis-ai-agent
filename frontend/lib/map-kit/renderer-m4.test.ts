@@ -135,10 +135,29 @@ describe('addProcessLayerStack', () => {
     ]);
   });
 
-  it('is idempotent — source already exists short-circuits', () => {
-    const m = makeMockMap({ sources: { 'process-s': { type: 'geojson' } } });
+  it('is idempotent — source + all three layers already exist short-circuits', () => {
+    const m = makeMockMap({
+      sources: { 'process-s': { type: 'geojson' } },
+      layers: [
+        { id: 'process-s-fill' },
+        { id: 'process-s-line' },
+        { id: 'process-s-point' },
+      ],
+    });
     addProcessLayerStack(m as any, 's', { type: 'FeatureCollection', features: [] });
     expect(m.addLayer).not.toHaveBeenCalled();
+  });
+
+  it('re-adds missing layers when the source survived a partial addLayer failure', () => {
+    // addSource 成功但 addLayer 抛错（样式未就绪）→ 重试必须补齐三层。
+    const m = makeMockMap({ sources: { 'process-s': { type: 'geojson' } } });
+    addProcessLayerStack(m as any, 's', { type: 'FeatureCollection', features: [] });
+    expect(m.addSource).not.toHaveBeenCalled();
+    expect(m.layerOps.filter((o) => o.op === 'add').map((o) => o.id)).toEqual([
+      'process-s-fill',
+      'process-s-line',
+      'process-s-point',
+    ]);
   });
 });
 

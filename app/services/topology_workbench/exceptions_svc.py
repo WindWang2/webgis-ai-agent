@@ -59,7 +59,8 @@ def accept_exception(
             raise WorkbenchError(
                 "exception_stale", "该问题已被复验判定 resolved —— 无需例外"
             )
-        # 已有 active 例外 → 幂等返回
+        # 已有 active 例外 → 幂等返回；stale 例外 → 复用同一行重新激活
+        # （同一 ruleset+finding_key 不累积重复例外记录）
         existing = db.execute(
             select(TopologyException).where(
                 TopologyException.finding_key == finding.finding_key,
@@ -88,12 +89,23 @@ def accept_exception(
             "witness_digest": finding.witness_digest,
             "metric": finding.metric,
         }
-        exc = TopologyException(
-            ruleset_id=run.ruleset_id, rule_id=finding.rule_id,
-            finding_key=finding.finding_key, anchor=anchor, reason=reason,
-            status="active", created_by=actor_user_id,
-        )
-        db.add(exc)
+        if existing is not None:
+            # stale → 重新激活同一行（锚点/理由/决定人按本次接受更新）
+            exc = existing
+            exc.rule_id = finding.rule_id
+            exc.anchor = anchor
+            exc.reason = reason
+            exc.status = "active"
+            exc.created_by = actor_user_id
+            exc.revoked_at = None
+            exc.revoked_by = None
+        else:
+            exc = TopologyException(
+                ruleset_id=run.ruleset_id, rule_id=finding.rule_id,
+                finding_key=finding.finding_key, anchor=anchor, reason=reason,
+                status="active", created_by=actor_user_id,
+            )
+            db.add(exc)
         db.flush()
         finding.status = "accepted_exception"
         finding.exception_id = exc.id
@@ -124,6 +136,7 @@ def revoke_exception(
         TopologyException,
         TopologyFinding,
         TopologyRuleset,
+        TopologyRun,
     )
 
     with SessionLocal() as db:
@@ -131,8 +144,11 @@ def revoke_exception(
         if exc is None:
             raise WorkbenchError("finding_not_found", "例外不存在", status=404)
         ruleset = db.get(TopologyRuleset, exc.ruleset_id)
-        if ruleset is None or (actor_user_id and not is_admin and not _ruleset_owned(
-                db, ruleset, actor_user_id)):
+        # 归属校验不得因 actor 为空而短路（无身份 ≠ 有权撤销）；admin 仍然覆盖
+        if ruleset is None or not (
+            is_admin
+            or (actor_user_id and _ruleset_owned(db, ruleset, actor_user_id))
+        ):
             raise WorkbenchError("not_owned", "例外不存在或无权访问", status=404)
         if exc.status == "revoked":
             return _exception_view(exc)
@@ -141,9 +157,12 @@ def revoke_exception(
         exc.revoked_by = actor_user_id
         # 关联 open 化：本规则集下同 finding_key 的 accepted finding 回 open
         findings = db.execute(
-            select(TopologyFinding).where(
+            select(TopologyFinding).join(
+                TopologyRun, TopologyFinding.run_id == TopologyRun.id,
+            ).where(
                 TopologyFinding.finding_key == exc.finding_key,
                 TopologyFinding.status == "accepted_exception",
+                TopologyRun.ruleset_id == exc.ruleset_id,
             )
         ).scalars().all()
         for f in findings:
@@ -165,7 +184,11 @@ def list_exceptions(
         stmt = select(TopologyException).order_by(TopologyException.created_at.desc())
         if ruleset_id:
             stmt = stmt.where(TopologyException.ruleset_id == ruleset_id)
-        if actor_user_id and not is_admin:
+        if not is_admin:
+            if not actor_user_id:
+                # 无身份（工具路径/未登录）不是超管 —— 无可见例外，绝不回退全表
+                # （anchor 内含源指纹/locator/metric，泄露即跨用户证据泄露）。
+                return []
             # 归属 = created_by 或（agent 会话内创建时）会话属主兜底
             from sqlalchemy import or_
             from app.models.db_model import Conversation
@@ -260,9 +283,15 @@ async def recheck_run(
         ).scalars():
             new_keys_by_rule.setdefault(f.rule_id, set()).add(f.finding_key)
 
-        # 新运行逐规则计算完整性（resolved 需要该规则 computation=full）
+        # 新运行逐规则计算完整性（resolved 需要该规则 applicable 且
+        # computation=full —— blocked 规则（AOI/target/connectors 为空等）
+        # computation 仍为 full，"无法判定"绝不构成"证据消失"）
         computation_by_rule = {
             (rr or {}).get("rule_id"): (rr or {}).get("computation")
+            for rr in (new_run.rule_results or [])
+        }
+        applicability_by_rule = {
+            (rr or {}).get("rule_id"): (rr or {}).get("applicability")
             for rr in (new_run.rule_results or [])
         }
 
@@ -280,12 +309,13 @@ async def recheck_run(
                 persisted_keys.append(f.finding_key)
                 continue
             comp = computation_by_rule.get(f.rule_id)
-            if comp == "full":
+            if (comp == "full"
+                    and applicability_by_rule.get(f.rule_id) == "applicable"):
                 f.status = "resolved"
                 f.resolved_by_run_id = new_run_id
                 resolved_keys.append(f.finding_key)
             else:
-                # 新运行该规则计算不完整 —— 无法证明证据消失，不判 resolved
+                # 新运行该规则计算不完整或被阻断 —— 无法证明证据消失，不判 resolved
                 persisted_keys.append(f.finding_key)
         # receipt 证据（绑输入/输出 revision + 规则 digest + 受影响问题）
         recheck_evidence = {

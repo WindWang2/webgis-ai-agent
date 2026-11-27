@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { compileMapSpecToSvg, resolvePaintValue } from "./mapspec-to-svg";
+import { BUILTIN_DOCUMENTS } from "@/lib/cartographic-assets/builtin-documents";
 
 describe("MapSpec-to-SVG Compiler Target", () => {
   const sampleMapSpec = {
@@ -672,5 +673,336 @@ describe('sampled label-field evidence is not authoritative absence', () => {
     }, { width: 600, height: 400, onDiagnostic: (code) => codes.push(code) });
     expect(codes).not.toContain('label_field_missing');
     expect(svg).toContain('late real label');
+  });
+});
+
+// ── G20：数值栅格离线快照（data:image）的放置矩形 ────────────────────────
+// review P1：此前 <image> 直接把经纬度 minX/minY 与 maxX-minX 当像素
+// x/y/width/height —— 度数值当像素用，快照被画到画布外且尺寸是度数跨度。
+// 正确形状 = project 后的 scaledPadding 内接矩形（与瓦片分支同一投影口径）。
+describe('G20: numeric raster offline snapshot placement rect', () => {
+  function rasterSpec() {
+    return {
+      version: '1.1',
+      sources: {
+        s1: {
+          type: 'geojson',
+          data: {
+            type: 'FeatureCollection',
+            features: [
+              { type: 'Feature', geometry: { type: 'Point', coordinates: [116.4, 39.9] }, properties: {} },
+              { type: 'Feature', geometry: { type: 'Point', coordinates: [116.5, 40.0] }, properties: {} },
+            ],
+          },
+        },
+      },
+      layers: [
+        {
+          id: 'grid',
+          type: 'raster',
+          source: 's1',
+          raster_style: { style_id: 'g20-snapshot' },
+          paint: { 'raster-opacity': 0.6 },
+        },
+      ],
+    };
+  }
+
+  function imageTag(svg: string): string {
+    const m = /<image [^>]*\/>/.exec(svg);
+    expect(m, 'offline snapshot <image> should be emitted').toBeTruthy();
+    return m![0];
+  }
+
+  function attr(tag: string, name: string): string | undefined {
+    return new RegExp(`${name}="([^"]*)"`).exec(tag)?.[1];
+  }
+
+  it('data:image 快照落在画布像素矩形（1200×800@72dpi padding40 → 40,40,1120,720）', () => {
+    const svg = compileMapSpecToSvg(rasterSpec(), {
+      targetDpi: 72,
+      width: 1200,
+      height: 800,
+      padding: 40,
+      numericRasterSnapshot: () => 'data:image/png;base64,AAAA',
+    });
+    const tag = imageTag(svg);
+    expect(attr(tag, 'href')).toBe('data:image/png;base64,AAAA');
+    // 经纬度值（116.4/39.9）不得出现在 x/y 上；度数跨度不得当 width/height
+    expect(attr(tag, 'x')).toBe('40');
+    expect(attr(tag, 'y')).toBe('40');
+    expect(attr(tag, 'width')).toBe('1120');
+    expect(attr(tag, 'height')).toBe('720');
+    expect(attr(tag, 'opacity')).toBe('0.6');
+  });
+
+  it('DPI 缩放后矩形随 dpiScale 走（144dpi → 80,80,2240,1440）', () => {
+    const svg = compileMapSpecToSvg(rasterSpec(), {
+      targetDpi: 144,
+      width: 1200,
+      height: 800,
+      padding: 40,
+      numericRasterSnapshot: () => 'data:image/png;base64,AAAA',
+    });
+    const tag = imageTag(svg);
+    expect(attr(tag, 'x')).toBe('80');
+    expect(attr(tag, 'y')).toBe('80');
+    expect(attr(tag, 'width')).toBe('2240');
+    expect(attr(tag, 'height')).toBe('1440');
+  });
+});
+
+// ── P2（review）回归：source 缺失披露 / G40 属性注入 / 表达式数组 / size 缺省 ──
+describe("MapSpec-to-SVG review P2 regressions", () => {
+  function pointSpec(binding: Record<string, unknown>) {
+    return {
+      version: "2.1",
+      view: { center: [116.4, 39.9], zoom: 10 },
+      sources: {
+        pts: {
+          type: "geojson",
+          inlineData: {
+            type: "FeatureCollection",
+            features: [{
+              type: "Feature",
+              properties: { c: "#00ff00", zone: "a" },
+              geometry: { type: "Point", coordinates: [116.4, 39.9] },
+            }],
+          },
+        },
+      },
+      layers: [{ id: "pts", source: "pts", type: "circle", paint: {}, symbol_asset: binding }],
+    };
+  }
+
+  function areaSpec(binding: Record<string, unknown>) {
+    return {
+      version: "2.1",
+      view: { center: [116.4, 39.9], zoom: 10 },
+      sources: {
+        zones: {
+          type: "geojson",
+          inlineData: {
+            type: "FeatureCollection",
+            features: [{
+              type: "Feature",
+              properties: { zone: "a" },
+              geometry: {
+                type: "Polygon",
+                coordinates: [[
+                  [116.38, 39.88], [116.42, 39.88], [116.42, 39.92],
+                  [116.38, 39.92], [116.38, 39.88],
+                ]],
+              },
+            }],
+          },
+        },
+      },
+      layers: [{ id: "zones", source: "zones", type: "fill", paint: {}, symbol_asset: binding }],
+    };
+  }
+
+  it("source 条目缺失 → layer_ref_unavailable（不静默消失）", () => {
+    const diags: string[] = [];
+    compileMapSpecToSvg(
+      {
+        version: "2.1",
+        view: { zoom: 8 },
+        sources: {},
+        layers: [{ id: "ghost", source: "missing", type: "circle", paint: {} }],
+      },
+      { onDiagnostic: (code) => diags.push(code) },
+    );
+    expect(diags).toContain("layer_ref_unavailable");
+  });
+
+  it("content_digest 注入字符在 defs/use id 中被转义", () => {
+    const tri = BUILTIN_DOCUMENTS["cartoasset.builtin.triangle"];
+    const evilDigest = 'sha256:a"b<cdefghijklmnop';
+    const docs = new Map([[evilDigest, { ...tri, content_digest: evilDigest }]]);
+    const svg = compileMapSpecToSvg(
+      pointSpec({
+        asset_id: "x", revision: 1, content_digest: evilDigest,
+        kind: "point_symbol", params: {},
+      }),
+      { targetDpi: 72, symbolAssets: docs },
+    );
+    expect(svg).toContain('cartoasset-a&quot;b&lt;cdefghij-');
+    expect(svg).not.toContain('a"b<c');
+  });
+
+  it('非白名单表达式数组按要素求值（["get","c"]），不写非法属性', () => {
+    const svg = compileMapSpecToSvg({
+      version: "2.1",
+      view: { zoom: 8 },
+      sources: {
+        S: {
+          type: "geojson",
+          inlineData: {
+            type: "FeatureCollection",
+            features: [{
+              type: "Feature",
+              properties: { c: "#00ff00" },
+              geometry: { type: "Point", coordinates: [116.4, 39.9] },
+            }],
+          },
+        },
+      },
+      layers: [{
+        id: "L", source: "S", type: "circle",
+        paint: { "circle-color": ["get", "c"], "circle-radius": 4 },
+      }],
+    }, { targetDpi: 72 });
+    expect(svg).toContain('fill="#00ff00"');
+    expect(svg).not.toContain('fill="get,c"');
+  });
+
+  it("无法求值的表达式数组回落缺省色（不输出非法 fill）", () => {
+    const svg = compileMapSpecToSvg({
+      version: "2.1",
+      view: { zoom: 8 },
+      sources: {
+        S: {
+          type: "geojson",
+          inlineData: {
+            type: "FeatureCollection",
+            features: [{
+              type: "Feature",
+              properties: {},
+              geometry: { type: "Point", coordinates: [116.4, 39.9] },
+            }],
+          },
+        },
+      },
+      layers: [{
+        id: "L", source: "S", type: "circle",
+        paint: { "circle-color": ["concat", "a", "b"], "circle-radius": 4 },
+      }],
+    }, { targetDpi: 72 });
+    expect(svg).toContain('fill="#3b82f6"');
+    expect(svg).not.toContain('fill="concat,a,b"');
+  });
+
+  it("point_symbol 缺 size_px → 缺省 16px 缩放（不产生 scale(NaN)）", () => {
+    const tri = BUILTIN_DOCUMENTS["cartoasset.builtin.triangle"];
+    const docs = new Map([[tri.content_digest, tri]]);
+    const svg = compileMapSpecToSvg(
+      pointSpec({
+        asset_id: "x", revision: 1, content_digest: tri.content_digest,
+        kind: "point_symbol", params: { anchor: "center" },
+      }),
+      { targetDpi: 72, symbolAssets: docs },
+    );
+    expect(svg).toContain("scale(0.6667)");
+    expect(svg).not.toContain("NaN");
+  });
+
+  it("area_texture 的 fg_color/bg_color 注入字符被转义", () => {
+    const hatch = BUILTIN_DOCUMENTS["cartoasset.builtin.hatch"];
+    const docs = new Map([[hatch.content_digest, hatch]]);
+    const svg = compileMapSpecToSvg(
+      areaSpec({
+        asset_id: "x", revision: 1, content_digest: hatch.content_digest,
+        kind: "area_texture",
+        params: {
+          fg_color: 'red" onload="alert(1)',
+          bg_color: 'white" onload="alert(2)',
+        },
+      }),
+      { targetDpi: 72, symbolAssets: docs },
+    );
+    expect(svg).not.toContain('stroke="red" onload="alert(1)"');
+    expect(svg).not.toContain('fill="white" onload="alert(2)"');
+    expect(svg).toContain("red&quot; onload=&quot;alert(1)");
+  });
+
+  it("缺 content_digest 的两份资产不塌成同一 defsId", () => {
+    const tri = BUILTIN_DOCUMENTS["cartoasset.builtin.triangle"];
+    const sq = BUILTIN_DOCUMENTS["cartoasset.builtin.square"];
+    // 短于 7 字符的摘要（含空串）此前 slice(7,19) 都退化为 ""，同 params
+    // 时第二份资产复用第一份的 def，渲染错误图元。
+    const docs = new Map([
+      ["", { ...tri, content_digest: "" }],
+      ["x", { ...sq, content_digest: "x" }],
+    ]);
+    const svg = compileMapSpecToSvg(
+      {
+        version: "2.1",
+        view: { center: [116.4, 39.9], zoom: 10 },
+        sources: {
+          pts: {
+            type: "geojson",
+            inlineData: {
+              type: "FeatureCollection",
+              features: [{
+                type: "Feature",
+                properties: {},
+                geometry: { type: "Point", coordinates: [116.4, 39.9] },
+              }],
+            },
+          },
+        },
+        layers: [
+          {
+            id: "a", source: "pts", type: "circle", paint: {},
+            symbol_asset: { asset_id: "a", revision: 1, content_digest: "", kind: "point_symbol", params: {} },
+          },
+          {
+            id: "b", source: "pts", type: "circle", paint: {},
+            symbol_asset: { asset_id: "b", revision: 1, content_digest: "x", kind: "point_symbol", params: {} },
+          },
+        ],
+      } as any,
+      { targetDpi: 72, symbolAssets: docs as any },
+    );
+    expect((svg.match(/<g id="cartoasset-/g) ?? []).length).toBe(2);
+    expect(svg).toContain("#2563eb"); // triangle
+    expect(svg).toContain("#16a34a"); // square
+  });
+
+  it("非法 hex 颜色不产出 NaN 分量（interpolate 回落端点值）", () => {
+    const out = resolvePaintValue(
+      { method: "interpolate", field: "v", stops: [[0, "#xyz"], [10, "#ffffff"]] },
+      { v: 2 },
+    );
+    expect(String(out)).not.toContain("NaN");
+    expect(out).toBe("#xyz");
+  });
+
+  it("match/case 缺 fallback 时使用入参 fallback，而不是最后一个 value", () => {
+    const props = { t: "b" };
+    expect(
+      resolvePaintValue(["match", ["get", "t"], "a", "x"], props, "#fallback"),
+    ).toBe("#fallback");
+    expect(
+      resolvePaintValue(["case", ["==", ["get", "t"], "a"], "x"], props, "#fallback"),
+    ).toBe("#fallback");
+  });
+
+  it("coordinates: [] 披露 layer_coordinates_invalid 且不在原点绘制", () => {
+    const diags: string[] = [];
+    const svg = compileMapSpecToSvg(
+      {
+        version: "2.1",
+        view: { zoom: 8 },
+        sources: {
+          S: {
+            type: "geojson",
+            inlineData: {
+              type: "FeatureCollection",
+              features: [{
+                type: "Feature",
+                properties: {},
+                geometry: { type: "Point", coordinates: [] },
+              }],
+            },
+          },
+        },
+        layers: [{ id: "L", source: "S", type: "circle", paint: { color: "#ff0000", radius: 4 } }],
+      } as any,
+      { targetDpi: 72, onDiagnostic: (code) => diags.push(code) },
+    );
+    expect(diags).toContain("layer_coordinates_invalid");
+    expect(svg).not.toContain("<circle");
   });
 });

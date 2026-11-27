@@ -235,3 +235,34 @@ async def test_pi_worker_resets_session_when_gis_session_changes():
     await bridge._isolate_vendor_session("sess-b")
     rpc.request.assert_awaited_once_with("new_session", {})
     bridge._drain_stale_events.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_multi_layer_heatmap_failure_discloses_partial_application(
+        monkeypatch):
+    """二层热力图只写入第一层即失败：失败载荷必须披露已应用层。"""
+    from app.services.gis_harness.heatmap_restyle import (
+        recolor_session_heatmaps,
+    )
+    import app.services.mapspec_store as msmod
+
+    layers = [
+        {"id": "heat-a", "type": "heatmap", "source": "sa",
+         "heatmap": {"palette": "classic"}, "paint": {}},
+        {"id": "heat-b", "type": "heatmap", "source": "sb",
+         "heatmap": {"palette": "classic"}, "paint": {}},
+    ]
+
+    class _Store:
+        async def get_mapspec(self, session_id):
+            return {"layers": layers}
+
+        async def layer_upsert(self, session_id, layer):
+            return {"success": layer["id"] == "heat-a"}
+
+    monkeypatch.setattr(msmod, "mapspec_store", _Store())
+    result = await recolor_session_heatmaps("s", "blues")
+    assert result["success"] is False
+    assert result["code"] == "heatmap_restyle_failed"
+    assert result["partial_applied"] == ["heat-a"]
+    assert result["remaining_layer_ids"] == []

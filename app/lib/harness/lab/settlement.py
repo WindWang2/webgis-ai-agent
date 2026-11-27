@@ -524,9 +524,3 @@ def _default_duplicate_op() -> Any:
         call_id="lab-dup-1", tool="lab.echo",
         arguments={"q": "dup"}, result={"echo": "dup"},
     )
-
-
-def _dup_fault() -> Any:
-    from app.lib.harness.lab.spec import FaultStep
-
-    return FaultStep(type="duplicate_event", target_turn=1)

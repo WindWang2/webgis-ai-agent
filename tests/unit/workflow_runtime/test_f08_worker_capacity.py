@@ -66,6 +66,17 @@ def test_profile_capacity_negative_in_flight_clamped():
     assert profile_capacity(rows, profile="raster") == (2, 0)
 
 
+def test_profile_capacity_fails_open_on_non_dict_profiles():
+    """capabilities.profiles 为 list/str 真值 → fail-open (0, 0)，不抛
+    AttributeError 打断派发。"""
+    rows = [{"capabilities": {"profiles": ["raster"]},
+             "load": {"in_flight": 1}}]
+    assert profile_capacity(rows, profile="raster") == (0, 0)
+    rows = [{"capabilities": {"profiles": "raster"},
+             "load": {"in_flight": 1}}]
+    assert profile_capacity(rows, profile="raster") == (0, 0)
+
+
 def test_choose_dispatch_no_capable_worker_unchanged(monkeypatch):
     reg = RegStub([])
     monkeypatch.setattr(DP, "dispatch_mode", lambda: "durable")

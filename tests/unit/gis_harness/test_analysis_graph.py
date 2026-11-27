@@ -123,6 +123,80 @@ class TestBoundsAndEmpty:
         g = build_analysis_graph(_FakePlan(chapter, superseded=True), None)
         assert any("superseded" in n for n in g["notes"])
 
+    def test_malformed_chapter_projection_never_raises(self):
+        """畸形章节（行是非 dict）→ 执行/产品投影降级缺席，绝不抛给调用方
+        （与 next_action / goal_graph 投影同纪律 —— 图是检视图，不是门槛）。"""
+        chapter = _chapter()
+        chapter["data_requirements"] = ["oops-not-a-dict"]
+        chapter["analysis_steps"] = ["oops-not-a-dict"]
+        g = _build(chapter)
+        assert g["counts"]["execution"] == 0
+        assert any("execution projection failed" in n for n in g["notes"])
+
+
+class TestPlanInputs:
+    def test_dict_plan_reads_goal_fields(self):
+        """dict plan 的 user_goal/superseded/replaced 不得静默为空/False
+        （label 已用同一字段；同节点内必须自洽）。"""
+        from app.services.gis_harness.analysis_graph import build_analysis_graph
+
+        g = build_analysis_graph({
+            "user_goal": "dict goal",
+            "superseded": True,
+            "replaced": True,
+            "gis_chapter": _chapter(),
+        })
+        assert g["goal"]["label"] == "dict goal"
+        assert g["goal"]["query"] == "dict goal"
+        assert g["goal"]["superseded"] is True
+        assert g["goal"]["replaced"] is True
+        assert any("superseded" in n for n in g["notes"])
+
+    def test_facet_completion_computed_once(self, monkeypatch):
+        import app.services.gis_harness.product_graph as pg
+
+        original = pg.build_facet_completion
+        calls = []
+
+        def _counting(*args, **kwargs):
+            calls.append(1)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(pg, "build_facet_completion", _counting)
+        _build(_chapter())
+        assert len(calls) == 1
+
+    async def test_non_numeric_revision_keeps_mapspec(self, monkeypatch):
+        """revision 非数字只降级修订号，不得把整个 MapSpec 置 None。"""
+        import app.services.gis_harness.render_observation as ro
+        import app.services.mapspec_store as msmod
+        import app.services.session_plan as spmod
+        from app.services.gis_harness import analysis_graph as ag
+
+        captured = {}
+        mapspec = {"revision": "not-a-number", "layers": [{"id": "l1"}]}
+
+        def _fake_build(plan, spec, **kw):
+            captured["mapspec"] = spec
+            captured["current_revision"] = kw.get("current_revision")
+            return {"nodes": []}
+
+        class _Store:
+            async def get_mapspec(self, session_id):
+                return mapspec
+
+        async def _none(_session_id):
+            return None
+
+        monkeypatch.setattr(ag, "build_analysis_graph", _fake_build)
+        monkeypatch.setattr(msmod, "mapspec_store", _Store())
+        monkeypatch.setattr(spmod, "load_session_plan", _none)
+        monkeypatch.setattr(ro, "load_render_observation", _none)
+
+        await ag.build_analysis_graph_for_session("s")
+        assert captured["mapspec"] is mapspec
+        assert captured["current_revision"] == 0
+
 
 class TestRoute:
     def test_route_registered(self):
@@ -139,6 +213,28 @@ class TestRoute:
         except Exception:  # noqa: BLE001 — openapi 构建失败退回路由表
             pass
         assert "/api/v1/sessions/{session_id}/analysis-graph" in paths
+
+    async def test_handler_uses_conversation_id(self, monkeypatch):
+        """回归：handler 曾读 ``conversation.session_id`` —— Conversation
+        只有 PK ``id``（session_id 语义 = Conversation.id，守卫查询即
+        ``Conversation.id == session_id``），属主校验通过的请求 100%
+        AttributeError → 500。此处直接驱动 handler 本体。"""
+        from app.api.routes import analysis_graph
+        from app.models.db_model import Conversation
+
+        conv = Conversation(id="sess-handler")
+        assert not hasattr(conv, "session_id")
+        seen: list[str] = []
+
+        async def _fake_build(session_id: str) -> dict:
+            seen.append(session_id)
+            return {"nodes": [], "goal": None}
+
+        monkeypatch.setattr(
+            analysis_graph, "build_analysis_graph_for_session", _fake_build)
+        result = await analysis_graph.get_analysis_graph(conv)
+        assert seen == ["sess-handler"]
+        assert result == {"nodes": [], "goal": None}
 
 
 class TestInvariants:

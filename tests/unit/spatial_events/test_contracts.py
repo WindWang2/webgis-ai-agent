@@ -172,6 +172,17 @@ class TestWatchContract:
         with pytest.raises(ValidationError):
             C.WatchCondition(aoi_bbox=[116.0, 33.0, 110.0, 29.0])  # min>max
 
+    def test_aoi_bbox_rejects_out_of_range_lon_lat(self):
+        # [0,0,500,500] 覆盖任意经纬度 → AOI 谓词恒真（watch 误触发）
+        with pytest.raises(ValidationError):
+            C.WatchCondition(aoi_bbox=[0.0, 0.0, 500.0, 500.0])
+        with pytest.raises(ValidationError):
+            C.WatchCondition(aoi_bbox=[-181.0, -10.0, 10.0, 10.0])
+        with pytest.raises(ValidationError):
+            C.WatchCondition(aoi_bbox=[-10.0, -91.0, 10.0, 10.0])
+        # 合法值域边界仍可用
+        assert C.WatchCondition(aoi_bbox=[-180.0, -90.0, 180.0, 90.0])
+
     def test_kind_must_be_envelope_kind(self):
         with pytest.raises(ValidationError):
             C.SpatialWatch(

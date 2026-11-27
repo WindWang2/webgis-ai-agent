@@ -200,3 +200,26 @@ async def test_empty_set_view_is_400(client, session_id):
     )
     assert resp.status_code == 400
     assert "center" in resp.json()["message"]
+
+
+@pytest.mark.cartography
+@pytest.mark.asyncio
+async def test_non_finite_set_view_is_rejected_without_write(client, session_id):
+    """NaN/Inf 视图值必须在边界被拒，绝不写入会话 MapSpec。
+
+    httpx 的 json= 编码器禁止 NaN，这里显式构造非标准 JSON
+    （Python json.loads 接受 NaN/Infinity）以复现真实请求体。
+    """
+    engine = MapSpecLifecycleEngine()
+    seeded = await engine.apply_mutation(session_id, InitProjectIntent())
+    before = await mapspec_store_instance.get_mapspec(session_id)
+    resp = await client.post(
+        f"/api/v1/chat/sessions/{session_id}/mapspec/mutations",
+        content=(
+            '{"intent":"set_view","expected_revision":%d,'
+            '"center":[114.3,30.5],"zoom":Infinity}'
+        ) % seeded.mutation_revision,
+        headers={"content-type": "application/json"},
+    )
+    assert resp.status_code == 422, resp.text
+    assert await mapspec_store_instance.get_mapspec(session_id) == before

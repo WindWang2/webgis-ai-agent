@@ -20,6 +20,8 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional, Sequence
 
+from pydantic import ValidationError
+
 from app.schemas.data_fabric_schema import QuerySpec
 from app.services.data_fabric.errors import InvalidQueryError
 from app.services.data_fabric.query.models import (
@@ -307,13 +309,22 @@ def normalize_query_spec(spec: QuerySpec) -> QuerySpecV2:
         sample = SampleSpec(size=max(1, min(5000, size)), seed=_opt_int(extras.get("sample_seed")))
 
     # ---- execution budget ----
-    execution = ExecutionBudget(
-        deadline_s=float(extras.get("deadline_s", ExecutionBudget().deadline_s)),
-        max_rows=_int_extra(extras, "max_rows", ExecutionBudget().max_rows),
-        max_bytes=min(_int_extra(extras, "max_bytes", ExecutionBudget().max_bytes), 512 * 1024 * 1024),
-        max_vertices=min(_int_extra(extras, "max_vertices", ExecutionBudget().max_vertices), 50_000_000),
-        max_pages=_int_extra(extras, "max_pages", ExecutionBudget().max_pages),
-    )
+    try:
+        deadline_s = float(extras.get("deadline_s", ExecutionBudget().deadline_s))
+    except (TypeError, ValueError):
+        raise InvalidQueryError("deadline_s must be a number") from None
+    try:
+        execution = ExecutionBudget(
+            deadline_s=deadline_s,
+            max_rows=_int_extra(extras, "max_rows", ExecutionBudget().max_rows),
+            max_bytes=min(_int_extra(extras, "max_bytes", ExecutionBudget().max_bytes), 512 * 1024 * 1024),
+            max_vertices=min(_int_extra(extras, "max_vertices", ExecutionBudget().max_vertices), 50_000_000),
+            max_pages=_int_extra(extras, "max_pages", ExecutionBudget().max_pages),
+        )
+    except ValidationError as e:
+        # 越界预算 → typed InvalidQueryError（文档契约，不是裸 pydantic
+        # ValidationError）。_int_extra 已抛 typed 错误，不经此路径。
+        raise InvalidQueryError(f"invalid execution budget: {e}") from None
 
     v2 = QuerySpecV2(
         select=(extras_all.get("fields") or extras_all.get("columns") or None),

@@ -82,7 +82,9 @@ export function rightDockWidthLimit(viewportWidth?: number): { min: number; max:
   const viewport = viewportWidth ?? (typeof window === 'undefined' ? 1280 : window.innerWidth);
   const proportional = Math.floor(viewport * 0.45);
   const room = Math.max(RIGHT_DOCK_MIN_WIDTH, viewport - 280);
-  const max = Math.max(RIGHT_DOCK_MAX_WIDTH, Math.min(proportional, room));
+  // 560 只是宽视口下 max 的下限，不能压过视口派生的上限：窄视口必须先满足
+  // room（为地图预留 280px），否则 700px 视口会把 dock 拖到 560（80%）。
+  const max = Math.min(room, Math.max(RIGHT_DOCK_MAX_WIDTH, proportional));
   return { min: RIGHT_DOCK_MIN_WIDTH, max: Math.max(RIGHT_DOCK_MIN_WIDTH, max) };
 }
 

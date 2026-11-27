@@ -186,6 +186,8 @@ class ScenarioBranchManager:
 
     async def _refresh_meta_revision(self, meta: ScenarioBranchMeta) -> ScenarioBranchMeta:
         state = await session_data_manager.get_map_state(meta.branch_session_id)
+        if not isinstance(state, dict):
+            return meta
         try:
             meta.last_revision = int(
                 state.get("_cartographic_mutation_revision", meta.last_revision) or 0

@@ -305,7 +305,10 @@ def _table_geo_meta(table: Any) -> Dict[str, Any]:
 
 def covering_bbox_columns(geo_meta: Dict[str, Any]) -> Optional[Dict[str, str]]:
     """geo 元数据里的逐行 bbox covering 列声明（GeoParquet 1.1 形状）。"""
-    for col in (geo_meta.get("columns") or {}).values():
+    columns = geo_meta.get("columns")
+    if not isinstance(columns, dict):
+        return None
+    for col in columns.values():
         cov = (col.get("covering") or {}).get("bbox") if isinstance(col, dict) else None
         if isinstance(cov, dict) and all(
             isinstance(cov.get(k), str) for k in ("xmin", "ymin", "xmax", "ymax")
@@ -356,14 +359,16 @@ def arrow_bbox_filter(table: Any, bbox: Sequence[float]) -> Any:
         names = set(table.schema.names)
         if all(covering[k] in names for k in ("xmin", "ymin", "xmax", "ymax")):
             return table.filter(bbox_filter_expression(covering, bbox))
-    for col in (geo_meta.get("columns") or {}).values():
-        table_bbox = col.get("bbox") if isinstance(col, dict) else None
-        if isinstance(table_bbox, (list, tuple)) and len(table_bbox) == 4:
-            b0, b1, b2, b3 = (float(c) for c in table_bbox)
-            minx, miny, maxx, maxy = _check_bbox_4(bbox)
-            if b2 < minx or b0 > maxx or b3 < miny or b1 > maxy:
-                return table.slice(0, 0)  # 表级不相交 → 确定空结果（诚实零行）
-            break
+    columns = geo_meta.get("columns")
+    if isinstance(columns, dict):
+        for col in columns.values():
+            table_bbox = col.get("bbox") if isinstance(col, dict) else None
+            if isinstance(table_bbox, (list, tuple)) and len(table_bbox) == 4:
+                b0, b1, b2, b3 = (float(c) for c in table_bbox)
+                minx, miny, maxx, maxy = _check_bbox_4(bbox)
+                if b2 < minx or b0 > maxx or b3 < miny or b1 > maxy:
+                    return table.slice(0, 0)  # 表级不相交 → 确定空结果（诚实零行）
+                break
     raise ArrowPredicateUnsupported(
         "row-level bbox filtering requires per-row bbox covering columns; "
         "arrow_bbox_filter does not parse geometry — fall back to the dict lane",

@@ -8,6 +8,7 @@ import asyncio
 import logging
 import math
 import os
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional, Sequence
@@ -990,13 +991,23 @@ class RequestCorrelationMiddleware(BaseHTTPMiddleware):
     现在服务端正式消费并关联日志）。
     """
 
+    _MAX_REQUEST_ID_LENGTH = 128
+    _REQUEST_ID_PATTERN = re.compile(
+        rf"[A-Za-z0-9._:-]{{1,{_MAX_REQUEST_ID_LENGTH}}}"
+    )
+
     async def dispatch(self, request: Request, call_next):  # type: ignore[override]
         try:
             from app.lib.runtime.context import bind_runtime_context, new_request_id
         except Exception:  # noqa: BLE001
             return await call_next(request)
         incoming = request.headers.get("x-request-id")
-        req_id = incoming.strip() if isinstance(incoming, str) and incoming.strip() else new_request_id()
+        candidate = incoming.strip() if isinstance(incoming, str) else ""
+        req_id = (
+            candidate
+            if self._REQUEST_ID_PATTERN.fullmatch(candidate)
+            else new_request_id()
+        )
         # 合并进 RuntimeContext，并保留 session_id（若已有，如 WebSocket）
         with bind_runtime_context(request_id=req_id):
             response = await call_next(request)

@@ -12,6 +12,8 @@ DeliveryAuditReport.verdict 与 receipt.summary 里。
 """
 from __future__ import annotations
 
+import asyncio
+import time
 from typing import Any, Dict, List, Optional
 
 import pytest
@@ -60,6 +62,19 @@ class FakeGovernor:
 
     def snapshot(self) -> dict:
         return {"active_count": len(self.acquired) - len(self.released)}
+
+
+class _HangingGovernor:
+    """acquire 永不返回的假件（背压悬挂面）。"""
+
+    def __init__(self) -> None:
+        self.released: List[str] = []
+
+    async def acquire(self, assignment_id: str, task_id: str) -> None:
+        await asyncio.Event().wait()
+
+    def release(self, assignment_id: str) -> None:
+        self.released.append(assignment_id)
 
 
 class RecordingAggregator:
@@ -296,6 +311,55 @@ class TestGovernorDiscipline:
         await session.run(_REQUEST)
         assert governor.snapshot()["active_count"] == 0
 
+    def test_governor_defaults_to_cluster_singleton(self):
+        """未注入 governor 时回退集群单例（≤3 熔断约束不缺席）。"""
+        from app.services.agent_swarm.orchestrator import (
+            get_swarm_concurrency_governor,
+        )
+
+        session = _session(_PassingAuditor())
+        assert session._governor is get_swarm_concurrency_governor()
+
+    async def test_stage_acquire_has_deadline(self, monkeypatch):
+        """compose 阶段 acquire 不得无界挂起（排队过期为诚实终止）。"""
+        from app.services.agent_swarm import duo_session as duo
+
+        monkeypatch.setattr(
+            duo, "_GOVERNOR_ACQUIRE_TIMEOUT_S", 0.01, raising=False
+        )
+        session = _session(_PassingAuditor(), governor=_HangingGovernor())
+        started = time.monotonic()
+        with pytest.raises((asyncio.TimeoutError, TimeoutError)):
+            await asyncio.wait_for(
+                session._stage(
+                    "run-deadline", 0, "compose",
+                    SwarmSpecialistRole.CARTOGRAPHY_SPECIALIST,
+                    lambda: (_ for _ in ()).throw(
+                        AssertionError("acquire 未返回前不得执行阶段")
+                    ),
+                ),
+                timeout=2.0,
+            )
+        assert time.monotonic() - started < 1.0
+
+    async def test_audit_stage_acquire_has_deadline(self, monkeypatch):
+        """audit 阶段 acquire 同受 deadline 封顶。"""
+        from app.services.agent_swarm import duo_session as duo
+
+        monkeypatch.setattr(
+            duo, "_GOVERNOR_ACQUIRE_TIMEOUT_S", 0.01, raising=False
+        )
+        session = _session(_PassingAuditor(), governor=_HangingGovernor())
+        started = time.monotonic()
+        with pytest.raises((asyncio.TimeoutError, TimeoutError)):
+            await asyncio.wait_for(
+                session._audit_stage(
+                    "run-deadline", None, None, None, "", None, round_index=0,
+                ),
+                timeout=2.0,
+            )
+        assert time.monotonic() - started < 1.0
+
 
 class TestAggregatorIntegration:
     """会话级聚合：receipts → manifest → merge；fail-open。"""
@@ -327,6 +391,21 @@ class TestAggregatorIntegration:
 
 
 class TestDuoSessionInternals:
+    async def test_stages_run_off_event_loop(self, monkeypatch):
+        """持 governor 槽位的 CPU 密集阶段必须在线程中执行，不阻塞事件循环。"""
+        calls: List[Any] = []
+
+        async def _fake_to_thread(func, *args, **kwargs):
+            calls.append(func)
+            return func(*args, **kwargs)
+
+        monkeypatch.setattr(asyncio, "to_thread", _fake_to_thread)
+        session = _session(_PassingAuditor())
+        result = await session.run(_REQUEST, run_id="run-offload")
+        assert result.status == "converged"
+        assert len(calls) == 2  # R0 compose + audit 均经 to_thread
+        assert calls[1] == session._auditor.audit
+
     async def test_auditor_stage_exception_propagates(self):
         """会话不吞审计异常（与 SwarmAggregator 的 fail-open 边界不同）。"""
         session = _session(_ExplodingAuditor())
@@ -540,3 +619,26 @@ class TestInProcessRuntimeRouting:
             on_heartbeat=lambda note: None,
         )
         assert receipt.status == SwarmReceiptStatus.SUCCEEDED
+
+
+class TestReceiptClockDomain:
+    """finished_at 必须是 epoch 时钟（与 dispatcher/orchestrator 同域）。"""
+
+    async def test_duo_receipt_finished_at_uses_epoch_clock(self):
+        session = _session(_PassingAuditor())
+        result = await session.run(_REQUEST)
+        now = time.time()
+        assert all(abs(now - r.finished_at) < 60 for r in result.receipts)
+
+    async def test_inprocess_receipt_finished_at_uses_epoch_clock(self):
+        ledger = ArtifactLedger()
+        runtime = InProcessSpecialistRuntime(
+            cartographer=CartographerAgent(ledger=ledger),
+            auditor=CriticAuditorAgent(),
+            ledger=ledger,
+        )
+        runtime.register_request("swarm.cartography.compose", _REQUEST)
+        receipt = await runtime.execute(
+            _assignment("swarm.cartography.compose", "swarm.cartography.compose")
+        )
+        assert abs(time.time() - receipt.finished_at) < 60

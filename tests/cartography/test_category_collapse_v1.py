@@ -229,3 +229,36 @@ class TestCartographerIntegration:
         # cartographer 以 sorted 序枚举类别（既有契约）。
         assert [e["key"] for e in legend["categories"]] == sorted(cats)
         assert "collapse" not in legend
+
+
+class TestMixedTypeLegendKeys:
+    """P2：混合类型值 1 与 "1" 不得生成同名 key 的异色图例条目。"""
+
+    def test_int_and_str_same_text_get_distinct_keys(self):
+        out = apply_collapse([1, "1"], colors=COLORS, keep_classes=2)
+        keys = [e["key"] for e in out.entries]
+        assert len(set(keys)) == len(keys), f"legend key 碰撞: {keys}"
+        assert out.entries[0]["color"] != out.entries[1]["color"]
+        # 数据侧同口径：两类落到不同属性值
+        assert out.collapse_key_for(1) == out.entries[0]["key"]
+        assert out.collapse_key_for("1") == out.entries[1]["key"]
+        assert out.collapse_key_for(1) != out.collapse_key_for("1")
+
+    def test_pure_string_keys_unchanged(self):
+        # 无碰撞时保持 #783 逐字节兼容（str 值原样做 key）
+        out = apply_collapse(["a", "b", "c"], colors=COLORS, keep_classes=3)
+        assert [e["key"] for e in out.entries] == ["a", "b", "c", OTHER_KEY]
+        assert out.meta.kept_keys == ["a", "b", "c"]
+
+    def test_rewrite_features_separates_colliding_types(self):
+        feats = [
+            {"properties": {"cat": 1}},
+            {"properties": {"cat": "1"}},
+        ]
+        out = apply_collapse([1, "1"], colors=COLORS, keep_classes=2)
+        new_feats, _ = rewrite_features_with_collapse(
+            feats, field="cat", outcome=out)
+        first = new_feats[0]["properties"]["cat:collapsed"]
+        second = new_feats[1]["properties"]["cat:collapsed"]
+        assert first != second
+        assert {first, second} == {out.entries[0]["key"], out.entries[1]["key"]}

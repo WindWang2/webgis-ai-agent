@@ -163,6 +163,13 @@ class RasterReader:
             overviews = len(ds.overviews(1)) if ds.count else 0
         except Exception:  # noqa: BLE001
             overviews = 0
+        # The fingerprint samples two corner windows — pixel IO, so it must
+        # run under the canonical GDAL env (HTTP timeout / cache cap /
+        # threads), not after the open-time env has been torn down.
+        from app.lib.geo_raster.env import rasterio_env
+
+        with rasterio_env():
+            fingerprint = self._fingerprint(ds)
         self._meta = RasterMetadata(
             uri=self.uri,
             width=grid.width,
@@ -179,7 +186,7 @@ class RasterReader:
             overviews=overviews,
             is_tiled=bool(getattr(ds, "is_tiled", False)),
             is_cog=self.cog_structure_ok(ds),
-            fingerprint=self._fingerprint(ds),
+            fingerprint=fingerprint,
         )
         self._meta.grid_profile = grid
         return self._meta
@@ -284,6 +291,11 @@ class RasterReader:
     def read_band(self, band: int = 1) -> np.ndarray:
         """Whole-band read via the budget guard (see read_full)."""
         ds = self._ds()
+        band = int(band)
+        if not (1 <= band <= ds.count):
+            raise RasterReaderError(
+                f"band {band} out of range (1..{ds.count}) for {self.uri!r}"
+            )
         m = self.metadata()
         # review W2: one band, not width*height*ALL bands
         return self._budgeted_read(
@@ -310,6 +322,11 @@ class RasterReader:
         """Read a whole decimated overview level (-1 = coarsest). Raises for
         out-of-range levels instead of silently clamping."""
         ds = self._ds()
+        band = int(band)
+        if not (1 <= band <= ds.count):
+            raise RasterReaderError(
+                f"band {band} out of range (1..{ds.count}) for {self.uri!r}"
+            )
         ovs = ds.overviews(band) if ds.count else []
         if not ovs:
             raise RasterReaderError("dataset has no overviews")

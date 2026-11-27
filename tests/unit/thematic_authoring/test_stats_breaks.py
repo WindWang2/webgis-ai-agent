@@ -93,6 +93,34 @@ def test_scan_field_missing_vs_null_distinguished():
     assert scan.scanned == 1
 
 
+def test_scan_field_huge_int_over_float_range_is_inf_not_crash():
+    """P2 回归：int 超出 float 上限（>1.8e308）→ 按 inf 分型，不抛 OverflowError。"""
+    huge = 10 ** 400
+    rows = [{"v": huge}, {"v": 1.0}]
+    scan = stats_mod.scan_field(make_fc(rows)["features"], "v")
+    assert scan.invalid["inf"] == 1
+    assert scan.scanned == 1
+    assert scan.values == [1.0]
+    assert str(huge) not in scan.category_counts
+    dist = stats_mod.field_distribution(scan)
+    assert dist["numeric"]["invalid"]["inf"] == 1
+
+
+def test_scan_field_distinct_cap_bounds_category_memory():
+    """P2 回归：distinct 键超过扫描帽后不再收录新键（cat_counts/key_kinds 有界）。"""
+    n = stats_mod.MAX_DISTINCT_SCAN + 25
+    rows = [{"uid": f"id-{i:06d}"} for i in range(n)]
+    scan = stats_mod.scan_field(make_fc(rows, geom="Point")["features"], "uid")
+    assert scan.distinct_capped is True
+    assert len(scan.category_counts) <= stats_mod.MAX_DISTINCT_SCAN
+    assert len(scan.key_kinds) <= stats_mod.MAX_DISTINCT_SCAN
+    assert scan.category_counts["id-000000"] == 1
+    dist = stats_mod.field_distribution(scan)
+    assert dist["categorical"]["distinct"] is None
+    # 截断不得让 other 计数少算（类别口径总数守恒）
+    assert dist["categorical"]["other_count"] == n - stats_mod.MAX_CATEGORY_TOP
+
+
 def test_category_type_collision_disclosed():
     fc = make_fc([{"code": 1}, {"code": "1"}, {"code": 2}])
     scan = stats_mod.scan_field(fc["features"], "code")
@@ -218,3 +246,16 @@ def test_ambiguous_keys_capture_up_to_64():
         feats.append({"properties": props_s})
     scan = stats_mod.scan_field(feats, "code")
     assert len(scan.ambiguous_keys) == 64  # cap 64（此前 5）
+
+
+def test_size_for_value_degenerate_domain_returns_none():
+    """P3 回归：退化值域（min==max）不得 ZeroDivisionError，按非法输入返回 None。"""
+    from app.services.thematic_authoring.builder import size_for_value, size_samples
+    from app.services.thematic_authoring.contract import SizeChannel
+
+    ch = SizeChannel.model_construct(
+        channel="radius", field="v", min_value=5.0, max_value=5.0,
+        min_size=4.0, max_size=10.0, scaling="linear",
+    )
+    assert size_for_value(5.0, ch) is None
+    assert size_samples(ch) == []

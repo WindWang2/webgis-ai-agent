@@ -385,7 +385,7 @@ def compile_tool_spec(
         return None
     fn = subset[0].get("function", {})
     schema, findings = project_schema_for_pi(subset[0])
-    schema_bytes = len(json.dumps(schema, ensure_ascii=False))
+    schema_bytes = len(json.dumps(schema, ensure_ascii=False).encode("utf-8"))
     budget = spec_max_schema_bytes()
     if budget and schema_bytes > budget:
         # fail-honest：放不下 → 整工具逐出（proxy 长尾仍可达），不削弱 schema。

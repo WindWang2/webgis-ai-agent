@@ -201,3 +201,47 @@ def test_scenario_11_fixed_style_is_not_reclassified_per_frame(media_env):
     from app.services.temporal_media.verify import verify_delivery
     assert verify_delivery(plan, encoded, media, digital, frames_dir,
                            svgs_dir)["passed"]
+
+
+def test_layer_support_tolerates_session_without_temporal_binding():
+    """P1：freeze.py:251 在校验前传 doc.get("temporal")，None 不得 500。"""
+    doc = temporal_document([2019, 2020])
+    doc.pop("temporal", None)
+    support = layer_support(doc, doc.get("temporal"))
+    assert support["temporal_bindings"] == []
+    assert support["render_path"] == "client_filter"
+    assert support["representation"] == ""
+    assert support["static_raster_layers"] == []
+    assert support["unsupported_layers"] == []
+    assert support["supported_layers"] == [
+        {"layer_id": "observations", "kind": "static_inline",
+         "source_type": "geojson"}]
+
+
+@pytest.mark.asyncio
+async def test_freeze_document_without_temporal_is_typed_not_attributeerror(
+        monkeypatch):
+    """P1：无绑定会话必须得到 typed NO_TEMPORAL_BINDING(409)，而非 AttributeError。
+
+    service.capabilities 只捕获 TemporalMediaError；此路径抛 AttributeError
+    会让绑定披露整条 500 失效。
+    """
+    from app.services.temporal_media.freeze import freeze_document
+
+    doc = temporal_document([2019, 2020])
+    doc.pop("temporal", None)
+
+    class _FakeStore:
+        async def get_mapspec(self, session_id: str):
+            return doc
+
+    async def _revision(session_id: str) -> int:
+        return 3
+
+    monkeypatch.setattr("app.services.mapspec_store.mapspec_store", _FakeStore())
+    monkeypatch.setattr(
+        "app.services.raster_authoring.service.current_revision", _revision)
+    with pytest.raises(TemporalMediaError) as exc:
+        await freeze_document("sess-g35")
+    assert exc.value.code == "NO_TEMPORAL_BINDING"
+    assert exc.value.status_code == 409

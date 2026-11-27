@@ -478,6 +478,9 @@ def merge_intent_hints(
     merged = base.model_copy(deep=True)
     if not isinstance(hints, dict):
         return merged
+    # 只有"真正生效"的 hint 才抬置信度：hint_applied 同时记录已应用与被拒
+    # （:487/:515），全被拒时置信度反升会压制下游澄清触发。
+    applied_any = False
     for key, value in hints.items():
         if key not in _HINT_OVERRIDABLE or value in (None, "", []):
             continue
@@ -490,6 +493,7 @@ def merge_intent_hints(
                     continue
                 if value != base.task:
                     merged.task = value
+                    applied_any = True
                     merged.hint_applied.append(f"task:{base.task}->{value}")
                     # 派生意图按新任务重算（保留显式形态信号），否则
                     # task 与 cartography_intents/measure 各说各话
@@ -508,13 +512,14 @@ def merge_intent_hints(
                         merged.subject, value)
             elif getattr(merged, key) != value:
                 setattr(merged, key, value)
+                applied_any = True
                 merged.hint_applied.append(f"{key}->{value}")
         except ValidationError:
             # #780: validate_assignment 会把越词汇表的 hint 值变成异常 ——
             # 拒绝该键、保留确定性基线，继续处理其余 hint。
             merged.hint_applied.append(f"{key}:{value} rejected (invalid value)")
             continue
-    if merged.hint_applied:
+    if applied_any:
         merged.confidence = round(min(1.0, merged.confidence + 0.1), 2)
     return merged
 

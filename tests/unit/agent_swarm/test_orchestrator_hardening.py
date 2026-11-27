@@ -246,6 +246,36 @@ class TestRetrySemantics:
         assert rt.calls == ["t1"]
         assert status.state == "failed"
 
+    async def test_retry_success_backfills_receipt_attempts(self):
+        """重试后券 attempts 必须等于真实尝试次数（投影不得少报）。"""
+
+        class _FlakyRuntime(RecordingRuntime):
+            async def execute(self, assignment, *, on_heartbeat=None):
+                self.calls.append(assignment.task.task_id)
+                receipt = SubagentReceipt(
+                    assignment_id=assignment.assignment_id,
+                    task_id=assignment.task.task_id,
+                    role=assignment.task.role,
+                    status=(
+                        SwarmReceiptStatus.SUCCEEDED
+                        if len(self.calls) > 1
+                        else SwarmReceiptStatus.FAILED
+                    ),
+                    produced_refs=(
+                        ["ref:out-t1"] if len(self.calls) > 1 else []
+                    ),
+                    error="" if len(self.calls) > 1 else "transient",
+                    error_code="" if len(self.calls) > 1 else "retryable",
+                )
+                return receipt
+
+        rt = _FlakyRuntime()
+        orch = _orch(rt, [_task("t1", max_retries=1)])
+        status = await orch.run_swarm("重试后成功")
+        assert status.state == "succeeded"
+        assert orch._receipts["t1"].attempts == 2
+        assert status.tasks["t1"]["attempt"] == 2
+
     async def test_required_failure_makes_cluster_failed(self):
         rt = RecordingRuntime({"t1": _failed("non_retryable")})
         orch = _orch(rt, [_task("t1"), _task("t2")])

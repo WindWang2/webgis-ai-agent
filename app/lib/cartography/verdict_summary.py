@@ -89,7 +89,11 @@ def _project_failed_checks(checks: Any) -> List[Dict[str, Any]]:
         }
         suggested_fix = check.get("suggested_fix")
         if isinstance(suggested_fix, dict) and suggested_fix:
-            entry["suggested_fix"] = suggested_fix
+            fix_text = json.dumps(suggested_fix, ensure_ascii=False, sort_keys=True)
+            entry["suggested_fix"] = (
+                suggested_fix if len(fix_text) <= _MAX_MESSAGE_CHARS
+                else _clip(fix_text, _MAX_MESSAGE_CHARS)
+            )
         elif suggested_fix:
             entry["suggested_fix"] = _clip(suggested_fix, _MAX_MESSAGE_CHARS)
         projected.append(entry)
@@ -230,8 +234,19 @@ def render_verdict_for_llm(review: Dict[str, Any]) -> str:
             body["selfheal_suggestions"] = selfheal_suggestions
     serialized = json.dumps(body, ensure_ascii=False, sort_keys=True)
     if len(serialized) > _MAX_TOTAL_CHARS:
-        # 兜底截断：逐字段封顶后正常到不了这里，防御未来字段膨胀。
-        serialized = serialized[:_MAX_TOTAL_CHARS]
+        # 兜底：逐级丢弃可选投影后再序列化 —— 绝不 slice JSON 文本
+        # （硬截断产出非法 JSON，注入 prompt 后模型无法解析）。
+        for key in ("failed_checks", "selfheal_suggestions", "feedback",
+                    "repair_attempts", "visual"):
+            body.pop(key, None)
+            serialized = json.dumps(body, ensure_ascii=False, sort_keys=True)
+            if len(serialized) <= _MAX_TOTAL_CHARS:
+                break
+    if len(serialized) > _MAX_TOTAL_CHARS:
+        serialized = json.dumps(
+            {"verdict": token, "truncated": True},
+            ensure_ascii=False, sort_keys=True,
+        )
     if token == "pass":
         hint = "No corrective action needed."
     else:

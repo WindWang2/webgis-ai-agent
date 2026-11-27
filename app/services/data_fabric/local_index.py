@@ -320,7 +320,7 @@ def assets_to_cards(assets: List[LocalAsset]) -> List[Any]:
             title=a.title,
             description=a.description,
             keywords=["本地", "离线", a.library],
-            fields=[f["name"] for f in a.meta.get("fields", []) if isinstance(f, dict)],
+            fields=[f["name"] for f in a.meta.get("fields", []) if isinstance(f, dict) and "name" in f],
             data_type=a.data_type,
             license="internal" if a.library != "local_osm" else "ODbL-1.0",
             update_frequency="manual_ingest",

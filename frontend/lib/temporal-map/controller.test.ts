@@ -18,10 +18,12 @@ import {
 import {
   getDisplayedTemporalFrame,
   getLiveTemporalFrame,
+  getLiveTemporalGeneration,
   getLiveTemporalRequest,
   markLiveApplied,
   requestLiveFrame,
   resetTemporalLiveState,
+  resolveEffectiveFrame,
   setActiveController,
 } from './live-frame';
 
@@ -91,6 +93,38 @@ describe('seq 顺序与 displayed_at 门控', () => {
   });
 });
 
+describe('活动控制器更替（会话/面板切换）', () => {
+  it('替换控制器作废上一会话 live 帧（帧 id 复用不锁旧时间窗）', () => {
+    const first = new TemporalPlaybackController();
+    setActiveController(first);
+    const stale = frame('f-2023', 2023);
+    requestLiveFrame(stale);
+    const req = getLiveTemporalRequest()!;
+    expect(markLiveApplied(req.seq, req.frame)).toBe(true);
+    expect(getDisplayedTemporalFrame()?.id).toBe('f-2023');
+
+    const genBefore = getLiveTemporalGeneration();
+    setActiveController(new TemporalPlaybackController());
+
+    // 陈旧 live 帧 + displayed 必须作废：reconcile 回落到 spec cursor
+    // （f-2021），否则图表/表格被沿用旧会话的时间窗。
+    expect(getLiveTemporalFrame()).toBeNull();
+    expect(getLiveTemporalRequest()).toBeNull();
+    expect(getDisplayedTemporalFrame()).toBeNull();
+    expect(resolveEffectiveFrame(cfg())?.id).toBe('f-2021');
+    // 订阅方（时间标签/统计）靠代信号重渲染 —— 无 bump 则 UI 不刷新。
+    expect(getLiveTemporalGeneration()).toBeGreaterThan(genBefore);
+  });
+
+  it('同控制器重复注册不清态（live 帧刷新不打断播放）', () => {
+    const c = new TemporalPlaybackController();
+    setActiveController(c);
+    requestLiveFrame(frame('f-2022', 2022));
+    setActiveController(c);
+    expect(getLiveTemporalFrame()?.id).toBe('f-2022');
+  });
+});
+
 describe('FrameFetchCache（M7 防风暴）', () => {
   it('同 key 命中 → loader 只调一次', async () => {
     const cache = new FrameFetchCache<string>();
@@ -112,6 +146,19 @@ describe('FrameFetchCache（M7 防风暴）', () => {
     expect(await p1).toBe('v');
     expect(await p2).toBe('v');
     expect(loader).toHaveBeenCalledTimes(1);
+  });
+
+  it('loader 拒绝后移出缓存：同 key 下次 fetch 重新取数', async () => {
+    const cache = new FrameFetchCache<string>();
+    const loader = vi.fn()
+      .mockRejectedValueOnce(new Error('transient'))
+      .mockResolvedValueOnce('ok');
+    await expect(cache.fetch('k', loader)).rejects.toThrow('transient');
+    expect(cache.size).toBe(0);
+    expect(await cache.fetch('k', loader)).toBe('ok');
+    expect(loader).toHaveBeenCalledTimes(2);
+    expect(temporalMetrics.fetches).toBe(2);
+    expect(temporalMetrics.cacheHits).toBe(0);
   });
 
   it('LRU 上限 24（长播放内存有界）', async () => {

@@ -89,4 +89,7 @@ try {
 }
 writeFileSync('lanes.json', `${JSON.stringify(decision)}\n`);
 // Only an actual boolean false can skip. Never coerce a mapper's string/null.
-appendFileSync(process.env.GITHUB_OUTPUT, `run=${decision.run}\n`);
+// Local/manual runs have no GITHUB_OUTPUT; writing is a CI-only side effect.
+if (process.env.GITHUB_OUTPUT) {
+  appendFileSync(process.env.GITHUB_OUTPUT, `run=${decision.run}\n`);
+}

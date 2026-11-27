@@ -195,6 +195,8 @@ def extract_scene3d_cues(query: str) -> Scene3DCues:
 
 def pitch_cue_present(cues: Scene3DCues, query: str = "") -> bool:
     """话语是否显式提及俯仰/视角调节（cue 抽取存在性判定，纯函数）。"""
+    if cues.camera_pitch is not None:
+        return True
     if query:
         return bool(_PITCH_RE.search(query.lower()) or _ROTATE_RE.search(query.lower()))
     return False

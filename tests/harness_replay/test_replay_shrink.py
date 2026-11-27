@@ -34,6 +34,22 @@ def _replay(scenario: Scenario):
 
 class TestShrink:
     @pytest.mark.asyncio
+    async def test_non_dict_fault_element_does_not_crash_identity(self):
+        """faults 元素非 dict（语料未过滤类型）时身份投影不得 AttributeError。"""
+        scenario = Scenario(
+            scenario_id="shrink-bad-fault", category="recorded",
+            turns=[TurnSpec(ops=[_op("a")])],
+            faults=["not-a-dict"],
+        )
+
+        async def oracle(_scenario):
+            return True
+
+        result = await shrink_scenario(scenario, oracle)
+        assert result.scenario.faults == []
+        assert result.removed["faults"] == ["fault[0]"]
+
+    @pytest.mark.asyncio
     async def test_green_scenario_returns_honestly(self):
         """输入本身绿 → 无可最小化，诚实返回原场景（reproduced=False）。"""
         scenario = Scenario(

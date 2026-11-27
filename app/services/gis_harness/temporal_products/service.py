@@ -283,6 +283,9 @@ async def control_temporal_view(
         if temporal.get("playback", {}).get("playing"):
             patch["playback"] = {"playing": False}  # 手动定位即暂停（防失控播放）
     elif action == "step":
+        if not frame_ids:
+            return _refusal(
+                "no_frames", "temporal 视图无真实帧序列（step 无目标帧）")
         n = steps if steps is not None else 1
         target = max(0, min(len(frames) - 1, cursor_idx + n))
         if target != cursor_idx + n:

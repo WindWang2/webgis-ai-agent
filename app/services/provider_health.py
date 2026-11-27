@@ -274,11 +274,16 @@ def check_amap_status(data: dict) -> tuple[bool, str]:
 
 
 def check_baidu_status(data: dict) -> tuple[bool, str]:
-    """Check Baidu JSON response for status == 0."""
+    """Check Baidu JSON response for status == 0.
+
+    Fail-closed（与其余 checker 一致）：``status`` 键缺失（如代理错误页、
+    HTML/畸形 JSON 被解析成无 status 的 dict）一律判失败，避免把原始
+    payload 当成功数据上抛。
+    """
     if not isinstance(data, dict):
         return False, "Invalid Baidu response format"
     status = data.get("status")
-    if status is not None and status != 0:
+    if status != 0:
         return False, f"Baidu: {data.get('message', f'error status {status}')}"
     return True, ""
 

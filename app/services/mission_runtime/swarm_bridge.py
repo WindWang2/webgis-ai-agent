@@ -103,7 +103,9 @@ class DurableSwarmBridge:
                 refs = rec.refs.model_dump(mode="json")
                 swarm_refs = list(refs.get("swarm_run_refs") or [])
                 if run.swarm_run_id not in swarm_refs:
-                    swarm_refs = (swarm_refs + [run.swarm_run_id])[: C.MAX_REFS]
+                    # Keep the newest ref: dropping the just-created run would
+                    # silently unlink it from the Mission.
+                    swarm_refs = (swarm_refs + [run.swarm_run_id])[-C.MAX_REFS:]
                     refs["swarm_run_refs"] = swarm_refs
                 try:
                     self.store.patch_mission(

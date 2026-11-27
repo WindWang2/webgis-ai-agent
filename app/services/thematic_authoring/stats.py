@@ -66,7 +66,10 @@ def _classify_invalid(raw: Any) -> Optional[str]:
     if isinstance(raw, bool):
         return "bool"
     if isinstance(raw, (int, float)):
-        f = float(raw)
+        try:
+            f = float(raw)
+        except OverflowError:  # int 超出 float 上限（>1.8e308）→ 按 inf 分型
+            return "inf"
         if math.isnan(f):
             return "nan"
         if math.isinf(f):
@@ -126,28 +129,29 @@ def scan_field(features: Iterable[Any], field: str) -> FieldScan:
         if present and raw is not None:
             num_kind = _classify_invalid(raw)
             if num_kind is not None:
-                if num_kind in ("bool", "string"):
-                    invalid[num_kind] += 1
-                else:
-                    invalid[num_kind] += 1  # nan / inf
+                invalid[num_kind] += 1
             else:
                 raw_values.append(float(raw))
             # 类别口径：NaN/Inf 排除（数值垃圾），其余非 null 值计入
             if num_kind not in ("nan", "inf"):
                 key = str(raw)
-                cat_counts[key] += 1
                 kind = key_kind_of(raw)
-                if key not in key_kind_sets:
+                if key in key_kind_sets:
+                    cat_counts[key] += 1
+                    if kind not in key_kind_sets[key]:
+                        key_kind_sets[key].add(kind)
+                        # 评审 P3-1：cap 5 → 64（作者拒绝面覆盖到实际类表规模；
+                        # 仍受 MAX_DISTINCT_SCAN 扫描帽约束，回执有界）。
+                        if key not in ambiguous and len(ambiguous) < 64:
+                            ambiguous.append(key)
+                elif len(key_kind_sets) < MAX_DISTINCT_SCAN:
+                    cat_counts[key] = 1
                     key_kind_sets[key] = {kind}
                     key_kinds[key] = kind
-                    if len(key_kind_sets) > MAX_DISTINCT_SCAN:
-                        distinct_capped = True
-                elif kind not in key_kind_sets[key]:
-                    key_kind_sets[key].add(kind)
-                    # 评审 P3-1：cap 5 → 64（作者拒绝面覆盖到实际类表规模；
-                    # 仍受 MAX_DISTINCT_SCAN 扫描帽约束，回执有界）。
-                    if key not in ambiguous and len(ambiguous) < 64:
-                        ambiguous.append(key)
+                else:
+                    # 扫描帽：新键不再收录（cat_counts/key_kinds 有界）；
+                    # distinct 已标未知，回执不得伪造精确去重数。
+                    distinct_capped = True
 
     approximated = len(raw_values) > MAX_SCAN_VALUES
     if approximated:
@@ -215,12 +219,16 @@ def field_distribution(scan: FieldScan) -> Dict[str, Any]:
         distinct = len(scan.category_counts)
     top = scan.category_counts.most_common(MAX_CATEGORY_TOP)
     listed = sum(c for _, c in top)
+    # 类别口径总数：由无效分型反推（含扫描帽外未收录键）——other 计数守恒，
+    # 不随 MAX_DISTINCT_SCAN 截断而少算。
+    cat_total = scan.total_features - sum(
+        scan.invalid[k] for k in ("missing", "null", "nan", "inf"))
     categorical: Dict[str, Any] = {
         "distinct": distinct,
         "distinct_capped": scan.distinct_capped,
         "top": [{"key": k, "count": c, "key_type": scan.key_kinds.get(k, "string")} for k, c in top],
         "listed": len(top),
-        "other_count": sum(scan.category_counts.values()) - listed,
+        "other_count": cat_total - listed,
         "ambiguous_keys": scan.ambiguous_keys,
     }
     return {
@@ -273,12 +281,13 @@ def category_match_counts(
     """类别表 → 每类计数 + other（未列出）计数 + null/missing 分母披露。"""
     listed = {str(c["key"]) for c in categories}
     per_key = {str(c["key"]): 0 for c in categories}
-    other = 0
     for key, cnt in scan.category_counts.items():
         if key in listed:
             per_key[key] += cnt
-        else:
-            other += cnt
+    # 类别口径总数（含扫描帽外未收录键）：other 守恒，不随截断少算。
+    cat_total = scan.total_features - sum(
+        scan.invalid[k] for k in ("missing", "null", "nan", "inf"))
+    other = cat_total - sum(per_key.values())
     return {
         "counts": [
             {"key": str(c["key"]), "count": per_key[str(c["key"])]}

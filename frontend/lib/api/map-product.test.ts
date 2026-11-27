@@ -75,6 +75,13 @@ describe('map product client', () => {
     expect(page.items.map((v) => v.version_no)).toEqual([3, 2, 1]);
   });
 
+  it('normalizes a malformed page object (missing items) to an empty page', async () => {
+    mockFetch.mockResolvedValue(jsonOk({ success: true, total: 3 }));
+    const page = await listMapProductVersions('p1');
+    expect(page.items).toEqual([]);
+    expect(page.total).toBe(0);
+  });
+
   it('fetches pairwise diff', async () => {
     serveGet();
     const d = await diffMapProductVersions('p1', 2, 3);

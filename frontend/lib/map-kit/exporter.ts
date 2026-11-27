@@ -932,9 +932,14 @@ export function hasNonWinAnsiChars(s: string): boolean {
 
 /**
  * 页标题随画布栅格化（W9：帧标题含非 WinAnsi 字符时，doc.text 会乱码 ——
- * 复制画布后把标题画上去，诚实降级不伪造矢量）。
+ * 复制画布后把标题画上去，诚实降级不伪造矢量）。subtitle 在场时同带绘制
+ * （文本层整体跳过时副标题一并随画布承载，不静默丢失）。
  */
-function rasterizeTitleOnCanvas(canvas: HTMLCanvasElement, title: string): HTMLCanvasElement {
+function rasterizeTitleOnCanvas(
+  canvas: HTMLCanvasElement,
+  title: string,
+  subtitle?: string,
+): HTMLCanvasElement {
   const out = document.createElement('canvas');
   out.width = canvas.width;
   out.height = canvas.height;
@@ -942,11 +947,16 @@ function rasterizeTitleOnCanvas(canvas: HTMLCanvasElement, title: string): HTMLC
   if (!ctx) return out;
   ctx.drawImage(canvas, 0, 0);
   ctx.fillStyle = 'rgba(255,255,255,0.85)';
-  ctx.fillRect(0, 0, out.width, 44);
+  ctx.fillRect(0, 0, out.width, subtitle ? 68 : 44);
   ctx.fillStyle = '#1e293b';
   ctx.font = 'bold 24px sans-serif';
   ctx.textAlign = 'left';
   ctx.fillText(title.slice(0, 60), 16, 30);
+  if (subtitle) {
+    ctx.font = '18px sans-serif';
+    ctx.fillStyle = '#475569';
+    ctx.fillText(subtitle.slice(0, 80), 16, 56);
+  }
   return out;
 }
 
@@ -1332,7 +1342,9 @@ export function discoverLegendData(layers: Layer[]): LegendData {
   return {
     legendSpec: nonHeatLegendLayer?.legend_spec,
     thematicLayer: thematicLayerInfo === nonHeatLegendLayer ? undefined : (thematicLayerInfo?.style?.type
-      ? thematicLayerInfo.style
+      // style 对象本身不带 source；携带图层 source 才能读到后端盖章的
+      // metadata.breaks/palette 图例证据（此前静默无图例）。
+      ? { ...thematicLayerInfo.style, source: thematicLayerInfo.source }
       : thematicLayerInfo) as LegacyThematicLegendInput | undefined,
     heatmapLegend: heatmapLayer
       ? {
@@ -1667,8 +1679,25 @@ async function runFrameExport(
   if (fmt === 'pdf') {
     const pdfDegradations: ExportDegradation[] = [];
     const fontB64 = await loadPublicationFontB64();
+    // W6（ADR-0118）+ ac-08（ADR-0157 P3）：封面标题 CJK 文本层判定 ——
+    // 与单帧路径（decidePdfTextLayerDisclosure）同一口径。出版字体注册
+    // 失败且封面标题/副标题含非 WinAnsi 字符时若按缺省 textLayer='vector'
+    // 书写，jsPDF 标准 14 字体编码不了 → 乱码且不披露（此前图集路径无
+    // 此判定）；改为随画布栅格化 + 显式 pdf_text_rasterized_cjk。
+    const pdfFontEmbedded = fontB64 != null;
+    const cjkInText =
+      hasNonWinAnsiChars(ctx.title) || hasNonWinAnsiChars(ctx.subtitle ?? '');
+    const pdfVectorText = !cjkInText || pdfFontEmbedded;
+    pdfDegradations.push(
+      ...decidePdfTextLayerDisclosure(pdfFontEmbedded, pdfVectorText, cjkInText),
+    );
+    // 文本层跳过时封面标题/副标题随画布栅格化 —— 帧 canvas 自身不带标题
+    // （composeFrames 只抓地图），不画即静默丢失；与附加页页标题同一路径。
+    const coverCanvas = pdfVectorText
+      ? composed.canvases[0]
+      : rasterizeTitleOnCanvas(composed.canvases[0], ctx.title, ctx.subtitle);
     const pdfBlob = await MapExporterEngine.exportToPDF(
-      composed.canvases[0],
+      coverCanvas,
       ctx.title,
       ctx.subtitle,
       {
@@ -1676,9 +1705,13 @@ async function runFrameExport(
         orientation: ctx.orientation as 'landscape' | 'portrait',
         author: ctx.author,
         dataSource: ctx.dataSource,
+        textLayer: pdfVectorText ? 'vector' : 'skip',
         fontB64,
         colorMode: req.color_mode ?? 'srgb',
-        pages: composed.canvases.map((canvas, i) => ({ canvas, title: composed.titles[i] })),
+        pages: composed.canvases.map((canvas, i) => ({
+          canvas: i === 0 ? coverCanvas : canvas,
+          title: composed.titles[i],
+        })),
         onDegradation: (d) => pdfDegradations.push(d),
       },
     );
@@ -2437,14 +2470,14 @@ async function runExportInternal(
           spec: hydratedSpec,
           layout: publicationLayout,
           dpi,
-          fallbackRaster: () => buildSvgText(exportCanvas, title, getDataUrl()),
+          fallbackRaster: () => buildSvgText(exportCanvas, effTitle, getDataUrl()),
         });
         svgText = vector.svg;
         svgDegradations = vector.degradations;
       } catch (e) {
         // fallbackRaster 未注入/自身抛错的双保险位图回退（不静默）。
         devOnly.warn('[MapExporter] vector svg build failed — raster fallback', e);
-        const wrapper = buildSvgWrapper(exportCanvas, title, getDataUrl());
+        const wrapper = buildSvgWrapper(exportCanvas, effTitle, getDataUrl());
         svgText = await wrapper.text();
         svgDegradations = [
           { code: 'vector_svg_fallback_raster', detail: e instanceof Error ? e.message : String(e) },

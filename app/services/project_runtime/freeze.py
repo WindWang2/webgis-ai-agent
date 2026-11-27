@@ -194,11 +194,15 @@ async def _collect_sensitive_refs(session_id: str) -> set:
 
 async def _dataset_descriptors(
     db: Any, project_id: str, user_id: str = "", org_id: Optional[int] = None
-) -> tuple[List[DatasetDescriptor], int]:
+) -> tuple[List[DatasetDescriptor], int, bool]:
     """项目挂载数据集 → 冻结描述符（version_fingerprint = 恢复比对基准）。
 
     以调用方身份走既有 IDOR 门（list_project_datasets 内部 get_project_with_auth）
     —— 匿名对 owned 项目拿不到 dataset 是正确行为（route 面用户已鉴权）。
+
+    第三返回值 ``unavailable`` 区分「项目确无数据集」与「读不到」：
+    抛异常 / 被鉴权门过滤都会产出空集，若不在 manifest 里显式披露，恢复期
+    会把读不到数据集当成「无漂移」。
     """
     import asyncio
 
@@ -213,7 +217,7 @@ async def _dataset_descriptors(
         )
     except Exception as e:  # noqa: BLE001 — dataset 投影失败按空（诚实）
         logger.info("[RuntimeFreeze] dataset descriptors skipped: %s", e)
-        return [], 0
+        return [], 0, True
     out: List[DatasetDescriptor] = []
     for row in rows[:DATASET_DESCRIPTOR_LIMIT]:
         try:
@@ -225,7 +229,24 @@ async def _dataset_descriptors(
             ))
         except Exception:  # noqa: BLE001 — 单行失败不阻断
             continue
-    return out, max(len(rows), int(_total or 0))
+    total = max(len(rows), int(_total or 0))
+    if not rows and not total:
+        # 空结果可能是「确无数据集」，也可能是 IDOR 门把项目过滤掉了；
+        # 用同一把门复核可读性，读不到就如实标 unavailable（fail-closed）。
+        try:
+            readable = await asyncio.to_thread(
+                lambda: ProjectService.get_project_with_auth(
+                    db, project_id, user_id or None, org_id
+                ) is not None
+            )
+        except Exception:  # noqa: BLE001 — 复核失败按不可读
+            readable = False
+        if not readable:
+            logger.info(
+                "[RuntimeFreeze] dataset projection unavailable (project not readable)"
+            )
+            return [], 0, True
+    return out, total, False
 
 
 async def save_runtime_snapshot(
@@ -334,7 +355,7 @@ async def save_runtime_snapshot(
     projection.capability_statuses = dict(
         list(capability_statuses.items())[:CAPABILITY_LIMIT]
     )
-    datasets, dataset_count = await _dataset_descriptors(
+    datasets, dataset_count, datasets_unavailable = await _dataset_descriptors(
         db, project_id, user_id=user_id, org_id=org_id
     )
 
@@ -362,6 +383,8 @@ async def save_runtime_snapshot(
             "workspace_snapshot_composed": bool(workspace_snapshot_id),
             "source_bindings_truncated": max(0, len(all_spec_refs) - len(spec_refs)),
             "datasets_truncated": max(0, dataset_count - len(datasets)),
+            # 读不到数据集 ≠ 项目没有数据集：恢复期不得把该状态当成无漂移。
+            "datasets_unavailable": datasets_unavailable,
         },
     )
     if not await get_project_runtime_store().save(snapshot):

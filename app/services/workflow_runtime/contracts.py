@@ -74,9 +74,13 @@ LEGAL_TRANSITIONS: Dict[str, frozenset] = {
         NodeState.READY,
     }),
     NodeState.FAILED: frozenset({NodeState.READY, NodeState.SKIPPED}),
-    NodeState.BLOCKED: frozenset({NodeState.READY, NodeState.SKIPPED}),
+    NodeState.BLOCKED: frozenset({
+        NodeState.READY, NodeState.SKIPPED, NodeState.CANCELLED,
+    }),
     NodeState.SUCCEEDED: frozenset({NodeState.STALE}),
-    NodeState.STALE: frozenset({NodeState.READY, NodeState.SUCCEEDED}),
+    NodeState.STALE: frozenset({
+        NodeState.READY, NodeState.SUCCEEDED, NodeState.CANCELLED,
+    }),
     NodeState.SKIPPED: frozenset({NodeState.READY}),
     NodeState.CANCELLED: frozenset(),
 }

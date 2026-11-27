@@ -96,7 +96,9 @@ def test_estimate_for_node_derives_from_bridge():
     assert d_est.basis["latency_class"] == "declared"
     assert d_est.basis["memory"] == "declared"
     assert d_est.basis["cpu"] == "declared"       # celery 推断
-    assert d_est.confidence == pytest.approx(0.5)  # 2/4（celery 不计权）
+    # P3：cpu declared（celery 推断）与 latency/memory 同计入维度置信度
+    # —— 3/4 而非 2/4（此前漏计使有据维度被少报）。
+    assert d_est.confidence == pytest.approx(0.75)
 
     derived = _tool_node("t2", cost="light")
     r_est = estimate_for_node(derived)

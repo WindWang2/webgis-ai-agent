@@ -282,7 +282,15 @@ class MapSpecLifecycleEngine:
     @staticmethod
     def _review_failure(mapspec: Dict[str, Any], exc: Exception) -> Dict[str, Any]:
         """Represent an evaluator failure as missing evidence, never as PASS."""
-        fingerprint = cartographic_fingerprint(mapspec)
+        # 该函数只在 review 的 except 块里调用 —— 自身再抛会逸出
+        # apply_mutation（双 fault：review 崩溃 + 指纹/结构异常），
+        # 绕过回滚与 is_error 契约。故此处所有派生值 best-effort。
+        try:
+            fingerprint = cartographic_fingerprint(mapspec)
+        except Exception:  # noqa: BLE001
+            fingerprint = None
+        _sources = mapspec.get("sources") if isinstance(mapspec, dict) else None
+        metadata_sources = len(_sources) if isinstance(_sources, (dict, list)) else 0
         check = {
             "rule": "CARTOGRAPHIC_REVIEW_EXECUTION",
             "status": "not_evaluated",
@@ -311,7 +319,7 @@ class MapSpecLifecycleEngine:
             "counters": {
                 "review_invocations": 1,
                 "rule_invocations": 1,
-                "metadata_sources": len(mapspec.get("sources") or {}),
+                "metadata_sources": metadata_sources,
                 "full_data_loads": 0,
                 "repair_attempts": 0,
             },
@@ -391,7 +399,21 @@ class MapSpecLifecycleEngine:
             # intent dispatch so we can capture ONLY what the intent will touch.
             # For Redis backend (returns fresh copies), this is zero-copy. For in-memory
             # backend, shallow copy is enough since we mutate only top-level keys.
-            pre_state = await session_data_manager.get_map_state(session_id)
+            try:
+                pre_state = await session_data_manager.get_map_state(session_id)
+            except Exception as exc:  # noqa: BLE001 — 存储读失败须回执而非裸异常
+                logger.error(
+                    f"MapSpec state read failed for session {session_id}: {exc}",
+                    exc_info=True,
+                )
+                return MapSpecResult(
+                    is_error=True,
+                    origin=origin,
+                    error_msg=f"MapSpec 意图更新失败: {exc}",
+                    correction_hint=(
+                        "读取当前 MapSpec 失败；未做任何修改，请稍后重试。"
+                    ),
+                )
             if pre_state.get("_cartographic_deleted") is True:
                 return MapSpecResult(
                     is_error=True,
@@ -462,7 +484,21 @@ class MapSpecLifecycleEngine:
             # 覆盖世代 N 破坏单调性，且重放的 expected_revision=0 开世
             # mutation 会通过针对新 spec 的 CAS。superseded 返回也直接复用
             # loaded，省掉旧路径的第二次全量 get_mapspec。
-            loaded = await self.store.get_mapspec(session_id, state_hint=pre_state)
+            try:
+                loaded = await self.store.get_mapspec(session_id, state_hint=pre_state)
+            except Exception as exc:  # noqa: BLE001 — 存储读失败须回执而非裸异常
+                logger.error(
+                    f"MapSpec load failed for session {session_id}: {exc}",
+                    exc_info=True,
+                )
+                return MapSpecResult(
+                    is_error=True,
+                    origin=origin,
+                    error_msg=f"MapSpec 意图更新失败: {exc}",
+                    correction_hint=(
+                        "读取当前 MapSpec 失败；未做任何修改，请稍后重试。"
+                    ),
+                )
             try:
                 prior_mutation_revision = int(
                     pre_state.get("_cartographic_mutation_revision", 0)
@@ -1273,12 +1309,27 @@ class MapSpecLifecycleEngine:
                 # Presentation-only batches need no data/source recovery checkpoint.
                 checkpoint_id_created = None
                 mutation_revision = prior_mutation_revision + 1
-                await self.store.save_mapspec(
+                save_res = await self.store.save_mapspec(
                     session_id, mapspec, mutation_revision=mutation_revision,
                     extra_fields=_dedup_commit_fields(
                         pre_state, mutation_id, mutation_revision, origin
                     ),
                 )
+                revision_persisted = bool(
+                    save_res.get("revision_persisted")
+                ) if isinstance(save_res, dict) else False
+                if not revision_persisted:
+                    # 与单笔路径同款回退：后端未随 save 落 CAS 令牌时补写，
+                    # 否则回执报 prior+1 而令牌仍停在旧值。
+                    persisted = await session_data_manager.set_map_state(
+                        session_id,
+                        "_cartographic_mutation_revision",
+                        mutation_revision,
+                    )
+                    if persisted is False:
+                        raise RuntimeError(
+                            "cartographic mutation revision persistence rejected"
+                        )
                 return MapSpecBatchResult(
                     mapspec=mapspec, outcomes=outcomes,
                     applied_count=applied, refused_count=refused,

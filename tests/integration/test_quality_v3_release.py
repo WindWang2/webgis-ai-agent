@@ -107,6 +107,25 @@ def test_missing_report_is_not_silent_pass(mod, fast_gates):
     assert "报告不存在" in state["lane_evidence_reason"]
 
 
+@pytest.mark.parametrize("raw_lanes", [
+    {"quick": True, "backend": True},   # lanes 是 JSON 对象（非 list）
+    ["quick", "backend"],               # 条目非 dict
+])
+def test_malformed_lanes_degrades_to_not_run(mod, fast_gates, tmp_path, raw_lanes):
+    """lanes 结构不符 → not-run 降级，不得 traceback（诚实降级路径）。"""
+    p = tmp_path / "runner-report.json"
+    p.write_text(json.dumps({"total_s": 1.0, "lanes": raw_lanes}),
+                 encoding="utf-8")
+    state, violations = mod.build_state(str(p), None)
+    assert set(state["lanes"].values()) == {"not-run"}
+    assert state["verdict"] == "NOT-READY"
+    assert "结构不符" in state["lane_evidence_reason"]
+    assert state["runner_evidence"] is None
+    assert sorted(violations) == [
+        "lane backend 状态 not-run（需 pass 证据或显式 waiver）",
+        "lane quick 状态 not-run（需 pass 证据或显式 waiver）"]
+
+
 def test_known_gaps_disclose_existing_limitations(mod, fast_gates):
     state, _ = mod.build_state(None, None)
     gap_ids = {g["id"] for g in state["known_gaps"]}

@@ -519,10 +519,12 @@ class DurableStatisticsStore:
             ok = self._call_with_timeout(_insert)
             # 评审 MINOR F2：机会式有界清理（每 100 次写入触发一次，
             # 失败静默 —— 让「有界保留」真正发生而不需要外部调度）。
+            # 清理同样走旁路线程 + 硬超时（评审 P2）：内联执行会让黑洞 DB
+            # 阻塞查询热路径，绕过 DB_TIMEOUT_S 的防护承诺。
             self._save_count += 1
             if self._save_count % 100 == 0:
                 try:
-                    self.prune()
+                    self._call_with_timeout(self.prune)
                 except Exception:  # noqa: BLE001
                     pass
             return bool(ok is None)

@@ -134,6 +134,12 @@ ERROR_CODES: FrozenSet[str] = frozenset({
     "repair_unsupported",         # 该 finding 类型无确定性修复
     "plan_build_failed",
     "not_owned",                  # 资源非本人（路由层转 404）
+    # 规则求值 blocked_code（RuleEvalOutput.blocked —— 运行降级，非请求失败）
+    "aoi_empty",                  # AOI 角色无有效几何（覆盖无法计算）
+    "target_empty",               # target 角色无有效面几何（包含判定无法计算）
+    "connectors_empty",           # connectors 角色无可用连接对象（端点无法判定）
+    "gap_geometry",               # 差集几何类型异常（无法作为缺口度量）
+    "role_unbound",               # 必需角色未绑定（运行装配缺陷）
 })
 
 # ─── 预算（有界纪律：宁可 partial 也绝不无界） ──────────────────────────

@@ -215,6 +215,24 @@ def test_intent_codec_and_registry_same_table():
     assert intent.step == 3.0
 
 
+def test_set_layout_codec_passes_component_links_and_composition():
+    """set_layout codec 必须透传 handler 已实现的 component_links/composition
+    —— 漏传会让这两类写入被静默丢弃。"""
+    from types import SimpleNamespace
+
+    from app.services.mapspec.mutation_registry import _codec_set_layout
+
+    links = [{"src": "a", "dst": "b", "type": "binds_to"}]
+    composition = {"id": "comp-1", "kind": "dashboard"}
+    req = SimpleNamespace(
+        legend=None, controls=None, margins=None, components=None,
+        component_links=links, composition=composition,
+    )
+    intent = _codec_set_layout(req)
+    assert intent.component_links == links
+    assert intent.composition == composition
+
+
 @pytest.mark.parametrize("body_name, fields, intent_name", [
     ("SetSceneBody", {"intent": "set_scene", "scene": {"mode": "2.5d"}}, "SetSceneIntent"),
     ("SetTemporalViewBody", {"intent": "set_temporal_view", "patch": {"playing": False}}, "SetTemporalViewIntent"),

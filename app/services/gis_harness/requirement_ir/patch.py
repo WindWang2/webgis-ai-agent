@@ -26,10 +26,12 @@ from app.services.gis_harness.intent import (
 )
 from app.services.gis_harness.requirement_ir import normalize as norm
 from app.services.gis_harness.requirement_ir.contracts import (
+    MAX_AMBIGUITIES,
     MAX_LOCKS,
     MAX_MEASURES,
     MAX_TEXT,
     EMPTY_PROVENANCE,
+    Ambiguity,
     GISIntentSpec,
     MeasureSpec,
     PatchRecord,
@@ -39,6 +41,7 @@ from app.services.gis_harness.requirement_ir.contracts import (
 )
 from app.services.gis_harness.requirement_ir.lifecycle import (
     can_accept,
+    effective_document_lifecycle,
     transition_document,
 )
 from app.services.gis_harness.workflow_instance import canonical_fingerprint
@@ -146,10 +149,25 @@ def _v_str(path: str, value: Any) -> str:
         if field is None:
             break
         if index < len(parts) - 1:
-            model = field.annotation
-            if not hasattr(model, "model_fields"):
-                break
+            annotation = field.annotation
+            if hasattr(annotation, "model_fields"):
+                model = annotation
+                continue
+            # 容器字段（List[MeasureSpec] / Tuple[str, ...]）：其
+            # max_length 是**条目计数**上限（MAX_MEASURES/MAX_DATASETS），
+            # 不是单项长度上限 —— 续走到条目模型（如 measures.phrase →
+            # MeasureSpec.phrase 的 128），标量条目则无单项长度约束
+            # （落 MAX_TEXT）。此前在此 break 会把 8/16 的计数上限当成
+            # 单项长度上限，合法短语/数据集名被 patch_value_invalid 拒绝。
+            args = get_args(annotation)
+            if args and hasattr(args[0], "model_fields"):
+                model = args[0]
+                continue
+            break
     limits = [getattr(meta, "max_length", MAX_TEXT) for meta in field.metadata] if field else []
+    if field is not None and get_args(field.annotation)[:1] == (str,):
+        # 末段即标量容器（datasets）：容器 max_length 是计数，不当单项上限
+        limits = []
     limit = min([MAX_TEXT, *limits])
     if len(value) > limit:
         raise PatchValueInvalid(path, f"expect str <= {limit} characters")
@@ -388,6 +406,14 @@ def _sync_core(spec: GISIntentSpec, path: str) -> None:
         core.subject = SubjectIntent(type=core.subject.type, category=spec.subject.category)
     elif path == "statistics.group_by":
         core.group_by = spec.statistics.group_by
+    elif path == "statistics.normalization":
+        # core.comparison 是 normalization 的**派生源**（derive_sections:
+        # normalize_normalization(core.comparison)）—— 不同步则 patch 过的
+        # 口径在下次从 core 重派生（超替/幂等探测）时静默回退，intent_view
+        # 外泄陈旧 core。"none" 是缺省值：core 保留原词面（比较语义不由
+        # 本 path 表达，清空会误伤 goal_satisfaction 的 comparison 面）。
+        if spec.statistics.normalization != "none":
+            core.comparison = spec.statistics.normalization
     elif path in ("time.range_start", "time.range_end", "time.granularity", "time.series"):
         core.time = _canonical_time_str(spec)
     elif path == "output.formats":
@@ -445,7 +471,8 @@ def _get_path_value(spec: GISIntentSpec, path: str) -> Any:
 
 def _is_default_value(value: Any) -> bool:
     """「新话语对该面无表达」的判定：字段处于默认空态。"""
-    return value is None or value == "" or value is False \
+    return value is None or value == "" \
+        or (isinstance(value, bool) and value is False) \
         or value == () or value == [] or value == {}
 
 
@@ -545,6 +572,35 @@ def apply_patch(
         if target.provenance.is_user() and patch.actor != "user":
             raise PatchConflict(f"measures.{measure_id}", patch.actor)
         spec.measures = [m for m in spec.measures if m.id != measure_id]
+        # core.measure 是 measures 的派生源（derive_sections 由它造 m1）：
+        # 删空后不同步 → intent_view 外泄陈旧度量、重派生时复活已删 measure。
+        if not spec.measures:
+            spec.core.measure = ""
+
+    elif patch.op == "record_ambiguity":
+        # 澄清入档是 lifecycle 记账，但仍是持久事实：必须走 journal，
+        # 否则 genesis + journal 恢复会丢 open/answered 与 asked_turn。
+        # 专用 op 而非裸 ``set ambiguities``，防止通用 setter 覆盖答案状态。
+        if patch.actor != "system":
+            raise PatchConflict("ambiguities", patch.actor)
+        try:
+            ambiguity = Ambiguity.model_validate(patch.value)
+        except ValueError as exc:
+            raise PatchValueInvalid("ambiguities", f"invalid ambiguity: {exc}") from exc
+        if ambiguity.state != "open" or ambiguity.answer or ambiguity.answered_turn is not None:
+            raise PatchValueInvalid("ambiguities", "record_ambiguity 只接受未答 open 歧义")
+        current = next(
+            (a for a in spec.ambiguities if a.context_key == ambiguity.context_key),
+            None,
+        )
+        if current is None:
+            if len(spec.ambiguities) >= MAX_AMBIGUITIES:
+                raise PatchValueInvalid("ambiguities", "ambiguity 数超上限")
+            spec.ambiguities.append(ambiguity.model_copy(update={"asked_turn": patch.turn}))
+        elif current.asked_turn is None:
+            current.asked_turn = patch.turn
+        else:
+            return (doc, False)
 
     elif patch.op == "answer_ambiguity":
         fields = _measure_fields_strict(patch, ("context_key", "answer"))
@@ -697,6 +753,10 @@ def apply_patch(
         lifecycle = transition_document(lifecycle, "accepted")
     elif patch.op == "supersede":
         lifecycle = "superseded"
+    elif patch.op == "record_ambiguity":
+        target = effective_document_lifecycle(doc.model_copy(update={"intent": spec}))
+        if target != lifecycle:
+            lifecycle = transition_document(lifecycle, target)
     elif lifecycle == "accepted" and patch.actor == "user" and patch.op != "accept":
         lifecycle = "draft"   # 用户修订重新打开
     if lifecycle != doc.lifecycle:

@@ -101,6 +101,8 @@ interface MountedAsset {
   prevRender: Set<string>;
   controller: AbortController;
   tickTimer: ReturnType<typeof setTimeout> | null;
+  /** 预算退避 tile 的重试定时器（无相机事件/其它加载完成时补驱动）。 */
+  retryTimer: ReturnType<typeof setTimeout> | null;
   lastTickAt: number;
   /** 最近帧 MVP（拾取/眼位/视锥消费；mercator [0,1]³ 世界域）。 */
   lastMvp: Mat4 | null;
@@ -108,6 +110,12 @@ interface MountedAsset {
   generation: number;
   /** 加载是否仍在途（终态 mounted/load_failed 落定前为 true —— 取消判定）。 */
   loadPending: boolean;
+  /**
+   * custom layer 是否已成功挂上 map（addLayer 未抛错）。addLayer 抛错时层
+   * 从未挂上、onAdd 也从未 acquireRenderer —— 卸载不得走"层缺失"分支做
+   * 归属释放（那会让共享 carrier refCount 被无偿 -1）。
+   */
+  layerAttached: boolean;
   /**
    * 本地表象覆盖（G3DV2-B M5，user-wins 表象层）：
    * visible=false 隐藏 / opacity∈[0.05,1] —— 不进 MapSpec（非持久
@@ -417,6 +425,10 @@ export class Scene3DManager {
     asset.generation += 1; // 作废在途回调
     asset.controller.abort();
     if (asset.tickTimer) clearTimeout(asset.tickTimer);
+    if (asset.retryTimer) {
+      clearTimeout(asset.retryTimer);
+      asset.retryTimer = null;
+    }
     for (const entry of asset.tiles?.values() ?? []) {
       entry.model?.dispose();
       this.ledger.release(tileOwnerKey(assetId, entry.tile.id));
@@ -433,9 +445,12 @@ export class Scene3DManager {
     if (layerPresent) {
       // 正常路径：MapLibre removeLayer 同步回调 onRemove → releaseRenderer。
       try { this.map.removeLayer?.(layerId); } catch { /* 实现层异常：onRemove 语义归属 MapLibre */ }
-    } else {
+    } else if (asset.layerAttached) {
       // 清扫路径：层已不在 map 上（setStyle 抹除且无 onRemove）—— 补齐
       // group 摘除 + refCount 归还，否则每次 setStyle 循环泄漏一份归属。
+      // layerAttached=false（addLayer 抛错）时层从未挂上、onAdd 从未
+      // acquireRenderer —— 无归属可释放（否则共享 carrier 被无偿 -1，
+      // 同图首资产随之失去 WebGLRenderer）。
       releaseLayerOwnership(this.map, asset.group);
     }
     this.mounted.delete(assetId);
@@ -457,6 +472,10 @@ export class Scene3DManager {
       asset.generation += 1;
       asset.controller.abort();
       if (asset.tickTimer) clearTimeout(asset.tickTimer);
+      if (asset.retryTimer) {
+        clearTimeout(asset.retryTimer);
+        asset.retryTimer = null;
+      }
       for (const entry of asset.tiles?.values() ?? []) {
         entry.model?.dispose();
         if (entry.model) this.ledger.release(tileOwnerKey(asset.assetId, entry.tile.id));
@@ -509,10 +528,12 @@ export class Scene3DManager {
       prevRender: new Set<string>(),
       controller: new AbortController(),
       tickTimer: null,
+      retryTimer: null,
       lastTickAt: 0,
       lastMvp: null,
       generation: 0,
       loadPending: true,
+      layerAttached: false,
       presentation: this.presentations.get(assetId) ?? { visible: null, opacity: null },
     };
     this.mounted.set(assetId, mounted);
@@ -543,6 +564,7 @@ export class Scene3DManager {
       this.unmountAsset(assetId);
       return;
     }
+    mounted.layerAttached = true;
     mounted.group.visible = mounted.visible;
     this.applyPlacement(mounted);
     this.applyPresentation(mounted);
@@ -793,6 +815,15 @@ export class Scene3DManager {
       });
       if (overDim) {
         entry.budgetDeferredAt = Date.now();
+        // 退避后若无相机事件、也无其它 tile 加载完成来再触发调度（末位
+        // 延后的 tile 正是这种情形），deferred tile 永不重试、画面留洞 ——
+        // 补一个退避窗口后的重试定时器。
+        if (!mounted.retryTimer && !this.disposed && !this.contextLost) {
+          mounted.retryTimer = setTimeout(() => {
+            mounted.retryTimer = null;
+            this.scheduleAsset(mounted, true);
+          }, TILE_BUDGET_BACKOFF_MS);
+        }
         recordSceneAssetStatus(
           mounted.assetId, 'degraded',
           `${budgetDimensionReason(overDim)}:${entry.tile.id}`,

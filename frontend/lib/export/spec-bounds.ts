@@ -39,6 +39,20 @@ export function inferSpecDataBounds(spec: unknown): BoundsWSEN | null {
     }
   };
 
+  const extractGeometry = (geometry: unknown): void => {
+    if (!geometry || typeof geometry !== 'object') return;
+    const geom = geometry as {
+      type?: string;
+      coordinates?: unknown;
+      geometries?: unknown;
+    };
+    if (geom.type === 'GeometryCollection') {
+      if (Array.isArray(geom.geometries)) geom.geometries.forEach(extractGeometry);
+      return;
+    }
+    extractCoords(geom.coordinates);
+  };
+
   for (const src of Object.values(sources)) {
     const geojson = (src as { inlineData?: unknown; data?: unknown })?.inlineData ??
       (src as { data?: unknown })?.data;
@@ -48,9 +62,7 @@ export function inferSpecDataBounds(spec: unknown): BoundsWSEN | null {
         ? (geojson as { features?: unknown[] }).features ?? []
         : [geojson];
     for (const feat of features) {
-      const geom = (feat as { geometry?: { coordinates?: unknown } })?.geometry;
-      if (!geom) continue;
-      extractCoords(geom.coordinates);
+      extractGeometry((feat as { geometry?: unknown })?.geometry);
     }
   }
 

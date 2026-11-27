@@ -152,8 +152,22 @@ async def read_coverage_subset(
                     reason_code=RC_AXIS_NOT_IDENTIFIABLE,
                     details={"axis": axis_name, "declared_axes": sorted(axes)},
                 )
-            subset_params[axis_name] = (float(window[0]), float(window[1]))
+            try:
+                lo, hi = float(window[0]), float(window[1])
+            except (TypeError, ValueError, IndexError, KeyError) as e:
+                raise CoverageReadError(
+                    f"subset '{axis_name}' window must be a numeric [min, max] pair",
+                    reason_code=RC_AXIS_NOT_IDENTIFIABLE,
+                    details={"axis": axis_name, "window": repr(window)},
+                ) from e
+            subset_params[axis_name] = (lo, hi)
     if bbox is not None:
+        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            raise CoverageReadError(
+                "bbox must be [minx, miny, maxx, maxy]",
+                reason_code=RC_AXIS_NOT_IDENTIFIABLE,
+                details={"bbox": repr(bbox)},
+            )
         grid_crs = meta.get("grid_crs")
         if not grid_crs:
             raise CoverageReadError("bbox requires a declared domain CRS; use explicit subsets", reason_code=RC_AXIS_NOT_IDENTIFIABLE)
@@ -173,7 +187,7 @@ async def read_coverage_subset(
         try:
             bbox = list(Transformer.from_crs("EPSG:4326", grid_crs, always_xy=True).transform_bounds(*bbox))
         # CRSError 是 RuntimeError 子类而非 ValueError（#2232）
-        except (ValueError, CRSError) as e:
+        except (TypeError, ValueError, CRSError) as e:
             raise CoverageReadError("domain CRS cannot be transformed", reason_code=RC_AXIS_NOT_IDENTIFIABLE) from e
         subset_params[lon_axis] = (float(bbox[0]), float(bbox[2]))
         subset_params[lat_axis] = (float(bbox[1]), float(bbox[3]))
@@ -221,10 +235,6 @@ async def read_coverage_subset(
     # 消除 subset_read_ready=True 却读取拒绝的自矛盾。
     from app.services.data_fabric.ogc_capability import normalize_coverage_format
 
-    _supported_norm = {
-        normalize_coverage_format(f)
-        for f in [*formats_supported, *_GEOTIFF_FORMATS, _COVJSON_FORMAT]
-    }
     if any(
         normalize_coverage_format(f) == normalize_coverage_format(_COVJSON_FORMAT)
         for f in formats_supported
@@ -492,8 +502,13 @@ def _parse_covjson(
                 f"range '{name}' lacks NdArray values/shape (TiledNdArray unsupported)",
                 reason_code=RC_CAPABILITY_NOT_DECLARED,
             )
-        if len(values) > max_cells or not all(isinstance(v, (int, float, type(None))) for v in values):
+        if len(values) > max_cells:
             raise CoverageReadError("COVJSON range exceeds scalar cell budget", reason_code=RC_BUDGET_EXCEEDED)
+        if not all(isinstance(v, (int, float, type(None))) for v in values):
+            raise CoverageReadError(
+                f"COVJSON range '{name}' values are not numeric",
+                reason_code=RC_CAPABILITY_NOT_DECLARED,
+            )
         try:
             arr1 = np.asarray(values, dtype="float64")
             if mixed_nodata and name in nodata_by_band:

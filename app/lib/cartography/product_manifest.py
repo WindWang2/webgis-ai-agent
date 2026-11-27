@@ -151,11 +151,16 @@ def build_product_manifest(
 
     layer_rows: List[Dict[str, Any]] = []
     for layer in layers:
+        layer_layout = layer.get("layout")
+        visibility = (
+            layer_layout.get("visibility")
+            if isinstance(layer_layout, dict) else None
+        )
         row: Dict[str, Any] = {
             "id": _bounded_str(layer.get("id")),
             "type": _bounded_str(layer.get("type"), 24),
             "visible": layer.get("visible") is not False
-            and (layer.get("layout") or {}).get("visibility") != "none",
+            and visibility != "none",
             "filter_digest": (
                 _digest(layer.get("filter"))
                 if layer.get("filter") is not None else None

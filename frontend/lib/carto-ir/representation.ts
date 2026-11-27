@@ -189,6 +189,11 @@ export function representationWindowAtZoom(
   plan: RepresentationPlan,
   zoom: number,
 ): NormalizedRepresentationWindow {
+  // 非有限 zoom（NaN/±Infinity）钳制会传播 NaN → 所有窗口比较为假 →
+  // 静默返回末窗（错误裁决）。显式失败优于静默猜窗。
+  if (!Number.isFinite(zoom)) {
+    throw new RangeError(`representationWindowAtZoom: zoom must be finite, got ${String(zoom)}`);
+  }
   const z = Math.min(MAPLIBRE_ZOOM_MAX - CONTIGUITY_EPSILON, Math.max(MAPLIBRE_ZOOM_MIN, zoom));
   for (const w of plan.windows) {
     if (w.minZoom <= z && z < w.maxZoom) return w;

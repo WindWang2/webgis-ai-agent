@@ -83,7 +83,8 @@ class MissionRuntimeService:
     ) -> C.MissionRecord:
         epoch = self._require_lease(mission_id, worker_id, org_id=org_id)
         rec = self.store.get_mission(mission_id, org_id=org_id)
-        assert rec is not None
+        if rec is None:
+            raise FencingError("MISSION_NOT_FOUND")
         if rec.state == C.MissionState.CREATED:
             rec = self.store.transition(
                 mission_id, to_state=C.MissionState.PLANNING.value,
@@ -175,7 +176,8 @@ class MissionRuntimeService:
         """Bump goal_revision; invalidate affected frontier only; keep valid refs."""
         epoch = self._require_lease(mission_id, worker_id, org_id=org_id)
         rec = self.store.get_mission(mission_id, org_id=org_id)
-        assert rec is not None
+        if rec is None:
+            raise FencingError("MISSION_NOT_FOUND")
         frontier = rec.frontier.model_dump()
         inv = set(invalidate_task_ids or [])
         if inv:
@@ -209,7 +211,8 @@ class MissionRuntimeService:
     ) -> C.MissionRecord:
         epoch = self._require_lease(mission_id, worker_id, org_id=org_id)
         rec = self.store.get_mission(mission_id, org_id=org_id)
-        assert rec is not None
+        if rec is None:
+            raise FencingError("MISSION_NOT_FOUND")
         refs = rec.refs.model_dump()
         sessions = list(refs.get("active_session_ids") or [])
         if session_id and session_id not in sessions:

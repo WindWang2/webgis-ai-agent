@@ -161,3 +161,67 @@ def test_long_owner_scopes_reject_before_creating_colliding_rows():
         PackageRegistry().register(None, owner_scope=owner)
     with pytest.raises(ValueError, match="owner_scope"):
         PackageRegistry().publish("p", "1", owner_scope=owner)
+
+
+@pytest.mark.asyncio
+async def test_record_tool_result_visits_all_active_instances():
+    """会话内 3+ 个活实例：工具结果证据不得只回写前 2 个。"""
+    from types import SimpleNamespace
+    from app.services.workflow_runtime.service import WorkflowRuntimeService
+
+    actives = [{"instance_id": f"wi-{i}", "package_id": "pkg"}
+               for i in range(3)]
+    completed = []
+
+    service = WorkflowRuntimeService.__new__(WorkflowRuntimeService)
+    service.store = SimpleNamespace(
+        list_session_instances=lambda *a, **kw: actives)
+
+    async def _dag(inst):
+        return {"nodes": [{"node_id": "cap:buffer", "kind": "analysis",
+                           "capability": "buffer"}]}
+
+    async def _roles(inst, capability):
+        return []
+
+    async def _complete(instance_id, node_id, ref, dag):
+        completed.append(instance_id)
+        return {"node": node_id, "ok": True}
+
+    service._instance_dag = _dag
+    service._role_nodes_for_capability = _roles
+    service._chat_complete_node = _complete
+    result = await service.record_tool_result(
+        "s1", capability="buffer", bound_ref="ref:x", owner_scope="u:x")
+    assert completed == ["wi-0", "wi-1", "wi-2"]
+    assert len(result["bound"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_bound_node_missing_row_falls_back_to_input_ref():
+    """store.get_node 返回 None（节点行并发缺失）时不抛 AttributeError。"""
+    from types import SimpleNamespace
+    from app.services.workflow_runtime.driver import Driver
+
+    transitions = []
+
+    class _Store:
+        def get_node(self, instance_id, node_id):
+            return None
+
+        def transition_node(self, *args, **kwargs):
+            transitions.append(kwargs)
+            return SimpleNamespace(ok=True)
+
+    driver = Driver(_Store(), owner_scope="u:x", deadline_s=5.0)
+
+    async def _probe(session_id, ref):
+        return None
+
+    driver.descriptor_probe = _probe
+    states = {}
+    await driver._run_node_claimed(
+        "wi-1", {}, {"node_id": "data:subject", "kind": "data_input"},
+        "data:subject", states, {}, "s1", "tok", None, ["ref:in"], {})
+    assert states["data:subject"] == C.NodeState.SUCCEEDED
+    assert transitions[0]["patch"]["output_ref"] == "ref:in"

@@ -144,7 +144,8 @@ class FacetArtifactLineage:
         out: List[str] = []
         for entry in self.entries.values():
             for r in entry.artifact_refs:
-                if r.role == "output" and r.liveness in ("expired", "failed"):
+                if r.role == "output" and r.liveness in (
+                        "expired", "superseded", "failed"):
                     out.append(r.ref)
         return out
 
@@ -202,7 +203,10 @@ def build_facet_lineage(
 
     from app.lib.gis.capability_registry import get_capability_registry
 
-    caps = get_capability_registry()
+    try:
+        caps = get_capability_registry()
+    except Exception:  # noqa: BLE001 — 血缘是增值投影，registry 缺席按空映射降级
+        caps = {}
 
     # 表/聚合类能力行（chart/statistics facet 的供给上游 facet 集合）。
     table_analysis_facets: List[str] = []
@@ -264,7 +268,8 @@ def build_facet_lineage(
                             producer_capability=cap,
                         ))
                     # 死 source artifact → 补层的执行债（不 remount 死 ref）
-                    if src_ref and _live(src_ref) in ("expired", "failed"):
+                    if src_ref and _live(src_ref) in (
+                            "expired", "superseded", "failed"):
                         entry.recompute_capabilities = [cap] if cap else []
             elif node.status == S_PENDING and cap:
                 # 计划层未落 MapSpec：执行债 = source_capability（advisor 已

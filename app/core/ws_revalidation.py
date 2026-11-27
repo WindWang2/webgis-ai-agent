@@ -58,6 +58,10 @@ async def stop_watchdog(task: asyncio.Task[None], *, closing: asyncio.Event | No
         # SQLAlchemy connection teardown mid-check can leak shielded cleanup.
         await asyncio.wait_for(asyncio.shield(task), 2)
     except asyncio.CancelledError:
+        # 仅吞掉「watchdog 自身被取消」；调用方被取消时必须继续展开，
+        # 否则停机/断连清理会被静默拖住。
+        if not task.cancelled():
+            raise
         _logger.debug("WebSocket authority watchdog cancelled")
     except asyncio.TimeoutError:
         task.cancel()

@@ -1602,7 +1602,12 @@ class ChatExecutionEngine:
         # H-5（#860）非流式 parity：tracker 先于规划创建——取消在规划等待期
         # （最长 120s planner 调用）也有可点燃的对象，而不是等规划结束后才生效。
         task = self.tracker.create(session_id, message)
-        await self._maybe_plan(session_id, message, messages)
+        try:
+            await self._maybe_plan(session_id, message, messages)
+        except Exception as e:
+            # P2：规划是 best-effort，map_state/Redis 抖动不得令整回合失败，
+            # 也不得把 tracker 任务留在 running（本方法内无兜底 finally）。
+            logger.warning(f"[chat_execution_engine] 规划阶段异常，降级无计划: {e}")
         executed_tools: set[tuple[str, str]] = set()
         owner_token = self.get_session_owner_token(session_id)
         # #684：捕获本用户轮原始消息与 turn_id，用于按用户轮衰减与固定关键词源。
@@ -1619,7 +1624,7 @@ class ChatExecutionEngine:
         # H-2（#857）：非流式回合总墙钟预算（与流式路径同义）。
         _turn_deadline = time.monotonic() + self._turn_total_timeout_s
         try:
-            for _ in range(self.max_rounds):
+            for _round_index in range(self.max_rounds):
                 # H-2：总预算耗尽的诚实失败（fail_task + TurnTimeoutError，
                 # 外层 chat() 按 failure_class="turn_timeout" settle FAILED）。
                 if time.monotonic() > _turn_deadline:
@@ -1871,8 +1876,8 @@ class ChatExecutionEngine:
                         )
                         if _dec_outcome is not None:
                             self._log_tool_decision(
-                                session_id, 0, message, _dec_tool, _dec_args,
-                                _dec_outcome, len(tc_list),
+                                session_id, _round_index, message, _dec_tool, _dec_args,
+                                _dec_outcome, len(tools or []),
                                 step_n=_dec_step_n,
                                 failure_class=_dec_fc,
                                 recovery_action=_dec_ra,
@@ -2450,7 +2455,6 @@ class ChatExecutionEngine:
             ctx.turn_finished = True
             return
 
-        streamed_content_parts: list[str] = []
         assistant_msg: dict = {}
         # Phase 8: token 事件批处理。LLM 流式输出每个 token 产生一条 SSE
         # （= 一次 HTTP write）；SSEBatcher 按 32 条 / 80ms 窗口合并为更少
@@ -2480,7 +2484,6 @@ class ChatExecutionEngine:
                         _ttft_ms = (time.perf_counter() - _t_llm) * 1000.0
                         if _ev is not None:
                             _ev.mark_first_event()
-                    streamed_content_parts.append(event_data["content"])
                     token_batcher.push(ctx.emitter.token(
                         event_data["content"],
                         event_data.get("is_reasoning", False),
@@ -3315,7 +3318,20 @@ class ChatExecutionEngine:
                     await session_data_manager.unset_session_clearing(session_id)
                 except Exception as exc:
                     logger.warning("clear_session: clearing marker rollback failed: %s", exc)
-            self._clearing_sessions.discard(session_id)
+                self._clearing_sessions.discard(session_id)
+            else:
+                # P2：delete 成功后跨副本 marker 仍在（TTL 30s）；本地 marker 也
+                # 必须保留到被取消 turn 真正排空 —— quiesce 超时后 straggler 的
+                # 清理写入仍可能复活已删会话行。turn 结束（清理完成）再清 mark。
+                # NOTE: engines built via ``__new__`` (partial stubs in tests)
+                # have no instance registry; treat that as "no straggler".
+                straggler = getattr(self, "_active_turn_tasks", {}).get(session_id)
+                if straggler is not None and not straggler.done():
+                    straggler.add_done_callback(
+                        lambda _t, _sid=session_id: self._clearing_sessions.discard(_sid)
+                    )
+                else:
+                    self._clearing_sessions.discard(session_id)
 
     def _detect_suspicious_result(self, result: Any) -> bool:
         return _is_suspicious_result_fn(result)

@@ -238,3 +238,110 @@ async def test_new_evidence_allows_new_attempt(monkeypatch):
     attempt = await service.start_repair_attempt(
         "s-sem", ctx=_ctx(), session_busy_check=False)
     assert attempt["attempt_id"] != created["attempt_id"]
+
+
+class _FakeJobView:
+    def __init__(self, status: str, **receipt):
+        self.status = status
+        self.receipt = type("_R", (), receipt)()
+
+
+@pytest.mark.asyncio
+async def test_delivery_wait_retries_transient_read_errors(monkeypatch):
+    """轮询中单次 get_delivery_job 抛错不得把仍在执行的交付直接判失败。"""
+    from app.services.gis_harness.goal_repair_execution import actions
+    from app.services.jobs.lifecycle import JobStatus
+    import app.services.data_delivery as dd
+
+    calls = []
+
+    async def _get(job_id, actor):
+        calls.append(job_id)
+        if len(calls) == 1:
+            raise RuntimeError("db blip")
+        return _FakeJobView(
+            JobStatus.completed.value, row_count=3, content_sha256="abc")
+
+    monkeypatch.setattr(dd, "get_delivery_job", _get)
+    monkeypatch.setattr(actions, "DELIVERY_POLL_INTERVAL_S", 0.0)
+    receipt = await actions._wait_delivery_job(
+        RepairOwnerContext(session_id="s", user_id="u"), "job-1",
+        rid="r1", aid="a1", action="run_delivery")
+    assert len(calls) == 2
+    assert receipt["status"] == actions.ACTION_SUCCEEDED
+
+
+@pytest.mark.asyncio
+async def test_read_action_budget_denial_does_not_block_writable(monkeypatch):
+    """只读动作被预算拒绝、写入动作均可准入时，attempt 不得整体误拒。"""
+    state = _seed_state()
+    plan_block = state[1]["map_product"]["goal_repair_plan"]
+    plan_block["actions"].insert(0, {
+        "rule": "reobserve_rule", "requirement_id": "export:gpkg",
+        "action": "reobserve", "side_effect": "read", "path": "x",
+        "budget_class": "repair",
+        "expected_new_evidence": "render_observation@new_seq",
+    })
+
+    async def fake_load_state(session_id):
+        return state
+
+    monkeypatch.setattr(service, "_load_state", fake_load_state)
+
+    async def noop(job_id):
+        return None
+
+    monkeypatch.setattr(service, "run_attempt_job", noop)
+    seen = []
+
+    def fake_admissible(session_id, budget_class):
+        seen.append(budget_class)
+        return (len(seen) > 1, "budget exhausted")
+
+    import app.services.gis_harness.loop_budget as lb
+    monkeypatch.setattr(lb, "loop_retry_admissible", fake_admissible)
+
+    view = await service.start_repair_attempt(
+        "s-sem", selected_action_ids=["a1", "a2"], ctx=_ctx(),
+        session_busy_check=False)
+    assert view.get("attempt_id")
+    assert view["budget_denied"]
+
+
+@pytest.mark.asyncio
+async def test_reconcile_waiting_delivery_charges_binding_budget_class(
+        monkeypatch):
+    """迟到交付收口按绑定 budget_class 计费（与 runner 同源）。"""
+    from app.services.gis_harness.goal_repair_execution import store
+    from app.services.gis_harness.goal_repair_execution.contracts import (
+        ACTION_WAITING_DELIVERY,
+    )
+    import app.services.data_delivery as dd
+
+    view = {"attempt_id": "42", "session_id": "s-sem", "active": False}
+    summary = {"actions": [{
+        "action_id": "a1", "status": ACTION_WAITING_DELIVERY,
+        "job_id": "job-1", "detail": "waiting"}]}
+    monkeypatch.setattr(store, "read_summary", lambda _aid: summary)
+    monkeypatch.setattr(store, "read_dispatch_spec", lambda _aid: {
+        "owner": {"user_id": "u1"},
+        "bindings": [{"action_id": "a1", "budget_class": "export"}],
+    })
+    monkeypatch.setattr(store, "write_summary_patch", lambda _aid, _p: True)
+
+    async def _job(job_id, actor):
+        return _FakeJobView("completed")
+
+    monkeypatch.setattr(dd, "get_delivery_job", _job)
+    charged = []
+    import app.services.gis_harness.loop_budget as lb
+    monkeypatch.setattr(
+        lb, "loop_charge", lambda sid, cls: charged.append((sid, cls)))
+    import app.services.gis_harness.map_completion as mc
+
+    async def _noop(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(mc, "maybe_finalize_map_product", _noop)
+    await service._reconcile_waiting_delivery(view)
+    assert charged == [("s-sem", "export")]

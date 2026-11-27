@@ -40,6 +40,7 @@ from app.services.chat.model_runtime.usage_ledger import (
     extract_usage_fact,
     persist_turn_records,
     reset_price_table_cache,
+    spawn_persist_task,
 )
 from tests.fixtures.pi_mocks import make_agent_settled, make_token_event
 
@@ -432,6 +433,51 @@ async def test_persist_incomplete_on_write_failure(db_factory, monkeypatch):
     assert ok is False and c.write_failures == 1
 
 
+async def test_persist_failure_count_resets_after_later_success(db_factory, monkeypatch):
+    """失败计数无清零路径：同一 collector 二次成功仍记 incomplete（P3）。"""
+    from app.core import database as db_mod
+
+    class _BrokenCtx:
+        async def __aenter__(self):
+            raise RuntimeError("db down")
+
+        async def __aexit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(db_mod, "async_db_session", lambda: _BrokenCtx())
+    c = TurnUsageCollector("sess-1", "turn-2b")
+    c.observe(_message_end_event(usage={"input": 10, "output": 5}))
+    assert await persist_turn_records(c, status="applied", finalize=True) is False
+    assert c.write_failures == 1
+
+    class _OkCtx:
+        async def __aenter__(self):
+            self._db = db_factory()
+            return self._db
+
+        async def __aexit__(self, *exc):
+            await self._db.close()
+
+    monkeypatch.setattr(db_mod, "async_db_session", _OkCtx)
+    assert await persist_turn_records(c, status="applied", finalize=True) is True
+    assert c.write_failures == 0
+    async with db_factory() as db:
+        row = (await db.execute(select(ChatTurnRuntime))).scalars().one()
+    assert row.complete is True and row.records_written == 1
+
+
+async def test_spawn_persist_task_keeps_strong_reference():
+    """fire-and-forget 任务必须被模块持有到完成（否则可被 GC）。"""
+    from app.services.chat.model_runtime import usage_ledger
+
+    c = TurnUsageCollector("sess-1", "turn-spawn")
+    task = spawn_persist_task(c)
+    assert task in usage_ledger._persist_tasks
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    assert task not in usage_ledger._persist_tasks
+
+
 # ── WP06/WP10：能力门与预算 ───────────────────────────────────────
 
 def test_capability_gate_rejects_no_tools():
@@ -625,6 +671,54 @@ async def test_apply_revoked_catalog_item_rejected(db_factory, monkeypatch):
     assert not any(c == "prompt" for c, _ in rpc.calls)
 
 
+async def test_apply_inherit_rejects_invalid_default_model(db_factory, monkeypatch):
+    """P2\uff1ainherit \u5206\u652f\u4e0d\u67e5 item.available \u2014\u2014 base_model \u4e3a\u7a7a/\u975e\u6cd5\u65f6\u76ee\u5f55\u91cc\u7684
+    \u9ed8\u8ba4\u9879\u6052\u5728\uff08build_catalog \u65e0\u6761\u4ef6\u63a8 is_default \u9879\uff09\u4f46\u6ca1\u6709\u53ef\u5e94\u7528\u7684
+    \u6a21\u578b id\uff0c\u4ecd ok=True \u653e\u884c\u3002\u5fc5\u987b\u5982\u5b9e\u62d2\u7edd\u3002"""
+    _catalog_env(monkeypatch, base="", extra="")  # \u7a7a base_model \u2192 invalid_id
+    rpc = _StubRpc(state_model=("webgis", ""))
+    async with db_factory() as db:
+        result = await apply_session_model(
+            rpc, db, session_id="conv-emptybase", turn_id="t-eb", bound_message="x",
+            force_apply=False,
+        )
+    assert not result.ok
+    assert result.reason_code == "catalog_item_unavailable"
+    assert not any(c == "set_model" for c, _ in rpc.calls)  # \u4e0d\u5e94\u8bd5\u56fe\u5e94\u7528
+    assert not any(c == "prompt" for c, _ in rpc.calls)
+
+
+async def test_apply_inherit_credential_missing_still_degrades(db_factory, monkeypatch):
+    """credential_missing \u4e0d\u62d2\u7eed\uff08\u6545\u610f\u7684\u8303\u56f4\u754c\u9650\uff09\uff1ainherit \u7684\u76ee\u6807\u5373 spawn
+    \u5feb\u7167\u9ed8\u8ba4\uff08Pi \u5b50\u8fdb\u7a0b\u81ea\u5e26\u51ed\u8bc1\uff09\uff0c\u8d70 get_state \u56de\u8bfb\u7684 degraded \u62ab\u9732
+    \u8def\u5f84\uff08M09/M10\uff09\u3002\u9501\u6b7b\u8be5\u754c\u9650\uff0c\u9632\u6b62\u56de\u5f52\u5230\u786c\u62d2\u7eed\u3002"""
+    _catalog_env(monkeypatch, base="m-base", key="")  # \u65e0\u51ed\u8bc1 \u2192 credential_missing
+    rpc = _StubRpc(state_model=("webgis", "m-base"))
+    async with db_factory() as db:
+        result = await apply_session_model(
+            rpc, db, session_id="conv-nocred", turn_id="t-nc", bound_message="x",
+            force_apply=False,
+        )
+    assert result.ok and result.status == "inherit_default"
+    assert result.effective_model == "m-base"
+
+
+async def test_resolve_session_target_inherit_rejects_unavailable_default(
+    db_factory, monkeypatch,
+):
+    """P2：resolve_session_target 的 inherit 分支对 unavailable 默认项
+    必须返回 ok=False（GET /model 与 turn 期同一语义）。"""
+    from app.services.chat.model_runtime.session_model_service import (
+        resolve_session_target,
+    )
+
+    _catalog_env(monkeypatch, base="", extra="")  # 空 base_model → invalid_id
+    async with db_factory() as db:
+        target = await resolve_session_target(db, "conv-emptybase")
+    assert not target["ok"]
+    assert target["reason_code"] == "catalog_item_unavailable"
+
+
 async def test_apply_inherit_uses_default_without_set_model_when_current(
     db_factory, monkeypatch,
 ):
@@ -815,3 +909,19 @@ async def test_put_preference_rejects_models_outside_catalog(monkeypatch):
     with pytest.raises(HTTPException) as exc_info:
         await put_session_model("conv-1", req, _conv=conv, db=MagicMock())
     assert exc_info.value.status_code == 404
+
+
+@pytest.mark.parametrize("cap", [0, -7])
+async def test_put_preference_rejects_nonpositive_token_cap(monkeypatch, cap):
+    """review-P3：cap<=0 不得静默归一为「清除上限」，必须 400。"""
+    from fastapi import HTTPException
+    from app.api.routes.session_model_views import ModelPreferenceUpdate, put_session_model
+
+    _catalog_env(monkeypatch, base="m-base")
+    req = ModelPreferenceUpdate(
+        mode="inherit", session_token_cap=cap, expected_revision=0)
+    with pytest.raises(HTTPException) as exc_info:
+        await put_session_model(
+            "conv-cap", req, _conv=SimpleNamespace(id="conv-cap"),
+            db=MagicMock())
+    assert exc_info.value.status_code == 400

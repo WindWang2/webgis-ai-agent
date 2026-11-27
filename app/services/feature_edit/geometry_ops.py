@@ -272,7 +272,11 @@ def move_by(
         geometry = feature.get("geometry")
         if not isinstance(geometry, dict):
             continue
-        geom = shape(geometry)
+        try:
+            geom = shape(geometry)
+        except Exception:
+            findings.append(finding("invalid_geometry", "existing geometry unparseable", wfid=wfid))
+            continue
         moved = shapely_transform(shift, geom)
         bad = _validate_after(moved)
         if bad is not None:
@@ -326,7 +330,11 @@ def snap_to_ref(
         geometry = feature.get("geometry")
         if not isinstance(geometry, dict):
             continue
-        geom = shape(geometry)
+        try:
+            geom = shape(geometry)
+        except Exception:
+            findings.append(finding("invalid_geometry", "existing geometry unparseable", wfid=wfid))
+            continue
         centroid = geom.centroid
         idx = tree.nearest(centroid)
         target_line = lines[int(idx)]

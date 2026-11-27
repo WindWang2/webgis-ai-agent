@@ -250,11 +250,17 @@ function parseTile(
   }
   const refine: 'REPLACE' | 'ADD' = refineRaw ?? parentRefine;
 
+  // geometricError 严格化：缺失/非法曾静默默认 0（SSE=0 → 永不细化、
+  // 子树永不加载）；与 refine 同口径 typed 拒绝。
+  if (typeof raw.geometricError !== 'number' || !Number.isFinite(raw.geometricError) || raw.geometricError < 0) {
+    throw new TilesetParseError('corrupt', `tile ${id} geometricError invalid (non-negative number required)`);
+  }
+
   const node: TileNode = {
     id,
     contentUri,
     contentFormat,
-    geometricError: typeof raw.geometricError === 'number' && raw.geometricError >= 0 ? raw.geometricError : 0,
+    geometricError: raw.geometricError,
     refine,
     localToEnu,
     sphereEnu,

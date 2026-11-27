@@ -124,14 +124,19 @@ def choose_classification(
     k = max(3, min(7, k))
 
     # 1. 显式指定
-    if requested_method and requested_method in method_meta:
-        return ClassificationChoice(
-            method=requested_method,
-            k=k,
-            authority=method_meta[requested_method].authority,
-            reasons=[f"调用方显式指定 {requested_method}（尊重显式制图决策）"],
-            source="explicit",
-        )
+    if requested_method:
+        if requested_method in method_meta:
+            return ClassificationChoice(
+                method=requested_method,
+                k=k,
+                authority=method_meta[requested_method].authority,
+                reasons=[f"调用方显式指定 {requested_method}（尊重显式制图决策）"],
+                source="explicit",
+            )
+        rejected.append({
+            "method": str(requested_method)[:80],
+            "reason": "未知分类方法——显式请求已忽略，按分布证据裁决",
+        })
 
     skew = _skew_ratio(stats)
     pool = [m for m in (recommended or []) if m in method_meta]

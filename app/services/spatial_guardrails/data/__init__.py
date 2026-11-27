@@ -58,14 +58,23 @@ def _prefecture_short_name(name: str) -> str:
 
 
 def get_prefecture_short_names() -> dict[str, str]:
-    """地级简称/全称 → 6 位码（名称模糊映射用）。"""
+    """地级简称/全称 → 6 位码（名称模糊映射用）。
+
+    全称/简称在多个地级码间重名时（如三省共用的「省直辖县级」：3790 山东 /
+    4190 河南 / 4290 湖北）该键不进入映射：归属无法唯一判定时解析失败，
+    优于把调用方静默引向任一首码（首码即中 → 错归属山东）。
+    """
     global _pref_short
     if _pref_short is None:
         with _lock:
             if _pref_short is None:
-                table: dict[str, str] = {}
+                codes: dict[str, str] = {}
+                ambiguous: set[str] = set()
                 for code, (name, _prov) in _admin.PREFECTURES.items():
-                    table.setdefault(name, code)
-                    table.setdefault(_prefecture_short_name(name), code)
-                _pref_short = table
+                    for key in (name, _prefecture_short_name(name)):
+                        if key in codes and codes[key] != code:
+                            ambiguous.add(key)
+                        else:
+                            codes.setdefault(key, code)
+                _pref_short = {k: v for k, v in codes.items() if k not in ambiguous}
     return _pref_short

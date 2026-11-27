@@ -304,6 +304,13 @@ class TestSamplingBounds:
         samples = bounded_value_samples(wide)
         assert len(samples) <= 16  # SAMPLING_FIELD_CAP
 
+    def test_sampling_field_cap_strings_do_not_leak_into_inferred(self):
+        """review P3 回归：numeric_fields=None 且字符串字段超过 field_cap 时，
+        溢出字段名不得漏入 inferred 桶（否则采样面翻倍、突破 field_cap）。"""
+        feats = [{"properties": {f"s{i}": f"x{i}" for i in range(40)}}]
+        samples = bounded_value_samples(feats)
+        assert len(samples) <= 16  # SAMPLING_FIELD_CAP
+
     def test_large_synthetic_feature_count_descriptor(self):
         fields = {f"m{i}": "number" for i in range(20)}
         p = _profile(
@@ -365,3 +372,41 @@ class TestUserRolesChannel:
         entry = next(f for f in d.fields if f.name == "v")
         assert "population_measure" in entry.roles
         assert entry.role_confidence == "user_declared"
+
+
+class TestArtifactRecordProjection:
+    """DatasetProfile.from_artifact_record 的 dict / 对象双形同权。"""
+
+    RECORD = {
+        "artifact_type": "poi_feature_set",
+        "feature_count": 42,
+        "bbox": [104.0, 30.0, 104.5, 30.5],
+        "crs": "EPSG:4326",
+        "metadata": {"geometry_types": ["Point"]},
+    }
+
+    def test_dict_record_keeps_count_bbox_and_crs(self):
+        """docstring 承诺支持 to_dict 形 record，但 feature_count/bbox/crs
+        旧实现只走 getattr —— dict 记录传入时三者恒空，画像静默丢失要素数
+        与空间范围（artifact_type/metadata 却已支持 dict，双标）。"""
+        p = DatasetProfile.from_artifact_record(self.RECORD)
+        assert p.source == "artifact_record"
+        assert p.artifact_type == "poi_feature_set"
+        assert p.feature_count == 42
+        assert p.bbox == [104.0, 30.0, 104.5, 30.5]
+        assert p.crs == "EPSG:4326"
+        assert p.geometry_types == ["Point"]
+        assert p.fields_status == "unknown"
+
+    def test_object_record_path_unchanged(self):
+        from types import SimpleNamespace
+
+        rec = SimpleNamespace(**self.RECORD)
+        p = DatasetProfile.from_artifact_record(rec)
+        assert p.feature_count == 42
+        assert p.bbox == [104.0, 30.0, 104.5, 30.5]
+        assert p.crs == "EPSG:4326"
+
+    def test_empty_record_stays_honest(self):
+        p = DatasetProfile.from_artifact_record({})
+        assert p.feature_count is None and p.bbox is None and p.crs == ""

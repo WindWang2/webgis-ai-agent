@@ -161,6 +161,29 @@ class TestDegenerateAndExtreme:
         assert inf["method"] == "declared_projected"
 
 
+class TestMalformedDeclaredCrs:
+    """畸形 crs 成员（properties 为非 dict 真值）不得打穿 CRS 识别/门禁。
+
+    evaluate_quality_gate 对用户提交的 GeoJSON 直接调用 infer_crs →
+    _parse_declared_crs；旧实现 props.get(...) 会抛 AttributeError。
+    """
+
+    def test_non_dict_properties_falls_back_to_numeric_inference(self):
+        data = _fc([[116.4, 39.9]])
+        data["crs"] = {"type": "name", "properties": "EPSG:4326"}
+        inf = infer_crs(data)
+        assert inf["crs"] == "EPSG:4326"
+        assert inf["confidence"] == "high"
+        assert inf["method"] == "degree_range"
+
+    def test_list_properties_falls_back_to_numeric_inference(self):
+        data = _fc([[116.4, 39.9]])
+        data["crs"] = {"type": "name", "properties": ["EPSG:4326"]}
+        inf = infer_crs(data)
+        assert inf["crs"] == "EPSG:4326"
+        assert inf["method"] == "degree_range"
+
+
 @pytest.mark.cartography
 def test_manual_declaration_beats_inference_in_planner():
     """人工传参优先：declared projected CRS 压过推断（验收：人工传参场景

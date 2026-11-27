@@ -89,6 +89,16 @@ describe('navigation', () => {
       expect((box[0] + box[2]) / 2).toBeCloseTo(104.08, 5);
       expect(opts.maxZoom).toBe(16);
     });
+
+    it('F-10.1: full-world bbox [180,s,-180,n] fits the globe instead of collapsing to a ~300m box', () => {
+      // unwrap 后 span=0 曾命中 minSpan 退化 widening → 塌缩成 lng 180 旁
+      // ~300m 盒，地图跳到极小范围而非全球。
+      fitBounds(mockMap as Map, [180, -20, -180, 20]);
+      const [box] = (mockMap.fitBounds as ReturnType<typeof vi.fn>).mock.calls.at(-1)!;
+      expect(box[0]).toBe(-180);
+      expect(box[2]).toBe(180);
+      expect(box[2] - box[0]).toBe(360);
+    });
   });
 
   describe('jumpTo', () => {
@@ -155,6 +165,47 @@ describe('navigation', () => {
       };
       const bbox = await calculateBBoxAsync(geojson);
       expect(bbox).toEqual([10, 10, 20, 20]);
+    });
+
+    it('should traverse GeometryCollection (top level and as Feature.geometry)', () => {
+      const top: any = {
+        type: 'GeometryCollection',
+        geometries: [
+          { type: 'Point', coordinates: [10, 20] },
+          { type: 'LineString', coordinates: [[30, 5], [40, 15]] },
+        ],
+      };
+      expect(calculateBBox(top)).toEqual([10, 5, 40, 20]);
+
+      const wrapped: any = {
+        type: 'FeatureCollection',
+        features: [
+          {
+            type: 'Feature',
+            geometry: {
+              type: 'GeometryCollection',
+              geometries: [
+                { type: 'Point', coordinates: [116, 39] },
+                { type: 'Point', coordinates: [118, 41] },
+              ],
+            },
+          },
+        ],
+      };
+      expect(calculateBBox(wrapped)).toEqual([116, 39, 118, 41]);
+    });
+
+    it('recomputes after in-place mutation (no stale identity-keyed cache)', () => {
+      // 旧实现以对象身份 WeakMap 缓存 bbox 且无失效机制 —— 同一对象原地
+      // 变更 coordinates 后再次调用返回陈旧范围。
+      const geojson: any = {
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [10, 10] },
+      };
+      expect(calculateBBox(geojson)).toEqual([10, 10, 10, 10]);
+      geojson.geometry.coordinates[0] = 50;
+      geojson.geometry.coordinates[1] = 60;
+      expect(calculateBBox(geojson)).toEqual([50, 60, 50, 60]);
     });
   });
 

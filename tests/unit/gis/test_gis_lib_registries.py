@@ -135,6 +135,59 @@ class TestCapabilityRegistry:
         issues = reg.validate()
         assert any("ghost" in i for i in issues)
 
+    def test_validate_checks_all_depends_on_entries(self):
+        """depends_on 不截断：第 7 个及以后的悬空引用同样被检出。"""
+        from app.lib.gis.capability_registry import (
+            CapabilityDescriptor, CapabilityRegistry,
+        )
+
+        reg = CapabilityRegistry()
+        reg.register(CapabilityDescriptor(id="cap.base", name="base"))
+        reg.register(CapabilityDescriptor(
+            id="cap.many", name="many",
+            depends_on=["cap.base"] + [f"missing{i}" for i in range(7)]))
+        issues = reg.validate()
+        assert any("missing6" in i for i in issues)
+
+    def test_get_registry_publishes_only_fully_loaded_instance(self, monkeypatch):
+        """并发读者不得在 load_builtins 完成前观察到半空注册表。"""
+        import threading
+        import time
+
+        import app.lib.gis.capability_registry as cr
+
+        original = cr.CapabilityRegistry.load_builtins
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow_load(self):
+            self._by_id.clear()
+            started.set()
+            release.wait(5.0)
+            original(self)
+
+        monkeypatch.setattr(cr.CapabilityRegistry, "load_builtins", slow_load)
+        cr.reset_capability_registry()
+        try:
+            init = threading.Thread(
+                target=cr.get_capability_registry, daemon=True)
+            init.start()
+            assert started.wait(5.0)
+            seen = []
+            reader = threading.Thread(
+                target=lambda: seen.append(cr.get_capability_registry()),
+                daemon=True)
+            reader.start()
+            time.sleep(0.1)
+            assert seen == [], "初始化未完成前不得发布半空注册表"
+            release.set()
+            init.join(5.0)
+            reader.join(5.0)
+            assert seen and seen[0].count > 0
+        finally:
+            release.set()
+            cr.reset_capability_registry()
+
 
 class TestAlgorithmRegistry:
     def test_seed_algorithm_count_and_coverage(self):

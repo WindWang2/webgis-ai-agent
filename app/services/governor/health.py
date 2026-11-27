@@ -55,8 +55,13 @@ class HealthView:
         return self.provider_state(source_key) == HEALTH_OPEN
 
     def degraded_sources(self, source_keys) -> Dict[str, str]:
-        """批量投影（bounded 输入由调用方保证；观测/admission 用）。"""
-        return {k: self.provider_state(k) for k in source_keys}
+        """批量投影：只返回**降级**（open/half_open）source 的状态。"""
+        degraded = {}
+        for k in source_keys:
+            state = self.provider_state(k)
+            if state in (HEALTH_OPEN, HEALTH_HALF_OPEN):
+                degraded[k] = state
+        return degraded
 
 
 __all__ = [

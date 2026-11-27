@@ -107,7 +107,12 @@ def _bounded_attrs(props: Optional[Dict[str, Any]]) -> Dict[str, str]:
 
 
 def _finite(x: float, y: float, *, where: str) -> Tuple[float, float]:
-    fx, fy = float(x), float(y)
+    try:
+        fx, fy = float(x), float(y)
+    except (TypeError, ValueError) as exc:
+        raise RasterSamplingError(
+            "INVALID_GEOMETRY", f"non-numeric coordinates in {where}",
+            field="stations") from exc
     if not (math.isfinite(fx) and math.isfinite(fy)):
         raise RasterSamplingError(
             "INVALID_GEOMETRY", f"non-finite coordinates in {where}",
@@ -277,12 +282,22 @@ def _iter_line_parts(
     gtype = geom.get("type")
     coords = geom.get("coordinates")
     parts: List[Tuple[str, List[Tuple[float, float]]]] = []
+
+    def _vertex(part_id: str, vi: int, c: Any) -> Tuple[float, float]:
+        if not isinstance(c, (list, tuple)) or len(c) < 2:
+            raise RasterSamplingError(
+                "INVALID_GEOMETRY",
+                f"{part_id} vertex[{vi}] must be an [x, y] coordinate pair",
+                field="lines_ref")
+        return tuple(c)  # type: ignore[return-value]
+
     if gtype == "LineString":
         if not isinstance(coords, list) or len(coords) < 2:
             raise RasterSamplingError(
                 "INVALID_GEOMETRY", "LineString needs ≥2 vertices",
                 field="lines_ref")
-        parts.append(("part-0", [tuple(c) for c in coords]))  # type: ignore[arg-type]
+        parts.append(("part-0", [_vertex("part-0", vi, c)
+                                 for vi, c in enumerate(coords)]))
     elif gtype == "MultiLineString":
         if not isinstance(coords, list) or not coords:
             raise RasterSamplingError(
@@ -294,7 +309,9 @@ def _iter_line_parts(
                     "INVALID_GEOMETRY",
                     f"MultiLineString part[{pi}] needs ≥2 vertices",
                     field="lines_ref")
-            parts.append((f"part-{pi}", [tuple(c) for c in part]))  # type: ignore[arg-type]
+            parts.append((f"part-{pi}",
+                          [_vertex(f"part-{pi}", vi, c)
+                           for vi, c in enumerate(part)]))
     else:
         raise RasterSamplingError(
             "INVALID_GEOMETRY",

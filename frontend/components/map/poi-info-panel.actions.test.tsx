@@ -133,4 +133,59 @@ describe('PoiInfoPanel — Elevated Spatial Inspection Popover', () => {
 
     expect(writeTextMock).toHaveBeenCalledWith('POI-9988')
   })
+
+  it('clipboard 写入拒绝时不虚报「已复制」', async () => {
+    const writeTextMock = vi.fn().mockRejectedValue(new Error('denied'))
+    Object.assign(navigator, { clipboard: { writeText: writeTextMock } })
+
+    render(
+      <PoiInfoPanel
+        x={200}
+        y={300}
+        coordinates={[104.0665, 30.5728]}
+        features={[makeFeature({ name: '天府广场' }, [104.0665, 30.5728])]}
+        layerIds={layerIds}
+        layersMap={layersMap}
+        onClose={() => {}}
+      />,
+    )
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '复制坐标' }))
+    })
+
+    expect(writeTextMock).toHaveBeenCalled()
+    // 权限拒绝/非安全上下文：保持未复制反馈，不谎报成功。
+    expect(screen.queryByRole('button', { name: '已复制经纬度坐标' })).toBeNull()
+    expect(screen.getByRole('button', { name: '复制坐标' })).toBeInTheDocument()
+  })
+
+  it('卸载时清除复制反馈定时器（坐标 1800ms / 属性 1500ms）', async () => {
+    vi.useFakeTimers()
+    try {
+      const writeTextMock = vi.fn().mockResolvedValue(undefined)
+      Object.assign(navigator, { clipboard: { writeText: writeTextMock } })
+      const { unmount } = render(
+        <PoiInfoPanel
+          x={200}
+          y={300}
+          coordinates={[104.0665, 30.5728]}
+          features={[makeFeature({ name: '宽窄巷子', code: 'POI-9988' }, [104.0665, 30.5728])]}
+          layerIds={layerIds}
+          layersMap={layersMap}
+          onClose={() => {}}
+        />,
+      )
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: '复制坐标' }))
+        fireEvent.click(screen.getByText('POI-9988'))
+      })
+      expect(vi.getTimerCount()).toBeGreaterThan(0)
+      unmount()
+      // 修复前：在途 1800/1500 定时器未清理，卸载后仍留在 timer 队列。
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

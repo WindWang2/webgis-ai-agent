@@ -94,6 +94,17 @@ describe('parseTileset', () => {
     expect(() => parseTileset(deep, OPTS)).toThrowError(/deeper than/);
   });
 
+  it('rejects a tile with missing/invalid geometricError (no silent SSE=0)', () => {
+    type ChildLike = { geometricError?: number };
+    const missing = buildTilesetFixture() as { root: { children: ChildLike[] } };
+    delete missing.root.children[0].geometricError;
+    expect(() => parseTileset(missing, OPTS)).toThrowError(/geometricError invalid/);
+
+    const negative = buildTilesetFixture() as { root: { children: ChildLike[] } };
+    negative.root.children[0].geometricError = -1;
+    expect(() => parseTileset(negative, OPTS)).toThrowError(/geometricError invalid/);
+  });
+
   it('rejects legacy b3dm content', () => {
     const doc = buildTilesetFixture({ contentExt: 'b3dm' });
     expect(() => parseTileset(doc, OPTS)).toThrowError(/b3dm/);

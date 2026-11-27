@@ -230,6 +230,24 @@ class TestIssue780HintMergeGuardrails:
                    for h in merged.hint_applied)
         assert merged.measure == "density"
 
+    def test_all_rejected_hints_do_not_raise_confidence(self):
+        """反证（review P2）：hint_applied 同时记录"已应用"与"被拒" ——
+        hints 全被拒时置信度不得反升（否则压制下游澄清触发）。"""
+        base = resolve_map_request_intent("给我看看成都小学")
+        assert base.confidence < 1.0        # 前提：+0.1 不被夹住
+        rejected_only = merge_intent_hints(
+            base, {"geometry_expectation": "cube"})          # 越词表值被拒
+        assert rejected_only.hint_applied           # 拒绝记录在场
+        assert rejected_only.confidence == base.confidence
+
+    def test_applied_hint_still_raises_confidence(self):
+        """对照：确有 hint 生效时置信度仍 +0.1（行为不回退）。"""
+        base = resolve_map_request_intent("给我看看成都小学")
+        merged = merge_intent_hints(base, {"measure": "density"})
+        assert merged.measure == "density"
+        assert merged.confidence == round(
+            min(1.0, base.confidence + 0.1), 2)
+
 
 class TestIssue781RasterRouting:
     """#781: 栅格主体 → raster_distribution，不再落 POI 热力族。"""

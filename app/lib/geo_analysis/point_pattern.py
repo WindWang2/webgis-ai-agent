@@ -180,7 +180,6 @@ def _k_curve(
                     estimated=f"~{n_pairs_est * 16 / 1e9:.2f} GB COO pairs",
                     limit=f"{_MAX_RIPLEY_PAIRS} pairs",
                 )
-        tree = cKDTree(xy)
     coo = tree.sparse_distance_matrix(
         tree, max_distance=float(r_grid[-1]), output_type="coo_matrix")
     keep = coo.row != coo.col
@@ -282,6 +281,20 @@ def ripley_k(
 
     window = _require_window(xy, window)
     xmin, ymin, xmax, ymax = window
+    # 与 quadrat_test（point_pattern.py 同文件）同闸：固定窗口小于数据
+    # 范围时，窗外焦点的四向边距为负 → 各向同性校正 inside fraction 被
+    # clip 到 _MIN_INSIDE_FRACTION（≈1e-9）→ 每对 K 贡献放大约 1e9 倍，
+    # 曲线被无声污染。窗口/数据不匹配是调用方错误，拒绝而非静默降级。
+    inside = (
+        (xy[:, 0] >= xmin) & (xy[:, 0] <= xmax)
+        & (xy[:, 1] >= ymin) & (xy[:, 1] <= ymax)
+    )
+    if not inside.all():
+        raise ValueError(
+            f"{int((~inside).sum())} points lie outside the analysis window "
+            f"[{xmin}, {ymin}, {xmax}, {ymax}] — edge corrections would "
+            "degenerate (w→0, K inflated ~1e9×); fix the window or the data"
+        )
     width, height = xmax - xmin, ymax - ymin
     area = width * height
     r_max = max_distance_ratio * min(width, height)
@@ -410,19 +423,18 @@ def quadrat_test(
 
     window = _require_window(xy, window)   # 恒非 None（缺省取数据 bbox）
     xmin, ymin, xmax, ymax = window
-    if True:
-        # Fixed study area: points outside it would be silently dropped by
-        # histogram2d — refuse instead (a window/points mismatch, not CSR).
-        inside = (
-            (xy[:, 0] >= xmin) & (xy[:, 0] <= xmax)
-            & (xy[:, 1] >= ymin) & (xy[:, 1] <= ymax)
+    # Fixed study area: points outside it would be silently dropped by
+    # histogram2d — refuse instead (a window/points mismatch, not CSR).
+    inside = (
+        (xy[:, 0] >= xmin) & (xy[:, 0] <= xmax)
+        & (xy[:, 1] >= ymin) & (xy[:, 1] <= ymax)
+    )
+    if not inside.all():
+        raise ValueError(
+            f"{int((~inside).sum())} points lie outside the fixed window "
+            f"[{xmin}, {ymin}, {xmax}, {ymax}] — the quadrat test would "
+            "silently drop them; fix the window or the data"
         )
-        if not inside.all():
-            raise ValueError(
-                f"{int((~inside).sum())} points lie outside the fixed window "
-                f"[{xmin}, {ymin}, {xmax}, {ymax}] — the quadrat test would "
-                "silently drop them; fix the window or the data"
-            )
     counts, _, _ = np.histogram2d(
         xy[:, 0], xy[:, 1],
         bins=(grid_cols, grid_rows),

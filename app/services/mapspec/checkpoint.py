@@ -420,7 +420,17 @@ async def rollback(
     session_id_for_refs = session_dir.name
 
     # 优先新格式 descriptor（ref -> blob），回退旧格式 materialized_refs（内联）。
-    descriptor = await asyncio.to_thread(_read_json_sync, ckpt_dir / "descriptor.json")
+    descriptor_path = ckpt_dir / "descriptor.json"
+    descriptor = await asyncio.to_thread(_read_json_sync, descriptor_path)
+    if descriptor_path.exists() and not (
+        isinstance(descriptor, dict) and isinstance(descriptor.get("refs"), dict)
+    ):
+        # 新格式 checkpoint 的 descriptor 损坏：绝不静默降级为 legacy 成功
+        #（只恢复 mapspec、ref_count=0 会让调用方误以为 refs 已恢复）。
+        return {
+            "success": False,
+            "message": f"Checkpoint '{checkpoint_id}' descriptor.json is missing or corrupt",
+        }
     if isinstance(descriptor, dict) and isinstance(descriptor.get("refs"), dict):
         referenced_refs = [
             ref_id
@@ -538,6 +548,16 @@ async def rollback(
     else:
         # 旧格式：materialized_refs.json 内联 payload。
         refs_file = ckpt_dir / "materialized_refs.json"
+        if not refs_file.exists():
+            # 两份 refs 载体都不存在：无法区分「descriptor 被删的新格式」
+            # 与「损坏的旧格式」，两者都不能静默以 ref_count=0 成功。
+            return {
+                "success": False,
+                "message": (
+                    f"Checkpoint '{checkpoint_id}' has neither descriptor.json "
+                    "nor legacy materialized_refs.json"
+                ),
+            }
         refs_data = await asyncio.to_thread(_read_json_sync, refs_file)
         refs_data = refs_data if isinstance(refs_data, dict) else {}
         ref_count = 0

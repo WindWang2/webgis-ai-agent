@@ -7,6 +7,7 @@ import os
 import numpy as np
 import pytest
 
+from app.services.raster_sampling import freeze as rs_freeze
 from app.services.raster_sampling import service as rs_service
 from app.services.raster_sampling import store as rs_store
 from app.services.raster_sampling.contracts import RasterSamplingError
@@ -424,3 +425,256 @@ async def test_invalid_reason_taxonomy_end_to_end(rs_env, raster_factory,
     assert reasons["ok"] is None
     assert reasons["nod"] == "nodata"
     assert reasons["nan"] == "non_finite"
+
+
+# ── P1（jobs.py:110）：产物被 GC 后不得复用 completed 幂等行空转 ───────
+
+async def test_gc_outputs_completed_job_row_reruns_and_publishes(
+        rs_env, raster_factory, seed_points_ref):
+    """产物被清掉（收据短路不命中）而幂等 job 行仍在 TTL 内 completed：
+    再次执行必须真的重跑并发布新收据，不能复用终态行空转（内联路径）。"""
+    from app.services.artifact_registry import (
+        fabric_parquet_path,
+        fabric_parquet_ref_exists,
+    )
+
+    out = await _make_point_plan(rs_env, raster_factory, seed_points_ref)
+    plan_id = out["plan"]["plan_id"]
+    first = await rs_service.execute(
+        session_id=SESS, plan_id=plan_id, owner_token=None,
+        background=False, trusted_dispatch=True)
+    first_ref = first["receipt"].outputs["sample_table_ref"]
+    assert fabric_parquet_ref_exists(SESS, first_ref)
+    first_job = (await rs_service.status(
+        session_id=SESS, plan_id=plan_id))["job"]
+    assert first_job["status"] == "completed"
+
+    # GC：产物 parquet 被清掉（收据与 completed job 行都还在复用 TTL 内）
+    os.unlink(fabric_parquet_path(SESS, first_ref))
+    assert not fabric_parquet_ref_exists(SESS, first_ref)
+
+    second = await rs_service.execute(
+        session_id=SESS, plan_id=plan_id, owner_token=None,
+        background=False, trusted_dispatch=True)
+    receipt = second.get("receipt")
+    assert receipt is not None, second
+    # 重算发布的新收据，且产物重新存活（而非复用死收据）
+    assert receipt.execution_id != first["receipt"].execution_id
+    assert fabric_parquet_ref_exists(SESS, receipt.outputs["sample_table_ref"])
+    # 新 job 行接管幂等键，旧的 completed 行不再被复用
+    second_job = (await rs_service.status(
+        session_id=SESS, plan_id=plan_id))["job"]
+    assert second_job["job_id"] != first_job["job_id"]
+    assert second_job["status"] == "completed"
+    results = await rs_service.results(
+        session_id=SESS, plan_id=plan_id, owner_token=None, page=1, per_page=50)
+    assert len(results["rows"]) == 3
+
+
+async def test_gc_outputs_background_submit_does_not_spin(
+        rs_env, raster_factory, seed_points_ref):
+    """同一 GC 场景的 background=True：不得只回一个永不执行的 running。"""
+    from app.services.artifact_registry import (
+        fabric_parquet_path,
+        fabric_parquet_ref_exists,
+    )
+
+    out = await _make_point_plan(rs_env, raster_factory, seed_points_ref)
+    plan_id = out["plan"]["plan_id"]
+    first = await rs_service.execute(
+        session_id=SESS, plan_id=plan_id, owner_token=None,
+        background=False, trusted_dispatch=True)
+    os.unlink(fabric_parquet_path(SESS, first["receipt"].outputs["sample_table_ref"]))
+    assert not fabric_parquet_ref_exists(
+        SESS, first["receipt"].outputs["sample_table_ref"])
+
+    submitted = await rs_service.execute(
+        session_id=SESS, plan_id=plan_id, owner_token=None,
+        background=True, trusted_dispatch=True)
+    assert submitted.get("job_id")
+
+    # 轮询到终态：复用的旧 completed 行会永远停在同一行上（空转）
+    deadline = asyncio.get_event_loop().time() + 30.0
+    while True:
+        state = await rs_service.status(session_id=SESS, plan_id=plan_id)
+        if state["job"]["status"] not in ("pending", "queued", "running",
+                                          "cancelling"):
+            break
+        assert asyncio.get_event_loop().time() < deadline, "background job 空转"
+        await asyncio.sleep(0.05)
+    assert state["job"]["job_id"] == submitted["job_id"]
+    assert state["job"]["status"] == "completed"
+    assert state["latest_receipt"] is not None
+    assert state["outputs_alive"]["sample_table"] is True
+
+
+# ── P2 perf：status 的同步 DB 查询不得阻塞事件循环 ──────────────────
+
+async def test_latest_job_sync_query_runs_off_event_loop(monkeypatch):
+    import threading
+
+    from app.services.data_operations import runner
+
+    seen = {}
+
+    class _Result:
+        def scalars(self):
+            return self
+
+        def all(self):
+            return []
+
+    class _FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, *args, **kwargs):
+            seen["thread"] = threading.get_ident()
+            return _Result()
+
+        def commit(self):
+            pass
+
+    monkeypatch.setattr(runner, "_sync_session", lambda: _FakeSession())
+    out = await rs_service._latest_job("sess-thread", "plan-thread")
+    assert out is None
+    assert seen["thread"] != threading.get_ident()  # 不在事件循环线程同步查库
+
+
+# ── P2 api-contract：status/results 读取复核 owner_token ────────────
+
+async def test_status_results_recheck_owner_token(rs_env, raster_factory,
+                                                  seed_points_ref):
+    from app.models.db_model import Conversation
+
+    out = await _make_point_plan(rs_env, raster_factory, seed_points_ref)
+    plan_id = out["plan"]["plan_id"]
+    await rs_service.execute(
+        session_id=SESS, plan_id=plan_id, owner_token=None,
+        background=False, trusted_dispatch=True)
+    with rs_env["sync_factory"]() as db:
+        db.add(Conversation(id=SESS, owner_token="owner-secret"))
+        db.commit()
+
+    with pytest.raises(RasterSamplingError) as ei:
+        await rs_service.status(session_id=SESS, plan_id=plan_id,
+                                owner_token="wrong")
+    assert ei.value.code == "UNAUTHORIZED"
+    assert ei.value.status_code == 404
+    with pytest.raises(RasterSamplingError) as ei2:
+        await rs_service.results(session_id=SESS, plan_id=plan_id,
+                                 owner_token="wrong")
+    assert ei2.value.code == "UNAUTHORIZED"
+    ok_status = await rs_service.status(session_id=SESS, plan_id=plan_id,
+                                        owner_token="owner-secret")
+    assert ok_status["success"] is True
+    ok_results = await rs_service.results(
+        session_id=SESS, plan_id=plan_id, owner_token="owner-secret",
+        include_curves=False)
+    assert ok_results["success"] is True
+
+
+# ── P2 perf：results(include_curves) 只读样本表一次 ────────────────
+
+async def test_results_include_curves_reads_table_once(
+        rs_env, raster_factory, seed_points_ref, monkeypatch):
+    out = await _make_point_plan(rs_env, raster_factory, seed_points_ref)
+    plan_id = out["plan"]["plan_id"]
+    await rs_service.execute(
+        session_id=SESS, plan_id=plan_id, owner_token=None,
+        background=False, trusted_dispatch=True)
+
+    import pyarrow.parquet as pq
+
+    reads = {"n": 0}
+    orig_read_table = pq.read_table
+    orig_parquet_file = pq.ParquetFile
+
+    def _counting_read_table(*args, **kwargs):
+        reads["n"] += 1
+        return orig_read_table(*args, **kwargs)
+
+    def _counting_parquet_file(*args, **kwargs):
+        reads["n"] += 1
+        return orig_parquet_file(*args, **kwargs)
+
+    monkeypatch.setattr(pq, "read_table", _counting_read_table)
+    monkeypatch.setattr(pq, "ParquetFile", _counting_parquet_file)
+    res = await rs_service.results(
+        session_id=SESS, plan_id=plan_id, owner_token=None,
+        page=1, per_page=50, include_curves=True)
+    assert res["curves"]["bands"]
+    assert res["pagination"]["total_rows"] == 3
+    assert reads["n"] == 1
+
+
+async def test_results_streamed_filters_preserve_facts(
+        rs_env, raster_factory, seed_points_ref):
+    """分页/过滤改为 Arrow 批流后，过滤计数与页切片语义保持不变。"""
+    out = await _make_point_plan(rs_env, raster_factory, seed_points_ref)
+    plan_id = out["plan"]["plan_id"]
+    ref_id = out["plan"]["sources"][0]["ref_id"]
+    await rs_service.execute(
+        session_id=SESS, plan_id=plan_id, owner_token=None,
+        background=False, trusted_dispatch=True)
+
+    page = await rs_service.results(
+        session_id=SESS, plan_id=plan_id, owner_token=None,
+        page=2, per_page=2, include_curves=False,
+        source_ref=ref_id, band=1, valid=True)
+    assert page["pagination"]["total_rows"] == 3
+    assert page["pagination"]["filtered_rows"] == 3
+    assert len(page["rows"]) == 1
+    empty = await rs_service.results(
+        session_id=SESS, plan_id=plan_id, owner_token=None,
+        include_curves=False, band=999)
+    assert empty["pagination"]["filtered_rows"] == 0
+    assert empty["rows"] == []
+
+
+# ── P3：_latest_job 不被会话任务窗口挤出 ────────────────────────────
+
+def test_latest_job_finds_plan_beyond_200_session_tasks(rs_env):
+    """同会话 >200 条执行任务时，旧 plan 的 job 仍能查到。"""
+    from app.models.db_model import AnalysisTask
+
+    with rs_env["sync_factory"]() as db:
+        db.add(AnalysisTask(
+            task_type="raster_sampling_execute", session_id=SESS,
+            parameters={"plan_id": "plan-old"}, status="completed"))
+        db.commit()
+        db.add_all([
+            AnalysisTask(task_type="raster_sampling_execute",
+                         session_id=SESS,
+                         parameters={"plan_id": f"plan-other-{i}"},
+                         status="completed")
+            for i in range(250)
+        ])
+        db.commit()
+
+    job = rs_service._latest_job_sync(SESS, "plan-old")
+    assert job is not None
+    assert job["params"]["plan_id"] == "plan-old"
+
+
+# ── P3：非 dict geometry 走 typed 通道（不抛 AttributeError） ────────
+
+def test_canonical_fc_digest_tolerates_malformed_geometry():
+    digest = rs_freeze._canonical_fc_digest({
+        "type": "FeatureCollection",
+        "features": [{"id": "a", "geometry": "bogus",
+                      "properties": {"k": "v"}}],
+    })
+    assert isinstance(digest, str) and digest
+
+
+def test_pick_line_feature_malformed_geometry_typed_reject():
+    with pytest.raises(RasterSamplingError) as ei:
+        rs_freeze.pick_line_feature({
+            "type": "FeatureCollection",
+            "features": [{"id": "a", "geometry": ["bogus"]}],
+        }, "")
+    assert ei.value.code == "INVALID_GEOMETRY"

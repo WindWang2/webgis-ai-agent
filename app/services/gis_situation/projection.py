@@ -155,7 +155,13 @@ def _dataset_lines(value: Any) -> List[str]:
         if row.get("bbox") and isinstance(row["bbox"], list):
             bbox = row["bbox"]
             if len(bbox) == 4:
-                extras.append(f"bbox=[{bbox[0]:.2f},{bbox[1]:.2f},{bbox[2]:.2f},{bbox[3]:.2f}]")
+                try:
+                    extras.append(
+                        f"bbox=[{bbox[0]:.2f},{bbox[1]:.2f},"
+                        f"{bbox[2]:.2f},{bbox[3]:.2f}]"
+                    )
+                except (TypeError, ValueError):
+                    pass
         if extras:
             parts.append("(" + ",".join(extras) + ")")
         lines.append("  * " + " ".join(p for p in parts if p))
@@ -245,7 +251,7 @@ class _Renderer:
         if fact.status == STATUS_KNOWN:
             try:
                 body = render(fact.value)
-            except (TypeError, ValueError, OverflowError, IndexError, KeyError):
+            except (AttributeError, TypeError, ValueError, OverflowError, IndexError, KeyError):
                 body = _compact(fact.value)
             if body is None:
                 return False
@@ -316,7 +322,7 @@ def render_situation_for_context(
         f.status == STATUS_KNOWN for f in (
             it.selected_feature, it.focus_layer_id,
             it.user_hidden_layers, it.pending_mutations,
-            it.recent_interactions, it.display_mode,
+            it.recent_interactions, it.display_mode, it.feature_edits,
         )
     )
     if has_interaction:
@@ -341,6 +347,11 @@ def render_situation_for_context(
                     "近期交互",
                     lambda v: _xml_fence("user_action", _render_interactions(v) or ""),
                     untrusted=False)
+        r.fact_line("interaction", "feature_edits", it.feature_edits,
+                    "要素编辑回执",
+                    lambda v: ";".join(
+                        _compact(p, 96) for p in v[:_MAX_LIST_ITEMS]),
+                    fence_tag="tool_event", untrusted=True)
 
     # ── 地理 ─────────────────────────────────────────────────────────
     geo = situation.geographic
@@ -425,7 +436,8 @@ def render_situation_for_context(
         # ADR-0285 D1：selection 声称面一行（验证由 webgis_selection_scope
         # 按需执行——投影只声称，不宣称已验证）。
         r.fact_line("analysis", "selection_scope", an.selection_scope,
-                    "选择 scope(未验证)", _scope_line)
+                    "选择 scope(未验证)", _scope_line,
+                    fence_tag="user_action", untrusted=True)
 
     # ── 制图：**不在本投影渲染**（决策 DC-3）──────────────────────────
     # verdict 由 [CARTOGRAPHY_VERDICT]（chat.py cartography_context）与 V6

@@ -240,6 +240,24 @@ def test_list_assets_owner_returns_own_raster_only(upload_db):
     assert [a["id"] for a in result["assets"]] == [2]
 
 
+def test_list_assets_null_upload_time_does_not_crash(upload_db):
+    """NULL upload_time（历史行/手动 SQL）：列表工具不得抛 AttributeError。"""
+    from sqlalchemy import text
+    from app.core.runtime_context import bind_runtime_context
+
+    with upload_db() as s:
+        s.execute(text("UPDATE uploads SET upload_time = NULL WHERE id = 2"))
+        s.commit()
+
+    fn = _list_assets_tool_fn()
+    # 生产 dispatch 路径总会绑定已验证的会话上下文（#2156 P3 fail-closed）。
+    with bind_runtime_context(session_id="session-ALICE"):
+        result = fn(session_id="session-ALICE")
+    assert result["success"] is True
+    assert [a["id"] for a in result["assets"]] == [2]
+    assert result["assets"][0]["time"] is None
+
+
 def test_list_assets_cross_session_isolated(upload_db):
     """跨会话：BOB 只能看到自己的资产（id=1），看不到 ALICE 的资产（id=2）。"""
     fn = _list_assets_tool_fn()

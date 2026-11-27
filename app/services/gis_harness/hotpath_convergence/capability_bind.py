@@ -111,6 +111,26 @@ def _tool_capabilities(registry: Any, tool_name: str) -> List[str]:
     return out[:8]
 
 
+def _candidate_score(candidate: Any) -> float:
+    """候选 score 的防御读取（None/缺失/非数值 → 0.0）。
+
+    证据构造直取 ``c.score`` 会在候选面缺字段时抛异常、逃出 dispatch
+    咽喉点 —— 违反本模块 fail-open 契约（与 191 行同面的 getattr 防御
+    同口径）。
+    """
+    try:
+        return round(float(getattr(candidate, "score", 0.0) or 0.0), 3)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _candidate_status(candidate: Any) -> str:
+    """候选 qualification.status 的防御读取（qualification 缺席 → ""）。"""
+    return str(
+        getattr(getattr(candidate, "qualification", None), "status", "")
+        or "")
+
+
 def _situation_from_optional(situation: Any = None):
     from app.services.gis_harness.qualification_v8 import QualificationContext
 
@@ -337,12 +357,12 @@ def bind_tool_capability(
                         allowed_hit = {
                             "capability": cap,
                             "rank": rank,
-                            "score": round(float(c.score), 3),
-                            "status": str(c.qualification.status),
+                            "score": _candidate_score(c),
+                            "status": _candidate_status(c),
                             "alternatives": [
                                 {"kind": n.kind, "id": n.id,
-                                 "score": round(float(n.score), 3),
-                                 "status": str(n.qualification.status)}
+                                 "score": _candidate_score(n),
+                                 "status": _candidate_status(n)}
                                 for n in near
                             ],
                         }
@@ -383,8 +403,8 @@ def bind_tool_capability(
             {
                 "kind": c.kind,
                 "id": c.id,
-                "score": round(float(c.score), 3),
-                "status": str(c.qualification.status),
+                "score": _candidate_score(c),
+                "status": _candidate_status(c),
             }
             for c in (plan.candidates or [])
             if str(getattr(c, "kind", "")) == "tool"

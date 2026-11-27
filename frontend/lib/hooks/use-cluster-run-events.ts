@@ -19,7 +19,7 @@ import {
   RunEventsUnavailableError,
   type GeoComputeRunEvent,
 } from '@/lib/api/geocompute';
-import { MIN_POLL_INTERVAL_MS } from './use-cluster-poll';
+import { MAX_CONSECUTIVE_ERRORS, MIN_POLL_INTERVAL_MS } from './use-cluster-poll';
 
 export const MAX_BUFFERED_EVENTS = 500;
 
@@ -111,7 +111,7 @@ export function useClusterRunEvents(
     const tick = async () => {
       if (stopped || !mountedRef.current || generation !== generationRef.current) return;
       if (hiddenRef.current) return; // 隐藏 → 暂停（可见性 effect 负责补拉重启）
-      if (errorCountRef.current >= 3) {
+      if (errorCountRef.current >= MAX_CONSECUTIVE_ERRORS) {
         setChannel('error');
         return; // 有界重试：不再排下一次
       }

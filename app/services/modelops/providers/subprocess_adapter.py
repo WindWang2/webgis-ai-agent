@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 import base64
+import binascii
 import json
 import logging
 import subprocess
@@ -368,11 +369,16 @@ class SubprocessWorkerProvider:
         raw_b64 = payload.get(key)
         if not raw_b64:
             raise ProviderError(f"subprocess response missing {key}")
-        arr = np.frombuffer(base64.b64decode(raw_b64), dtype=np.float32)
         shape = payload.get(f"{key}_shape")
         if not shape:
             raise ProviderError(f"subprocess response missing {key}_shape")
-        arr = arr.reshape([int(v) for v in shape])
+        try:
+            arr = np.frombuffer(base64.b64decode(raw_b64), dtype=np.float32)
+            arr = arr.reshape([int(v) for v in shape])
+        except (binascii.Error, ValueError, TypeError) as exc:
+            raise ProviderError(
+                f"subprocess response has malformed {key}: {exc}"
+            ) from exc
         if arr.ndim != ndim:
             raise ProviderError(f"{key} must have ndim={ndim} (got {arr.ndim})")
         return np.ascontiguousarray(arr, dtype=np.float32)

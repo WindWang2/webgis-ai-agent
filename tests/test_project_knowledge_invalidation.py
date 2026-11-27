@@ -520,6 +520,71 @@ def test_reuse_retrieval_liveness_is_batched_1721(db):
     )
 
 
+def test_reuse_retrieval_batches_demotions_1721(db, monkeypatch):
+    """漂移候选不得逐条 SELECT+UPDATE —— 批量降级一次完成。"""
+    for i in range(20):
+        aid = f"art-{i}"
+        db.add(Artifact(
+            id=aid, project_id="proj_1", name=f"asset_{i}",
+            artifact_type="raster", content_fingerprint="sha256:new",
+            created_at=_NOW,
+        ))
+        db.flush()
+        ks.upsert_entry(db, KnowledgeUpsert(
+            org_id="org:7", project_id="proj_1", entity_kind=EK_ARTIFACT,
+            authority_store=AS_ARTIFACT, authority_id=aid,
+            subject=f"asset_{i}.tif", version_token="sha256:old",
+        ))
+
+    calls = {"n": 0}
+    original = ks.demote_stale_by_token
+
+    def _counting(*args, **kwargs):
+        calls["n"] += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(ks, "demote_stale_by_token", _counting)
+
+    hits = find_reuse_candidates(
+        db, org_id="org:7", project_id="proj_1", query=ReuseQuery(limit=3),
+    )
+    assert all(h.verdict == VERDICT_NOT_REUSABLE for h in hits)
+    assert calls["n"] == 0, "漂移降级必须批量（不得每候选一次写回）"
+
+    from app.models.project_knowledge import ProjectKnowledgeEntry
+
+    rows = list(db.execute(select(ProjectKnowledgeEntry)).scalars())
+    assert len(rows) == 20
+    assert all(row.status == "stale" for row in rows)
+
+
+def test_map_product_probe_parses_colon_project_id(db):
+    """authority_id 编码 mp:{project_id}:{version_no}：project_id 含冒号时
+    不得整类判 None（否则条目被永久 invalidated）。"""
+    from app.models.project import MapProductVersion
+    from app.services.project_knowledge.contract import AS_MAP_PRODUCT
+
+    db.add(Project(
+        id="proj:1", org_id=7, owner_id=None, name="colon",
+        status="active", metadata_json={}, created_at=_NOW, updated_at=_NOW,
+    ))
+    db.add(MapProductVersion(
+        id="mpv-1", project_id="proj:1", version_no=2,
+        product_fingerprint="fp:mp2", created_at=_NOW,
+    ))
+    db.flush()
+
+    aid = "mp:proj:1:2"
+    assert live_version_token(
+        db, project_id="proj:1",
+        authority_store=AS_MAP_PRODUCT, authority_id=aid,
+    ) == "fp:mp2"
+    batched = live_version_tokens(
+        db, project_id="proj:1", probes=[(AS_MAP_PRODUCT, aid)],
+    )
+    assert batched[(AS_MAP_PRODUCT, aid)] == "fp:mp2"
+
+
 def test_lifecycle_matches_session_and_authority_for_direct_and_tagged_refs(db):
     from app.models.project_knowledge import ProjectKnowledgeEntry
 

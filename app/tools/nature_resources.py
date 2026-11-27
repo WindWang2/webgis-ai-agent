@@ -140,7 +140,7 @@ def register_nature_resource_tools(registry: ToolRegistry):
                 "id": r.id,
                 "name": r.original_name,
                 "path": r.filename,
-                "time": r.upload_time.isoformat(),
+                "time": r.upload_time.isoformat() if r.upload_time else None,
                 "bbox": r.bbox
             } for r in records]
 

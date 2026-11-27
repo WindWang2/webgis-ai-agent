@@ -120,6 +120,23 @@ describe('DataRefreshPanel', () => {
     expect(screen.getByText('g10Stale')).toBeDefined();
   });
 
+  it('check 渲染全部警告与条目备注（不再只取 warnings[0]）', async () => {
+    api.checkProjectSourceUpdates.mockResolvedValue({
+      ...CHECK,
+      warnings: ['顶层警告1', '顶层警告2'],
+      inventory: {
+        ...CHECK.inventory,
+        items: [{ ...CHECK.inventory.items[0], note: '来源备注' }],
+        warnings: ['库存警告'],
+      },
+    });
+    render(<DataRefreshPanel projectId="proj-test" sessionId="sess-test" authed />);
+    fireEvent.click(screen.getByTestId('g10-check-updates'));
+    await waitFor(() =>
+      expect(screen.getByText('顶层警告1 · 顶层警告2 · 库存警告')).toBeDefined());
+    expect(screen.getByTestId('g10-source-list').textContent).toContain('来源备注');
+  });
+
   it('preview shows exact diff counts and the minimal recompute plan', async () => {
     render(<DataRefreshPanel projectId="proj-test" sessionId="sess-test" authed />);
     fireEvent.click(screen.getByTestId('g10-check-updates'));

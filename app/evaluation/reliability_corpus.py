@@ -24,8 +24,9 @@ class ReliabilityCase:
     category: str
     description: str
     script: Tuple[ScriptedCall, ...]
-    #: 额外不变量钩子：接收 SimulationReport，返回违规列表（可为空）
-    custom_check: Optional[str] = None   # 保留扩展位（当前由 expect_* 覆盖）
+    #: 保留扩展位（当前未消费：执行方由 expect_* / ScriptedCall 断言覆盖；
+    #: 该字段不是 callable 钩子，传入任何值都会被忽略）
+    custom_check: Optional[str] = None
 
 
 def _c(case_id: str, category: str, description: str, *calls: ScriptedCall) -> ReliabilityCase:

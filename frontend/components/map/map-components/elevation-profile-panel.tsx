@@ -117,9 +117,16 @@ function ElevationProfilePanelView({ component, ctx }: { component: MapSpecCompo
     // ref 切换：清除旧 fetched，否则短暂显示旧剖面（chart_panel 同款）
     setFetched(undefined);
     let alive = true;
-    loadChartArtifact(profileRef).then((chart) => {
-      if (alive) setFetched(chart);
-    });
+    // .catch 与 chapter-artifact 的 chart 分支同构（#2160）：拒绝（如会话
+    // cursor 读取抛错）时必须落 unavailable 终态 —— 否则 alive 失效、状态
+    // 永驻 loading，文档承诺的「剖面数据不可用」占位不可达，且冒未处理拒绝。
+    loadChartArtifact(profileRef)
+      .then((chart) => {
+        if (alive) setFetched(chart);
+      })
+      .catch(() => {
+        if (alive) setFetched(null);
+      });
     return () => {
       alive = false;
     };

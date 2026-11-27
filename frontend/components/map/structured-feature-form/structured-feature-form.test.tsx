@@ -192,6 +192,44 @@ describe('默认值采用披露', () => {
   });
 });
 
+describe('initialProps 引用抖动（P2）', () => {
+  it('父组件重渲染（内联字面量、内容相同）不清空用户已键入内容', async () => {
+    const onChange = vi.fn();
+    const rules = doc([
+      { field: 'owner', type: 'string', required: false, nullable: false, empty_string: 'allow' },
+    ]);
+    const view = render(
+      <StructuredFeatureForm rules={rules} initialProps={{}} onChange={onChange} />,
+    );
+    await userEvent.type(screen.getByTestId('sff-input-owner'), 'alice');
+    expect((screen.getByTestId('sff-input-owner') as HTMLInputElement).value).toBe('alice');
+
+    // 父组件重渲染：initialProps 是**新的内联字面量**（引用身份变、内容相同）。
+    // 修复前：useEffect deps 含 initialProps 对象引用 → states 重建 → 清空。
+    view.rerender(
+      <StructuredFeatureForm rules={rules} initialProps={{}} onChange={onChange} />,
+    );
+    expect((screen.getByTestId('sff-input-owner') as HTMLInputElement).value).toBe('alice');
+    expect(onChange).toHaveBeenLastCalledWith({ owner: 'alice' });
+  });
+
+  it('初始值内容真实变化仍重建（换要素属性场景不回退）', async () => {
+    const onChange = vi.fn();
+    const rules = doc([
+      { field: 'owner', type: 'string', required: false, nullable: false, empty_string: 'allow' },
+    ]);
+    const view = render(
+      <StructuredFeatureForm rules={rules} initialProps={{ owner: 'alice' }} onChange={onChange} />,
+    );
+    expect((screen.getByTestId('sff-input-owner') as HTMLInputElement).value).toBe('alice');
+
+    view.rerender(
+      <StructuredFeatureForm rules={rules} initialProps={{ owner: 'bob' }} onChange={onChange} />,
+    );
+    expect((screen.getByTestId('sff-input-owner') as HTMLInputElement).value).toBe('bob');
+  });
+});
+
 describe('imperative handle', () => {
   it('focusFirstError 聚焦首个错误字段（布尔未选占位）', async () => {
     const ref = createRef<StructuredFeatureFormHandle>();

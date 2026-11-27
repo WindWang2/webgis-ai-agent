@@ -63,6 +63,7 @@ export function adaptLineage(graph: LineageGraph): LineageLayout {
   };
 
   // De-dup rows first so repeated edges to the same artifact collapse.
+  const parentEdgeKeys = new Set<string>();
   const parentsByNode = new Map<string, { depth: number; tool: string | null; sourceDatasetId: string | null }>();
   for (const p of graph.parents ?? []) {
     const existing = parentsByNode.get(p.parent_artifact_id);
@@ -74,8 +75,13 @@ export function adaptLineage(graph: LineageGraph): LineageLayout {
         sourceDatasetId: p.source_dataset_id ?? null,
       });
     }
-    edges.push({ from: p.parent_artifact_id, to: p.artifact_id, kind: 'parent' });
+    const edgeKey = `${p.parent_artifact_id}\u0000${p.artifact_id}`;
+    if (!parentEdgeKeys.has(edgeKey)) {
+      parentEdgeKeys.add(edgeKey);
+      edges.push({ from: p.parent_artifact_id, to: p.artifact_id, kind: 'parent' });
+    }
   }
+  const consumerEdgeKeys = new Set<string>();
   const consumersByNode = new Map<string, { depth: number; tool: string | null }>();
   for (const c of graph.consumers ?? []) {
     const existing = consumersByNode.get(c.consumer_artifact_id);
@@ -83,7 +89,12 @@ export function adaptLineage(graph: LineageGraph): LineageLayout {
     if (!existing || depth < existing.depth) {
       consumersByNode.set(c.consumer_artifact_id, { depth, tool: c.producing_tool ?? null });
     }
-    edges.push({ from: c.parent_artifact_id ?? graph.artifact_id, to: c.consumer_artifact_id, kind: 'consumer' });
+    const from = c.parent_artifact_id ?? graph.artifact_id;
+    const edgeKey = `${from}\u0000${c.consumer_artifact_id}`;
+    if (!consumerEdgeKeys.has(edgeKey)) {
+      consumerEdgeKeys.add(edgeKey);
+      edges.push({ from, to: c.consumer_artifact_id, kind: 'consumer' });
+    }
   }
 
   for (const [id, meta] of parentsByNode) {

@@ -112,6 +112,27 @@ def test_calculate_index_b11_is_not_accepted_as_nbr():
                 os.remove(os.path.join("data", out_dir, f))
 
 
+def test_auto_detect_11_band_landsat_uses_landsat_preset():
+    """11-band Landsat-8/9 must not be positional-guessed as Sentinel-2.
+
+    Applying the Sentinel-2 preset to an 11-band Landsat product picks
+    nir=B8(pan) and swir11/swir12=B11/B12(TIRS), silently corrupting
+    NDWI/NBR when strict_band_semantics=False.
+    """
+    from types import SimpleNamespace
+
+    from app.services.nature_resource_analyzer import (
+        SATELLITE_PRESETS,
+        NatureResourceAnalyzer,
+    )
+
+    detected = NatureResourceAnalyzer.auto_detect_bands(SimpleNamespace(count=11))
+    assert detected["source"] == "preset-landsat8-9"
+    assert detected["nir"] == SATELLITE_PRESETS["landsat-8-9"]["nir"] == 5
+    assert detected["swir11"] == 6
+    assert detected["swir12"] == 7
+
+
 @pytest.fixture(autouse=True)
 def _numerical_owner_roots(monkeypatch, tmp_path):
     from pathlib import Path

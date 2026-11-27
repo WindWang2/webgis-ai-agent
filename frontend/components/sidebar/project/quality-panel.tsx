@@ -177,7 +177,9 @@ export function QualityPanel({ projectId, authed, onLocateArtifact }: QualityPan
             <StatusBadge status={q.report.overall_status} />
             <span className="text-micro text-ink-muted">{q.report.total_features} {t('kpl1d')}</span>
           </div>
-          {typeof q.report.issue_summary === 'object' && (
+          {/* typeof null === 'object' —— 后端载荷 issue_summary: null 时
+              Object.entries(null) 会抛 TypeError 让整个面板白屏（评审 P2）。 */}
+          {q.report.issue_summary != null && typeof q.report.issue_summary === 'object' && (
             <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-micro text-ink-secondary">
               {Object.entries(q.report.issue_summary).map(([level, count]) => (
                 <span key={level}>

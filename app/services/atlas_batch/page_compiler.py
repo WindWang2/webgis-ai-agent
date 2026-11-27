@@ -108,7 +108,7 @@ def compile_atlas_page(
         width_mm=outcome.width_mm,
         height_mm=outcome.height_mm,
         page=outcome.page,
-        svg_bytes=len(injected),
+        svg_bytes=len(injected.encode("utf-8")),
         frame_diagnostics=outcome.frame_diagnostics,
         rendered_component_types=outcome.rendered_component_types,
         omitted_components=outcome.omitted_components,

@@ -20,7 +20,7 @@ def compute_centroid(geometry: Dict[str, Any]) -> Optional[Tuple[float, float]]:
         from shapely.geometry import shape
         centroid = shape(geometry).centroid
         return None if centroid.is_empty else (float(centroid.x), float(centroid.y))
-    except (ValueError, TypeError, AttributeError):
+    except (ValueError, TypeError, AttributeError, KeyError):
         return None
 
 
@@ -167,14 +167,23 @@ class TemporalChangeEngine:
             # Map features by id_field
             id_map_s1 = {}
             for f in s1_features:
+                if not isinstance(f, dict):
+                    continue
                 props = f.get("properties", f) if isinstance(f, dict) else {}
                 fid = props.get(id_field) if props.get(id_field) is not None else f.get("id")
                 if fid is not None:
                     id_map_s1[str(fid)] = f
 
+            # Resolve each snapshot's CRS and build its Transformer once for
+            # the whole matched set — per-feature Transformer construction
+            # dominated the cost on large feature collections.
+            transformers: Optional[Tuple[Any, Any]] = None
+
             shifted_distances: List[float] = []
 
             for f_end in sn_features:
+                if not isinstance(f_end, dict):
+                    continue
                 props_end = f_end.get("properties", f_end) if isinstance(f_end, dict) else {}
                 fid = props_end.get(id_field) if props_end.get(id_field) is not None else f_end.get("id")
                 if fid is not None and str(fid) in id_map_s1:
@@ -189,12 +198,17 @@ class TemporalChangeEngine:
 
                     dist = 0.0
                     if c1 is not None and c2 is not None:
-                        from app.lib.geo_processor.core import extract_declared_crs
-                        from pyproj import Transformer
-                        crs1 = extract_declared_crs(snapshots[0]) or "EPSG:4326"
-                        crs2 = extract_declared_crs(snapshots[-1]) or "EPSG:4326"
-                        c1 = Transformer.from_crs(crs1, 4326, always_xy=True).transform(*c1)
-                        c2 = Transformer.from_crs(crs2, 4326, always_xy=True).transform(*c2)
+                        if transformers is None:
+                            from app.lib.geo_processor.core import extract_declared_crs
+                            from pyproj import Transformer
+                            crs1 = extract_declared_crs(snapshots[0]) or "EPSG:4326"
+                            crs2 = extract_declared_crs(snapshots[-1]) or "EPSG:4326"
+                            transformers = (
+                                Transformer.from_crs(crs1, 4326, always_xy=True),
+                                Transformer.from_crs(crs2, 4326, always_xy=True),
+                            )
+                        c1 = transformers[0].transform(*c1)
+                        c2 = transformers[1].transform(*c2)
                         dist = haversine_distance(c1, c2)
                         shifted_distances.append(dist)
 

@@ -16,6 +16,7 @@ from app.services.gis_action.derive import (
     DERIVE_NO_DATA,
     DERIVE_NO_FIELD,
     DERIVE_OK,
+    DERIVE_SKIPPED,
     DERIVE_SOURCE_UNRESOLVED,
     classification_params_of,
     derive_classification_spec,
@@ -207,3 +208,54 @@ class TestMaterialize:
         assert called == []
         assert records == []
         assert updated.layer_intents[0].blueprint.legend_spec["breaks"] == full["breaks"]
+
+    @pytest.mark.asyncio
+    async def test_invalid_k_only_still_emits_skipped_record(self):
+        """classification 仅含越界 k（无 method/palette）：仍须
+        DERIVE_SKIPPED 披露，而非静默跳过（用户应知为何无 legend）。"""
+        ir = _ir(_layer_intent(classification={"k": 999999}))
+        calls = []
+
+        async def loader(ref):
+            calls.append(ref)
+            return _geojson()
+
+        updated, records = await materialize_classification(
+            ir, current={}, load_geojson=loader)
+        assert [r.code for r in records] == [DERIVE_SKIPPED]
+        assert calls == []
+        assert updated.layer_intents[0].blueprint.legend_spec == {}
+
+    @pytest.mark.asyncio
+    async def test_illegal_k_only_still_emits_skipped_record(self):
+        """非整数 k（"abc"）同样被钳制清空 —— 也必须 typed 披露。"""
+        ir = _ir(_layer_intent(classification={"k": "abc"}))
+
+        async def loader(ref):
+            return _geojson()
+
+        _, records = await materialize_classification(
+            ir, current={}, load_geojson=loader)
+        assert [r.code for r in records] == [DERIVE_SKIPPED]
+
+    @pytest.mark.asyncio
+    async def test_blueprint_budget_rejection_preserves_other_layers(self):
+        """单层重建超字节闸只降级该层，不丢失前面已成功的物化与披露。"""
+        long_field = "pop" * 2000
+        ir = _ir(
+            _layer_intent("L1", source="ref:d1"),
+            _layer_intent(
+                "L2", source="ref:d2",
+                classification={"k": 5, "method": "quantiles",
+                                "palette": "YlOrRd", "field": long_field},
+            ),
+        )
+
+        async def loader(ref):
+            return _geojson(field="pop" if ref == "ref:d1" else long_field)
+
+        updated, records = await materialize_classification(
+            ir, current={}, load_geojson=loader)
+        assert [r.code for r in records] == [DERIVE_OK, DERIVE_SKIPPED]
+        assert updated.layer_intents[0].blueprint.legend_spec["breaks"]
+        assert updated.layer_intents[1].blueprint.legend_spec == {}

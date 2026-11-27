@@ -5,7 +5,7 @@
  * 必选闸（未选全禁用执行）、阻断禁用执行、准备执行链（plan→preview→
  * execute→bind）与收据渲染、入图按钮出现。API 全 mock（@/lib/api/*）。
  */
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PrepareFlow } from './prepare-flow';
@@ -19,6 +19,8 @@ const mockListUploads = vi.fn();
 const mockFetchRefGeoJSON = vi.fn();
 const mockAddLayer = vi.fn();
 const mockUpdateLayer = vi.fn();
+const mockRemoveLayer = vi.fn();
+const mockAddToast = vi.fn();
 
 vi.mock('@/lib/api/data-preparation', () => ({
   dataPreparationApi: {
@@ -42,11 +44,11 @@ vi.mock('@/lib/api/data-fabric', () => ({
 
 vi.mock('@/lib/store/useHudStore', () => ({
   useHudStore: (sel: (s: unknown) => unknown) =>
-    sel({ addLayer: mockAddLayer, updateLayer: mockUpdateLayer }),
+    sel({ addLayer: mockAddLayer, updateLayer: mockUpdateLayer, removeLayer: mockRemoveLayer }),
 }));
 
 vi.mock('@/components/ui/toast', () => ({
-  useToastStore: (sel: (s: unknown) => unknown) => sel({ addToast: vi.fn() }),
+  useToastStore: (sel: (s: unknown) => unknown) => sel({ addToast: mockAddToast }),
 }));
 
 function makeInspection(overrides: Record<string, unknown> = {}) {
@@ -115,6 +117,13 @@ beforeEach(() => {
                 feature_count: 20 }],
   });
 });
+
+/** 可控 promise：手动 resolve 模拟「在飞 / 迟到」的请求。 */
+function deferred<T = unknown>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => { resolve = r; });
+  return { promise, resolve };
+}
 
 describe('PrepareFlow', () => {
   it('装载上传列表并允许选择后检查', async () => {
@@ -236,5 +245,136 @@ describe('PrepareFlow', () => {
       </I18nProvider>,
     );
     expect(mockListUploads).not.toHaveBeenCalled();
+  });
+
+  it('inspect 在飞时切换会话：重新选源后检查按钮不永久卡 loading', async () => {
+    const { I18nProvider } = await import('@/lib/i18n/i18n-provider');
+    const d = deferred();
+    mockInspect.mockImplementationOnce(() => d.promise as Promise<never>);
+    const view = render(
+      <I18nProvider>
+        <PrepareFlow sessionId="sess-1" ownerToken={null} />
+      </I18nProvider>,
+    );
+    fireEvent.change(await screen.findByTestId('dp-source-select'),
+      { target: { value: 'ref:data-1' } });
+    fireEvent.click(screen.getByTestId('dp-inspect'));
+    expect(screen.getByTestId('dp-inspect')).toBeDisabled();
+    // inspect 仍在飞时切换会话（epoch 自增 + 链路复位）
+    view.rerender(
+      <I18nProvider>
+        <PrepareFlow sessionId="sess-2" ownerToken={null} />
+      </I18nProvider>,
+    );
+    fireEvent.change(screen.getByTestId('dp-source-select'),
+      { target: { value: 'ref:data-1' } });
+    expect(screen.getByTestId('dp-inspect')).not.toBeDisabled();
+    // 迟到响应落地（epoch 不匹配被丢弃）—— 不得把新会话按钮重新锁死
+    d.resolve(makeInspection());
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.getByTestId('dp-inspect')).not.toBeDisabled();
+  });
+
+  it('在途 listUploads 切换会话：旧会话迟到响应不覆盖新会话列表', async () => {
+    const { I18nProvider } = await import('@/lib/i18n/i18n-provider');
+    const d = deferred();
+    mockListUploads.mockImplementationOnce(() => d.promise as Promise<never>);
+    mockListUploads.mockResolvedValueOnce({
+      total: 1,
+      uploads: [{ session_ref: 'ref:new', original_name: 'new.csv', feature_count: 3 }],
+    });
+    const view = render(
+      <I18nProvider>
+        <PrepareFlow sessionId="sess-1" ownerToken={null} />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(mockListUploads).toHaveBeenCalledTimes(1));
+    view.rerender(
+      <I18nProvider>
+        <PrepareFlow sessionId="sess-2" ownerToken={null} />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(mockListUploads).toHaveBeenCalledTimes(2));
+    expect((await screen.findByTestId('dp-source-select')).textContent).toContain('new.csv');
+    await act(async () => {
+      d.resolve({
+        total: 1,
+        uploads: [{ session_ref: 'ref:old', original_name: 'old.csv', feature_count: 9 }],
+      });
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId('dp-source-select').textContent).not.toContain('old.csv');
+  });
+
+  it('描述符写回失败：toast 取真实错误，不复用「需澄清字段」文案', async () => {
+    mockInspect.mockResolvedValue(makeInspection());
+    mockCreatePlan.mockResolvedValue({
+      plan: { plan_id: 'prep-1', plan_hash: 'h1', state: 'proposed',
+        input_ref: 'ref:data-1', input_fingerprint: 'dsd-v1:abc',
+        steps: [], mutates_data: true },
+      warnings: [],
+    });
+    mockPreview.mockResolvedValue({
+      plan_id: 'prep-1', sampled_rows: 20, truncated: false,
+      estimated_rows_after: 18, quality_delta_sample: {}, steps: [], degraded: [],
+    });
+    mockExecute.mockResolvedValue({
+      receipt: {
+        plan_id: 'prep-1', plan_hash: 'h1', input_ref: 'ref:data-1',
+        output_ref: 'ref:prep-9', output_fingerprint: 'dsd-v1:def',
+        row_before: 20, row_after: 18,
+        quality_before: {}, quality_after: {}, degraded: [], user_confirmations: [],
+      },
+    });
+    mockBind.mockRejectedValue(new Error('descriptor write failed'));
+    await renderFlow();
+    fireEvent.change(await screen.findByTestId('dp-source-select'),
+      { target: { value: 'ref:data-1' } });
+    fireEvent.click(screen.getByTestId('dp-inspect'));
+    await waitFor(() => screen.getByTestId('dp-role-神秘列'));
+    fireEvent.change(screen.getByTestId('dp-role-神秘列').querySelector('select')!,
+      { target: { value: 'category' } });
+    fireEvent.click(await screen.findByTestId('dp-prepare'));
+    await screen.findByTestId('dp-receipt-done');
+    await waitFor(() =>
+      expect(mockAddToast).toHaveBeenCalledWith('descriptor write failed', 'warning'));
+    expect(mockAddToast).not.toHaveBeenCalledWith('有字段需确认角色后才能准备', 'warning');
+  });
+
+  it('空 FeatureCollection 入图：不报加载成功，移除空占位图层', async () => {
+    mockInspect.mockResolvedValue(makeInspection());
+    mockCreatePlan.mockResolvedValue({
+      plan: { plan_id: 'prep-1', plan_hash: 'h1', state: 'proposed',
+        input_ref: 'ref:data-1', input_fingerprint: 'dsd-v1:abc',
+        steps: [], mutates_data: true },
+      warnings: [],
+    });
+    mockPreview.mockResolvedValue({
+      plan_id: 'prep-1', sampled_rows: 20, truncated: false,
+      estimated_rows_after: 18, quality_delta_sample: {}, steps: [], degraded: [],
+    });
+    mockExecute.mockResolvedValue({
+      receipt: {
+        plan_id: 'prep-1', plan_hash: 'h1', input_ref: 'ref:data-1',
+        output_ref: 'ref:prep-9', output_fingerprint: 'dsd-v1:def',
+        row_before: 20, row_after: 18,
+        quality_before: {}, quality_after: {}, degraded: [], user_confirmations: [],
+      },
+    });
+    mockBind.mockResolvedValue({});
+    await renderFlow();
+    fireEvent.change(await screen.findByTestId('dp-source-select'),
+      { target: { value: 'ref:data-1' } });
+    fireEvent.click(screen.getByTestId('dp-inspect'));
+    await waitFor(() => screen.getByTestId('dp-role-神秘列'));
+    fireEvent.change(screen.getByTestId('dp-role-神秘列').querySelector('select')!,
+      { target: { value: 'category' } });
+    fireEvent.click(await screen.findByTestId('dp-prepare'));
+    await screen.findByTestId('dp-receipt-done');
+    mockFetchRefGeoJSON.mockResolvedValue({ type: 'FeatureCollection', features: [] });
+    fireEvent.click(screen.getByTestId('dp-load'));
+    await waitFor(() => expect(mockRemoveLayer).toHaveBeenCalledWith('prep-h1'));
+    expect(mockUpdateLayer).not.toHaveBeenCalled();
+    expect(mockAddToast).not.toHaveBeenCalledWith('已加载到地图', 'success');
   });
 });

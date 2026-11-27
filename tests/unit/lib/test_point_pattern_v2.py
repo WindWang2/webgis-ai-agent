@@ -406,3 +406,63 @@ def test_gfj_tool_payload_evidence_and_mc():
     kinds_plain = [u["uncertainty_type"]
                    for u in without_env["scientific_evidence"]["uncertainty"]]
     assert "monte_carlo_summary" not in kinds_plain
+
+
+def test_ripley_k_rejects_points_outside_fixed_window():
+    """P2 修复：固定 window 必须包含全部点（与 quadrat_test 同闸）。
+
+    窗口小于数据范围时，窗外焦点边距为负 → 各向同性校正 w 被 clip 到
+    _MIN_INSIDE_FRACTION（≈1e-9）→ 每对 K 贡献放大约 1e9 倍，曲线被
+    无声污染（缺陷版会返回虚高的 K）。缺省 bbox 窗口不受影响。
+    """
+    xy = _csr_xy(60)
+    # 全部点在 WINDOW 内 → 正常
+    ok = ripley_k(xy, crs=METRIC_CRS, window=WINDOW)
+    assert np.all(np.isfinite(ok["K"]))
+    # 收缩窗口使部分点落到窗外 → 类型化拒绝（而不是 1e9 放大的 K）
+    with pytest.raises(ValueError, match="outside the analysis window"):
+        ripley_k(xy, crs=METRIC_CRS, window=(50.0, 50.0, 100.0, 100.0))
+    # 缺省窗口（数据 bbox）永远包含全部点，行为不变
+    res_bbox = ripley_k(xy, crs=METRIC_CRS)
+    assert res_bbox["window"] == [round(float(v), 4) for v in (
+        xy[:, 0].min(), xy[:, 1].min(), xy[:, 0].max(), xy[:, 1].max())]
+
+
+def test_ripley_envelope_contract_forbids_zero_draws():
+    """ripley_k_envelope_analysis 契约曾声明 envelopes default=0/minimum=0，
+    与该契约自身描述「包络次数（≥1）」及工具签名默认 99 相矛盾——0 会让
+    工具层在 result["envelope_K_low"] 上 KeyError 崩掉（承诺的 p 值与
+    monte_carlo_summary 无从产出），而非机器可读的参数拒绝。"""
+    from app.lib.gis.parameter_contracts import get_parameter_contract_registry
+
+    contract = get_parameter_contract_registry().get("ripley_k_envelope_analysis")
+    spec = contract.spec("envelopes")
+    assert spec.default == 99 and spec.minimum == 1
+
+    from app.tools.point_pattern_tools import register_point_pattern_tools
+    from app.tools.registry import ToolRegistry
+
+    rs = np.random.RandomState(42)
+    fc = {"type": "FeatureCollection", "features": [
+        {"type": "Feature",
+         "geometry": {"type": "Point", "coordinates": [float(lo), float(la)]},
+         "properties": {}}
+        for lo, la in zip(rs.uniform(116.3, 116.4, 60),
+                          rs.uniform(39.85, 39.95, 60))]}
+    registry = ToolRegistry()
+    register_point_pattern_tools(registry)
+    rejected = asyncio.run(registry.dispatch(
+        "ripley_k_envelope_analysis",
+        {"geojson": fc, "n_steps": 8, "envelopes": 0}))
+    assert rejected["success"] is False
+    assert "parameter_contract_violation" in str(
+        rejected.get("message") or rejected.get("error") or "")
+    # 默认路径仍跑满包络（p 值 + MonteCarloSummary 在位）
+    default = asyncio.run(registry.dispatch(
+        "ripley_k_envelope_analysis", {"geojson": fc, "n_steps": 8}))
+    assert default["success"] is True
+    assert default["data"]["envelopes"] == 99
+    assert default["data"]["K_p_values"]
+    kinds = [u["uncertainty_type"]
+             for u in default["scientific_evidence"]["uncertainty"]]
+    assert "monte_carlo_summary" in kinds and "statistical_significance" in kinds

@@ -758,14 +758,20 @@ class ChatContextAssembler:
                 from app.services.chat.context_policy import build_evicted_refs_tombstone
                 tombstone = await build_evicted_refs_tombstone(session_id, head, store)
                 if tombstone:
-                    head.append({"role": "system", "content": tombstone})
+                    # 末条必须是当前用户提问（context_budget/context_policy 以
+                    # idx==len-1 判定 USER_PROMPT）—— tombstone 插在它之前。
+                    _tombstone_msg = {"role": "system", "content": tombstone}
+                    if head and head[-1].get("role") == "user":
+                        head.insert(len(head) - 1, _tombstone_msg)
+                    else:
+                        head.append(_tombstone_msg)
             except Exception:  # noqa: BLE001 — tombstone 是增值披露
                 logger.debug(
                     "[ContextPolicy] evicted-refs tombstone failed", exc_info=True
                 )
 
         layers = map_state.get("layers", {}) if isinstance(map_state, dict) else {}
-        layer_count = len(layers) if isinstance(layers, dict) else 0
+        layer_count = len(layers) if isinstance(layers, (dict, list)) else 0
 
         # ADR-0237 Wave 5：模型感知预算度量（加观测不加行为 —— 截断权仍在
         # 既有组件；超预算以 violations 留痕，供 trace/debug bundle 消费）。

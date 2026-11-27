@@ -54,6 +54,7 @@ export function PrepareFlow({ sessionId: sessionIdProp, ownerToken }: PrepareFlo
   const addToast = useToastStore((s) => s.addToast);
   const addLayer = useHudStore((s) => s.addLayer);
   const updateLayer = useHudStore((s) => s.updateLayer);
+  const removeLayer = useHudStore((s) => s.removeLayer);
 
   const [uploads, setUploads] = useState<UploadOption[]>([]);
   const [sourceRef, setSourceRef] = useState('');
@@ -68,8 +69,10 @@ export function PrepareFlow({ sessionId: sessionIdProp, ownerToken }: PrepareFlo
 
   const refreshUploads = useCallback(async () => {
     if (!sessionId) return;
+    const epoch = sessionEpochRef.current;
     try {
       const res = await listUploads(sessionId, { ownerToken });
+      if (epoch !== sessionEpochRef.current) return [];
       const options = (res.uploads ?? [])
         .filter((u) => u.session_ref)
         .map((u) => ({
@@ -90,6 +93,10 @@ export function PrepareFlow({ sessionId: sessionIdProp, ownerToken }: PrepareFlo
     setPreview(null);
     setRoleChoices({});
     setSourceRef('');
+    // 在途 inspect/prepare 的 finally 因 epoch 不匹配永不清除（R2 #2191）——
+    // 显式复位，否则切换会话后检查/准备按钮永久卡 loading（无取消入口）。
+    setInspecting(false);
+    setPreparing(false);
     void refreshUploads();
   }, [refreshUploads]);
 
@@ -169,10 +176,10 @@ export function PrepareFlow({ sessionId: sessionIdProp, ownerToken }: PrepareFlo
           { session_id: sessionId, source_ref: sourceRef, roles: roleChoices },
           { ownerToken },
         );
-      } catch {
+      } catch (err) {
         if (epoch !== sessionEpochRef.current) return;
         // 绑定写回是增值面（receipt 已携带确认）—— 失败只提示不回滚。
-        addToast(t('clarifyHint'), 'warning');
+        addToast(describeApiError(err, t('loadFailed')), 'warning');
       }
     } catch (err) {
       if (epoch !== sessionEpochRef.current) return;
@@ -207,10 +214,14 @@ export function PrepareFlow({ sessionId: sessionIdProp, ownerToken }: PrepareFlo
     try {
       const geojson = await dataFabricApi.fetchRefGeoJSON(receipt.output_ref, sessionId, { ownerToken });
       if (epoch !== sessionEpochRef.current) return;
-      if (geojson && (geojson.type === 'FeatureCollection' || Array.isArray(geojson.features))) {
+      // 空/非法 FeatureCollection 不得报加载成功，也不得在地图上残留空占位图层。
+      if (geojson && Array.isArray(geojson.features) && geojson.features.length > 0) {
         updateLayer(layerId, { source: geojson });
+        addToast(t('loadSuccess'), 'success');
+        return;
       }
-      addToast(t('loadSuccess'), 'success');
+      removeLayer(layerId);
+      addToast(t('loadFailed'), 'warning');
     } catch {
       if (epoch !== sessionEpochRef.current) return;
       addToast(t('loadFailed'), 'warning');

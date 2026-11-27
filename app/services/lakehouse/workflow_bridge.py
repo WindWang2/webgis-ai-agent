@@ -97,7 +97,12 @@ def commit_dataset_version_from_artifact(
         provenance["workflow_run_id"] = run
     args = meta.get("tool_args")
     if isinstance(args, Mapping):
-        provenance["parameters"] = dict(args)
+        # 本模块 docstring 的契约：parameters 在投影边界即脱敏（与
+        # dataset_registry 同一 redact 口径）—— artifact metadata 里的
+        # 原始 tool_args 绝不原样交给下游 provenance。
+        from app.services.provenance.manifest import redact_provenance_args
+
+        provenance["parameters"] = redact_provenance_args(dict(args))
     if provenance_extra:
         if not isinstance(provenance_extra, Mapping):
             raise WorkflowBridgeError("provenance_extra must be a mapping")

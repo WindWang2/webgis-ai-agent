@@ -119,9 +119,15 @@ def default_policy() -> RetryPolicy:
         except (TypeError, ValueError):
             return default
 
+    base_delay = _float("GIS_WORKFLOW_RETRY_BASE_DELAY_S", 0.5)
+    max_delay = _float("GIS_WORKFLOW_RETRY_MAX_DELAY_S", 8.0)
+    if not 0 < base_delay <= 60:
+        base_delay = 0.5
+    if not 0 < max_delay <= 300:
+        max_delay = 8.0
     return RetryPolicy(
         max_attempts=max(1, min(_int(
             "GIS_WORKFLOW_RETRY_MAX_ATTEMPTS", 2), C.MAX_NODE_ATTEMPTS)),
-        base_delay_s=_float("GIS_WORKFLOW_RETRY_BASE_DELAY_S", 0.5),
-        max_delay_s=_float("GIS_WORKFLOW_RETRY_MAX_DELAY_S", 8.0),
+        base_delay_s=base_delay,
+        max_delay_s=max_delay,
     )

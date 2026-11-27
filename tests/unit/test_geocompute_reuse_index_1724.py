@@ -116,3 +116,25 @@ def test_find_result_owner_isolated(idx_env):
     ) is True
     assert reuse_index.find_result("u:other", "fp3") is None
     assert reuse_index.find_result("u:h3", "fp3")["result_ref"] == "ref:mine"
+
+
+def test_long_owner_scope_read_after_write_truncation(idx_env):
+    """写侧 owner_scope 截断到列宽 40，读侧必须同一投影 —— 否则长域
+    永不命中（静默缓存失效）且剪枝删不到任何行。"""
+    from app.models.db_model import GeoComputeNodeResult
+    from app.services.geocompute import reuse_index
+
+    factory, _ = idx_env
+    long_owner = "u:" + "a" * 50
+    assert len(long_owner) > 40
+    assert reuse_index.record_result(
+            org_id="org-fixture",
+        owner_scope=long_owner, node_fingerprint="fp-long",
+        result_ref="ref:long", session_id="s1",
+        upstream_fingerprints=None,
+    ) is True
+    entry = reuse_index.find_result(long_owner, "fp-long")
+    assert entry is not None and entry["result_ref"] == "ref:long"
+    assert reuse_index.delete_result(long_owner, "fp-long") is True
+    with factory() as db:
+        assert db.query(GeoComputeNodeResult).count() == 0

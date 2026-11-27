@@ -503,6 +503,10 @@ class ToolRegistry:
         # register 同名覆盖 / update_args_model，两处都会失效对应条目），字节
         # 大小无需每轮在预算闸里重新 json.dumps。
         self._schema_sizes: dict[str, int] = {}
+        # P3 perf：注册后函数签名/协程标注不可变 —— dispatch 热路径复用该缓存，
+        # 避免每次 dispatch 都 inspect.signature（~10µs/次）与重复判函数类型。
+        # 键为工具名，register 覆盖 / unregister 时失效。
+        self._call_shapes: dict[str, tuple[tuple[str, ...], bool, bool]] = {}
         # 工具分层元数据。无标注的工具默认 tier=1 (always-on)，确保向后兼容。
         # tier: 1 = 总在 catalog 中 (foundational / high-frequency)
         #       2 = 仅当本轮用户消息触发或最近 N 轮命中相应 domain 时载入
@@ -632,6 +636,13 @@ class ToolRegistry:
         )
         if desc_errors:
             raise ValueError("; ".join(desc_errors))
+        # #996/P3：非法 cost 必须在任何 _tools/_models/_schemas 写入之前失败 ——
+        # 否则注册抛错后仍留下「工具在表、无 _metadata」的半注册条目（dispatch
+        # 按 tier=1/THREAD 放行、descriptor() 抛 KeyError）。
+        if cost not in _VALID_TOOL_COSTS:
+            raise ValueError(
+                f"工具 {name} 声明了非法 cost={cost!r}，合法值: {', '.join(_VALID_TOOL_COSTS)}"
+            )
         if name in self._tools and self._tools[name] is not func:
             # #1062: 此前静默覆盖同名工具 —— 两个模块撞名（或 skill 热重建
             # re-register）会无声替换一个活工具。显式告警留痕；显式更新走
@@ -643,6 +654,7 @@ class ToolRegistry:
                 getattr(func, "__module__", "?"),
             )
         self._tools[name] = func
+        self._call_shapes.pop(name, None)
         if parameters:
             # 优先使用显式提供的 parameters (OpenAI 格式)
             properties = parameters.get("properties", {})
@@ -726,10 +738,6 @@ class ToolRegistry:
         # timeout: 单次执行墙钟预算（秒），覆盖模块级 _TOOL_TIMEOUT_S。
         # cost (#996): 成本先验（light/medium/heavy），默认 light 全库兼容；
         # 非法值与 execution_policy 同门在注册期显式失败。
-        if cost not in _VALID_TOOL_COSTS:
-            raise ValueError(
-                f"工具 {name} 声明了非法 cost={cost!r}，合法值: {', '.join(_VALID_TOOL_COSTS)}"
-            )
 
         def _str_tuple(key: str) -> tuple:
             val = kwargs.get(key)
@@ -911,6 +919,7 @@ class ToolRegistry:
             return False
         self._tools.pop(name, None)
         self._models.pop(name, None)
+        self._call_shapes.pop(name, None)
         self._schemas = [s for s in self._schemas if s["function"]["name"] != name]
         self._schema_sizes.pop(name, None)
         self._metadata.pop(name, None)
@@ -938,8 +947,18 @@ class ToolRegistry:
         schema_json = args_model.model_json_schema()
         new_params: dict[str, Any] = {
             "type": "object",
-            "properties": schema_json.get("properties", {}),
-            "required": schema_json.get("required", []),
+            # 与 register（678-679 行）同门：session_id 是服务端私有字段，
+            # 绝不能出现在 LLM 可见 schema 里。
+            "properties": {
+                key: value
+                for key, value in schema_json.get("properties", {}).items()
+                if key != "session_id"
+            },
+            "required": [
+                key
+                for key in schema_json.get("required", [])
+                if key != "session_id"
+            ],
         }
         for s in self._schemas:
             if s["function"]["name"] == name:
@@ -1743,13 +1762,24 @@ class ToolRegistry:
         # 执行函数
         # The third dispatch argument is trusted context. Do not overwrite a
         # validated model/function default with None when context is absent.
-        sig = inspect.signature(tool_func)
-        has_var_keyword = any(
-            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
-        )
-        if "session_id" in sig.parameters and session_id is not None:
+        # P3 perf：签名注册后不可变 —— 首次 dispatch 构造后缓存，热路径不再
+        # 每次 inspect.signature。
+        shape = self._call_shapes.get(name)
+        if shape is None:
+            sig = inspect.signature(tool_func)
+            shape = (
+                tuple(sig.parameters),
+                any(
+                    p.kind == inspect.Parameter.VAR_KEYWORD
+                    for p in sig.parameters.values()
+                ),
+                inspect.iscoroutinefunction(tool_func),
+            )
+            self._call_shapes[name] = shape
+        param_names, has_var_keyword = shape[0], shape[1]
+        if "session_id" in param_names and session_id is not None:
             arguments["session_id"] = session_id
-        elif "session_id" not in sig.parameters and not has_var_keyword and isinstance(arguments, dict) and "session_id" in arguments:
+        elif "session_id" not in param_names and not has_var_keyword and isinstance(arguments, dict) and "session_id" in arguments:
             # Drop injected session_id if the tool doesn't accept session_id or **kwargs
             arguments = {k: v for k, v in arguments.items() if k != "session_id"}
 
@@ -1869,8 +1899,6 @@ class ToolRegistry:
                 correction_hint="An unexpected error occurred during tool execution. Please review the error message and parameters."
             )
 
-        return result
-
     async def _execute_tool(self, name: str, policy: ToolExecutionPolicy,
                             tool_func: Callable, arguments: dict) -> Any:
         """按执行策略运行工具函数（不含校验/解引用等前置步骤）。
@@ -1881,15 +1909,21 @@ class ToolRegistry:
         CELERY 自动路由到 ASYNC；此处再按函数类型兜底，策略元数据与函数
         实现不符（旧数据/直接改 _metadata）时仍正确执行。
         """
+        # P3 perf：协程标注复用 dispatch 侧注册缓存（缺失时兜底探测）。
+        _shape = self._call_shapes.get(name)
+        is_coroutine = (
+            _shape[2] if _shape is not None
+            else inspect.iscoroutinefunction(tool_func)
+        )
         if policy == ToolExecutionPolicy.INLINE:
             # 超轻量工具 (<5ms)：直接在当前 Task 执行，不占用线程池信号量
-            if inspect.iscoroutinefunction(tool_func):
+            if is_coroutine:
                 return await tool_func(**arguments)
             return tool_func(**arguments)
-        if policy == ToolExecutionPolicy.ASYNC and inspect.iscoroutinefunction(tool_func):
+        if policy == ToolExecutionPolicy.ASYNC and is_coroutine:
             # 纯非阻塞 async I/O：直接 await
             return await tool_func(**arguments)
-        if inspect.iscoroutinefunction(tool_func):
+        if is_coroutine:
             # THREAD/CELERY × async def：绕过线程路径直接 await（见注释头）
             return await tool_func(**arguments)
         if policy == ToolExecutionPolicy.CELERY:

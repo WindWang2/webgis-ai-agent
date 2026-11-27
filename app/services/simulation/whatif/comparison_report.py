@@ -34,6 +34,11 @@ def _fmt_delta(value: Optional[float]) -> str:
     return f"{float(value):+.{_PRECISION}f}%"
 
 
+def _as_float(value: Any, default: float = 0.0) -> float:
+    """数值格式符不接受 None：缺值回落 display 默认（只挡 None，不改格式）。"""
+    return default if value is None else float(value)
+
+
 def build_comparison_report(comparison: Any) -> Dict[str, Any]:
     """ScenarioComparison → 结构化专报 JSON（供渲染与存档）。"""
     branches = list(getattr(comparison, "branches", []) or [])
@@ -140,8 +145,8 @@ def render_comparison_markdown(report: Dict[str, Any]) -> str:
         coverage_txt = ""
         if coverage:
             coverage_txt = (
-                f"；覆盖增益 {coverage.get('gained_area_m2', 0.0):,.2f} m²，"
-                f"覆盖损失 {coverage.get('lost_area_m2', 0.0):,.2f} m²"
+                f"；覆盖增益 {_as_float(coverage.get('gained_area_m2')):,.2f} m²，"
+                f"覆盖损失 {_as_float(coverage.get('lost_area_m2')):,.2f} m²"
             )
         layer_txt = "、".join(layer_parts) if layer_parts else "无几何变更图层"
         lines.append(f"- {title_by_id[bid]}：{layer_txt}{coverage_txt}")
@@ -154,7 +159,7 @@ def render_comparison_markdown(report: Dict[str, Any]) -> str:
     if recommended:
         rec_title = title_by_id.get(recommended, f"方案 {recommended}")
         lines.append(
-            f"**推荐方案：{rec_title}**（置信度 {advice.get('confidence', 0.0):.2f}，"
+            f"**推荐方案：{rec_title}**（置信度 {_as_float(advice.get('confidence')):.2f}，"
             f"模式 {advice.get('mode', 'deterministic')}）"
         )
     else:
@@ -177,7 +182,7 @@ def render_comparison_markdown(report: Dict[str, Any]) -> str:
             lines.append(
                 f"| {row.get('branch_id', '')} | {row.get('metric_key', '')} "
                 f"| {_fmt_delta(row.get('delta_pct'))} "
-                f"| {row.get('cost_proxy', 0.0):.1f} "
+                f"| {_as_float(row.get('cost_proxy')):.1f} "
                 f"| {_fmt_value(row.get('roi_index'))} |"
             )
         lines.append("")

@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import io
+import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -14,6 +16,8 @@ from app.services.durable_blob_store import get_filesystem_blob_store, reset_fil
 from app.services.georeferencing.intake import ingest_source_bytes
 from app.services.georeferencing.refs import blob_has_live_ref, blob_key_for_sha, purge_session_georef_state
 from app.services.georeferencing.service import bind_mapspec_layer, create_plan, delete_source, execute_plan, revise_draft
+from app.services.georeferencing.store import get_plan, mutate_plan_cas
+from app.services.raster_authoring import service as raster_service
 from app.services.raster_authoring.service import current_revision
 from app.services.session_data import session_data_manager
 
@@ -123,5 +127,87 @@ async def test_r09_artifact_registry_protection_until_source_deleted(isolated_en
         matching = [r for r in recs if r.artifact_id == rref]
         assert matching and matching[0].status == "superseded"
         assert await session_data_manager.get(sid, rref) is None
+    finally:
+        purge_session_georef_state(sid)
+
+
+# ── P2 review-swarm regressions ─────────────────────────────────────────────
+
+
+def test_p2_refs_sidecar_is_not_truncated_at_128_sessions(isolated_env):
+    """_load_refs must retain every session pin: _save_refs persists it wholesale."""
+    from app.services.georeferencing.refs import _load_refs, _save_refs
+
+    sha = "cd" * 32
+    refs_path = Path(settings.DATA_DIR) / "georeferencing" / "_refs" / sha[:4] / f"{sha}.json"
+    refs_path.parent.mkdir(parents=True, exist_ok=True)
+    refs_path.write_text(
+        json.dumps({"v": 1, "refs": {f"sess-{i:03d}": 1 for i in range(130)}}),
+        encoding="utf-8",
+    )
+
+    assert blob_has_live_ref(sha, "sess-129") is True
+    loaded = _load_refs(sha)
+    assert len(loaded) == 130
+    loaded["sess-new"] = 1
+    assert _save_refs(sha, loaded) is True
+
+    persisted = json.loads(refs_path.read_text(encoding="utf-8"))["refs"]
+    assert len(persisted) == 131
+    assert persisted["sess-129"] == 1
+
+
+@pytest.mark.asyncio
+async def test_p2_bind_does_not_stamp_superseded_artifact(isolated_env, monkeypatch):
+    """A georef job finishing during commit_expression must not receive the stale bind."""
+    sid = "sess-gc-bind-race"
+    try:
+        src = await ingest_source_bytes(session_id=sid, filename="bind.png", raw_bytes=_textured_png())
+        plan = create_plan(session_id=sid, source_id=src.source_id, name="Bind Race", target_crs="EPSG:3857")
+        gcps = [
+            GcpInputItem(gcp_id="1", label="1", px=0.0, py=0.0, map_x=13370000.0, map_y=3530000.0),
+            GcpInputItem(gcp_id="2", label="2", px=40.0, py=0.0, map_x=13370080.0, map_y=3530000.0),
+            GcpInputItem(gcp_id="3", label="3", px=40.0, py=40.0, map_x=13370080.0, map_y=3529920.0),
+            GcpInputItem(gcp_id="4", label="4", px=0.0, py=40.0, map_x=13370000.0, map_y=3529920.0),
+        ]
+        plan = revise_draft(session_id=sid, plan_id=plan.plan_id, expected_revision=1, gcps=gcps)
+        res = await execute_plan(
+            session_id=sid,
+            plan_id=plan.plan_id,
+            expected_revision=plan.revision,
+            background=False,
+        )
+        original_id = res["artifact"].artifact_id
+
+        async def _fake_commit_expression(**_kwargs):
+            # Simulate a concurrent georef completion replacing latest_artifact
+            # while bind awaits commit_expression.
+            fresh = get_plan(sid, plan.plan_id)
+            newer = fresh.latest_artifact.model_copy(
+                update={"artifact_id": "gart_concurrent_replacement"}
+            )
+            mutate_plan_cas(
+                sid,
+                plan.plan_id,
+                expected_revision=None,
+                mutator=lambda c: c.model_copy(update={"latest_artifact": newer}),
+            )
+            return {"mapspec_revision": 9}
+
+        monkeypatch.setattr(raster_service, "commit_expression", _fake_commit_expression)
+        bound = await bind_mapspec_layer(
+            session_id=sid,
+            plan_id=plan.plan_id,
+            expected_mapspec_revision=1,
+            layer_id="georef-bind-race",
+        )
+
+        assert bound.bound is False
+        assert bound.partial_success is True
+        assert bound.artifact is not None and bound.artifact.artifact_id == original_id
+        after = get_plan(sid, plan.plan_id)
+        assert after.latest_artifact.artifact_id == "gart_concurrent_replacement"
+        assert after.latest_artifact.mapspec_layer_id is None
+        assert after.mapspec_bind_status != "bound"
     finally:
         purge_session_georef_state(sid)

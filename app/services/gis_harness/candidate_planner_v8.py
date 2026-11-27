@@ -273,9 +273,10 @@ def plan_candidates_v8(
 
     plan.candidates.sort(key=lambda c: (c.score, c.kind, c.id))
     del plan.candidates[max_candidates:]
-    if aware:
-        plan.worst_semantics = next(
-            (c.semantics for c in plan.candidates if c.semantics), None)
+    # 语义披露与资源排序开关无关：kill-switch 只关排序因子，不得吞掉
+    # degraded 候选的 approximate 披露。
+    plan.worst_semantics = next(
+        (c.semantics for c in plan.candidates if c.semantics), None)
     return plan
 
 

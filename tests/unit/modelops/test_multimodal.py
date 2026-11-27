@@ -99,6 +99,16 @@ def test_register_validation_and_caps_honesty():
         smap.register([f"c{i}" for i in range(MAX_SEMANTIC_CLASSES)])
 
 
+def test_register_replace_at_cap_is_not_rejected():
+    """replace=True 重注册同一集合：上限按结果集大小判定（总量未超限）。"""
+    enc = StubTextEncoder(dimension=8)
+    smap = SemanticClassMap(encoder=enc)
+    names = [f"c{i}" for i in range(MAX_SEMANTIC_CLASSES)]
+    smap.register(names)
+    result = smap.register(names, replace=True)
+    assert result["total"] == MAX_SEMANTIC_CLASSES
+
+
 def test_map_rejects_zero_vector():
     smap = SemanticClassMap(encoder=_OrthogonalEncoder())
     smap.register(["a"])

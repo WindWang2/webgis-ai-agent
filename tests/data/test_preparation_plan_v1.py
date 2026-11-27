@@ -13,18 +13,25 @@ from app.lib.data.profile import DatasetProfileV3, profile_features
 from app.lib.gis.dataset_descriptor import SourceRef
 from app.services.data_preparation.executor import (
     ExecError,
+    PreparationReceipt,
+    _append_receipt_sync,
+    _exec_lock,
+    _load_receipts_sync,
     apply_steps,
     dry_run,
     execute_plan,
 )
 from app.services.data_preparation.plan import (
+    MAX_PLAN_STEPS,
     AxisSwapStep,
     DedupStep,
     FieldMappingStep,
     FilterRowsStep,
     PlanValidationError,
+    PreparationPlan,
     RenameFieldStep,
     ReprojectStep,
+    _plans_path,
     build_plan,
     compute_plan_hash,
     discard_plan,
@@ -245,6 +252,18 @@ class TestApplySteps:
             _payload(fc), [DedupStep(key_fields=("学校编号",))])
         assert len(new["geojson"]["features"]) == 5
         assert ev[0]["dropped"] == 1
+
+    def test_dedup_feature_without_properties_is_not_fatal(self):
+        """feature 无 properties 成员：视作全空属性参与去重（与 axis_swap /
+        rename_field 的 isinstance 防护同口径），不得抛 AttributeError。"""
+        fc = _school_fc(3)
+        fc["features"][1] = {"type": "Feature", "geometry": None}
+        new, ev, _ = apply_steps(
+            _payload(fc), [DedupStep(key_fields=("学校编号",))])
+        assert len(new["geojson"]["features"]) == 3
+        assert ev[0]["dropped"] == 0
+        assert new["geojson"]["features"][1] == {
+            "type": "Feature", "geometry": None}
 
     def test_rename_field(self):
         payload = _payload(_school_fc(3))
@@ -505,3 +524,94 @@ class TestReviewR1Regressions:
         # 层之外的路径回退（dry_run 纯函数不改状态）+ API 闸由 API 测试锁定
         stored = await get_plan(sid, plan.plan_id)
         assert stored.state == "executed"
+
+
+# ── 计划 ring：单行坏 JSON 只跳该行（文档纪律「坏行跳过」）─────────────────
+
+class TestPlanRingBadLineTolerance:
+    async def test_bad_jsonl_line_skipped_not_whole_file(self):
+        """plans.jsonl 单行坏 JSON（半写/损坏）→ 跳过该行；不得被外层 except
+        吞成「全文件按空」，否则随后 save_plan 全量覆写、静默丢失全部计划。"""
+        sid = "sess-prep-badline"
+        plan = build_plan(
+            session_id=sid, owner="u", input_ref="ref:x",
+            input_fingerprint="dsd-v1:" + "a" * 64,
+            steps=[DedupStep(key_fields=("学校编号",))])
+        assert await save_plan(plan)
+        path = _plans_path(sid)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("{not json\n")
+        assert (await get_plan(sid, plan.plan_id)) is not None
+        # 后续保存是 read-modify-write：历史没被清空，两条计划才能并存
+        plan2 = build_plan(
+            session_id=sid, owner="u", input_ref="ref:x",
+            input_fingerprint="dsd-v1:" + "a" * 64,
+            steps=[FieldMappingStep(role="name", field="学校名称",
+                                    source="user")])
+        assert await save_plan(plan2)
+        assert (await get_plan(sid, plan.plan_id)) is not None
+        assert (await get_plan(sid, plan2.plan_id)) is not None
+
+
+# ── 收据并发 / 执行锁生命周期 / 步数上限（P3 修复回归）────────────────────
+
+class TestReceiptAppendSerialized:
+    def test_concurrent_appends_do_not_lose_records(self, tmp_path, monkeypatch):
+        """执行锁粒度是 (session, plan_hash)，同 session 不同计划并发执行会
+        共写同一 receipts.jsonl：read-modify-write 必须串行，否则互相丢收据。"""
+        import threading
+
+        from app.services.data_preparation import executor as ex
+
+        path = tmp_path / "receipts.jsonl"
+        real_load = ex._load_receipts_sync
+        gate = threading.Barrier(2)
+
+        def _synced_load(p):
+            # 两个写者都先读到同一份旧快照，再一起写 —— 未串行时必丢一条。
+            snapshot = real_load(p)
+            try:
+                gate.wait(timeout=0.5)
+            except threading.BrokenBarrierError:
+                pass
+            return snapshot
+
+        monkeypatch.setattr(ex, "_load_receipts_sync", _synced_load)
+
+        def _write(plan_hash):
+            ex._append_receipt_sync(path, PreparationReceipt(
+                plan_id=f"plan-{plan_hash}", plan_hash=plan_hash,
+                input_ref="ref:in", output_ref=f"ref:out-{plan_hash}"))
+
+        threads = [threading.Thread(target=_write, args=(h,))
+                   for h in ("aaa", "bbb")]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+        records = real_load(path)
+        assert {r.plan_hash for r in records} == {"aaa", "bbb"}
+
+
+class TestExecLockLifecycle:
+    def test_unused_exec_locks_are_evicted(self):
+        """锁表必须弱引用：长驻进程执行大量不同计划后不得无界增长。"""
+        import gc
+
+        from app.services.data_preparation import executor as ex
+
+        key = "sess-lock-gc:hash-lock-gc"
+        lock = _exec_lock("sess-lock-gc", "hash-lock-gc")
+        assert key in ex._EXEC_LOCKS
+        del lock
+        gc.collect()
+        assert key not in ex._EXEC_LOCKS
+
+
+class TestPlanStepsBound:
+    def test_tuple_steps_over_limit_rejected_not_truncated(self):
+        """PlanStep tuple 直传路径不得静默截断（否则 plan_hash 只覆盖前 16 步）。"""
+        steps = tuple(DedupStep(key_fields=("x",))
+                      for _ in range(MAX_PLAN_STEPS + 1))
+        with pytest.raises(ValueError, match="exceeds"):
+            PreparationPlan(plan_id="prep-too-many", steps=steps)

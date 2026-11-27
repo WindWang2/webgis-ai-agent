@@ -404,6 +404,26 @@ async def test_r2_1_properties_level_natural_key_indexed_after_materialize(clien
     assert idx.get(wfid) == wfid
 
 
+# ── P2:Summary 响应时间戳契约须与运行时 float 一致 ─────────────────────────
+
+
+def test_summary_response_timestamps_declared_as_float():
+    from app.schemas.feature_proposal_schema import FeatureProposalSummaryResponse
+
+    # proposal_summary() 原样回传持久记录的 float 时间戳；声明为 str 会让
+    # OpenAPI 契约与实测线格式不符（前端按字符串解析会错）。
+    model = FeatureProposalSummaryResponse(
+        proposal_id="fpr-1", ref_id="ref-1", title="t", author_kind="agent",
+        status="draft", revision=1, candidate_digest="d",
+        created_at=1700000000.0, updated_at=1700000001.5,
+    )
+    assert isinstance(model.created_at, float)
+    assert isinstance(model.updated_at, float)
+    schema = FeatureProposalSummaryResponse.model_json_schema()
+    assert schema["properties"]["created_at"]["type"] == "number"
+    assert schema["properties"]["updated_at"]["type"] == "number"
+
+
 # ── R2-2:merge 提案收敛(不与其他 op 混排;父集=feature_ids)──────────────
 
 
@@ -428,3 +448,115 @@ async def test_r2_2_merge_mixing_rejected_and_parents_explicit(client, _isolated
     })
     assert resp.status_code == 400
     # 合法形态(唯一 op + 显式父集)仍通 —— 由 test_rp1_5 覆盖。
+
+
+# ── P3:容量闸拒绝不得留下孤立 base blob(先落盘后拒绝 → 无回收路径)────────
+
+
+async def test_p3_capacity_rejection_leaves_no_orphan_base_blob(
+    client, _isolated, tmp_path,
+):
+    from app.services.feature_proposals.contracts import MAX_DRAFT_PROPOSALS_PER_REF
+    from tests.unit.feature_proposals.test_service_journey import _immediate_edit
+
+    s = sid()
+    ref = await _seed(s)
+    for i in range(MAX_DRAFT_PROPOSALS_PER_REF):
+        resp = await client.post(f"/api/v1/chat/sessions/{s}/feature-proposals", json={
+            "ref_id": ref, "submit": False,
+            "ops": [{"op": "set_fields", "wfids": ["s1"], "fields": {"capacity": i}}],
+        })
+        assert resp.status_code == 201, resp.text
+    # 改变当前数据 → 下一次 capture 必是新 CAS key(同 key 会被去重掩盖)。
+    await _immediate_edit(
+        s, ref, [{"op": "set_fields", "fields": {"capacity": 999}}], feature_ids=["s1"],
+    )
+    blob_dir = tmp_path / "blobs"
+    before = {p for p in blob_dir.rglob("*") if p.is_file()}
+    resp = await client.post(f"/api/v1/chat/sessions/{s}/feature-proposals", json={
+        "ref_id": ref, "submit": False,
+        "ops": [{"op": "set_fields", "wfids": ["s1"], "fields": {"capacity": 1234}}],
+    })
+    assert resp.status_code == 429
+    assert resp.json()["code"] == "draft_limit_reached"
+    after = {p for p in blob_dir.rglob("*") if p.is_file()}
+    assert after == before  # 未新增无引用的 base 快照 blob
+
+
+# ── P3:list_proposals 负 offset 须钳到 0(此前切片返回错页/空页)────────────
+
+
+async def test_p3_list_proposals_negative_offset_clamped(client, _isolated):
+    from app.services.feature_proposals import service as fpsvc
+
+    s = sid()
+    ref = await _seed(s)
+    for i in range(2):
+        await _create(client, s, ref, [
+            {"op": "set_fields", "wfids": ["s1"], "fields": {"capacity": 10 + i}},
+        ])
+    listing = await fpsvc.list_proposals(s, offset=-1)
+    assert listing["total"] == 2
+    assert listing["offset"] == 0
+    assert len(listing["items"]) == 2  # 未修复时 items[-1:49] 只剩 1 条
+
+
+# ── P2：非 FC 早返回必须保留 unresolved_conflicts（snap 依赖组装不再 500）───
+
+
+async def test_non_fc_conflict_report_is_blocked_with_snap_dependency():
+    from types import SimpleNamespace
+
+    from app.schemas.feature_proposal_schema import BaseEvidence
+    from app.services.feature_proposals.bridge import build_conflict_report
+
+    base = BaseEvidence(
+        ref_id="ref:target", content_revision=1, fingerprint="fp-base",
+        snapshot_key="a" * 64, snapshot_sha256="a" * 64, snapshot_bytes=2,
+        materialized=False, captured_at=1.0,
+    )
+    proposal = SimpleNamespace(
+        base=base,
+        ops=[{"op": "snap_to_ref", "ref_id": "ref:dep"}],
+        resolutions=[], feature_ids=None, op_seed="seed",
+    )
+    report = await build_conflict_report(
+        proposal,
+        current_payload={"type": "not-a-feature-collection"},
+        current_fingerprint="fp-current",
+        base_payload={"type": "FeatureCollection", "features": []},
+        dep_fingerprints_current={},
+    )
+    assert report["verdict"] == "blocked"
+    assert report["unresolved_conflicts"]
+    assert any(c["conflict_id"] == "payload-not-fc" for c in report["unresolved_conflicts"])
+
+
+# ── P2：dependency_changed 只删除该 ref 的 snap op，并明确记录删除数量 ───────
+
+
+def test_dependency_resolution_preserves_other_snap_refs():
+    from app.services.feature_proposals.rebase import apply_resolutions_to_ops
+
+    ops = [
+        {"op": "snap_to_ref", "ref_id": "ref:a", "wfids": ["s1"]},
+        {"op": "snap_to_ref", "ref_id": "ref:b", "wfids": ["s2"]},
+        {"op": "set_fields", "wfids": ["s3"], "fields": {"capacity": 5}},
+    ]
+    conflicts = [
+        {"conflict_id": "dependency:snap_ref:ref:a", "kind": "dependency_changed",
+         "detail": {"ref_id": "ref:a"}},
+        {"conflict_id": "dependency:snap_ref:ref:b", "kind": "dependency_changed",
+         "detail": {"ref_id": "ref:b"}},
+    ]
+    new_ops, applied, rejected = apply_resolutions_to_ops(
+        ops,
+        [{"conflict_id": "dependency:snap_ref:ref:a", "action": "keep_current"}],
+        conflicts,
+        base_payload=SCHOOLS,
+    )
+    assert rejected == []
+    assert new_ops == [ops[1], ops[2]]
+    assert len(applied) == 1
+    assert "ref:a" in applied[0]["effect"]
+    assert "1 snap_to_ref" in applied[0]["effect"]

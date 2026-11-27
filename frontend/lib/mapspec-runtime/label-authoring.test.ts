@@ -33,6 +33,18 @@ describe('projectAuthoring（G16 live 投影）', () => {
     expect(proj.orphan).toHaveLength(0);
   });
 
+  it('身份源变更：active 与表达式都使用当前数据解析键，不信任覆写旧 idKey', () => {
+    const proj = projectAuthoring([
+      { featureId: 's1', text: '当前身份覆写', idKey: 'OBJECTID' },
+    ], feats);
+    expect(proj.active.map((o) => o.featureId)).toEqual(['s1']);
+    expect(proj.orphan).toEqual([]);
+    expect(Array.from(proj.idsByKeys.keys())).toEqual([null]);
+    expect(buildTextFieldExpr(proj, 'name')).toEqual([
+      'match', ['to-string', ['id']], 's1', '当前身份覆写', ['get', 'name'],
+    ]);
+  });
+
   it('text 覆写 → match 表达式（含 id 与属性键分组）', () => {
     const proj = projectAuthoring([
       { featureId: 's1', text: '自定义一' },
@@ -138,5 +150,20 @@ describe('R1 review fixes（G16）', () => {
       [{ featureId: 'toString', hidden: true }], null);
     expect(proj.unprojectable).toContain('toString');
     expect(buildHiddenExcludeFilter(proj)).toBeNull();
+  });
+
+  it('P3：覆写文本恰等于多键哨兵 → 哨兵动态避让，覆写不被静默丢弃', () => {
+    const collision = '\u0000__fallback__';
+    const proj = projectAuthoring([
+      { featureId: 's1', text: collision },
+      { featureId: 's2', text: '自定义二', idKey: 'OBJECTID' },
+    ], feats);
+    const expr = buildTextFieldExpr(proj, 'name') as unknown[];
+    expect(expr).toBeTruthy();
+    // 外层 case 的 consequent 是首组 match，尾元素即「组内未命中」哨兵。
+    const firstMatch = expr[2] as unknown[];
+    const sentinel = firstMatch[firstMatch.length - 1];
+    expect(sentinel).not.toBe(collision);
+    expect(JSON.stringify(expr)).toContain('__fallback__');
   });
 });

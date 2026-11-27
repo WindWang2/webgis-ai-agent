@@ -1030,6 +1030,46 @@ async def test_assemble_policy_off_vs_on_artifacts(monkeypatch, kill_switch_on):
     assert "context_policy" not in off_report
 
 
+async def test_assemble_keeps_current_user_prompt_last_with_tombstone(monkeypatch, kill_switch_on):
+    """RELOAD_REF tombstone 不得占用末条（预算按末条判 USER_PROMPT）。"""
+    from app.services.chat.context_assembler import ChatContextAssembler
+
+    metadata = {
+        "map_state": {},
+        "list_refs": {},
+        "event_log": [],
+        "started_at": None,
+    }
+    msgs = [
+        {"role": "system", "content": "SYS"},
+        {"role": "user", "content": "看看这个 ref:data-gone12345678"},
+    ]
+    result = await ChatContextAssembler(store=FakePolicyStore(metadata=metadata)).assemble(
+        "tomb-last-session", msgs
+    )
+    joined = "\n".join(str(m.get("content")) for m in result.messages)
+    assert "[引用状态]" in joined
+    assert result.messages[-1]["role"] == "user"
+    assert (result.budget_report or {}).get("by_category", {}).get("USER_PROMPT", 0) > 0
+
+
+async def test_assemble_layer_count_accepts_list_map_state(kill_switch_on):
+    """map_state.layers 以 list 上报（context_builder 同口径）时计数不得为 0。"""
+    from app.services.chat.context_assembler import ChatContextAssembler
+
+    metadata = {
+        "map_state": {"layers": [{"id": "l1"}, {"id": "l2"}]},
+        "list_refs": {},
+        "event_log": [],
+        "started_at": None,
+    }
+    msgs = [{"role": "system", "content": "SYS"}, {"role": "user", "content": "hi"}]
+    result = await ChatContextAssembler(store=FakePolicyStore(metadata=metadata)).assemble(
+        "layers-list-session", msgs
+    )
+    assert result.layer_count == 2
+
+
 async def test_assemble_advisor_flags_map_state_condense_executed(monkeypatch, kill_switch_on):
     """advisor 判 MAP_STATE 超分区 → 策略真实压缩 env 块（[环境感知] 尾部）。"""
     from app.core.config import settings

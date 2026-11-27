@@ -142,6 +142,32 @@ describe('resolveFrameEffectiveSpec', () => {
     expect(out.filteredFeatureCount).toBeNull();
   });
 
+  it('time_window start=0 → 与后端真值门一致整体跳过（不施加 epoch 0 窗）', () => {
+    const s = spec();
+    const slot = s.frame_product!.frames[0] as unknown as { data: Record<string, unknown> };
+    delete slot.data.where;
+    slot.data.time_window = { time_field: 'year', time_representation: 'year_int', start: 0, end: 2023 };
+    const out = resolveFrameEffectiveSpec(s, s.frame_product, 'f-2022');
+    expect(out.applied).toEqual(['layer_overrides']); // resolver.py 以 start/end 真值为门
+    expect(out.filteredFeatureCount).toBeNull();
+    const src = (out.document.sources as unknown as Record<string, Record<string, unknown>>)['src-0'];
+    const payload = (src.inlineData ?? src.data) as { features: Array<{ properties: { year: number } }> };
+    expect(payload.features.map((f) => f.properties.year)).toEqual([2020, 2022, 2024]); // 未过滤
+  });
+
+  it("time_window start=null / '' → 与后端真值门一致跳过，不抛 frame_time_window_invalid", () => {
+    const cases: Array<[unknown, unknown]> = [[null, 2024], ['', '']];
+    for (const [start, end] of cases) {
+      const s = spec();
+      const slot = s.frame_product!.frames[0] as unknown as { data: Record<string, unknown> };
+      delete slot.data.where;
+      slot.data.time_window = { time_field: 'year', time_representation: 'year_int', start, end };
+      const out = resolveFrameEffectiveSpec(s, s.frame_product, 'f-2022');
+      expect(out.applied).toEqual(['layer_overrides']);
+      expect(out.filteredFeatureCount).toBeNull();
+    }
+  });
+
   it('independent 图例帧跳过共享分级；palette_colors 类数不匹配丢弃+披露（M6）', () => {
     const s = spec();
     s.frame_product!.shared_expression = {
@@ -161,6 +187,27 @@ describe('resolveFrameEffectiveSpec', () => {
     expect(layer.legend_spec!.breaks).toEqual([0, 5, 10, 15, 20]);
     expect(layer.legend_spec!.palette_colors).toBeUndefined();
     expect(out.disclosures).toContain('shared_expression_palette_colors_not_recomputed');
+  });
+
+  it('shared_expression 换 palette 但类数不变 → 旧 palette_colors 丢弃+披露（M6）', () => {
+    const s = spec();
+    // 层已有 4 类色带（Blues），与共享分级类数一致 —— 只有 palette 变了。
+    const layer = (s.layers as unknown as Array<{ legend_spec: Record<string, unknown> }>)[0];
+    layer.legend_spec.breaks = [0, 5, 10, 15, 20];
+    layer.legend_spec.palette_colors = ['#eff3ff', '#bdd7e7', '#6baed6', '#2171b5'];
+    s.frame_product!.shared_expression = {
+      field: 'per_10k', method: 'quantile', k: 4, palette: 'Viridis',
+      breaks: [0, 5, 10, 15, 20], domain_status: 'complete',
+    };
+    const out = resolveFrameEffectiveSpec(s, s.frame_product, 'f-2022');
+    const outLayer = (out.document.layers as unknown as Array<{ legend_spec?: Record<string, unknown> }>)[0];
+    expect(outLayer.legend_spec!.palette).toBe('Viridis');
+    // 旧 Blues 色带必须丢弃（thematic-paint 直消费 palette_colors ——
+    // 留下即同值不同色），并披露前端不重算。
+    expect(outLayer.legend_spec!.palette_colors).toBeUndefined();
+    expect(out.disclosures).toContain('shared_expression_palette_colors_not_recomputed');
+    // 输入不可变：原 spec 的旧色带不被就地丢弃。
+    expect(layer.legend_spec.palette_colors).toEqual(['#eff3ff', '#bdd7e7', '#6baed6', '#2171b5']);
   });
 
   it('normalizeBoundaryValue：year_int/date_string/epoch_s + 契约时区口径', async () => {

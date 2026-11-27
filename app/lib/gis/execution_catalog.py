@@ -336,7 +336,9 @@ def _algorithm_entry(
             if getattr(envelope, k, None) is not None
         }
     scientific = str(getattr(algo, "scientific_status", "") or "")
-    fallbacks = _sorted_tuple(getattr(algo, "fallback_algorithms", None) or ())
+    raw_fallbacks = [str(f) for f in
+                     (getattr(algo, "fallback_algorithms", None) or ())]
+    fallbacks = _sorted_tuple(raw_fallbacks)
     deprecated = scientific == "DEPRECATED"
     raw_caps = [str(c or "").strip() for c in
                 (getattr(algo, "capabilities", None) or ()) if str(c or "").strip()]
@@ -369,7 +371,9 @@ def _algorithm_entry(
             getattr(algo, "cancellation_profile", "") or ""),
         resource_envelope=env_proj,
         fallback_targets=fallbacks,
-        superseded_by=fallbacks[0] if deprecated and fallbacks else "",
+        # canonical 后继 = descriptor 声明序第一个（fallbacks 是排序视图，
+        # 用字母序首项会把多 fallback 的弃用算法指向错误后继）。
+        superseded_by=raw_fallbacks[0] if deprecated and raw_fallbacks else "",
         deprecated=deprecated,
         certification=_certification_projection(
             ns, index, evidence_available=evidence_available),
@@ -547,9 +551,11 @@ class ExecutionCatalog:
 
     def entries_of_kind(self, kind: str) -> List[CatalogEntry]:
         """按 id 稳定排序的某类条目（确定性）。"""
-        return [e for e in sorted(
-            self.entries.values(), key=lambda e: (e.kind, e.id))
-            if e.kind == kind]
+        # 先过滤再排序（discover/docs 在查询循环内多次调用，避免每次对
+        # 全量 entries 排序）。
+        return sorted(
+            (e for e in self.entries.values() if e.kind == kind),
+            key=lambda e: e.id)
 
     def counts(self) -> Dict[str, int]:
         out = {k: 0 for k in CATALOG_KINDS}
@@ -678,8 +684,18 @@ def compile_execution_catalog(
             catalog.degraded_sources.append("tools")
         descriptors = reg.descriptors() if reg is not None else {}
         for name in sorted(descriptors):
-            e = _tool_entry(descriptors[name], index,
-                            evidence_available=evidence_available)
+            # 单条 descriptor 投影失败只丢该条目（degraded 披露 + 日志），
+            # 不再中止整个 tools 投影留下静默残缺目录。
+            try:
+                e = _tool_entry(descriptors[name], index,
+                                evidence_available=evidence_available)
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "[execution-catalog] tool descriptor %s projection "
+                    "failed: %s", name, exc)
+                if "tools" not in catalog.degraded_sources:
+                    catalog.degraded_sources.append("tools")
+                continue
             entries[e.key] = e
     except Exception as exc:  # noqa: BLE001
         logger.error("[execution-catalog] tool registry unavailable: %s", exc)
@@ -732,10 +748,10 @@ def get_execution_catalog(
     global _cached_catalog
     with _lock:
         if _cached_catalog is None or refresh:
-            compiled = compile_execution_catalog()
-            if compiled.degraded_sources:
-                return compiled
-            _cached_catalog = compiled
+            # degraded 快照同样入缓存（degraded 标志保留在快照上，调用方
+            # 可感知）；否则任一 registry 持续不可用时每次调用都全量重编译
+            # 四个 registry。恢复由显式 refresh=True 触发。
+            _cached_catalog = compile_execution_catalog()
         return _cached_catalog
 
 
@@ -780,7 +796,11 @@ def seed_execution_catalog(
     catalog.certification_evidence_fingerprint = fingerprint
     global _cached_catalog
     with _lock:
-        _cached_catalog = catalog
+        # degraded（如播种早于 pi-bridge 注入 → 工具面缺席、条目不全）
+        # 不写单例 —— 与 get_execution_catalog 同一道闸：否则缺条目的
+        # 目录被永久锁死，后续无参调用只能读到残缺快照。
+        if not catalog.degraded_sources:
+            _cached_catalog = catalog
     return catalog
 
 
@@ -900,9 +920,17 @@ def reconcile_with_manifest(
             if kind == KIND_RECIPE:
                 m_fp = str(proj.get("content_fingerprint", "") or "")
                 if m_fp:
-                    from app.services.gis_harness.recipes import get_recipe_registry
+                    # 对账器绝不 raise：编译后 registry 变动（id 消失）或
+                    # recipe 模块导入失败时跳过该条而不穿透异常。
+                    try:
+                        from app.services.gis_harness.recipes import get_recipe_registry
 
-                    live_fp = get_recipe_registry().content_fingerprint_of(eid)[:32]
+                        live_fp = get_recipe_registry().content_fingerprint_of(eid)[:32]
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "[execution-catalog] recipe fingerprint unavailable "
+                            "for %s: %s", eid, exc)
+                        continue
                     if m_fp and live_fp and m_fp != live_fp:
                         _emit(RECONCILE_RECIPE_FP_DIVERGENCE, kind, eid,
                               "manifest snapshot vs live recipe fingerprint")

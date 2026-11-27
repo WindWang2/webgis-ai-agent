@@ -242,9 +242,13 @@ async def test_repeated_dispatch_status_is_honest_failure():
                          step_params={"distance": 100.0, "unit": "m"}),)})
     contract.data_contracts["hazard"] = DataRoleBinding(
         role="hazard", ref="ref:geojson-abc")
+    class _Store:
+        async def get(self, session_id, ref):
+            return {"type": "FeatureCollection", "features": []}
+
     state = new_state(contract, contract_fingerprint="fp")
     executor = WorkflowExecutor(
-        registry=None, session_data=None, dispatch=_repeated_dispatch)
+        registry=None, session_data=_Store(), dispatch=_repeated_dispatch)
     await executor._run_step("s", contract, contract.steps[0], state)
     entry = state.steps["only"]
     assert entry.state == "failed"
@@ -272,9 +276,13 @@ async def test_upstream_budget_gate_blocks_oversized_intermediate():
         role="hazard", ref="ref:geojson-h")
     contract.data_contracts["receptor"] = DataRoleBinding(
         role="receptor", ref="ref:geojson-r")
+    class _Store:
+        async def get(self, session_id, ref):
+            return {"type": "FeatureCollection", "features": []}
+
     state = new_state(contract, contract_fingerprint="fp")
     state.steps["up"].state = "satisfied"
-    executor = WorkflowExecutor(registry=None, session_data=None,
+    executor = WorkflowExecutor(registry=None, session_data=_Store(),
                                 max_features=10)
     # 直接注入超限上游产物（绕过 store——单元级钉扎门行为）
     executor._step_payloads["up"] = {
@@ -332,3 +340,35 @@ async def test_plan_rebinding_same_id_is_replan_not_silent_reuse(registry):
     assert steps["per_capita_rate"] == "satisfied"   # 新绑定真实生效
     ev = run["evidence"]
     assert "per_capita_rate" in ev["steps_executed"]
+
+
+def test_collect_stale_steps_uses_receipt_identity_when_unobserved():
+    """调用方未观察到 current identity 时以回执记录的执行身份为基线——
+    裸 ref（缺 content_revision）不得制造假 stale。"""
+    from app.services.gis_harness.analysis_workflows.contracts import (
+        AnalysisStepSpec,
+        AnalysisWorkflowContract,
+    )
+    from app.services.gis_harness.analysis_workflows.recompute import (
+        step_fingerprint,
+    )
+
+    contract = AnalysisWorkflowContract(
+        workflow_id="awf.stale.unobserved",
+        family="admin_facility_distribution",
+        steps=(AnalysisStepSpec(
+            step_id="only", tool_name="spatial_aggregate",
+            role_inputs={"points": "role:subject"}),),
+        data_contracts={"subject": DataRoleBinding(
+            role="subject", ref="ref:geojson-s")},
+    )
+    state = new_state(contract, contract_fingerprint="fp")
+    ident = ref_identity("ref:geojson-s", 7)
+    entry = state.steps["only"]
+    entry.state = "satisfied"
+    entry.fingerprint = step_fingerprint(
+        contract.steps[0], input_identities={"points": ident},
+        science=contract.science_context)
+    state.receipts["only"] = {"input_fingerprints": {"points": ident}}
+
+    assert collect_stale_steps(contract, state, current_identities={}) == []

@@ -662,6 +662,12 @@ def _render_authored_chrome(
                 f'height="{_fmt_num(float(box.get("height") or 0.0))}" '
                 f'fill="none" stroke="#0f172a" stroke-width="1" />'
             )
+        elif kind not in ("map_slot", "group"):
+            # map_slot is consumed by the page frame above; group is structural.
+            omitted.append({"component_id": cid, "type": kind,
+                            "code": "publication_component_omitted"})
+            diags.append(("publication_component_omitted",
+                          "authoring kind unsupported", cid))
         if fragment:
             parts.append(fragment)
             if kind not in rendered:
@@ -1284,16 +1290,18 @@ def compile_mapspec_to_svg_detailed(
     try:
         _labels_budget = int(max_labels)
     except (ValueError, TypeError, OverflowError):
-        _labels_budget = 0
+        _labels_budget = None
     _layout_for_labels = mapspec.get("layout") if isinstance(mapspec, dict) else None
-    if _labels_budget <= 0 and isinstance(_layout_for_labels, dict):
+    if _labels_budget is None and isinstance(_layout_for_labels, dict):
         _lc = _layout_for_labels.get("labels")
         if isinstance(_lc, dict):
             try:
                 _labels_budget = int(_lc.get("maxLabels"))
             except (ValueError, TypeError, OverflowError):
-                _labels_budget = 0
-    _labels_budget = min(_labels_budget if _labels_budget > 0 else _MAX_LABELS_PER_EXPORT, _MAX_LABELS_PER_EXPORT)
+                _labels_budget = None
+    if _labels_budget is None:
+        _labels_budget = _MAX_LABELS_PER_EXPORT
+    _labels_budget = min(max(0, _labels_budget), _MAX_LABELS_PER_EXPORT)
     timeout_s = timeout_ms_val / 1000.0
     start_mono = _time.monotonic()
     diagnostics: List[Dict[str, Any]] = []
@@ -2649,7 +2657,10 @@ def compile_mapspec_to_svg_detailed(
                         if _poly_obs:
                             _segment_obstacle_groups.append(_poly_obs)
 
-                except Exception:
+                except Exception as _layer_exc:  # noqa: BLE001 — 单图层降级留痕
+                    logger.warning(
+                        "[mapspec-to-svg] layer %s render failed: %s",
+                        _lid, _layer_exc)
                     continue
 
         # G16：覆写失效披露（有界 ≤8 条/类）。orphan = 覆写目标在当前数据
@@ -2716,6 +2727,8 @@ def compile_mapspec_to_svg_detailed(
                     _rev_ov = _ov_a.get("sourceRevision")
                     if (
                         _rev_ov is not None and _rev_a is not None
+                        and isinstance(_rev_ov, (int, float))
+                        and not isinstance(_rev_ov, bool)
                         and float(_rev_ov) != float(_rev_a)
                     ):
                         _stale_n += 1
@@ -3003,10 +3016,14 @@ def compile_mapspec_to_svg_detailed(
             # 作者计划编译失败必须诚实披露，不得伪装成一张空白成功图。
             _emit_diag("print_layout_compile_failed",
                        detail=f"{type(_compile_exc).__name__}: {str(_compile_exc)[:160]}")
+        # P1 review fix：整函数 catch-all 的空白占位图不得伪装成一张"成功的
+        # 空图" —— 任何路径（不止 print_layout）都以产物内
+        # data-export-degraded 标记如实披露（与 3D 透视降级、report 超时
+        # 占位同一词汇；词表内无"整链编译失败"码，故走产物内披露）。
         w_fallback = min(width, 16384) if isinstance(width, (int, float)) and width > 0 else 1200
         h_fallback = min(height, 16384) if isinstance(height, (int, float)) and height > 0 else 800
         return SvgCompilation(
-            svg=f"""<svg width="{int(w_fallback)}" height="{int(h_fallback)}" viewBox="0 0 {int(w_fallback)} {int(h_fallback)}" xmlns="http://www.w3.org/2000/svg">
+            svg=f"""<svg data-export-degraded="true" data-export-degraded-reason="svg_compile_failed" width="{int(w_fallback)}" height="{int(h_fallback)}" viewBox="0 0 {int(w_fallback)} {int(h_fallback)}" xmlns="http://www.w3.org/2000/svg">
   <rect width="100%" height="100%" fill="#ffffff" />
   <g class="mapspec-vector-layers">
   </g>

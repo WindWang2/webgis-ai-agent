@@ -148,3 +148,21 @@ class TestCjkFontFetcherFix:
 
         with pytest.raises(ValueError):
             _deny_url_fetcher(bad)
+
+
+def test_g41_canonical_legend_tolerates_malformed_counts_and_missing():
+    """canonical counts/missing 非 dict 时不得 AttributeError 冒泡。"""
+    from app.lib.cartography.svg_marginalia import render_g41_canonical_legend
+
+    kwargs = dict(width=100.0, size=6.0, family="sans-serif",
+                  color="#000000", line_units=5.0)
+    bivariate = render_g41_canonical_legend(
+        {"type": "bivariate", "n": 2, "cells": [],
+         "counts": ["bad"], "missing": "bad"},
+        0.0, 0.0, **kwargs)
+    assert "chrome-g41-canonical-legend" in bivariate
+    dual = render_g41_canonical_legend(
+        {"type": "reliability_dual_channel", "counts": [],
+         "missing": "bad", "estimate": {}, "measure": {}, "channel": {}},
+        0.0, 0.0, **kwargs)
+    assert "chrome-g41-canonical-legend" in dual

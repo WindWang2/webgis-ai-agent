@@ -54,6 +54,8 @@ class CalculationSpace(BaseModel):
 
 def _bbox_center_and_span(
     bbox: Optional[Sequence[float]],
+    *,
+    wrap_degrees: bool = False,
 ) -> Optional[tuple]:
     if not bbox or len(bbox) != 4:
         return None
@@ -66,7 +68,11 @@ def _bbox_center_and_span(
     # R1 P1：返回**原始**跨度（不做环绕归一）—— 环绕解释由地理分支按
     # 采样占据弧 / AM 证据三级链裁决（此前无条件归一把近全球 bbox 判成
     # ≤6° 单带）。中心用 min/max 中点（仅无更强证据时的兜底）。
-    raw_span = (maxx - minx) % 360.0
+    # %360 环绕只对**经纬度**坐标成立（跨 AM 的 minx>maxx 负跨度绕回）；
+    # 投影米坐标（3857 等）宽度 ≥360 单位时同样被绕回 → 中心≈minx，
+    # 反算经纬错误、suggested_transform 指向错误 UTM 带 —— 故仅地理
+    # CRS 传 wrap_degrees=True。
+    raw_span = (maxx - minx) % 360.0 if wrap_degrees else (maxx - minx)
     clon = minx + raw_span / 2.0
     return (clon, (miny + maxy) / 2.0, raw_span, abs(maxy - miny))
 
@@ -86,7 +92,8 @@ def resolve_calculation_space(
 
     cls = contract.crs_class
     bbox = contract.data_bbox
-    geo = _bbox_center_and_span(bbox)
+    # %360 环绕只对经纬度成立（跨 AM 负跨度绕回）；投影米坐标走原始跨度。
+    geo = _bbox_center_and_span(bbox, wrap_degrees=(cls == "geographic"))
 
     def _result(mode: str, crs: str, basis: str, **kw: Any) -> CalculationSpace:
         return CalculationSpace(mode=mode, working_crs=crs, working_crs_basis=basis, **kw)

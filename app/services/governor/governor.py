@@ -116,6 +116,10 @@ class HarnessResourceGovernor:
         except FileNotFoundError:
             logger.info("governor budget manifest not found; starting empty")
             return {}
+        except OSError:
+            logger.warning("governor budget manifest unreadable; starting empty",
+                           exc_info=True)
+            return {}
         except ValueError:
             logger.warning("governor budget manifest invalid; starting empty",
                            exc_info=True)
@@ -133,8 +137,8 @@ class HarnessResourceGovernor:
                Optional[AcquireTicket]]:
         """准入 + 预留。返回 (decision, reservation|None, ticket|None)。
 
-        - decision.allowed=True 时 reservation/ticket 必然非 None
-          （complete() 需要它们归还）；
+        - decision.allowed=True 时 reservation 必然非 None（complete()
+          需要它归还）；ticket 仅在实际获得背压槽位时非 None；
         - reject/degrade → (decision, None, None)，调用方不得执行原请求；
         - observe 模式：即便 decision 为 reject/degrade 也放行执行
           （reservation 照常建立 —— 观测语义完整）。
@@ -219,7 +223,9 @@ class HarnessResourceGovernor:
                 gmetrics.observe_queue_wait(
                     exc.channel or "direct", exc.waited_s)
                 if not enforce:
-                    ticket = AcquireTicket(channel="", session_id=demand.scope_key())
+                    # 排队超时 = 未获得任何槽位：不伪造 ticket（review P2），
+                    # 否则 complete → bp.release 会对会话闸二次归还。
+                    ticket = None
                 elif exc.channel == "cancelled":
                     # 排队期间会话被取消（R9）—— 诚实拒绝
                     decision = ResourceDecision(
@@ -258,6 +264,11 @@ class HarnessResourceGovernor:
                 self._sync_gauges()
                 return decision, reservation, ticket
             except BaseException:
+                # 先摘除 live 登记（review P2）：登记录入后遭遇取消/中断时，
+                # 遗留的幽灵预留会被 cancel_session/complete 二次归还。
+                if reservation is not None:
+                    self._live_reservations.pop(reservation.reservation_id, None)
+                    self._live_tickets.pop(reservation.reservation_id, None)
                 try:
                     if reservation is not None:
                         from app.services.governor.session_budget import live_dims_of
@@ -329,10 +340,13 @@ class HarnessResourceGovernor:
                             dim.value, expected, float(observed))
                 # 归还语义：live 维按 actual（缺省 = charged 原样）归还；
                 # cumulative 维按 actual 入账（actual 缺省 = charged 估值 ——
-                # 估算消耗也是消耗，诚实计入账本）
+                # 估算消耗也是消耗，诚实计入账本）。actual 中未入账的维
+                # （如实测 NETWORK_BYTES）同样计入 —— 不静默丢弃实测消耗。
                 merged_actual: Dict[Dimension, float] = {
-                    dim: actual.get(dim, add) for dim, add in charged.items()
+                    dim: float(v) for dim, v in actual.items()
                 }
+                for dim, add in charged.items():
+                    merged_actual.setdefault(dim, add)
                 self.ledger.release(reservation, actual=merged_actual)
             if ticket is not None and release_slot:
                 cost = max(0.1, actual.get(Dimension.WALL_TIME_S, 1.0))

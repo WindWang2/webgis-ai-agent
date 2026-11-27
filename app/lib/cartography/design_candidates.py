@@ -632,7 +632,10 @@ def generate_design_candidates(
                         + "）——先执行对应分析产出该数据，再切换表达")
                 incompatible_requested[model_id] = blocked
 
-    if not pool:
+    # 池空不等于「无话可说」：用户显式要求的 typed block（不可行解释）与
+    # planner 实况候选仍须进集可见——提前 return 会把它们静默丢弃
+    # （违反本模块「不静默丢弃」承诺）。
+    if not pool and not incompatible_requested and not primary_model_id:
         return DesignCandidateSet()
 
     # 表达族去重：同族保组合层分最高者。例外——率/密度语义模型与其原始

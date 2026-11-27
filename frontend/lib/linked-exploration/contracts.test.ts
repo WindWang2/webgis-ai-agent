@@ -46,6 +46,21 @@ describe('compileCombinedWhere', () => {
     expect(compileCombinedWhere([])).toBeNull();
   });
 
+  it.each(['gte', 'gt', 'lte', 'lt'] as const)('持久化 JSON null 的 %s 边界不进入 where', (boundary) => {
+    const isLower = boundary === 'gte' || boundary === 'gt';
+    const bounds = isLower ? { [boundary]: null, lt: 10 } : { [boundary]: null, gte: 10 };
+    const restored = JSON.parse(JSON.stringify(rng(bounds))) as ReturnType<typeof rng>;
+    expect(conditionToWhere(restored)).toEqual({
+      op: isLower ? 'lt' : 'gte', field: 'pop', value: 10,
+    });
+  });
+
+  it('四个边界全缺的 range 条件报错而非编译为恒真过滤', () => {
+    const empty = rng({});
+    expect(() => conditionToWhere(empty)).toThrow('区间条件必须至少包含一个边界');
+    expect(() => compileCombinedWhere([empty])).toThrow('区间条件必须至少包含一个边界');
+  });
+
   it('facet 只排除自身控件（E11）', () => {
     const w = compileCombinedWhere(
       [cat(['a']), rng({ gte: 1 }), {

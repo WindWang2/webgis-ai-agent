@@ -238,7 +238,8 @@ def decide_representation(
         reason_codes=core.reason_codes()[:8],
         recommended_pitch=core.recommended_pitch if applied_mode == core.mode else 0.0,
         recommended_bearing=core.recommended_bearing if applied_mode == core.mode else 0.0,
-        recommended_exaggeration=core.recommended_exaggeration,
+        recommended_exaggeration=(
+            core.recommended_exaggeration if applied_mode == core.mode else 0.0),
         camera_transition_ms=core.camera_transition_ms,
         scene_config=scene_config,
     )

@@ -46,6 +46,69 @@ async def test_promotion_database_steps_all_leave_event_loop(monkeypatch):
     assert all(thread != main for _, thread in calls)
 
 
+def test_promotion_quota_locks_do_not_accumulate_for_idle_projects():
+    import gc
+    import weakref
+
+    from app.services import project_artifact_promotion as promotion
+
+    project_id = "quota-lock-lifetime-regression"
+    promotion._QUOTA_LOCKS.pop(project_id, None)
+    try:
+        lock = promotion._quota_lock(project_id)
+        assert promotion._quota_lock(project_id) is lock
+        lock_ref = weakref.ref(lock)
+        del lock
+        gc.collect()
+        assert lock_ref() is None
+        assert project_id not in promotion._QUOTA_LOCKS
+    finally:
+        promotion._QUOTA_LOCKS.pop(project_id, None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("storage_ref", "read_error", "expected_status"),
+    [
+        (None, False, "no_session_context"),
+        ("", False, "no_session_context"),
+        ("ref:data", True, "no_session_context"),
+        ("ref:data", False, "session_expired"),
+    ],
+)
+async def test_promotion_only_marks_session_expired_after_successful_probe(
+    monkeypatch, storage_ref, read_error, expected_status
+):
+    from app.services import project_artifact_promotion as promotion
+
+    artifact = SimpleNamespace(
+        id="a", project_id="p", storage_ref=storage_ref,
+        content_fingerprint="", metadata_json={},
+    )
+
+    class DB:
+        def commit(self):
+            pass
+
+    monkeypatch.setattr(promotion, "_promotion_rows", lambda *args: [artifact])
+    session_get = AsyncMock(return_value=None)
+    if read_error:
+        session_get.side_effect = RuntimeError("session store unavailable")
+    monkeypatch.setattr("app.services.session_data.session_data_manager.get", session_get)
+    run = SimpleNamespace(id="run", project_id="p")
+
+    result = await promotion.promote_run_artifacts(
+        DB(), run, session_id="s", project_id="p"
+    )
+
+    assert result[0]["status"] == expected_status
+    assert artifact.metadata_json["content_status"] == expected_status
+    if storage_ref:
+        session_get.assert_awaited_once_with("s", storage_ref)
+    else:
+        session_get.assert_not_awaited()
+
+
 def test_celery_worker_restores_origin_and_clears_it_after_execution(monkeypatch):
     from app.services.jobs.context import JobOrigin, use_origin, current_origin
     from app.services.jobs.celery_origin import origin_headers

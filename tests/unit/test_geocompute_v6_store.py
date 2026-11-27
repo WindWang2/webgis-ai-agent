@@ -19,6 +19,7 @@ from app.services.geocompute.cluster.store import (
     ClusterLedger,
     ClusterRunStore,
     PlanSnapshotTooLargeError,
+    _claims_for_row,
     _utcnow,
 )
 from datetime import timedelta
@@ -392,3 +393,28 @@ class TestWorkers:
         epoch2 = a.claim_lease(rid, coordinator_id="c", ttl_s=30)
         assert epoch2 == epoch + 1
         assert a.get_run(rid)["attempts"] == 0
+
+
+class TestMemoryEstimateValidation:
+    """estimate.memory_mb 非有限值：提交端拒绝、认领端容忍（历史行）。"""
+
+    @pytest.mark.parametrize("bad", [float("inf"), float("nan"), "inf", "1e400"])
+    def test_create_run_rejects_non_finite_memory_estimate(self, env, bad):
+        a, _, _ = env
+        plan = _plan_snapshot()
+        plan["nodes"][0]["estimate"]["memory_mb"] = bad
+        with pytest.raises(ClusterBackpressureError):
+            a.create_run(plan_snapshot=plan, plan_fingerprint="fp",
+                         owner_scope="u:abc")
+
+    def test_claims_skip_non_finite_memory_estimate(self):
+        """已持久化的坏行（修复前提交）在 claim 路径不得令 int() 抛异常。"""
+        from types import SimpleNamespace
+
+        snapshot = _plan_snapshot(nodes=2)
+        snapshot["nodes"][0]["estimate"]["memory_mb"] = float("inf")
+        snapshot["nodes"][1]["estimate"]["memory_mb"] = 32
+        row = SimpleNamespace(plan_snapshot=snapshot, resource_request=None,
+                              tenant_key=None, project_key=None)
+        claims = _claims_for_row(row, units=1)
+        assert claims["global"].mem_mb == 32

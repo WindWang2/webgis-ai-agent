@@ -316,7 +316,8 @@ class GraphStateMatrix(SpatialStateMatrix):
         if idxs.size == 0:
             return [], None, False
         if idxs.size > max_features:
-            idxs = idxs[:max_features]
+            order = np.argsort(arr[idxs])[::-1][:max_features]
+            idxs = idxs[order]
             truncated = True
         else:
             truncated = False

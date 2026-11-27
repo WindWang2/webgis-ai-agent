@@ -138,16 +138,20 @@ export function rasterizeAreaTexture(
     // F9（评审）：tile 周期 = tile_viewbox × pattern_scale × ratio（与导出
     // pattern 同式）；tile 图元保留自身颜色（fg_color 不覆涂）。
     const [tw, th] = doc.pattern?.tile_viewbox ?? [12, 12];
-    const w = Math.max(4, Math.min(PATTERN_TILE_SPAN,
-      Math.round(tw * params.pattern_scale * pixelRatio)));
-    const h = Math.max(4, Math.min(PATTERN_TILE_SPAN,
-      Math.round(th * params.pattern_scale * pixelRatio)));
+    // 超帽时两轴共用缩放系数，避免独立 clamp 造成非等比拉伸。
+    const scale = Math.min(
+      params.pattern_scale * pixelRatio,
+      PATTERN_TILE_SPAN / tw,
+      PATTERN_TILE_SPAN / th,
+    );
+    const w = Math.max(4, Math.round(tw * scale));
+    const h = Math.max(4, Math.round(th * scale));
     const ctx = ctxOf(w, h);
     if (params.bg_color !== 'transparent') {
       ctx.fillStyle = params.bg_color;
       ctx.fillRect(0, 0, w, h);
     }
-    ctx.scale(w / tw, h / th);
+    ctx.scale(scale, scale);
     for (const p of doc.pattern?.tile_primitives ?? []) paintPrim(ctx, p);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     return ctx.getImageData(0, 0, w, h);
@@ -240,6 +244,11 @@ export function rationalLineLattice(
   return { p: 0, q: 1, size: fallbackSize };
 }
 
+function esc(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 /** swatch SVG 字符串（屏上图例；与后端 swatch_svg 同语义的 TS 投影）。 */
 export function swatchSvgString(
   doc: SymbolAssetDocument,
@@ -247,8 +256,6 @@ export function swatchSvgString(
   boxW: number,
   boxH: number,
 ): string {
-  const esc = (s: string) =>
-    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
   const parts: string[] = [];
   if (doc.kind === 'point_symbol') {
     const [vw, vh] = doc.viewbox ?? [24, 24];
@@ -312,10 +319,10 @@ export function swatchSvgString(
 function primSvg(prims: SymbolPrimitive[]): string {
   const out: string[] = [];
   for (const p of prims) {
-    const attrs: string[] = [`fill="${p.fill ?? 'none'}"`];
+    const attrs: string[] = [`fill="${esc(p.fill ?? 'none')}"`];
     if ((p.opacity ?? 1) < 1) attrs.push(`fill-opacity="${p.opacity}"`);
     if (p.stroke && p.stroke !== 'none') {
-      attrs.push(`stroke="${p.stroke}" stroke-width="${p.stroke_width ?? 1}"`);
+      attrs.push(`stroke="${esc(p.stroke)}" stroke-width="${p.stroke_width ?? 1}"`);
     }
     if (p.op === 'path' && p.d) {
       out.push(`<path d="${p.d.map((c) => c.join(' ')).join(' ')}" ${attrs.join(' ')}/>`);
@@ -326,7 +333,7 @@ function primSvg(prims: SymbolPrimitive[]): string {
     } else if (p.op === 'polygon' || p.op === 'polyline') {
       out.push(`<${p.op} points="${(p.points ?? []).map((q) => q.join(',')).join(' ')}" ${attrs.join(' ')}/>`);
     } else if (p.op === 'line') {
-      out.push(`<line x1="${p.x}" y1="${p.y}" x2="${(p.x ?? 0) + (p.w ?? 0)}" y2="${(p.y ?? 0) + (p.h ?? 0)}" stroke="${p.stroke}" stroke-width="${p.stroke_width ?? 1}"/>`);
+      out.push(`<line x1="${p.x}" y1="${p.y}" x2="${(p.x ?? 0) + (p.w ?? 0)}" y2="${(p.y ?? 0) + (p.h ?? 0)}" stroke="${esc(String(p.stroke))}" stroke-width="${p.stroke_width ?? 1}"/>`);
     }
   }
   return out.join('');

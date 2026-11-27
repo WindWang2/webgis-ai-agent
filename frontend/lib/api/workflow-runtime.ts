@@ -235,6 +235,9 @@ export async function getInstance(
     `/instances/${encodeURIComponent(instanceId)}`,
     opts,
   );
+  if (!res?.instance) {
+    throw new WorkflowRuntimeApiError('WORKFLOW_RUNTIME_ERROR', 'instance missing from response', 200);
+  }
   return res.instance;
 }
 
@@ -247,6 +250,9 @@ export async function createInstance(
     method: 'POST',
     body: req,
   });
+  if (!res?.instance) {
+    throw new WorkflowRuntimeApiError('WORKFLOW_RUNTIME_ERROR', 'instance missing from response', 200);
+  }
   return res.instance;
 }
 

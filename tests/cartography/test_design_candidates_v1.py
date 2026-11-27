@@ -353,3 +353,36 @@ def test_polygon_density_family_diversity_preserved() -> None:
     cs = generate_design_candidates(ctx)
     families = {c.expression_family for c in cs.candidates}
     assert len(families) >= 2, f"候选面退化为单一族: {families}"
+
+
+def test_empty_pool_still_surfaces_requested_typed_block(monkeypatch) -> None:
+    """P2：组合层池空（降级/零可行模型）时用户显式要求不得被静默丢弃。
+
+    ``if not pool: return DesignCandidateSet()`` 早退会把不可行要求的
+    typed block 与 planner primary 一起丢掉 —— 违反「不静默丢弃」。
+    """
+    from app.lib.cartography import design_candidates as dc
+
+    monkeypatch.setattr(dc, "_pool_from_composition", lambda *a, **k: {})
+    monkeypatch.setattr(dc, "_augment_with_affinity_families",
+                        lambda ctx, pool: None)
+    ctx = _chengdu_points_ctx(user_requested_models=("aggregate_grid",))
+    cs = generate_design_candidates(ctx)
+    blocked = [c for c in cs.candidates
+               if c.map_model_id == "aggregate_grid"]
+    assert blocked, "池空时用户显式要求的 typed block 仍须可见"
+    assert blocked[0].suitability == CandidateSuitability.BLOCKED
+    assert cs.user_request_handling["typed_blocked"] == ["aggregate_grid"]
+
+
+def test_empty_pool_still_surfaces_planner_primary(monkeypatch) -> None:
+    """P2：池空时 planner 实况候选仍须补入（诚实对齐）。"""
+    from app.lib.cartography import design_candidates as dc
+
+    monkeypatch.setattr(dc, "_pool_from_composition", lambda *a, **k: {})
+    monkeypatch.setattr(dc, "_augment_with_affinity_families",
+                        lambda ctx, pool: None)
+    ctx = _chengdu_points_ctx()
+    cs = generate_design_candidates(ctx, primary_model_id="visual_heatmap")
+    assert [c.map_model_id for c in cs.candidates] == ["visual_heatmap"]
+    assert cs.selection_basis.startswith("planner_primary")

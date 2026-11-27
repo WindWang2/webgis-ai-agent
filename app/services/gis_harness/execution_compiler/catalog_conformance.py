@@ -211,7 +211,10 @@ def audit_family_conformance(
     for v in all_verdicts:
         counts[v.verdict] = counts.get(v.verdict, 0) + 1
 
-    payload = [v.to_bounded_dict() for v in all_verdicts]
+    # 指纹必须覆盖**报告实际承载的载荷**（前 96 条）——此前对全部
+    # all_verdicts 计算而报告只存 [:96]，verdicts>96 时指纹无法从报告
+    # 内容复算，漂移检测/对账校验必败。全量计数仍由 counts 披露。
+    payload = [v.to_bounded_dict() for v in all_verdicts[:96]]
     digest = hashlib.sha256(
         repr(payload).encode("utf-8")).hexdigest()[:32]
     return FamilyConformanceReport(

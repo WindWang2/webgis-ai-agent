@@ -36,4 +36,14 @@ describe('ThematicLegend (router)', () => {
     const { container } = render(<ThematicLegend spec={null as any} />);
     expect(container.firstChild).toBeNull();
   });
+
+  it('reliability 调色板超过 7 色时披露剩余色数', () => {
+    const { container } = render(<ThematicLegend spec={{
+      type: 'reliability_dual_channel',
+      estimate: { label: '估计', unit: '人', palette_colors: Array.from({ length: 9 }, (_, i) => `#00000${i}`) },
+      measure: { kind: 'se', level: 0.9, unit_note: '', visual_meaning: '' },
+      missing: { label: '缺失', count: 0 },
+    } as any} />);
+    expect(container.textContent).toContain('…+2');
+  });
 });

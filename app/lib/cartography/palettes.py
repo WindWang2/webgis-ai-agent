@@ -44,7 +44,7 @@ def _hex_to_rgb_float(hex_color: str) -> tuple:
         if len(h) != 6:
             return (0.0, 0.0, 0.0)
         return tuple(int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, AttributeError):
         return (0.0, 0.0, 0.0)
 
 
@@ -477,7 +477,10 @@ def grayscale_ramp_separation(colors: List[str]) -> _Optional[float]:
         rgb = parse_css_color(c)
         if rgb is None:
             return None
-        lums.append(_wcag_relative_luminance(c))
+        # 用 parse 结果（含 rgb()/rgba() 白底合成）算亮度 —— 原始串直接
+        # 传入 _wcag_relative_luminance 会把功能记法误当黑色。
+        lums.append(_wcag_relative_luminance(
+            "#{:02x}{:02x}{:02x}".format(*rgb)))
     if len(lums) < 2:
         return None
     return min(abs(lums[i] - lums[i + 1]) for i in range(len(lums) - 1))

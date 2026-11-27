@@ -17,6 +17,7 @@ import {
   previewFlowProduct,
   queryFlowProduct,
   fetchFlowRefGeoJSON,
+  type FlowPreviewResponse,
 } from '@/lib/flow/flow-product';
 import { commitMapSpecMutation, refreshMapSpecAfterExternalMutation } from '@/lib/mapspec/user-mutation';
 
@@ -224,6 +225,55 @@ describe('FlowProductPanel', () => {
     await waitFor(() => expect(refreshMock).toHaveBeenCalledWith(SESSION, 6));
   });
 
+  it('Apply 提交成功后刷新失败不报 applyFailed，并退出编辑态', async () => {
+    commitMapSpecDocument(CANDIDATE_SPEC, 5);
+    previewMock.mockResolvedValue(PREVIEW);
+    commitMock.mockImplementation(async () => {
+      commitMapSpecDocument(APPLIED_SPEC, 6);
+      return { success: true, status: 'committed', mutation_revision: 6 };
+    });
+    refreshMock.mockRejectedValue(new Error('refresh boom'));
+    render(<FlowProductPanel />);
+
+    const sourceSelect = await screen.findByLabelText('OD 表（GeoJSON 源）');
+    fireEvent.change(sourceSelect, { target: { value: 'ref:geojson-od-1' } });
+    await waitFor(() => expect(screen.getByLabelText(/权重字段/)).toHaveValue('trips'));
+    fireEvent.click(screen.getByRole('button', { name: '预览' }));
+    await screen.findByText(/80.0%/);
+    fireEvent.click(screen.getByRole('button', { name: '应用到地图' }));
+
+    await waitFor(() => expect(refreshMock).toHaveBeenCalledWith(SESSION, 6));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByText('已应用到地图')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '预览' })).toBeNull();
+  });
+
+  it('Preview 必填门控覆盖四个经纬度字段与权重字段', async () => {
+    commitMapSpecDocument(CANDIDATE_SPEC, 5);
+    render(<FlowProductPanel />);
+    await waitFor(() => expect(screen.getByLabelText(/权重字段/)).toHaveValue('trips'));
+
+    const previewButton = screen.getByRole('button', { name: '预览' });
+    expect(previewButton).toHaveProperty('disabled', false);
+    for (const [label, value] of [
+      ['起点经度字段', 'origin_lng'],
+      ['起点纬度字段', 'origin_lat'],
+      ['终点经度字段', 'destination_lng'],
+      ['终点纬度字段', 'destination_lat'],
+    ]) {
+      const field = screen.getByLabelText(new RegExp(label));
+      fireEvent.change(field, { target: { value: '' } });
+      expect(previewButton).toHaveProperty('disabled', true);
+      fireEvent.change(field, { target: { value } });
+      expect(previewButton).toHaveProperty('disabled', false);
+    }
+
+    const weightField = screen.getByLabelText(/权重字段/);
+    expect(weightField.closest('div')?.textContent).toContain('必填');
+    fireEvent.change(weightField, { target: { value: '' } });
+    expect(previewButton).toHaveProperty('disabled', true);
+  });
+
   it('预览后改配置 → 预览过期，Apply 禁用并提示', async () => {
     commitMapSpecDocument(CANDIDATE_SPEC, 5);
     previewMock.mockResolvedValue(PREVIEW);
@@ -269,6 +319,23 @@ describe('FlowProductPanel', () => {
     fireEvent.change(sourceSelect, { target: { value: 'ref:geojson-od-1' } });
     fireEvent.click(await screen.findByRole('button', { name: '预览' }));
     expect(await screen.findByText('empty_display_set')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '应用到地图' })).toHaveProperty('disabled', true);
+  });
+
+  it('预览缺少可应用字段时禁用 Apply，避免可点却无反应', async () => {
+    commitMapSpecDocument(CANDIDATE_SPEC, 5);
+    const previewWithoutCanApply: Partial<typeof PREVIEW> = { ...PREVIEW };
+    delete previewWithoutCanApply.can_apply;
+    previewMock.mockResolvedValue({
+      ...previewWithoutCanApply,
+      product_ref: '',
+      family_id: '',
+    } as unknown as FlowPreviewResponse);
+    render(<FlowProductPanel />);
+    const sourceSelect = await screen.findByLabelText('OD 表（GeoJSON 源）');
+    fireEvent.change(sourceSelect, { target: { value: 'ref:geojson-od-1' } });
+    fireEvent.click(await screen.findByRole('button', { name: '预览' }));
+    await screen.findByText(/80.0%/);
     expect(screen.getByRole('button', { name: '应用到地图' })).toHaveProperty('disabled', true);
   });
 
@@ -321,6 +388,53 @@ describe('FlowProductPanel', () => {
     fireEvent.click(screen.getByLabelText('流入'));
     await waitFor(() => expect(queryMock).toHaveBeenCalledTimes(2));
     expect(queryMock.mock.calls[1][1]).toMatchObject({ direction: 'inbound' });
+  });
+
+  it('加载更多追加新页并保留首页，不重复新页', async () => {
+    commitMapSpecDocument(APPLIED_SPEC, 5);
+    queryMock
+      .mockResolvedValueOnce({
+        success: true,
+        kind: 'node',
+        product_ref: 'ref:flow-product-abc',
+        node: { node_id: 'n1', name: '武侯区', inbound: 3, outbound: 8, net: 5 },
+        direction: 'both',
+        edges: {
+          items: [{ id: 'e1', origin_node_id: 'n1', destination_node_id: 'n2', weight: 10 }],
+          offset: 0, limit: 50, matched_count: 2, next_offset: 50,
+        },
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        kind: 'node',
+        product_ref: 'ref:flow-product-abc',
+        node: { node_id: 'n1', name: '武侯区', inbound: 3, outbound: 8, net: 5 },
+        direction: 'both',
+        edges: {
+          items: [{ id: 'e2', origin_node_id: 'n2', destination_node_id: 'n3', weight: 20 }],
+          offset: 50, limit: 50, matched_count: 2, next_offset: null,
+        },
+      });
+    render(<FlowProductPanel />);
+    act(() => {
+      publishSelection('select', {
+        source: 'map',
+        layer_id: 'flow-odf_x-nodes',
+        feature_id: 'n1',
+        selected_ids: ['n1'],
+        selected_categories: [],
+        id_field: '$id',
+        artifact_ref: 'ref:flow-product-abc',
+        properties: { flow_focus: 'node', flow_direction: 'both', name: '武侯区' },
+      });
+    });
+    expect(await screen.findByText(/n1 → n2/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '加载更多' }));
+    await waitFor(() => expect(queryMock).toHaveBeenCalledTimes(2));
+    expect(queryMock.mock.calls[1][1]).toMatchObject({ offset: 50, limit: 50 });
+    expect(await screen.findByText(/n2 → n3/)).toBeTruthy();
+    expect(screen.getByText(/n1 → n2/)).toBeTruthy();
+    expect(screen.getAllByText(/n2 → n3/)).toHaveLength(1);
   });
 
   it('焦点对象缺失（404）给具体提示，不伪造数据', async () => {

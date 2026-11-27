@@ -113,7 +113,14 @@ def register_linked_exploration_tools(registry: ToolRegistry) -> None:
         return out
 
     def _conditions(raw: List[Dict[str, Any]]) -> List[Any]:
-        return contract.parse_conditions(raw or [])
+        try:
+            return contract.parse_conditions(raw or [])
+        except LinkedExplorationError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 非 dict/pydantic 等 → 域错误面
+            raise LinkedExplorationError(
+                "INVALID_CONDITION", f"conditions 非法：{exc}",
+                status_code=422) from exc
 
     def _explain_conditions(parsed: List[Any]) -> List[Dict[str, Any]]:
         """Pi 可读的条件解释（哪些条件生效、typed 值、口径）。"""

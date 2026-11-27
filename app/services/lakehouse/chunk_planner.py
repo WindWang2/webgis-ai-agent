@@ -40,9 +40,6 @@ def _validate_chunks(shape: Sequence[int], chunks: Sequence[int]) -> Tuple[int, 
     for dim_size, c in zip(shape, cs):
         if c < 1:
             raise CubeSchemaError(f"chunk size must be >= 1, got {c}")
-        if dim_size > 0 and c > max(dim_size, 1):
-            # 超轴长 chunk 允许（zarr 语义：尾部块截断），但计划按轴长取 min。
-            continue
     return cs
 
 

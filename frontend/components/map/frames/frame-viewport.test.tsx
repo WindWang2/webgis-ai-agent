@@ -14,6 +14,7 @@ import type { MapSpec } from '@/lib/mapspec-compiler/types';
 const rmg = vi.hoisted(() => ({
   map: null as ReturnType<typeof makeMockMaplibreMap> | null,
   lostHandlers: new Set<() => void>(),
+  mapMounts: 0,
 }));
 
 vi.mock('react-map-gl/maplibre', () => {
@@ -21,6 +22,7 @@ vi.mock('react-map-gl/maplibre', () => {
   const MapMock = React.forwardRef(function MapMock(props: any, ref: any) {
     React.useImperativeHandle(ref, () => ({ getMap: () => rmg.map }), []);
     React.useEffect(() => {
+      rmg.mapMounts += 1;
       const t = setTimeout(() => props.onLoad?.(), 0);
       return () => clearTimeout(t);
       // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -37,6 +39,13 @@ const spec: MapSpec = {
 } as unknown as MapSpec;
 
 const cam: CameraSnapshot = { center: [104, 30.6], zoom: 9, bearing: 0, pitch: 0 };
+
+/** mock map 的 on/off 调用记录里是否注册/解绑过某事件（runtime 生命周期探针：
+ *  runtime 构造挂 terrainErrorHandler = on('error')，dispose 对称 off('error')）。 */
+function hasMapEventCall(map: unknown, method: 'on' | 'off', event: string): boolean {
+  const mock = (map as Record<string, { mock: { calls: Array<[string, unknown]> } }>)[method];
+  return mock.mock.calls.some(([ev]) => ev === event);
+}
 
 function mount() {
   const handleRef: { current: FrameViewportHandle | null } = { current: null };
@@ -77,6 +86,16 @@ afterEach(() => {
 });
 
 describe('FrameViewport 生命周期（P4）', () => {
+  it('挂载只建一张地图：key 不含首渲染为 null 的登记代际（g0→g1 翻 key）', async () => {
+    rmg.mapMounts = 0;
+    const { unmount } = mount();
+    await waitFor(() => expect(rmg.mapMounts).toBeGreaterThanOrEqual(1));
+    // onLoad → mapReady 重渲染：修复前 key 由 g0 翻到 g1，首张地图被弃后重挂。
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    expect(rmg.mapMounts).toBe(1);
+    unmount();
+  });
+
   it('挂载登记预算槽位；卸载释放（A09/A26）', async () => {
     const { unmount } = mount();
     await waitFor(() => expect(mapInstanceRegistry.has('frame:fp-1')).toBe(true));
@@ -145,6 +164,65 @@ describe('FrameViewport 生命周期（P4）', () => {
     });
     await waitFor(() => expect(onContextLost).toHaveBeenCalledWith('fp-1', expect.any(Number)));
     (rmg.map as unknown as { getCanvas: () => unknown }).getCanvas = origGetCanvas;
+  });
+
+  it('context loss 重建后 runtime 随新 Map 实例重建（旧 runtime dispose，不泄漏）', async () => {
+    // canvas-like 带 addEventListener 的假面（模拟真实浏览器）。
+    const listeners = new Map<string, Set<(e: unknown) => void>>();
+    const canvas = {
+      width: 300, height: 200,
+      addEventListener: (ev: string, h: (e: unknown) => void) => {
+        if (!listeners.has(ev)) listeners.set(ev, new Set());
+        listeners.get(ev)!.add(h);
+      },
+      removeEventListener: (ev: string, h: (e: unknown) => void) => listeners.get(ev)?.delete(h),
+      toDataURL: () => 'data:image/png;base64,X',
+    };
+    const firstMap = rmg.map!;
+    (firstMap as unknown as { getCanvas: () => unknown }).getCanvas = () => canvas;
+    render(
+      <FrameViewport
+        ref={() => {}}
+        frameId="fp-1"
+        effectiveSpec={spec}
+        onMountedFact={vi.fn()}
+        onCameraDraft={vi.fn()}
+        mapStyle={{ version: 8, sources: {}, layers: [] }}
+        initialCamera={cam}
+        desiredSpecRevision={3}
+        desiredDataRevision={7}
+        onContextLost={vi.fn()}
+      />,
+    );
+    // 首个 runtime 已绑到 firstMap（构造函数挂 terrainErrorHandler = on('error')）。
+    await waitFor(() =>
+      expect(hasMapEventCall(firstMap, 'on', 'error')).toBe(true),
+    );
+    await waitFor(() => expect(listeners.get('webglcontextlost')?.size ?? 0).toBeGreaterThan(0));
+
+    // 重建：Map 按 key 重挂 → 底层 map 实例更换（真实浏览器即新 canvas/map）。
+    const secondMap = makeMockMaplibreMap();
+    const origOnce = secondMap.once.bind(secondMap);
+    secondMap.once = (((type: string, cb: (...a: unknown[]) => void) => {
+      if (type === 'idle') {
+        setTimeout(() => cb(), 0);
+        return secondMap;
+      }
+      return origOnce(type as never, cb as never);
+    }) as typeof secondMap.once);
+    rmg.map = secondMap as never;
+    act(() => {
+      for (const h of listeners.get('webglcontextlost')!) {
+        h({ preventDefault: () => {} });
+      }
+    });
+
+    // 修复前：runtimeRef 非空即复用 —— 旧 runtime 留着不 dispose（无 off('error')），
+    // 新 map 上永不挂 runtime（无 on('error')）→ 新视窗不渲染业务图层。
+    await waitFor(() =>
+      expect(hasMapEventCall(firstMap, 'off', 'error')).toBe(true),
+    );
+    expect(hasMapEventCall(secondMap, 'on', 'error')).toBe(true);
   });
 
   it('连续挂载/卸载 30 次无注册残留（A26 有界）', async () => {

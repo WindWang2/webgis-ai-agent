@@ -32,7 +32,7 @@ def _station_set(points, crs="EPSG:4326"):
 
 
 def test_same_block_5000_points_single_open_few_reads(rs_env, raster_factory):
-    """S17：5,000 点同块 → opens=1、窗口读有界（非 5000 次、非整幅）。"""
+    """S17：5,000 点同块 → opens=2（采集+批读各一次）、窗口读有界（非 5000 次、非整幅）。"""
     made = {}
 
     async def make():
@@ -62,7 +62,7 @@ def test_same_block_5000_points_single_open_few_reads(rs_env, raster_factory):
         bindings=[_binding(ref)],
         station_set=ss,
         method="source_pixel")
-    assert metrics.opens == 1
+    assert metrics.opens == 2
     assert metrics.window_reads <= 8, f"5000 same-block points: {metrics.window_reads} reads"
     assert len(rows) == 5000
     # 解析 oracle：值 = row*10 + col（与生成式一致 —— 期望由坐标独立算出）
@@ -97,7 +97,7 @@ def test_strip_raster_single_point_full_row_cost(rs_env, raster_factory):
         resolved_sources=[ref_holder["resolved"]],
         bindings=[_binding(ref_holder["ref"])],
         station_set=ss, method="source_pixel")
-    assert metrics.opens == 1
+    assert metrics.opens == 2
     # itemsize=4（dtype 默认 float32）→ 一行全宽 = 80000×4 字节
     assert metrics.decoded_bytes >= 80_000 * 4  # 至少一行全宽
     # 放大闸下限：monkeypatch 条带预算 → 同请求必须 typed 拒绝（不静默）
@@ -114,6 +114,26 @@ def test_strip_raster_single_point_full_row_cost(rs_env, raster_factory):
         assert "strip" in ei.value.detail or "block" in ei.value.detail
     finally:
         mod.MAX_STRIP_DECODE_BYTES = orig
+
+
+def test_opens_counts_acquisition_and_batch_read_passes(rs_env, raster_factory):
+    """P3：opens 记采集 open + 批读 open —— 单源应为 2（记账不低报）。"""
+    import asyncio
+
+    made = {}
+
+    async def make():
+        ref, path = await raster_factory("opens", name="opens_small")
+        made["ref"] = ref
+        made["resolved"] = await _resolve("opens", ref)
+
+    asyncio.run(make())
+    ss = _station_set([(10.005, 19.995)])
+    _, metrics, _ = reader_schedule.execute_sampling(
+        resolved_sources=[made["resolved"]],
+        bindings=[_binding(made["ref"])],
+        station_set=ss, method="source_pixel")
+    assert metrics.opens == 2
 
 
 def test_value_cell_budget_pre_allocation(rs_env, raster_factory):
@@ -208,7 +228,7 @@ def test_two_sources_own_grids_no_hidden_resample(rs_env, raster_factory):
         resolved_sources=[made["r1"], made["r2"]],
         bindings=[_binding(made["ref1"]), _binding(made["ref2"])],
         station_set=ss, method="source_pixel")
-    assert metrics.opens == 2
+    assert metrics.opens == 4
     src1 = {r.sample_id: r for r in rows if r.source_ref == made["ref1"]}
     src2 = {r.sample_id: r for r in rows if r.source_ref == made["ref2"]}
     assert all(r.raw_value == 111.0 for r in src1.values())

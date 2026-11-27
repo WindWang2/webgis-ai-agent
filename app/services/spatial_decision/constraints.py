@@ -112,11 +112,11 @@ def evaluate_alternative_constraints(
                 constraint=c,
             )
         elif c.category == ConstraintCategory.NUMERIC:
-            # Check attribute in alternative.attributes first, then in metric_values
-            val = None
-            if c.metric_key in alternative.attributes:
-                val = alternative.attributes[c.metric_key]
-            elif c.metric_key in metric_values:
+            # Check attribute in alternative.attributes first, then in metric_values.
+            # A present-but-None attribute is missing evidence, not a value: fall
+            # back to the evaluated metric instead of failing as "no evidence".
+            val = alternative.attributes.get(c.metric_key)
+            if val is None and c.metric_key in metric_values:
                 val = metric_values[c.metric_key]
             try:
                 numeric_value = float(val) if val is not None and not isinstance(val, bool) else None
@@ -133,7 +133,17 @@ def evaluate_alternative_constraints(
             val = alternative.attributes.get(c.metric_key)
             thresh = c.threshold
             op = c.operator or "in"
-            passed = False if val is None else ((val in thresh) if op == "in" else (val not in thresh))
+            if val is None:
+                passed = False
+            elif op == "in":
+                passed = val in thresh
+            elif op in ("not_in", "outside"):
+                passed = val not in thresh
+            else:
+                # Fail closed on unknown operators: previously a misspelled
+                # operator fell through to `val not in thresh`, which is
+                # usually True for values that should violate the constraint.
+                passed = False
             penalty = 0.0 if passed else (c.penalty_weight if c.constraint_type == ConstraintType.SOFT else 0.0)
             evaluation = ConstraintEvaluation(
                 constraint_id=c.id,

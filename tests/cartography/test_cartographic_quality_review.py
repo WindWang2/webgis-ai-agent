@@ -2121,3 +2121,111 @@ def test_point_heatmap_layer_passes_geometry_check():
 
     geometry = next(c for c in report["checks"] if c["rule"] == "GEOMETRY_LAYER_TYPE")
     assert geometry["status"] == "pass"
+
+
+def test_projection_budgets_are_per_domain_not_shared():
+    """P2：共享 4096 节点预算被 sources 耗尽 → layers/view 全塌为 truncated。
+
+    指纹随后对 paint/视野/表现变更失明，陈旧观察可被盖章到新 revision。
+    """
+    spec = _plain_mapspec()
+    spec["sources"]["huge"] = {
+        "type": "geojson",
+        "inlineData": {"type": "FeatureCollection", "features": []},
+        "profile": {
+            "featureCount": 10,
+            "bbox": [100.0, 20.0, 101.0, 21.0],
+            "fields": {
+                f"f{i:03d}": {
+                    "type": "number", "min": 0, "max": 1,
+                    "mean": 0.5, "null_count": 0,
+                    "sampleValues": [f"v{j}" for j in range(40)],
+                }
+                for i in range(300)
+            },
+        },
+    }
+    spec["view"] = {"center": [104.0, 30.0], "zoom": 11.5}
+    projection = cartographic_projection(spec)
+    # 第二个（小的）源不得被前一个巨源的预算吃光
+    assert projection["sources"]["points"] != {"truncated": True}
+    # 域间不互相饿死：layers/view 仍是真实投影而非 {"truncated": True}
+    assert projection["layers"] != [{"truncated": True}]
+    assert projection["layers"][0].get("paint") is not None
+    assert projection["view"] != {"truncated": True}
+    assert projection["view"]["zoom"] == 11.5
+
+
+def test_projection_still_detects_paint_change_after_huge_source():
+    """同一 P2 的可观察后果：巨源在场时 paint 变更仍必须换指纹。"""
+    spec = _plain_mapspec()
+    spec["sources"]["huge"] = {
+        "type": "geojson",
+        "profile": {
+            "featureCount": 10,
+            "fields": {
+                f"f{i:03d}": {
+                    "type": "number",
+                    "sampleValues": [f"v{j}" for j in range(40)],
+                }
+                for i in range(300)
+            },
+        },
+    }
+    before = cartographic_fingerprint(spec)
+    spec["layers"][0]["paint"]["circle-color"] = "#ff0000"
+    assert cartographic_fingerprint(spec) != before
+
+
+def test_apply_palette_change_tolerates_tuple_stops():
+    """Python 构造的 tuple stops/cases 不得因原地赋值抛 TypeError。"""
+    from app.lib.cartography.quality_loop import _apply_palette_change
+
+    layer = {
+        "legend_spec": {"palette_colors": ["#111111", "#222222", "#333333"]},
+        "paint": {"fill-color": {
+            "method": "step", "field": "v", "default": "#000000",
+            "stops": ((0, "#111111"), (1, "#222222")),
+        }},
+    }
+    _apply_palette_change(layer, ["#111111", "#222222", "#333333"])
+
+    match_layer = {
+        "legend_spec": {"palette_colors": ["#111111", "#222222"]},
+        "paint": {"fill-color": {
+            "method": "match", "field": "k",
+            "cases": (("a", "#111111"), ("b", "#222222")),
+        }},
+    }
+    _apply_palette_change(match_layer, ["#111111", "#222222"])
+
+
+def test_repair_patch_fingerprint_tolerates_nan_observation():
+    from app.lib.cartography.runtime_repair import repair_patch_fingerprint
+
+    fingerprint = repair_patch_fingerprint([
+        {"before": {"opacity": float("nan")}},
+    ])
+    assert fingerprint.startswith("repair-sha256:")
+
+
+def test_runtime_visibility_repair_tolerates_non_dict_layout():
+    mapspec = _plain_mapspec()
+    mapspec["layers"][0]["layout"] = "invalid"
+    observation = {
+        "layers": [{
+            "id": "result",
+            "runtime_store_id": "result",
+            "intent_generation": 3,
+        }],
+    }
+    cartography = {
+        "checks": [{
+            "rule": "RUNTIME_RESULT_VISIBILITY",
+            "status": "fail",
+            "evidence": {"layer_id": "result", "runtime_layer_id": "result"},
+        }],
+    }
+    plan = plan_runtime_repairs(mapspec, observation, cartography)
+    assert plan is not None
+    assert plan["patches"][0]["desired"]["visible"] is True

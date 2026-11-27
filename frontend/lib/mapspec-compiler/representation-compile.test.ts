@@ -397,10 +397,10 @@ describe("compileMapSpec：显式计划优先于密度推断", () => {
 
 // ── #1747 项 1：heatmap 表达窗子层 paint 与 live 路径对齐 ─────────────────
 // live runtime（addRepresentationSublayersSafe）对 heatmap 子层用
-// heatmapOnlyPaint(toMapLibrePaint(layer)) —— 原生 heatmap-* paint 全量
-// 穿透；headless 编译器此前只发 heatmap-radius，带原生密度色带的层导出
-// 即掉回 MapLibre 默认蓝色色带（导出降级）。现已收口为单一实现
-// （mapspec-compiler/heatmap-paint.ts），此处锁定导出侧契约。
+// heatmapOnlyPaint(toMapLibrePaint(layer, { includeHeatmapKeys: true })) ——
+// 原生 heatmap-* paint 全量穿透；headless 编译器此前只发 heatmap-radius，
+// 带原生密度色带的层导出即掉回 MapLibre 默认蓝色色带（导出降级）。现已
+// 收口为单一实现（mapspec-compiler/heatmap-paint.ts），此处锁定导出侧契约。
 describe("compileMapSpec：g) heatmap 表达窗子层 paint 与 live 对齐（#1747）", () => {
   const windows: MapSpecRepresentationWindow[] = [
     { min_zoom: 0, max_zoom: 11, mode: "raw" },
@@ -453,6 +453,130 @@ describe("compileMapSpec：g) heatmap 表达窗子层 paint 与 live 对齐（#1
     expect(rep1.paint["circle-color"]).toBeUndefined();
     expect(rep1.paint["heatmap-radius"]).toBeDefined();
     expect((rep1.paint["heatmap-radius"] as unknown[])[0]).toBe("interpolate");
+  });
+
+  it("circle 层带原生 heatmap-* paint：色带穿透 __rep 子层，主层不带 heatmap-* 键", () => {
+    // #1747 项 1（circle 主层侧）：circle 分支此前没有原生 heatmap-* paint
+    // 的透传收纳 —— visual_heatmap 窗子层只拿到符号律兜底的 heatmap-radius，
+    // 密度色带掉回 MapLibre 默认蓝色色带（导出降级）。原生键不得落主层
+    // paint（MapLibre 拒绝 circle 层上的 heatmap-* 键），只透给窗子层。
+    const nativeColor = [
+      "interpolate", ["linear"], ["heatmap-density"],
+      0, "rgba(0,0,0,0)", 0.5, "#ff8800", 1, "#ff0000",
+    ] as unknown as StyleMethod;
+    const r = compileMapSpec(
+      specWith({
+        windows,
+        layer: {
+          type: "circle",
+          paint: {
+            color: "#3388aa",
+            radius: 4,
+            "heatmap-color": nativeColor,
+            "heatmap-intensity": 1.2,
+            "heatmap-opacity": 0.9,
+            "heatmap-radius": 18,
+          },
+        },
+      }),
+    );
+    expect(r.report.success).toBe(true);
+    const main = layerOf(r, "L");
+    expect(main.type).toBe("circle");
+    expect(Object.keys(main.paint).some((k) => k.startsWith("heatmap-"))).toBe(false);
+    const rep1 = layerOf(r, "L__rep1");
+    expect(rep1.type).toBe("heatmap");
+    // 密度色带不得掉回 MapLibre 默认蓝
+    expect(rep1.paint["heatmap-color"]).toEqual(nativeColor);
+    expect(rep1.paint["heatmap-intensity"]).toBe(1.2);
+    expect(rep1.paint["heatmap-opacity"]).toBe(0.9);
+    // 显式半径优先（符号律兜底只在缺省时介入 —— 与 live 同规）
+    expect(rep1.paint["heatmap-radius"]).toBe(18);
+    // 非 heatmap-* 键不得残留（MapLibre 会拒绝整层）
+    expect(Object.keys(rep1.paint).every((k) => k.startsWith("heatmap-"))).toBe(true);
+  });
+});
+
+// ── P2（review）：G40 类别绑定 × raw 窗克隆 / label 合成门 ─────────────────
+describe("compileMapSpec：h) raw 窗克隆同步主层最终定义（G40）", () => {
+  const windows: MapSpecRepresentationWindow[] = [
+    { min_zoom: 0, max_zoom: 11, mode: "raw" },
+    { min_zoom: 11, max_zoom: 14, mode: "hidden" },
+    { min_zoom: 14, max_zoom: 24, mode: "raw" },
+  ];
+
+  it("area_texture + category_binding：raw 窗克隆继承类别排除 filter", () => {
+    const r = compileMapSpec(
+      specWith({
+        windows,
+        layer: {
+          type: "fill",
+          paint: { color: "#ff0000" },
+          symbol_asset: {
+            schema_version: 1,
+            asset_id: "cartoasset.builtin.hatch",
+            revision: 1,
+            content_digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            kind: "area_texture",
+            params: {},
+            category_binding: {
+              field: "zone",
+              map: [
+                { key: "a", asset_id: "a", revision: 1, content_digest: "sha256:bbbb" },
+                { key: "b", asset_id: "b", revision: 1, content_digest: "sha256:cccc" },
+              ],
+            },
+          },
+        },
+      }),
+    );
+    expect(r.report.success).toBe(true);
+    const main = layerOf(r, "L");
+    const rep2 = layerOf(r, "L__rep2");
+    // G40 主层 filter 为整体替换（新数组）—— 克隆必须在补丁后同步，否则
+    // 类别要素既被纹理子层绘制又被克隆再画一次（双绘）。
+    expect(main.filter).toEqual(
+      ["!", ["in", ["get", "zone"], ["literal", ["a", "b"]]]],
+    );
+    expect(rep2.filter).toEqual(main.filter);
+    expect(rep2.paint["fill-pattern"]).toBe(main.paint["fill-pattern"]);
+  });
+});
+
+describe("compileMapSpec：i) label 子层继承合成 zoom 门", () => {
+  it("raw 窗 [11,24)：标注层与主层同门（不越窗渲染）", () => {
+    const r = compileMapSpec(
+      specWith({
+        windows: [
+          { min_zoom: 0, max_zoom: 11, mode: "hidden" },
+          { min_zoom: 11, max_zoom: 24, mode: "raw" },
+        ],
+        layer: { label: { field: "v" } },
+      }),
+    );
+    const main = layerOf(r, "L");
+    const label = layerOf(r, "L-label");
+    expect(main.minzoom).toBe(11);
+    expect(main.maxzoom).toBe(24);
+    expect(label.minzoom).toBe(11);
+    expect(label.maxzoom).toBe(24);
+  });
+
+  it("退化门（主层恒隐 minzoom=24）→ 标注层同为恒隐门", () => {
+    const r = compileMapSpec(
+      specWith({
+        windows: [
+          { min_zoom: 0, max_zoom: 11, mode: "visual_heatmap" },
+          { min_zoom: 11, max_zoom: 24, mode: "raw" },
+        ],
+        layer: { visibility: { max_zoom: 6 }, label: { field: "v" } },
+      }),
+    );
+    const main = layerOf(r, "L");
+    const label = layerOf(r, "L-label");
+    expect(main.minzoom).toBe(24);
+    expect(label.minzoom).toBe(24);
+    expect(label.maxzoom).toBeUndefined();
   });
 });
 

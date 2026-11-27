@@ -92,6 +92,8 @@ def _bound(value: Any, depth: int = 0) -> Any:
     if isinstance(value, bool) or value is None:
         return value
     if isinstance(value, (int, float)):
+        if isinstance(value, float) and not math.isfinite(value):
+            return None
         return value
     return _bound_str(value)
 
@@ -99,12 +101,12 @@ def _bound(value: Any, depth: int = 0) -> Any:
 def canonical_decision_json(record: Dict[str, Any]) -> str:
     """决策载荷规范化（digest / id 派生统一入口；排序键 + 有限精度）。"""
     return json.dumps(_round_floats(record), sort_keys=True,
-                      ensure_ascii=False, default=str)
+                      ensure_ascii=False, default=str, allow_nan=False)
 
 
 def _round_floats(value: Any) -> Any:
     if isinstance(value, float):
-        return round(value, 6)
+        return round(value, 6) if math.isfinite(value) else None
     if isinstance(value, dict):
         return {k: _round_floats(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
@@ -149,9 +151,12 @@ def alternative_entry(
     entry: Dict[str, Any] = {"id": _bound_str(alt_id, 96)}
     if score is not None:
         try:
-            entry["score"] = round(float(score), 4)
+            score_value = float(score)
         except (TypeError, ValueError):
             pass
+        else:
+            if math.isfinite(score_value):
+                entry["score"] = round(score_value, 4)
     if status:
         entry["status"] = _bound_str(status, 32)
     if rank is not None and not isinstance(rank, bool):

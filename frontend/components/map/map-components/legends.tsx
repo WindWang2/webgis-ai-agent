@@ -111,7 +111,8 @@ function BivariateMatrix({ legend, title }: { legend: LegendSpec; title?: string
     boundary_rule?: string;
   };
   const colors = raw.colors ?? [];
-  const n = Math.min(4, Math.max(2, Number(raw.n ?? 3)));
+  const nRaw = Number(raw.n ?? 3);
+  const n = Number.isFinite(nRaw) ? Math.min(4, Math.max(2, Math.trunc(nRaw))) : 3;
   const labelA = String(raw.label_a ?? '');
   const labelB = String(raw.label_b ?? '');
   if (colors.length < n * n) return null;
@@ -331,10 +332,10 @@ function LegendRenderer(component: MapSpecComponent, ctx: RendererContext) {
 
 // V4：composite 变体 —— 多层复合图例（所有携带 legend_spec 的图层分组）
 function renderComposite(component: MapSpecComponent, ctx: RendererContext, variant: string) {
-  const groups = (ctx.spec?.layers ?? [])
+  const allGroups = (ctx.spec?.layers ?? [])
     .map((l) => l as unknown as { id: string; legend_spec?: LegendSpec & { title?: string } })
-    .filter((l) => l.legend_spec != null)
-    .slice(0, 3);
+    .filter((l) => l.legend_spec != null);
+  const groups = allGroups.slice(0, 3);
   return (
     <div data-testid="spec-chrome-legend" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome px-2 py-1.5 ${positionClass(component)}`} aria-label={tNow('map.legends.compositeAria')}>
       {groups.map((g) => {
@@ -354,6 +355,9 @@ function renderComposite(component: MapSpecComponent, ctx: RendererContext, vari
           </div>
         );
       })}
+      {allGroups.length > groups.length && (
+        <div className="text-micro text-map-chrome-ink-muted" aria-label={tNow('map.legends.moreHidden', { count: allGroups.length - groups.length })}>…+{allGroups.length - groups.length}</div>
+      )}
     </div>
   );
 }

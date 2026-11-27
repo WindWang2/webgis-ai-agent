@@ -27,6 +27,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
@@ -53,9 +54,7 @@ def scope_percentages(report_json: Dict[str, Any]) -> Dict[str, Tuple[int, int, 
         summary = payload.get("summary") or {}
         stmts = int(summary.get("num_statements") or 0)
         covered = int(summary.get("covered_lines") or 0)
-        if normed.lower().startswith(CARTOGRAPHY_PREFIX) or normed.lower().startswith(
-            "app\\lib\\cartography\\"
-        ):
+        if normed.lower().startswith(CARTOGRAPHY_PREFIX):
             scope = "cartography"
         elif normed.lower().startswith(HARNESS_PREFIX):
             scope = "harness"
@@ -125,38 +124,41 @@ def main(argv=None) -> int:
                  else "❌ lane 存在失败"))
         return rc
 
-    json_path = Path(args.json_path) if args.json_path else (
-        Path(tempfile.mkdtemp(prefix="ac10-cov-")) / "coverage.json"
-    )
-    if not args.skip_tests:
-        # 覆盖率不足时 pytest 本身退出码非 0（无 --cov-fail-under 时仅当测试失败）；
-        # 测试失败 = lane 红线，直接透传失败。
-        rc = run_lane(json_path)
-        if rc != 0:
-            print(f"[coverage-gate] cartography lane 测试失败（exit={rc}）", flush=True)
-            return rc
-    if not json_path.exists():
-        print(f"[coverage-gate] 找不到 coverage JSON：{json_path}", flush=True)
-        return 2
-    report = json.loads(json_path.read_text(encoding="utf-8"))
-    scopes = scope_percentages(report)
+    with (
+        tempfile.TemporaryDirectory(prefix="ac10-cov-")
+        if not args.json_path else nullcontext()
+    ) as temp_dir:
+        json_path = (Path(args.json_path) if args.json_path
+                     else Path(temp_dir) / "coverage.json")
+        if not args.skip_tests:
+            # 覆盖率不足时 pytest 本身退出码非 0（无 --cov-fail-under 时仅当测试失败）；
+            # 测试失败 = lane 红线，直接透传失败。
+            rc = run_lane(json_path)
+            if rc != 0:
+                print(f"[coverage-gate] cartography lane 测试失败（exit={rc}）", flush=True)
+                return rc
+        if not json_path.exists():
+            print(f"[coverage-gate] 找不到 coverage JSON：{json_path}", flush=True)
+            return 2
+        report = json.loads(json_path.read_text(encoding="utf-8"))
+        scopes = scope_percentages(report)
 
-    carto_stmts, carto_covered, carto_pct = scopes["cartography"]
-    h_stmts, h_covered, h_pct = scopes["harness"]
-    combined_s = carto_stmts + h_stmts
-    combined_c = carto_covered + h_covered
-    combined_pct = (combined_c / combined_s * 100.0) if combined_s else 0.0
+        carto_stmts, carto_covered, carto_pct = scopes["cartography"]
+        h_stmts, h_covered, h_pct = scopes["harness"]
+        combined_s = carto_stmts + h_stmts
+        combined_c = carto_covered + h_covered
+        combined_pct = (combined_c / combined_s * 100.0) if combined_s else 0.0
 
-    print("=" * 72)
-    print("cartography lane 独立覆盖率（与后端 75% 分开计）")
-    print(f"  app/lib/cartography : {carto_stmts:5} stmts, {carto_pct:6.2f}%   ← 闸 scope")
-    print(f"  app/lib/harness     : {h_stmts:5} stmts, {h_pct:6.2f}%   （09 线，仅报告）")
-    print(f"  合并参考            : {combined_s:5} stmts, {combined_pct:6.2f}%")
-    print(f"  下限（ratchet 只升不降）: {floor:.1f}%")
-    ok = carto_pct >= floor
-    print(f"  判定: {'✅ 通过' if ok else '❌ 低于下限 —— 拦截'}")
-    print("=" * 72)
-    return 0 if ok else 1
+        print("=" * 72)
+        print("cartography lane 独立覆盖率（与后端 75% 分开计）")
+        print(f"  app/lib/cartography : {carto_stmts:5} stmts, {carto_pct:6.2f}%   ← 闸 scope")
+        print(f"  app/lib/harness     : {h_stmts:5} stmts, {h_pct:6.2f}%   （09 线，仅报告）")
+        print(f"  合并参考            : {combined_s:5} stmts, {combined_pct:6.2f}%")
+        print(f"  下限（ratchet 只升不降）: {floor:.1f}%")
+        ok = carto_pct >= floor
+        print(f"  判定: {'✅ 通过' if ok else '❌ 低于下限 —— 拦截'}")
+        print("=" * 72)
+        return 0 if ok else 1
 
 
 if __name__ == "__main__":

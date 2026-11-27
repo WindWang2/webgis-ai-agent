@@ -45,6 +45,16 @@ def test_malformed_cursor_typed_reject():
         decode_page_cursor(encode_page_cursor(-1))
 
 
+def test_cursor_non_object_payload_typed_reject():
+    """cursor 解出 JSON 数组/标量/null → typed 400，而不是 AttributeError 泄漏。"""
+    import base64
+
+    for payload in ("[]", "[1]", "null", "1", '"x"'):
+        token = base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
+        with pytest.raises(FeaturePageError):
+            decode_page_cursor(token)
+
+
 def test_bbox_param_parsing():
     assert parse_bbox_param(None) is None
     assert parse_bbox_param("") is None

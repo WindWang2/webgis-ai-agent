@@ -626,9 +626,19 @@ class RuntimeInteractionService:
             if record is None or record.turn_id != turn_id:
                 continue
             if record.state in (InteractionState.PENDING, InteractionState.ANSWER_WRITTEN):
+                was_pending = record.state is InteractionState.PENDING
                 record.state = InteractionState.INVALIDATED
                 record.resolve_evidence = reason[:120]
                 count += 1
+                # P2：teardown 失效同样要经合法取消收口（与 cap 拒绝 / 宿主
+                # 策略期限同款）—— 否则无原生 timeout 的 dialog 在 Pi 子进程
+                # 内悬挂；INVALIDATED 永不被心跳复审，错过即不可恢复。
+                if was_pending and record.rpc is not None and record.native_timeout_ms is None:
+                    try:
+                        response = build_ui_response(record.native_id, cancelled=True)
+                        self._deferred_writes.append((record.rpc, response))
+                    except UiProtocolError:
+                        pass
                 self._emit_update(record)
         return count
 

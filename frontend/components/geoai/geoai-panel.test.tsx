@@ -263,6 +263,47 @@ describe('GeoAiPanel', () => {
     await userEvent.click(screen.getByTestId('undo'));
     expect(screen.getByText('提交后按分数列出')).toBeTruthy();
   });
+
+  it('候选渲染预算只计入真正渲染的多边形（非 Polygon 不占预算）', async () => {
+    await bootPanel();
+    // 前 500 个 feature 是 MultiPolygon，第 501 个才是 Polygon。渲染预算
+    // 必须只对进入 DOM 的候选计数，否则这个多边形会被非多边形全部挤掉。
+    const bigGeojson = {
+      features: [
+        ...Array.from({ length: 500 }, (_, i) => ({
+          type: 'Feature',
+          properties: { candidate: i, score: 0.1, source: 'heuristic' },
+          geometry: {
+            type: 'MultiPolygon',
+            coordinates: [[[[104, 24], [105, 24], [105, 25], [104, 25], [104, 24]]]],
+          },
+        })),
+        {
+          type: 'Feature',
+          properties: { candidate: 0, score: 0.8, source: 'heuristic' },
+          geometry: {
+            type: 'Polygon',
+            coordinates: [[[104, 24], [106, 24], [106, 26], [104, 26], [104, 24]]],
+          },
+        },
+      ],
+    };
+    const prevImpl = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation((url: string) => {
+      if (String(url).includes('/geoai/artifact-geojson')) {
+        return Promise.resolve(jsonOk(bigGeojson));
+      }
+      return prevImpl ? prevImpl(url) : Promise.resolve(jsonOk({}));
+    });
+    const overlay = screen.getByTestId('prompt-overlay');
+    await userEvent.pointer([
+      { target: overlay, keys: '[MouseLeft>]', coords: { x: 100, y: 50 } },
+      { keys: '[/MouseLeft]', coords: { x: 100, y: 50 } },
+    ]);
+    await userEvent.click(screen.getByTestId('submit'));
+    await waitFor(() => expect(screen.getByTestId('candidate-list')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('candidate-poly-0')).toBeTruthy());
+  });
 });
 
 describe('GeoAiPanel 可访问性（#2157/#2159/#2163）', () => {

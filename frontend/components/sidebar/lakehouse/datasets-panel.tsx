@@ -20,8 +20,6 @@ export interface DatasetsPanelProps {
   ownerType: 'session' | 'project';
   sessionId: string;
   ownerToken?: string | null;
-  /** 双快照对比入口（P6 diff 视图在本 tab 内渲染）。 */
-  onOpenDiff?: (datasetId: string, versions: [string, string]) => void;
 }
 function RefChips({ refs }: { refs: DatasetRef[] }) {
   return (

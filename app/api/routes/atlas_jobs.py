@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Dict, Optional
 
@@ -165,9 +166,10 @@ async def submit_atlas_export_job(
             status_code=404,
             detail={"code": "atlas_spec_missing",
                     "message": f"会话 {body.session_id} 无已提交的权威 MapSpec"})
+    hydrated_document = await hydrate_ref_sources(document, body.session_id)
     try:
-        plan_summary = dry_run_plan(
-            spec, await hydrate_ref_sources(document, body.session_id))
+        plan_summary = await asyncio.to_thread(
+            dry_run_plan, spec, hydrated_document)
     except MapSpecSchemaError as ex:
         raise HTTPException(
             status_code=400,
@@ -185,7 +187,8 @@ async def submit_atlas_export_job(
         owner_token=owner_token,
     )
     with use_origin(origin):
-        result = submit_atlas_job(spec, origin_session_id=body.session_id)
+        result = await asyncio.to_thread(
+            submit_atlas_job, spec, origin_session_id=body.session_id)
     return AtlasSubmitResponse(
         job_id=str(result.get("job_id") or ""),
         status=str(result.get("status") or "submitted"),

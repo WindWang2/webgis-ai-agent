@@ -156,6 +156,62 @@ class TestMixedExportTool:
         assert "bytes" not in result or not isinstance(result.get("bytes"), bytes) \
             or result.get("bytes", 0) < 10_000_000, "refs-only 回执不携带图像载荷"
 
+    def test_tool_lineage_db_failure_does_not_block_delivery(
+            self, monkeypatch):
+        """db 会话/commit 失败只丢 lineage，导出交付仍返回成功回执。"""
+        import asyncio
+
+        import app.core.database as db_module
+        import app.services.mixed_map_export as export_module
+        from app.tools.mixed_map_export_tools import (
+            register_mixed_map_export_tools,
+        )
+        from app.tools.registry import ToolRegistry
+
+        artifact = {
+            "bytes": b"<svg/>", "media_type": "image/svg+xml",
+            "extension": ".svg", "manifest": {"mapspec_revision": 3},
+        }
+        persist_calls = []
+
+        async def _export(*args, **kwargs):
+            return artifact
+
+        async def _persist(session_id, art, *, principal, user_id=None,
+                           owner_token=None, db=None):
+            persist_calls.append(db)
+            return {
+                "success": True,
+                "filename": "mixed_map_1.svg",
+                "download_url": "/api/v1/export/download/mixed_map_1.svg",
+                "manifest_url":
+                    "/api/v1/export/download/mixed_map_1.svg.manifest.json",
+                "media_type": "image/svg+xml",
+                "bytes": 6,
+                "manifest": {"mapspec_revision": 3},
+            }
+
+        class _BrokenSession:
+            async def __aenter__(self):
+                raise RuntimeError("db unavailable")
+
+            async def __aexit__(self, *exc_info):
+                return False
+
+        monkeypatch.setattr(export_module, "export_mixed_map", _export)
+        monkeypatch.setattr(export_module, "persist_mixed_export", _persist)
+        monkeypatch.setattr(
+            db_module, "async_db_session", lambda: _BrokenSession())
+
+        reg = ToolRegistry()
+        register_mixed_map_export_tools(reg)
+        result = asyncio.run(
+            reg._tools["webgis_map_export"](format="svg", session_id="sess-1"))
+
+        assert result["success"] is True
+        assert result["filename"] == "mixed_map_1.svg"
+        assert persist_calls[-1] is None
+
     def test_tool_missing_session(self):
         import asyncio
 

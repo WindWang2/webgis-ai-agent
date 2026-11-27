@@ -153,16 +153,9 @@ def _tier_decluttering(
 
 def _mandatory_ids_from_overrides(
     overrides: Sequence[UserScaleOverride],
-) -> Tuple[frozenset, List[str]]:
-    ids = {o.value for o in overrides if o.kind == "mandatory_feature"}
-    values: List[str] = []
-    for o in overrides:
-        if o.kind == "band_keep_values" and isinstance(o.detail, dict):
-            tier = o.detail.get("tier")
-            vals = o.detail.get("values")
-            if isinstance(tier, str) and isinstance(vals, list):
-                values.append(tier)
-    return frozenset(ids), values
+) -> frozenset:
+    return frozenset(
+        o.value for o in overrides if o.kind == "mandatory_feature")
 
 
 def build_scale_profile(
@@ -184,7 +177,7 @@ def build_scale_profile(
     feature_count = source.feature_count or len(features)
     model = importance.selected if importance is not None else None
     pin_raw = any(o.kind == "pin_mode" and o.value == "raw" for o in user_overrides)
-    mandatory_ids, band_keep_overrides = _mandatory_ids_from_overrides(user_overrides)
+    mandatory_ids = _mandatory_ids_from_overrides(user_overrides)
 
     bands: List[ScaleBandPlan] = []
     artifacts: Dict[str, GeneralizationResult] = {}
@@ -268,7 +261,12 @@ def build_scale_profile(
 
         mode = "generalized" if gen is not None else "raw"
         displayed = len(gen.feature_collection["features"]) if gen else feature_count
-        suppressed = feature_count - displayed
+        # suppressed 以本带**实际输入**（receipt.input_count）为基准，不是
+        # source.feature_count：源 revision 声明数与实际入泛化要素数不一致
+        # 时，带统计会静默错值，而 receipt.stats_match 仍自洽为 True。
+        raw_input = gen.receipt.get("input_count") if gen is not None else None
+        band_input = int(raw_input) if isinstance(raw_input, int) else feature_count
+        suppressed = max(0, band_input - displayed)
         degrade: List[str] = []
         if gen is not None:
             degrade = [

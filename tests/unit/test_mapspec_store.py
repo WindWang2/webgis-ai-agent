@@ -537,3 +537,23 @@ async def test_discard_mapspec_clears_sidecars_and_fingerprint(clean_session):
     assert (session_dir / "mapspec.json").exists()
     loaded = await raw_store.get_mapspec(clean_session)
     assert loaded == spec
+
+
+@pytest.mark.asyncio
+async def test_save_rejects_nan_instead_of_writing_invalid_json(tmp_path, monkeypatch):
+    """NaN/Infinity 不得写成裸记号（非法 JSON）——在写入点响亮失败。"""
+    import app.services.mapspec.store as store_mod
+
+    monkeypatch.setattr(store_mod, "BASE_STORAGE_DIR", tmp_path)
+    raw_store = store_mod.MapSpecStore()
+    sid = f"test-nan-{uuid.uuid4().hex[:8]}"
+    spec = {"version": "1.0", "layers": [], "view": {"center": [float("nan"), 0.0]}}
+
+    with pytest.raises(ValueError):
+        await raw_store.save_mapspec(sid, spec)
+    assert not (tmp_path / sid / "mapspec.json").exists()
+
+    target = tmp_path / "atomic-nan.json"
+    with pytest.raises(ValueError):
+        store_mod._atomic_write_json_sync(target, {"v": float("inf")})
+    assert not target.exists()

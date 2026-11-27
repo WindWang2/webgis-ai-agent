@@ -209,7 +209,19 @@ class TestWindow:
             window_event_times=[
                 NOW - timedelta(seconds=i) for i in range(500)])
         r = evaluate_watch(w, st, _evt())
-        assert len(r.state.window_event_times) <= 128
+        assert len(r.state.window_event_times) <= 1000
+
+    def test_window_min_events_above_128_reachable(self):
+        """契约允许 window_min_events<=1000：窗口簿记不得截断在 128。"""
+        w = _watch(C.WatchCondition(window_s=3600, window_min_events=200))
+        st = C.WatchState()
+        fired = False
+        for i in range(200):
+            r = evaluate_watch(
+                w, st, _evt(occurred_at=NOW + timedelta(seconds=i)))
+            st = r.state
+            fired = fired or r.fired
+        assert fired
 
 
 class TestCooldown:

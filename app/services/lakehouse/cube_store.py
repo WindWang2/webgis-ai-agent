@@ -608,11 +608,23 @@ def publish_cube(
     base = Path(store_dir)
     entries = collect_cube_entries(base)
     total = sum(n for _p, _d, n in entries)
+    extra = dict(payload_extra) if payload_extra else {}
     payload: Dict[str, Any] = {
         "dims": ["time", "y", "x"],
         "cube_schema_version": CUBE_SCHEMA_VERSION,
-        **(dict(payload_extra) if payload_extra else {}),
+        **extra,
     }
+    labeled = payload.get("labeled")
+    if isinstance(labeled, Mapping):
+        # labeled cube 的形状契约以 labeled 投影为准（v2/v3）—— 绝不以
+        # v1 的 [time,y,x]/schema v1 错标 4-D store 的 manifest 形状。
+        if "dims" not in extra and labeled.get("dims"):
+            payload["dims"] = list(labeled["dims"])
+        if (
+            "cube_schema_version" not in extra
+            and labeled.get("cube_schema_version") is not None
+        ):
+            payload["cube_schema_version"] = labeled["cube_schema_version"]
     if total <= blob_budget_bytes:
         identity = publish_data_object(
             {rel: base / rel for rel, _d, _n in entries},
@@ -723,11 +735,11 @@ def fork_cube_revision(
 
     # 原子发布（#1634）：整个修订目录先落到同目录隐藏 staging，再
     # os.replace 到终态 —— 读者要么见完整修订、要么见无修订；CoW 链接
-    # 与 chunk 重写都在 staging 内进行，写盘中途崩溃只遗留 staging 残骸
-    # （下次 fork 开头即清），残缺修订目录永不落终态。
+    # 与 chunk 重写都在 staging 内进行，写盘中途崩溃只遗留 staging 残骸，
+    # 残缺修订目录永不落终态。staging 名逐 fork 唯一 —— 同 target_dir
+    # 的并发 fork 绝不互删对方的 staging。
     dst.parent.mkdir(parents=True, exist_ok=True)
-    stage = dst.with_name(f".{dst.name}.tmp")
-    shutil.rmtree(stage, ignore_errors=True)  # 上次崩溃遗留的 staging 残骸
+    stage = dst.with_name(f".{dst.name}.{uuid.uuid4().hex}.tmp")
     stage.mkdir()
     try:
         _fork_revision_into(

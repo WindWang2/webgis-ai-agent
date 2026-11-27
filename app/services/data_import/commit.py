@@ -151,7 +151,9 @@ async def commit_member(
                 from app.services.data_import.preview import _zipset_shp_path
 
                 read_path = _zipset_shp_path(member, source, extract_root)
-            kwargs: Dict[str, Any] = {}
+            # 有界读取：先按行预算 +1 截断，再交给 interpret_vector 判超限，
+            # 避免超大图层整读撑爆内存（preview 同款上界）。
+            kwargs: Dict[str, Any] = {"max_features": budgets.COMMIT_ROW_LIMIT + 1}
             if layer is not None:
                 kwargs["layer"] = layer
             try:
@@ -187,6 +189,8 @@ async def commit_member(
                 hints=member.hints,
                 row_limit=budgets.COMMIT_ROW_LIMIT,
                 cancel=_check_cancel,
+                # 提交不走预览列帽（评审 P1）：超帽列不得从产物中静默消失
+                cap_columns=False,
             )
     except InterpretationError as e:
         receipt.error_code = e.code
@@ -244,7 +248,9 @@ async def commit_member(
             )
             if transformed and ev:
                 ev.transform_target = "EPSG:4326"
-            payload_bytes = len(json.dumps(fc, ensure_ascii=False))
+            # 单次全量序列化：预算测长与 outputs 副本复用同一字符串
+            fc_json = json.dumps(fc, ensure_ascii=False)
+            payload_bytes = len(fc_json)
             if payload_bytes > budgets.MAX_MEMBER_OUTPUT_BYTES:
                 raise CommitError(
                     "OUTPUT_BUDGET_EXCEEDED",
@@ -284,9 +290,7 @@ async def commit_member(
                 out_path = staging.outputs_dir(state) / (
                     staging.member_safe_name(member.member_key) + ".geojson"
                 )
-                out_path.write_text(
-                    json.dumps(fc, ensure_ascii=False), encoding="utf-8"
-                )
+                out_path.write_text(fc_json, encoding="utf-8")
             except OSError as e:  # noqa: BLE001 — outputs 副本失败不阻断
                 state.notes.append(f"{member.display_name}: outputs 副本写入失败（{e}）")
         else:

@@ -197,6 +197,23 @@ def test_stable_refresh_keeps_the_scheme_active(db):
     assert get_shared_classification(db, "p1", "pop") is not None
 
 
+def test_drift_invalidates_legacy_field_only_prior(db):
+    # Legacy field-only prior (subject = bare field name, no source
+    # provenance) must be invalidated by drift too, or it stays injectable.
+    record_fact(db, "p1", "shared_classification", "pop", _CLS,
+                fingerprint=classification_fingerprint(_CLS))
+    db.commit()
+    baseline = profile_geojson_source(_fc(list(range(1, 101))))["fields"]["pop"]
+    apply_distribution_drift(db, "p1", {"s1::pop": baseline})
+    db.commit()
+    assert get_shared_classification(db, "p1", "pop") is not None
+    drifted = profile_geojson_source(_fc([v * 4 for v in range(1, 101)]))["fields"]["pop"]
+    events = apply_distribution_drift(db, "p1", {"s1::pop": drifted})
+    db.commit()
+    assert events[0]["invalidated_classifications"] == 1
+    assert get_shared_classification(db, "p1", "pop") is None
+
+
 def test_unevaluable_profile_leaves_state_untouched(db):
     _seed_project(db, list(range(1, 101)))
     events = apply_distribution_drift(db, "p1", {"pop": {"type": "string"}})

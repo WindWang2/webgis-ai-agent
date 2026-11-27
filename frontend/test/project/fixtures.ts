@@ -295,9 +295,9 @@ export function makeGcExecuteResponse(overrides: Partial<GcExecuteResponse> = {}
     project_id: 'p1',
     retention: {
       deleted_revisions: [{ artifact_id: 'art-9', revision_no: 3 }],
-      deleted_revision_count: 12,
+      deleted_revision_count: 1,
       deleted_blobs: [{ sha256: 'a1b2c3' }],
-      deleted_blob_count: 5,
+      deleted_blob_count: 1,
       bytes_freed: 7.9e8,
       skipped_protected_count: 1,
       skipped_protected: [{ artifact_id: 'art-2' }],

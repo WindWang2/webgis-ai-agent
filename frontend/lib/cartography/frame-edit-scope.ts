@@ -48,20 +48,25 @@ export function frameEditScopeLabel(scope: FrameEditScope): string {
 /**
  * 把 override 写入目标帧 layerOverrides（frames 整表携带，目标帧外的槽
  * 逐字保留 —— A03「仅改第二幅」的构造性保证）。
- * 返回 'routed' = 已路由到帧；'no_active_frame' = 无活动画幅（调用方走
- * 根级默认路径）。
+ * 返回 'routed' = 已写入目标帧；'no_active_frame' = 会话、spec 或目标帧
+ * 已失效而未写入；'superseded' = CAS 冲突。
  */
 export async function commitLayerOverrideForFrame(
   frameId: string,
   patch: FrameOverridePatch,
-): Promise<'routed' | 'superseded'> {
+): Promise<'routed' | 'no_active_frame' | 'superseded'> {
   const enqueuedSessionId = getMapSpecSessionCursor().sessionId;
-  let outcome: 'routed' | 'superseded' = 'routed';
+  let outcome: 'routed' | 'no_active_frame' | 'superseded' = 'no_active_frame';
   await enqueueUserMutation(async () => {
-    const { sessionId, revision, ownerToken } = getMapSpecSessionCursor();
+    const { sessionId, ownerToken } = getMapSpecSessionCursor();
     if (!sessionId || sessionId !== enqueuedSessionId) return;
     const spec = (await readCurrentSpec(sessionId, ownerToken)) as MapSpec | null;
     if (!spec) return;
+    // readCurrentSpec 的 GET map-state 回退会经 setMapSpecRevision 推进游标
+    // —— revision 必须在读取之后取：此前在读取前解构，回退路径的 mutation
+    // 仍携带陈旧 expected_revision → 409 superseded，画幅 override 静默丢弃。
+    const { sessionId: activeSessionId, revision } = getMapSpecSessionCursor();
+    if (activeSessionId !== sessionId) return; // 读取期间切会话 → 作废
     const frames = Array.isArray(spec.layout?.frames) ? [...spec.layout!.frames!] : [];
     if (!frames.some((f) => f && f.id === frameId)) return; // 帧缺席 → 不写
     const nextFrames = frames.map((f) => {

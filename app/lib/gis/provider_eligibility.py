@@ -130,8 +130,8 @@ def extension_lifecycle_view(host: Any) -> dict[str, Any]:
     return out
 
 
-def _probe_model_facts(provider_id: str, input_profile: Optional[dict],
-                       budget: Optional[dict]) -> tuple[dict[str, str], list[str], str]:
+def _probe_model_facts(provider_id: str,
+                       input_profile: Optional[dict]) -> tuple[dict[str, str], list[str], str]:
     """只读探测（全部使用既有纯函数 / 已编译缓存；不发起慢 I/O）。"""
     facts: dict[str, str] = {f: FACET_NOT_EVALUATED for f in QUALIFICATION_FACETS}
     disclosures: list[str] = []
@@ -332,13 +332,23 @@ def qualify_provider(
         disclosures.append("injected_probe: 探测已真实执行；结果按预算闸降级")
     else:
         facts, disclosures, gpu_fallback = _probe_model_facts(
-            provider_id, input_profile, budget)
+            provider_id, input_profile)
     facts["permission"] = FACET_PASS
     if probe is not None:
         gpu_fallback = "not_evaluated"
 
     elapsed = time.monotonic() - started
-    if deadline_s is not None and elapsed > float(deadline_s):
+    # 预算闸（与上面 remaining 计算同口径）：deadline_s 为非数值（"5s"/
+    # list/dict）时 float() 会抛未捕获异常，冲破「预算不足一律
+    # not_evaluated」的 fail-closed 契约 —— 此处按「无预算约束」处理，
+    # 与函数内另两处 try 守卫一致。
+    over_budget = False
+    if deadline_s is not None:
+        try:
+            over_budget = elapsed > float(deadline_s)
+        except (TypeError, ValueError):
+            over_budget = False
+    if over_budget:
         for key in QUALIFICATION_FACETS:
             if facts.get(key) == FACET_PASS:
                 facts[key] = FACET_NOT_EVALUATED

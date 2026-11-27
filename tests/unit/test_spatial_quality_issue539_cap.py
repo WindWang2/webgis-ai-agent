@@ -265,6 +265,57 @@ def test_dangling_budget_never_punishes_real_free_ends():
     assert report.truncated is False
 
 
+def test_dangling_endpoint_exactly_at_budget_boundary_is_flagged():
+    """Off-by-one at the dangling-scan budget boundary: an endpoint whose
+    buffered query returns EXACTLY MAX_DANGLING_CANDIDATES non-self candidates,
+    none of them connecting, was FULLY scanned (the candidate list ran out at
+    the boundary) — so its verdict is determined and it must be flagged
+    DANGLING_ENDPOINT. The old `inspected < MAX` test dropped it silently: no
+    issue, no undetermined count, no truncation reason."""
+    old = SpatialQualityEngine.MAX_DANGLING_CANDIDATES
+    SpatialQualityEngine.MAX_DANGLING_CANDIDATES = 2
+    try:
+        # Observer O sees exactly 2 candidates (C1, C2) inside its buffered
+        # bbox (±1e-6); each sits at real distance sqrt(2)·0.99e-6 ≈ 1.40e-6,
+        # above the 1e-6 connection threshold, so neither connects. C1 and C2
+        # are far enough apart that neither appears in the other's bbox, so
+        # each of them sees only O (1 candidate < budget 2).
+        o = (0.0001, 0.0001)
+        d = 0.99e-6
+        corners = [(o[0] + d, o[1] + d), (o[0] - d, o[1] - d)]
+        lines = [[(0.0, 0.0), list(o)]]
+        for i, c in enumerate(corners):
+            lines.append([[5e-6 * (i + 1), 0.0], list(c)])
+        geo = {
+            "type": "FeatureCollection",
+            "features": [
+                {"type": "Feature", "properties": {"id": i},
+                 "geometry": {"type": "LineString", "coordinates": coords}}
+                for i, coords in enumerate(lines)
+            ],
+        }
+        report = SpatialQualityEngine.audit_dataset(geo, crs="EPSG:4326")
+    finally:
+        SpatialQualityEngine.MAX_DANGLING_CANDIDATES = old
+
+    dangling = [i for i in report.issues if i.code == "DANGLING_ENDPOINT"]
+    # All 6 endpoints (3 lines × 2 ends) are genuinely free and were scanned to
+    # completion — including the observer's end, whose candidate count equals
+    # the budget exactly.
+    assert len(dangling) == 6, f"dangling={len(dangling)}"
+    o_end_flags = [
+        i for i in dangling
+        if i.feature_index == 0 and abs(i.details["endpoint"][0] - o[0]) < 1e-12
+    ]
+    assert len(o_end_flags) == 1  # the observer END is flagged, not dropped
+    # The boundary case is a DETERMINED verdict — not an undetermined one, so
+    # nothing is reported as truncated either.
+    details = report.truncation_details or {}
+    assert details.get("dangling_endpoints_undetermined", 0) == 0
+    assert "dangling_budget" not in details.get("reasons", [])
+    assert report.truncated is False
+
+
 def test_report_contract_additive():
     """New fields are additive; to_dict() carries them; the classic fields stay."""
     geo = _ring_geojson(2)

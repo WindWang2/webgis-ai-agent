@@ -114,11 +114,6 @@ def _measurement_of(field: str, samples: Sequence[Any], explicit: Optional[str])
         return ""
 
 
-#: 共享资格分组：这些测量语义两两不同即拒绝共享（同组才可比）。
-_RATE_LIKE = {"rate"}
-_COUNT_LIKE = {"ratio"}
-
-
 def compute_shared_expression(
     frame_datasets: Sequence[Tuple[str, Dict[str, Any]]],
     field: str,

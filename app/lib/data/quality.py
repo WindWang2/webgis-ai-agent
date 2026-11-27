@@ -372,7 +372,7 @@ def run_quality_checks(
         issues.extend(_vector_checks(profile.vector, crs=profile.crs))
         checks_run += [
             "empty_payload", "empty_geometry", "crs_missing", "impossible_coordinates",
-            "null_heavy_field", "invalid_dates", "schema_truncated",
+            "zero_coordinates", "null_heavy_field", "invalid_dates", "schema_truncated",
         ]
         if not deep_evidence:
             checks_not_run += ["self_intersection", "duplicate_geometries", "duplicate_rows"]
@@ -407,5 +407,6 @@ def run_quality_checks(
         checks_run=checks_run,
         checks_not_run=checks_not_run,
     )
-    report.status = compose_status(issues)
+    # 没查到任何证据 = 未检查，绝不静默判 VALID（FAILED 分支同口径）。
+    report.status = compose_status(issues) if checks_run else QualityStatus.UNCHECKED
     return report

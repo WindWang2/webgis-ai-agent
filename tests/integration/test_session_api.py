@@ -113,7 +113,8 @@ class TestSessionMapStateAPI:
 
     @patch("app.services.session_data.session_data_manager")
     def test_push_map_state_ignores_client_layers(self, mock_sdm, client):
-        """#643: map-state POST must not replace desired layers."""
+        """#643 + P3：layers 不进 Desired MapSpec；静默丢弃 + 204 会误导
+        推送图层的客户端，改为显式 422 拒绝（不写入任何 map-state 字段）。"""
         mock_sdm.set_map_state = AsyncMock(return_value=True)
         mock_conv = MagicMock()
         with patch.object(_chat_mod.AsyncHistoryService, "get_session_meta", AsyncMock(return_value=mock_conv)):
@@ -124,8 +125,8 @@ class TestSessionMapStateAPI:
                     "layers": [{"id": "forged", "visible": False}],
                 },
             )
-        assert resp.status_code == 204
+        assert resp.status_code == 422
         written_keys = [call.args[1] for call in mock_sdm.set_map_state.await_args_list]
         assert "layers" not in written_keys
-        assert "viewport" in written_keys
+        assert written_keys == []
 

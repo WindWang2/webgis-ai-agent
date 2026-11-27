@@ -609,7 +609,13 @@ def bounded_get(session, url, *, params=None, timeout=15, max_bytes=None, header
         url, params=params, timeout=timeout, stream=True,
         headers=headers, allow_redirects=True,
     )
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except Exception:
+        # 4xx/5xx：stream=True 的响应体未读，必须先 close 把连接还回池，
+        # 否则同 host 反复失败后新请求会卡在池上（Content-Length 分支同理）。
+        resp.close()
+        raise
     content_length = resp.headers.get("Content-Length")
     if content_length and content_length.isdigit() and int(content_length) > cap:
         resp.close()

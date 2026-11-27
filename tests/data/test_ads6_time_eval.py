@@ -40,6 +40,21 @@ def test_eval_set_is_big_enough():
     assert data["n"] >= 150, f"eval set shrunk to {data['n']} (need ≥150)"
 
 
+def test_no_duplicate_golden_samples():
+    """同 expr + 同起止 + 同粒度的金标只能出现一次。
+
+    完全重复的样本会在评测里被双计，扭曲 MRR（生成器
+    scripts/ads_gen_time_eval.py 的 TIME_SAMPLES 曾含一条重复项）。
+    """
+    data = json.loads(EVAL.read_text(encoding="utf-8"))
+    keys = [
+        (s["kind"], s["expr"], s.get("start"), s.get("end"), s["granularity"])
+        for s in data["samples"]
+    ]
+    dupes = sorted({k for k in keys if keys.count(k) > 1})
+    assert not dupes, f"duplicate golden samples double-counted in eval: {dupes}"
+
+
 def test_parsing_accuracy_threshold(accuracy):
     print(f"\n[ads6-eval] n={accuracy['n']} accuracy={accuracy['accuracy']:.4f}")
     assert accuracy["accuracy"] >= 0.90, f"accuracy {accuracy['accuracy']:.4f} < 0.90"

@@ -630,7 +630,12 @@ def check_eligibility(
 
     geom_types = profile.get("geometryTypes") or []
     geom_cat = _geometry_category(list(geom_types) if isinstance(geom_types, (list, tuple)) else [])
-    feature_count = profile.get("featureCount")
+    feature_count_raw = profile.get("featureCount")
+    # 要素数事实是否在场（缺席 ≠ 0：缺席时 min_points 检查必须 unknown 放行，
+    # 否则「点位过少/隐私聚合」披露把缺失事实当成不满足）。
+    count_known = isinstance(feature_count_raw, (int, float)) \
+        and not isinstance(feature_count_raw, bool)
+    feature_count = feature_count_raw
     if not isinstance(feature_count, int):
         # JSON 往返可能给 float（如 1260.0）——数值强制收敛，避免大样本被
         # 误判为 0 点而触发 INSUFFICIENT_POINTS。
@@ -676,7 +681,9 @@ def check_eligibility(
                 "Polygon": "polygon", "MultiPolygon": "polygon",
             }
             need = {required_cats.get(g, g.lower()) for g in rule.requires_geometry}
-            ok = geom_cat in need if geom_cat != "unknown" else False
+            # unknown 放行（与 recipe 级 :657 及 V4 检查器同纪律）：几何事实
+            # 缺席时判失败等于把「没测到」当成「不支持」，元素被静默禁用。
+            ok = geom_cat in need if geom_cat != "unknown" else True
             check["geometry"] = {"dominant": geom_cat, "required": sorted(need)}
             if not ok:
                 report.disabled.append(DisabledElement(
@@ -691,8 +698,11 @@ def check_eligibility(
             threshold = (
                 rule.min_points if rule.min_points is not None else min_points_default
             )
-            ok = feature_count >= threshold
+            # 事实缺席 = unknown 放行（V4 check_sample_size 同纪律）。
+            ok = feature_count >= threshold if count_known else True
             check["min_points"] = {"count": feature_count, "min": threshold}
+            if not count_known:
+                check["min_points"]["facts_absent"] = True
             if not ok:
                 report.disabled.append(DisabledElement(
                     element=rule.element,

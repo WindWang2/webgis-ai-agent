@@ -124,3 +124,41 @@ def test_point_to_point_distance():
     assert eval_res.passed
     assert 80.0 < eval_res.observed_value < 90.0
 
+
+
+def test_min_distance_without_threshold_fails_closed():
+    """P3: a MIN_DISTANCE constraint with no threshold must not clamp to 0m and pass."""
+    site = Point(116.30, 39.90)
+    reference = Point(116.40, 39.90)  # ~8.5 km away
+
+    constraint = Constraint(
+        id="min_dist_missing_threshold",
+        name="Min distance without threshold",
+        constraint_type=ConstraintType.HARD,
+        category=ConstraintCategory.SPATIAL,
+        spatial_predicate=SpatialPredicate.MIN_DISTANCE,
+        reference_geometry=mapping(reference),
+    )
+
+    result = evaluate_spatial_constraint("Site", mapping(site), constraint)
+    assert result.passed is False
+    assert "fails closed" in result.evidence_statement
+
+
+def test_max_distance_without_threshold_fails_closed():
+    """P3: a MAX_DISTANCE constraint with no threshold must not silently use 1000m."""
+    site = Point(116.30, 39.90)
+    reference = Point(116.3005, 39.90)  # ~42 m away
+
+    constraint = Constraint(
+        id="max_dist_missing_threshold",
+        name="Max distance without threshold",
+        constraint_type=ConstraintType.HARD,
+        category=ConstraintCategory.SPATIAL,
+        spatial_predicate=SpatialPredicate.MAX_DISTANCE,
+        reference_geometry=mapping(reference),
+    )
+
+    result = evaluate_spatial_constraint("Site", mapping(site), constraint)
+    assert result.passed is False
+    assert "fails closed" in result.evidence_statement

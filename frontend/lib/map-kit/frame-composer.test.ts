@@ -10,10 +10,11 @@
  *    → cartogram_unsupported（warning）+ 按未变形几何渲染；
  * 4. grid 组合几何：行优先、含每帧小标题。
  */
-import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { composeFrames, composeGridCanvas, type ExportFrame } from './frame-composer';
 import { runExport, MapExporterEngine, type ExportDeps, type ExportRequest } from './exporter';
 import type { Map } from 'maplibre-gl';
+import { __setPublicationFontCacheForTests } from '../export/pdf-font';
 
 vi.mock('@/lib/api/config', () => ({
   API_BASE: 'http://localhost:8001',
@@ -349,5 +350,123 @@ describe('runExport frames branch（W9）', () => {
 
     expect(outcome.ok).toBe(false);
     expect(outcome.error).toContain('多帧导出失败');
+  });
+});
+
+// ── 图集 PDF 封面 CJK 文本层判定（与单帧路径同口径）──────────────────────
+
+describe('runExport frames + pdf 封面文本层（W6 / ADR-0157 P3）', () => {
+  // 记录每个 2d 上下文收到的 fillText —— 画布栅格化路径（封面标题随帧
+  // canvas 绘制）的可观测面；jsdom 的 canvas 2d 上下文被 test/setup 打桩，
+  // 无像素可读，只能从绘制调用面验证。
+  let fillTexts: string[];
+  let restoreGetContext: (() => void) | undefined;
+  const originalGetContext = HTMLCanvasElement.prototype.getContext;
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    fillTexts = [];
+    HTMLCanvasElement.prototype.getContext = function (
+      this: HTMLCanvasElement,
+      kind: string,
+      ...rest: unknown[]
+    ) {
+      const ctx = originalGetContext.call(this, kind, ...(rest as []));
+      if (kind === '2d' && ctx) {
+        (ctx as unknown as { fillText: (t: string) => void }).fillText = (t: string) => {
+          fillTexts.push(String(t));
+        };
+      }
+      return ctx;
+    } as HTMLCanvasElement['getContext'];
+    restoreGetContext = () => {
+      HTMLCanvasElement.prototype.getContext = originalGetContext;
+    };
+    __setPublicationFontCacheForTests(null); // 出版字体注册失败
+  });
+
+  afterEach(() => {
+    restoreGetContext?.();
+    restoreGetContext = undefined;
+    __setPublicationFontCacheForTests(undefined);
+  });
+
+  it('字体不可用 + CJK 封面标题 → textLayer=skip + 标题随画布栅格化 + pdf_text_rasterized_cjk', async () => {
+    const map = makeMockMap();
+    const deps = makeRunExportDeps(map);
+    stubUpload();
+    const pdfSpy = vi
+      .spyOn(MapExporterEngine, 'exportToPDF')
+      .mockResolvedValue(new Blob(['pdf'], { type: 'application/pdf' }));
+
+    const req: ExportRequest = {
+      title: '区县图集',
+      subtitle: '2026 年度',
+      format: 'pdf',
+      frames: [{ title: '锦江区' }, { title: '青羊区' }],
+    };
+    const outcome = await runExport(deps, req);
+
+    expect(outcome.ok).toBe(true);
+    // 文本层整体跳过（此前缺省 'vector' → doc.text 标准 14 字体乱码）
+    const pdfArgs = pdfSpy.mock.calls[0];
+    expect((pdfArgs[3] as { textLayer?: string }).textLayer).toBe('skip');
+    // 封面标题/副标题随画布栅格化（不画即静默丢失）
+    expect(fillTexts).toContain('区县图集');
+    expect(fillTexts).toContain('2026 年度');
+    // 显式披露 + 系统消息如实
+    const finalMsg = (deps.getHudState().setPendingSystemMessage as Mock).mock.calls.at(-1)![0] as string;
+    expect(finalMsg).toContain('pdf_text_rasterized_cjk');
+  });
+
+  it('字体不可用 + ASCII 封面标题 → 仍走缺省 vector 文本层（不过度降级）', async () => {
+    const map = makeMockMap();
+    const deps = makeRunExportDeps(map);
+    stubUpload();
+    const pdfSpy = vi
+      .spyOn(MapExporterEngine, 'exportToPDF')
+      .mockResolvedValue(new Blob(['pdf'], { type: 'application/pdf' }));
+
+    const req: ExportRequest = {
+      title: 'District Atlas',
+      format: 'pdf',
+      frames: [{ title: '锦江区' }, { title: '青羊区' }],
+    };
+    const outcome = await runExport(deps, req);
+
+    expect(outcome.ok).toBe(true);
+    const pdfArgs = pdfSpy.mock.calls[0];
+    expect((pdfArgs[3] as { textLayer?: string }).textLayer).toBe('vector');
+    // 封面标题不进画布（单一事实源仍是 PDF 文本层）
+    expect(fillTexts).not.toContain('District Atlas');
+    const finalMsg = (deps.getHudState().setPendingSystemMessage as Mock).mock.calls.at(-1)![0] as string;
+    expect(finalMsg).not.toContain('pdf_text_rasterized_cjk');
+  });
+
+  it('字体可用 + CJK 封面标题 → vector 文本层 + pdf_cjk_font_embedded（嵌入优先）', async () => {
+    __setPublicationFontCacheForTests(
+      btoa(String.fromCharCode(0, 1, 0, 0) + 'fontdata'.padEnd(8, '\0')),
+    );
+    const map = makeMockMap();
+    const deps = makeRunExportDeps(map);
+    stubUpload();
+    const pdfSpy = vi
+      .spyOn(MapExporterEngine, 'exportToPDF')
+      .mockResolvedValue(new Blob(['pdf'], { type: 'application/pdf' }));
+
+    const req: ExportRequest = {
+      title: '区县图集',
+      format: 'pdf',
+      frames: [{ title: '锦江区' }],
+    };
+    const outcome = await runExport(deps, req);
+
+    expect(outcome.ok).toBe(true);
+    const pdfArgs = pdfSpy.mock.calls[0];
+    expect((pdfArgs[3] as { textLayer?: string }).textLayer).toBe('vector');
+    expect(fillTexts).not.toContain('区县图集'); // 画布不重复画标题
+    const finalMsg = (deps.getHudState().setPendingSystemMessage as Mock).mock.calls.at(-1)![0] as string;
+    expect(finalMsg).toContain('pdf_cjk_font_embedded');
+    expect(finalMsg).not.toContain('pdf_text_rasterized_cjk');
   });
 });

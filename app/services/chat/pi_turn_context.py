@@ -645,10 +645,11 @@ class PiTurnRegistry:
         """
         if self._swept and not force:
             return 0
-        self._swept = True
         client = self._get_redis_client()
         if client is None:
+            # Redis 不可用时不置 _swept —— 否则本进程永久跳过启动对账。
             return 0
+        self._swept = True
         prefix = f"{self._instance_id()}:"
         pattern = "webgis:pi:active_turn:*"
         deleted = 0

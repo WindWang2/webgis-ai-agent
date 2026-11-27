@@ -178,4 +178,22 @@ describe('computeFilterThinAsync — worker path (scripted Worker over REAL hand
     await computeFilterThinAsync(raw, VIEW, 500); // 同视口同预算 → memo 命中
     expect(posted.length).toBe(before);
   });
+
+  it('init-raw postMessage throwing (non-cloneable raw) → resolves null, no sync throw', async () => {
+    // raw 含循环引用/不可克隆值时 worker.postMessage 同步抛 DataCloneError：
+    // 必须按「通道失败」resolve null（调用方回退同步路径），而不是把
+    // 同步异常漏给 computeFilterThinAsync 的调用方。
+    const worker = {
+      __wired: undefined as boolean | undefined,
+      onerror: null as unknown,
+      postMessage: (msg: ViewportComputeRequest) => {
+        if (msg.type === 'init-raw') throw new Error('DataCloneError');
+      },
+      addEventListener: () => {},
+      terminate: () => {},
+    };
+    stubWorker(worker);
+    const raw = fc(VIEWPORT_WORKER_MIN_FEATURES + 1);
+    await expect(computeFilterThinAsync(raw, VIEW, 500)).resolves.toBeNull();
+  });
 });

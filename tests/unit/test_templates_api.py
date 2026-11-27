@@ -586,3 +586,18 @@ async def test_unauthenticated_list_hides_user_templates(client):
     allowed = await client.get(f"/api/v1/templates/{tmpl_id}", headers=user_headers)
     assert allowed.status_code == 200
     assert allowed.json()["name"] == "他人模板"
+
+
+@pytest.mark.asyncio
+async def test_delete_unknown_template_tolerates_seed_without_id(
+        client, monkeypatch):
+    """种子条目缺 id 时 DELETE 不应 KeyError→500，仍应是 404。"""
+    from app.api.routes import templates as templates_mod
+
+    monkeypatch.setattr(
+        templates_mod, "SEED_TEMPLATES",
+        [*templates_mod.SEED_TEMPLATES, {"kind": "basemap", "name": "malformed"}],
+    )
+    resp = await client.delete(
+        "/api/v1/templates/tmpl-does-not-exist", headers=user_headers)
+    assert resp.status_code == 404

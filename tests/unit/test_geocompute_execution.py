@@ -16,6 +16,7 @@ from app.services.geocompute import (
     ExecutionRunStatus,
     GeoExecutionEngine,
     NodeCategory,
+    NodeExecutionError,
     NodeReusePolicy,
     ResourceBudget,
     ResourceEstimate,
@@ -456,6 +457,25 @@ class TestOperators:
         assert payload["ref_id"].startswith("ref:geocompute-")
         assert payload["metadata"]["materialized_rows"] == 2
 
+    def test_materialize_empty_result_set_stores_empty_payload(self):
+        """空 features 列表是合法载荷（0 行结果集），不得当成缺失输入。"""
+        node = _node("m", NodeCategory.MATERIALIZE, inputs=["src"],
+                     parameters={"prefix": "geocompute"})
+        ctx = self._ctx(session_id="geocompute-test-session")
+        payload = ops.execute_node(
+            ctx, node, {"src": {"features": [], "metadata": {}}})
+        assert payload["ref_id"].startswith("ref:geocompute-")
+        assert payload["metadata"]["materialized_rows"] == 0
+
+    def test_attribute_join_single_input_is_typed_error(self):
+        """只声明 1 个输入时必须以 NodeExecutionError 失败，而不是裸
+        IndexError（后者收编为无信息的 NODE_FAILED）。"""
+        node = _node("j", NodeCategory.ATTRIBUTE_JOIN, inputs=["left"],
+                     parameters={"join_field_left": "id"})
+        with pytest.raises(NodeExecutionError, match="two inputs"):
+            ops.execute_node(
+                self._ctx(), node, {"left": {"rows": [{"id": 1}]}})
+
     def test_query_uses_injected_catalog_fn(self, monkeypatch):
         class _StubDB:
             # authz 接线后的 DB-free 替身：目录项存在、谓词注入放行。
@@ -516,6 +536,22 @@ class TestOperators:
                     "metadata": {}}
         payload = ops.execute_node(self._ctx(), node, {"agg": upstream})
         assert payload["rows"] == [{"kind": "a"}]
+
+    def test_empty_rows_channel_flows_to_downstream_ops(self):
+        """上游产出 0 行（FILTER/AGGREGATE/SPATIAL_JOIN 的 {"rows": []}）→
+        下游按空输出继续，而非把空通道误判为缺失输入硬失败。"""
+        upstream = {"ref_id": "ref:x", "rows": [], "metadata": {}}
+        filt = _node("f", NodeCategory.FILTER, inputs=["agg"],
+                     parameters={"predicate": {"op": "eq", "field": "kind",
+                                               "value": "a"}})
+        filtered = ops.execute_node(self._ctx(), filt, {"agg": upstream})
+        assert filtered["rows"] == []
+        assert filtered["metadata"]["filtered_from"] == 0
+        agg = _node("agg", NodeCategory.AGGREGATE, inputs=["f"],
+                    parameters={"aggregates": [{"func": "count", "field": "v"}],
+                                "group_by": ["kind"]})
+        payload = ops.execute_node(self._ctx(), agg, {"f": filtered})
+        assert payload["rows"] == []
 
     def test_filter_on_bare_row_features_keeps_matches(self):
         """裸属性行被包装进 features（旧 ref / MATERIALIZE 落存重取形状）→
@@ -583,6 +619,14 @@ class TestTracing:
         self._engine_min().execute_plan(ExecutionPlan(plan_id="p", nodes=[_filter_node()]))
         after = len(tracing.recent_events(limit=1024))
         assert after > before
+
+    def test_recent_events_non_positive_limit_is_empty(self):
+        """limit<=0 必须有界返回空列表（items[-0:] == items[0:] 会返回全量）。"""
+        from app.services.geocompute import tracing
+
+        tracing.emit("node_completed", run_id="r-limit", node_id="n1")
+        assert tracing.recent_events(limit=0) == []
+        assert tracing.recent_events(limit=-5) == []
 
     @staticmethod
     def _engine_min() -> GeoExecutionEngine:

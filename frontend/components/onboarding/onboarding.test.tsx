@@ -67,6 +67,39 @@ describe('Tour', () => {
     }
   });
 
+  it('有目标步骤：点暗区也关闭 tour（与无目标步骤的任意点击关闭一致）', async () => {
+    const nav = document.createElement('nav');
+    // jsdom 无布局：直接锚定测量值
+    nav.getBoundingClientRect = () =>
+      ({ top: 10, left: 10, right: 110, bottom: 50, width: 100, height: 40, x: 10, y: 10, toJSON: () => ({}) }) as DOMRect;
+    document.body.appendChild(nav);
+    try {
+      render(<Tour />);
+      act(() => {
+        useOnboardingStore.setState({ tourOpen: true, stepIndex: 3 }); // rail 步（有 targetSelector）
+      });
+      await waitFor(() => expect(screen.getByTestId('tour-spotlight')).toBeInTheDocument());
+      const wrapper = screen.getByTestId('onboarding-tour');
+      // 焦点圈闭矩形本身（box-shadow 暗区之外）：点击关闭（既有行为，防回归）
+      const spotMask = wrapper.querySelector<HTMLElement>('div[style*="box-shadow"]');
+      expect(spotMask).not.toBeNull();
+      fireEvent.mouseDown(spotMask!);
+      expect(useOnboardingStore.getState().tourOpen).toBe(false);
+      expect(useOnboardingStore.getState().tourSeen).toBe(true);
+
+      // 暗区（box-shadow 绘制、不参与命中测试）：修复前 mousedown 无响应
+      act(() => {
+        useOnboardingStore.setState({ tourOpen: true, stepIndex: 3 });
+      });
+      await waitFor(() => expect(screen.getByTestId('tour-scrim')).toBeInTheDocument());
+      fireEvent.mouseDown(screen.getByTestId('tour-scrim'));
+      expect(useOnboardingStore.getState().tourOpen).toBe(false);
+      expect(useOnboardingStore.getState().tourSeen).toBe(true);
+    } finally {
+      nav.remove();
+    }
+  });
+
   it('reduced-motion 降级路径：无脉冲动画（双轨约定的 JS 侧）', async () => {
     const nav = document.createElement('nav');
     nav.getBoundingClientRect = () =>

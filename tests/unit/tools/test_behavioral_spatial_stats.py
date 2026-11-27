@@ -228,6 +228,47 @@ async def test_space_time_k_analysis_behavioral(registry):
 
 
 @pytest.mark.asyncio
+async def test_space_time_tools_empty_time_field_returns_missing_required(registry):
+    for tool_name in ("space_time_k_analysis", "mantel_test_analysis"):
+        out = await registry.dispatch(
+            tool_name, {"geojson": _space_time_fc(), "time_field": "", "permutations": "0"})
+        _assert_error_readable(out)
+        assert out.get("code") == "MISSING_REQUIRED_FIELD", (tool_name, out)
+        assert out.get("error_type") == "MissingRequiredField", (tool_name, out)
+
+
+@pytest.mark.asyncio
+async def test_space_time_tools_disclose_nat_rows_dropped(registry):
+    fc = _space_time_fc()
+    fc["features"][0]["properties"]["ts"] = "not-a-timestamp"
+
+    for tool_name in ("space_time_k_analysis", "mantel_test_analysis"):
+        out = await registry.dispatch(
+            tool_name, {"geojson": fc, "time_field": "ts", "permutations": "0"})
+        assert out.get("success") is True, (tool_name, out)
+        data = out["data"]
+        assert data["n"] == 29, (tool_name, data)
+        assert data["n_time_dropped"] == 1, (tool_name, data)
+        assert "1 行" in data["time_dropped_note"] and "剔除" in data["time_dropped_note"]
+
+
+@pytest.mark.asyncio
+async def test_space_time_k_epoch_seconds_span(registry):
+    """Epoch 数值时间戳按秒解析（与 ST-DBSCAN 同契约）。
+
+    三个时间窗跨 7200 s；若按 pandas 默认纳秒解析（1970 塌缩），
+    t_span 会变成 ~7e-6 s，t 网格同样失真。
+    """
+    out = await registry.dispatch(
+        "space_time_k_analysis",
+        {"geojson": _space_time_fc(), "time_field": "ts", "permutations": "0"})
+    assert out.get("success") is True, out
+    data = out["data"]
+    assert data["t_span"] > 7000
+    assert min(data["t"]) > 100
+
+
+@pytest.mark.asyncio
 async def test_mantel_test_analysis_behavioral(registry):
     # validation：缺 time_field → 校验错误
     bad = await registry.dispatch("mantel_test_analysis", {"geojson": _fc([])})
@@ -282,6 +323,27 @@ async def test_cross_pcf_analysis_behavioral(registry):
     assert data.get("p_value") is not None
 
 
+@pytest.mark.asyncio
+async def test_cross_pcf_type_nulls_dropped_with_disclosure(registry):
+    """类型字段为空的行剔除并披露，不能 astype(str) 变成 'None' 第三类。
+
+    两类各 12 点 + 3 行空类型：未修复时 distinct 有 3 个取值，
+    cross_pair_correlation 直接拒绝；修复后按 24 个有效点检验。
+    """
+    feats = _two_type_fc()["features"] + [
+        _point(116.02, 39.02, cat=None) for _ in range(3)
+    ]
+    out = await registry.dispatch(
+        "cross_pcf_analysis",
+        {"geojson": _fc(feats), "type_field": "cat",
+         "n_steps": 6, "permutations": "0"})
+    assert out.get("success") is True, out
+    data = out["data"]
+    assert data["n"] == 24
+    assert data["n_type_null_dropped"] == 3
+    assert "type_null_note" in data
+
+
 # ── advanced_spatial ──────────────────────────────────────────────────
 
 
@@ -313,6 +375,32 @@ async def test_interpolation_model_compare_behavioral(registry):
     assert all("method" in row for row in rows)
     assert out.get("recommended") is not None
     assert "scientific_evidence" in out
+
+
+@pytest.mark.asyncio
+async def test_interpolation_model_compare_validation_tracks_recommended(registry):
+    """推荐方法的 CV 证据必须进入 scientific_evidence.validation。
+
+    6×6 平滑场上 idw 是首个带 validation 的行，但推荐方法为
+    trend_surface；未修复时证据循环在 idw 行无条件 break，
+    validation 静默缺失。
+    """
+    fc = _grid_fc(6, 6, lambda r, c: {
+        "v": float(10.0 * np.sin(c / 2.0) + 3.0 * r)})
+    out = await registry.dispatch(
+        "interpolation_model_compare", {"geojson": fc, "value_field": "v"})
+    assert out.get("recommended") is not None, out
+    recommended_method = out["recommended"]["method"]
+    rows = out.get("comparison") or []
+    rec_index = next(
+        i for i, row in enumerate(rows) if row["method"] == recommended_method)
+    # 触发条件：推荐方法之前已存在带 validation 的其他方法行
+    assert any(row.get("validation") for row in rows[:rec_index]), rows
+    validation = (out.get("scientific_evidence") or {}).get("validation")
+    assert validation is not None, out.get("scientific_evidence")
+    assert validation["target"] == f"interpolation_compare:{recommended_method}"
+    assert validation["rmse"] == pytest.approx(
+        out["recommended"]["rmse"], abs=1e-5)
 
 
 # ── remote_sensing（波段栈降维）───────────────────────────────────────

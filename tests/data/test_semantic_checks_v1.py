@@ -102,6 +102,16 @@ class TestUnitAmbiguity:
         issues = detect_unit_ambiguity(_fp("面积_km2", samples=[1234.5, 88.2]))
         assert issues == []
 
+    def test_bare_suffix_unit_marker_no_issue(self):
+        # 无分隔符后缀同样算显式单位声明（不再误报 unit_ambiguous）。
+        assert detect_unit_ambiguity(_fp("面积km2", samples=[1234.5, 88.2])) == []
+        assert detect_unit_ambiguity(_fp("人口万人", samples=[12.0, 35.0])) == []
+
+    def test_quantity_word_ending_with_unit_char_still_ambiguous(self):
+        # 「人口」末尾的「人」不是单位声明（无分隔符 + 落在数量词内）。
+        issues = detect_unit_ambiguity(_fp("人口", samples=[12.0, 35.0]))
+        assert [i.code for i in issues] == [QualityIssueCode.UNIT_AMBIGUOUS]
+
     def test_unit_hint_no_issue(self):
         issues = detect_unit_ambiguity(_fp("面积", unit_hint="km2", samples=[1.0]))
         assert issues == []
@@ -187,6 +197,15 @@ class TestFieldRoleAmbiguity:
         )
         fields = {"name": _fp("name", dtype="string", samples=["a"]),
                   "城市": _fp("城市", dtype="string", samples=["杭州"])}
+        assert detect_field_role_ambiguity(fields, semantic_profile=sem) == []
+
+    def test_infinite_sample_does_not_crash(self):
+        # count 角色样本含 +Inf：int(inf) 曾抛 OverflowError 穿透聚合入口
+        sem = self._sem(
+            {"num": (["count_measure"],)},
+            {"num": "rule_derived"},
+        )
+        fields = {"num": _fp("num", samples=[1.0, float("inf")])}
         assert detect_field_role_ambiguity(fields, semantic_profile=sem) == []
 
     def test_no_semantic_profile_no_issue(self):

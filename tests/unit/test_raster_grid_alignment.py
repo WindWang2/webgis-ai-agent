@@ -317,3 +317,65 @@ def test_aligned_reader_falls_back_for_gcp_source(_td):
         # 回退原文件：读到的是真实像元而非 VRT 全 NaN
         np.testing.assert_array_equal(ds.read(1), data)
         assert eff is None  # 源未声明 nodata
+
+
+def test_aligned_reader_uint_nodata_sentinel_is_not_zero(_td):
+    """P2 修复：无符号整型 B 未声明 nodata 时，足迹哨兵不得是 0。
+
+    iinfo(uint).min == 0 是高频真实值（背景/0 类）—— 旧实现拿它当
+    VRT 填充/effective nodata，B 中真实 0 像元被 valid_mask_for 静默
+    剔除。修复后无符号取 iinfo().max（uint8 → 255）：真实 0 保持有效，
+    只有足迹外才是哨兵。
+    """
+    from app.lib.geo_analysis.raster_grid import _fallback_fill_nodata
+    from app.lib.geo_analysis.raster_windowed import valid_mask_for
+
+    # 单元级锚：无符号 → max，有符号 → min，float → NaN
+    assert _fallback_fill_nodata(
+        RasterGridProfile(width=1, height=1, crs=None,
+                          transform=(1.0, 0.0, 0.0, 0.0, 1.0, 0.0),
+                          dtype="uint8")) == 255.0
+    assert _fallback_fill_nodata(
+        RasterGridProfile(width=1, height=1, crs=None,
+                          transform=(1.0, 0.0, 0.0, 0.0, 1.0, 0.0),
+                          dtype="uint16")) == 65535.0
+    assert _fallback_fill_nodata(
+        RasterGridProfile(width=1, height=1, crs=None,
+                          transform=(1.0, 0.0, 0.0, 0.0, 1.0, 0.0),
+                          dtype="int16")) == -32768.0
+    assert np.isnan(_fallback_fill_nodata(
+        RasterGridProfile(width=1, height=1, crs=None,
+                          transform=(1.0, 0.0, 0.0, 0.0, 1.0, 0.0),
+                          dtype="float32")))
+
+    # 端到端：uint8 B（含真实 0）部分覆盖 A → 0 仍有效、足迹外才是哨兵
+    pa = os.path.join(_td, f"ua_{uuid.uuid4().hex[:6]}.tif")
+    pb = os.path.join(_td, f"ub_{uuid.uuid4().hex[:6]}.tif")
+    _write(pa, np.zeros((10, 10), dtype="float32"),
+           crs="EPSG:3857", transform=from_bounds(0, 0, 100, 100, 10, 10))
+    b_vals = np.array([[0, 1], [2, 0]], dtype="uint8")
+    _write(pb, b_vals, crs="EPSG:3857",
+           transform=from_bounds(0, 0, 50, 50, 2, 2))
+    try:
+        with rasterio.open(pa) as src_a:
+            g_a = RasterGridProfile.from_dataset(src_a)
+        with rasterio.open(pb) as src_b:
+            g_b = RasterGridProfile.from_dataset(src_b)
+        decision = decide_alignment(g_a, g_b, categorical=True)
+        assert decision.status == "needs_resample"
+        with aligned_reader(pb, decision) as (reader, eff_nodata):
+            assert eff_nodata == 255.0       # 不是 0
+            arr = reader.read(1)
+            # B 足迹（x∈[0,50] → 列 0-4；north-up 变换 y∈[0,50] → 行 5-9）
+            # 内是真实类别（含 0）
+            assert set(np.unique(arr[5:, :5]).tolist()) <= {0.0, 1.0, 2.0}
+            # 足迹外是哨兵 255
+            assert (arr[:5, :] == 255.0).all()
+            assert (arr[5:, 5:] == 255.0).all()
+            # 关键：真实 0 不被当 nodata 剔除
+            valid = valid_mask_for(arr, eff_nodata)
+            assert valid[9, 0] and valid[9, 4]      # 足迹内 0 值像元有效
+            assert not valid[0, 9]                  # 足迹外哨兵无效
+    finally:
+        os.remove(pa)
+        os.remove(pb)

@@ -247,6 +247,82 @@ def test_node_cancel_flags_block_dispatch_and_cancel_queued(factory):
     assert "transform:buffer:subject" not in h.execs  # 零执行
 
 
+def test_node_cancel_converges_blocked_and_stale(factory):
+    """BLOCKED/STALE 的取消旗标必须落 CANCELLED，不能留在非终态。"""
+    h = Harness(factory)
+    h.default = _ok("ref:out")
+    iid = h.inst["instance_id"]
+    for nid in ("transform:buffer:subject", "transform:clip:subject"):
+        assert h.store.transition_node(
+            iid, nid, C.NodeState.READY,
+            expected_from=C.NodeState.PENDING).ok
+    assert h.store.transition_node(
+        iid, "transform:buffer:subject", C.NodeState.BLOCKED,
+        expected_from=C.NodeState.READY, reason="BINDING_BLOCKED").ok
+    assert h.store.transition_node(
+        iid, "transform:clip:subject", C.NodeState.STALE,
+        expected_from=C.NodeState.READY).ok
+    assert h.store.request_node_cancel(
+        iid, ["transform:buffer:subject", "transform:clip:subject"]) == [
+            "transform:buffer:subject", "transform:clip:subject"]
+
+    summary = h.run()
+
+    assert summary["status"] == C.InstanceStatus.CANCELLED
+    assert summary["states"]["transform:buffer:subject"] == C.NodeState.CANCELLED
+    assert summary["states"]["transform:clip:subject"] == C.NodeState.CANCELLED
+    transitions = [e for e in h.store.get_events(iid)
+                   if e["kind"] == C.EventKind.STATE_TRANSITION
+                   and e["to_state"] == C.NodeState.CANCELLED]
+    assert {e["from_state"] for e in transitions} >= {
+        C.NodeState.BLOCKED, C.NodeState.STALE}
+
+
+def test_stale_reuse_cannot_bypass_node_cancel_flag(factory):
+    """已有可复用产物的 STALE 节点仍必须先服从取消旗标。"""
+    h = Harness(factory)
+    h.default = _ok("ref:out")
+    assert h.run()["status"] == C.InstanceStatus.SUCCEEDED
+    iid = h.inst["instance_id"]
+    nid = "transform:clip:subject"
+    assert h.store.transition_node(
+        iid, nid, C.NodeState.STALE,
+        expected_from=C.NodeState.SUCCEEDED).ok
+    assert h.store.request_node_cancel(iid, [nid]) == [nid]
+    calls_before = list(h.execs)
+
+    summary = h.run()
+
+    assert summary["status"] == C.InstanceStatus.CANCELLED
+    assert summary["states"][nid] == C.NodeState.CANCELLED
+    assert not (h.store.get_node(iid, nid)["reuse"] or {}).get("reused")
+    assert h.execs == calls_before
+
+
+def test_instance_cancel_leaves_no_nonterminal_nodes(factory):
+    """实例取消须收敛 BLOCKED/STALE，终态实例不得残留非终态节点行。"""
+    h = Harness(factory)
+    iid = h.inst["instance_id"]
+    for nid in ("transform:buffer:subject", "transform:clip:subject"):
+        assert h.store.transition_node(
+            iid, nid, C.NodeState.READY,
+            expected_from=C.NodeState.PENDING).ok
+    assert h.store.transition_node(
+        iid, "transform:buffer:subject", C.NodeState.BLOCKED,
+        expected_from=C.NodeState.READY, reason="BINDING_BLOCKED").ok
+    assert h.store.transition_node(
+        iid, "transform:clip:subject", C.NodeState.STALE,
+        expected_from=C.NodeState.READY).ok
+    assert h.store.update_instance(iid, fields={"cancel_requested": True})
+
+    summary = h.run()
+
+    assert summary["status"] == C.InstanceStatus.CANCELLED
+    assert all(C.is_terminal(state) for state in summary["states"].values())
+    assert h.store.get_instance(iid)["status"] == C.InstanceStatus.CANCELLED
+    assert not h.execs
+
+
 def test_service_cancel_nodes_propagates_to_descendants(factory):
     """service.cancel_nodes：目标 + 后代闭包；上游不动；未知节点 422 语义。"""
     from types import SimpleNamespace

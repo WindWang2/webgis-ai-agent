@@ -134,6 +134,20 @@ class TestProgressiveDisclosure:
         assert "procedure" in detail["skill"]
         assert detail["truncated"] is False
 
+    def test_detail_over_budget_is_trimmed(self, library):
+        base = library.get("validate_spatial_data")
+        huge = base.model_copy(update={"description": "x" * 20000})
+        detail = SkillCatalog([huge]).detail(huge.id)
+        assert detail["truncated"] is True
+        assert detail["bytes"] <= detail["budget_bytes"]
+
+    def test_oversized_card_is_not_returned(self, library):
+        base = library.get("validate_spatial_data")
+        huge = base.model_copy(update={"id": "x" * 5000})
+        payload = SkillCatalog([huge]).cards()
+        assert payload["truncated"] is True
+        assert payload["cards"] == []
+
     def test_unknown_skill(self, library):
         catalog = SkillCatalog(library.skills)
         assert "error" in catalog.card("nope")
@@ -186,3 +200,25 @@ class TestEvidence:
                                            skill_id=f"s{i}"))
         assert len(rec.records) == MAX_RECORDS
         assert rec.records[0].skill_id == "s50"
+
+    def test_bounded_list_zero_limit_is_empty(self):
+        rec = SkillEvidenceRecorder()
+        rec.record_selection("s", "1.0.0", ["kw"], 0.5)
+        assert rec.to_bounded_list(limit=0) == []
+        assert len(rec.to_bounded_list(limit=1)) == 1
+
+    def test_retrieve_skills_reuses_retriever_per_library(self, library, monkeypatch):
+        from app.services.gis_harness.skills import retrieval as retrieval_mod
+
+        calls = []
+        original = retrieval_mod.SkillRetriever.__init__
+
+        def counting(self, skills):
+            calls.append(1)
+            original(self, skills)
+
+        monkeypatch.setattr(retrieval_mod.SkillRetriever, "__init__", counting)
+        retrieval_mod._RETRIEVERS.clear()
+        retrieval_mod.retrieve_skills(library, "小学 分布")
+        retrieval_mod.retrieve_skills(library, "人口 分布")
+        assert len(calls) == 1

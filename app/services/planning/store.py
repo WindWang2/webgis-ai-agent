@@ -276,6 +276,9 @@ class PlanStore:
         """
         async with session_lock_registry.lock(f"plan-store:{session_id}", fail_on_degraded=True, fail_on_lost=True):
             self._cache.pop(session_id)
+            invalidate = getattr(self._session_store, "invalidate_local_cache", None)
+            if callable(invalidate):
+                invalidate(session_id)
             ref_id = await self._session_store.resolve_alias(session_id, CURRENT_PLAN_ALIAS)
             if ref_id == CURRENT_PLAN_ALIAS:
                 return

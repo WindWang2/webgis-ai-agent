@@ -247,6 +247,9 @@ async def run_map_finalization(
     def _finding_key(f: MapCompletionFinding) -> str:
         return f"{f.code}:{str(f.target)[:64]}"
 
+    if max_passes <= 0:
+        # 0 轮修复 ≠ 零校验：仍做一次纯校验，状态不得凭空 complete。
+        findings = _validate_all(inputs, chapter)
     while passes < max_passes:
         passes += 1
         findings = _validate_all(inputs, chapter)
@@ -263,7 +266,7 @@ async def run_map_finalization(
             repaired_last_pass = False
             break
         repairable = [f for f in findings if f.repair is not None]
-        if not repairable or not findings:
+        if not repairable:
             repaired_last_pass = False
             break
         retry_free = [
@@ -495,7 +498,13 @@ async def run_map_finalization(
     # error 会被静默丢弃、误判 complete。
     all_errors = [f for f in findings if f.severity == "error"]
     result.findings = findings[:MAX_FINDINGS]
-    result.repairs_applied = all_repairs[:MAX_DISCLOSED_REPAIRS]
+    # repairs_applied 承载**全量**本轮修复：披露面（to_dict/SSE 载荷/
+    # finalization chain）各自再截断（≤6/≤4），而 durable repair_memory 的
+    # 合并（maybe_finalize 的 prior ∪ applied → map_product_block）必须见到
+    # 全量 —— 在此截到 MAX_DISCLOSED_REPAIRS 会让单轮 >6 条修复永不进
+    # 记忆，后续轮 prior_repairs 缺项 → 重新对抗用户已覆盖的修复
+    # （map_product_block all_repairs 契约明示此回归面）。
+    result.repairs_applied = list(all_repairs)
 
     layer_err = [f for f in findings if f.code in (
         F_NO_RESULT_LAYER, F_LAYER_MISSING, F_SOURCE_MISSING, F_LAYER_HIDDEN,
@@ -656,8 +665,6 @@ def _assemble_visual_snapshot(
                     rect.get("width"), rect.get("height"),
                 ],
             })
-            if len(component_boxes) >= 24:
-                break
     snapshot = {
         "trigger": "finalization",
         "session_id": str(session_id or "")[:64],
@@ -1374,10 +1381,15 @@ async def maybe_finalize_map_product(
                         session_id,
                     )
                     return result
+                # 修复记忆合并必须读**锁内 fresh 章节**的已存块：stored 是
+                # 锁外快照，并发终验在该窗口落块时其 repair_memory 会被静默
+                # 丢弃（lost update —— goal/revision/rows/render-seq 四道
+                # 守卫都不覆盖 repair_memory 键）。
+                stored_now = fresh.gis_chapter.get("map_product")
                 prior_repairs_merged = (
-                    list(stored.get("repair_memory") or [])
-                    + list(stored.get("repairs") or [])
-                    if isinstance(stored, dict)
+                    list(stored_now.get("repair_memory") or [])
+                    + list(stored_now.get("repairs") or [])
+                    if isinstance(stored_now, dict)
                     else []
                 )
                 merged_repairs = list(
@@ -1690,7 +1702,7 @@ async def read_stored_map_product(session_id: str) -> Optional[Dict[str, Any]]:
                 "required_render_seq": _required_seq,
             }
     except Exception:  # noqa: BLE001 — 确认面缺席按 auto（True）
-        payload["display_confirmed"] = False
+        payload["display_confirmed"] = True
         logger.warning("Display confirmation unavailable", exc_info=True)
     # ADR-0183（G5 接线 W4）：goal satisfaction 投影随 task_complete 面
     # 下行（additive；块缺席/旧块 → 键省略，零漂移）。

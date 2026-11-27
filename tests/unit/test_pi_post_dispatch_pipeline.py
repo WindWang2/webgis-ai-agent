@@ -300,6 +300,16 @@ async def test_ok_with_map_actions_records_issued_side(_env):
 
 
 @pytest.mark.asyncio
+async def test_bad_map_action_does_not_lose_harness_evidence(_env):
+    """单个坏 map_action 不得中断 record_event / 评估证据。"""
+    _env.finalize_result = SimpleNamespace(status="pending", repairs_applied=False)
+    out = await apply_post_dispatch_disclosure(_disclosure(map_actions=(None,)))
+    assert len(_env.harness.events) == 1
+    assert _env.stages
+    assert out.stale_generation is False
+
+
+@pytest.mark.asyncio
 async def test_ok_disclosure_stage_order_is_pinned(_env):
     """review P1 #2 回归钉：终验先落 map_product，投影随后读取（基线顺序）。"""
     _env.finalize_result = SimpleNamespace(status="completed", repairs_applied=True)

@@ -22,6 +22,7 @@ from pydantic import ValidationError
 import app.schemas.review_schema as review_schema_mod
 from app.schemas.review_schema import (
     Anchor,
+    AnchorKind,
     AnchoredComment,
     ProposalStatus,
     TERMINAL_STATUSES,
@@ -165,12 +166,30 @@ class ReviewService:
         engine = MapSpecLifecycleEngine()
         current_rev = await read_current_revision(session_id)
         spec = None
+        spec_available = True
         try:
             state = None
             spec = await engine.store.get_mapspec(session_id, state_hint=state)
         except Exception:  # noqa: BLE001 — 投影尽力而为
             spec = None
-        anchor_states = await anchor_mod.proposal_anchor_states(session_id, p, spec)
+            spec_available = False
+        if spec_available:
+            anchor_states = await anchor_mod.proposal_anchor_states(session_id, p, spec)
+        else:
+            # spec 读取失败 ≠ 可证缺失：layer/component/feature 锚如实降级为
+            # UNVERIFIED（claim/artifact 不依赖 spec，仍走真实评估）。
+            anchor_states = {}
+            for comment in p.comments:
+                if comment.anchor is None:
+                    continue
+                if comment.anchor.kind in (
+                    AnchorKind.LAYER, AnchorKind.COMPONENT, AnchorKind.FEATURE,
+                ):
+                    anchor_states[comment.comment_id] = anchor_mod.AnchorState.UNVERIFIED
+                else:
+                    anchor_states[comment.comment_id] = await anchor_mod.evaluate_anchor(
+                        session_id, comment.anchor, None,
+                    )
         verdict = evaluate_approval(self.policy, p, p.decisions)
         return {
             "proposal": p.model_dump(mode="json"),
@@ -460,8 +479,11 @@ class ReviewService:
         from app.services.mapspec.lifecycle_engine import MapSpecLifecycleEngine
 
         engine = MapSpecLifecycleEngine()
-        spec = await engine.store.get_mapspec(session_id)
+        # 先读 revision 再读 spec：两次 await 之间若有 mutation 落地，spec 只会
+        # 比所记录的 base 更新（反之 _validate_targets 会校验旧于 base 的 spec —
+        # TOCTOU）。残留的 base 再漂移由 merge 的 CAS 漂移拒绝兜底。
         new_base = await read_current_revision(session_id)
+        spec = await engine.store.get_mapspec(session_id)
         if new_base == p.base_revision:
             # 无漂移 rebase 无意义，且会让旧批准"名义过期实际继续计数"
             # （review R1-P2）—— 显式拒绝。

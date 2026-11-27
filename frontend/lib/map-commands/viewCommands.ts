@@ -77,13 +77,17 @@ function reachedTarget(settled: { center: [number, number]; zoom: number }, targ
  * Wraps a synchronous camera move so the action settles with a structured result.
  * Always resolves (never rejects): predictable failures like invalid coordinates
  * become a failed MapCommandResult, matching the command's Promise contract.
+ *
+ * `execute` may return a MapCommandResult to settle immediately — for the
+ * "the camera did NOT need to move" case (no moveend will ever fire), where
+ * waiting for one would ack a fake `timeout` 10s later and stall the queue.
  */
 function runCameraCommand(
   ctx: MapCommandContext,
-  execute: (ctx: MapCommandContext) => void,
+  execute: (ctx: MapCommandContext) => MapCommandResult | void,
   target?: CameraTarget,
 ): Promise<MapCommandResult> {
-  return (async () => {
+  return (async (): Promise<MapCommandResult> => {
     // V3: a user gesture owns the camera — wait it out (bounded) instead of
     // fighting it. waitForGestureEnd resolves immediately when idle.
     if (isUserGesturing()) {
@@ -169,14 +173,22 @@ function runCameraCommand(
       });
 
       try {
-        execute(ctx);
+        // A returned result settles right away (no moveend will follow it).
+        const early = execute(ctx);
+        if (early) settle(early);
       } catch (e) {
         // Predictable execution failures (e.g. navigation.flyTo rejecting invalid
         // coordinates) become a failed result — the old silent-swallow path.
         settle({ status: 'failed', error: e instanceof Error ? e.message : String(e) });
       }
     });
-  })();
+  })().catch((e) => ({
+    // P3: map.stop()/onUserGestureStart()/map.once() sit outside the inner
+    // try — a destroyed map must still settle failed, never reject, per the
+    // "always resolve" contract above.
+    status: 'failed' as const,
+    error: e instanceof Error ? e.message : String(e),
+  }));
 }
 
 /** Reads the *settled* camera state off the map (post-moveend). */
@@ -294,7 +306,10 @@ export const viewCommands: Record<string, CommandEntry> = {
     // 的自然语言请求拒绝成 invalid_params —— 后端成功、前端立刻失败的矛盾。
     // 任一命名维度有效即放行（无有效参数的 no-op 快路径在 run 体内处理）。
     requiredParams: (p) =>
-      Array.isArray(p.center) ||
+      // center 出现时必须是 [lng, lat] 二元组（与 fly_to/fly_camera 同宽）：
+      // {center:[116]} 会让 run 内 hasCenter=false，若无其他维度即早退 ack
+      // succeeded 把未动的当前相机当 actual（假成功）。
+      (Array.isArray(p.center) && p.center.length === 2) ||
       typeof p.zoom === 'number' ||
       typeof p.bearing === 'number' ||
       typeof p.pitch === 'number',
@@ -372,7 +387,11 @@ export const viewCommands: Record<string, CommandEntry> = {
       return runCameraCommand(ctx, (c) => {
         const recheck = checkViewport(c.map, bbox);
         if (recheck !== 'repairable') {
-          return;
+          // 手势等待期间视口已覆盖结果区（用户自己把地图拖过来了）→ 不动
+          // 相机，moveend 也永远不会触发。立即以当前视口结算 succeeded ——
+          // 否则要空转到 10s 安全超时才 ack failed:timeout（假失败）且队列
+          // 停 10s（与 set_map_view 的 no-op 快路径同构）。
+          return { status: 'succeeded', result: { viewport: recheck, repaired: false } };
         }
         navigation.fitBounds(c.map, bbox as [number, number, number, number], 80);
       });

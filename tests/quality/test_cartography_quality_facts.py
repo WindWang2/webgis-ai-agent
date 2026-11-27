@@ -279,6 +279,23 @@ async def test_trend_prefix_query_escapes_like_wildcards(facts_db):
 
 
 @pytest.mark.anyio
+async def test_trend_sync_row_shape_matches_async(facts_db, monkeypatch):
+    """同步趋势查询行形态与 async 版一致：scene_id / session_id 都在。"""
+    await store.record_quality_run(
+        lane="runtime", source="test",
+        session_id="s-sync", scene_id="heatmap-basic", passed=True,
+        checks=[_check("carto.load.ratio", "pass", {"load_ratio": 0.42})],
+    )
+    monkeypatch.setattr(settings, "DATABASE_URL", f"sqlite:///{facts_db}")
+    sync_rows = store.query_quality_trend_sync("carto.load.ratio")
+    async_rows = await store.query_quality_trend("carto.load.ratio")
+    assert len(sync_rows) == len(async_rows) == 1
+    assert set(sync_rows[0]) == set(async_rows[0])
+    assert sync_rows[0]["scene_id"] == "heatmap-basic"
+    assert sync_rows[0]["session_id"] == "s-sync"
+
+
+@pytest.mark.anyio
 async def test_retention_leaves_the_write_hot_path(facts_db, monkeypatch,
                                                    fresh_retention_throttle):
     """#1745 2：保留策略不在每次落库后同步执行。

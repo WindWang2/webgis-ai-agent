@@ -55,9 +55,9 @@ ALLOW_MARK = "h01:allow"
 
 def _is_type_checking_test(node: ast.AST) -> bool:
     """``if TYPE_CHECKING:`` / ``if typing.TYPE_CHECKING:`` 判定。"""
-    if not isinstance(node, ast.Name):
-        return False
-    return node.id == "TYPE_CHECKING"
+    if isinstance(node, ast.Name):
+        return node.id == "TYPE_CHECKING"
+    return isinstance(node, ast.Attribute) and node.attr == "TYPE_CHECKING"
 
 
 def _type_checking_guarded(node: ast.AST, parents: dict) -> bool:

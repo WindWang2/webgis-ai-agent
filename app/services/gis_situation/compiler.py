@@ -471,6 +471,10 @@ def compile_map(
         layout=layout_fact,
         desired_revision=rev_fact, fingerprint=fingerprint,
         layers=layers_fact, layer_count=layer_count_fact,
+        # layer_ids 是「完整身份清单」（消费方用它判断某层是否仍在），
+        # 不做上限裁剪 —— 裁剪后 >100 层的地图会被误判缺失。体量由
+        # layer_count/layers 摘要（已在 :412 裁剪并披露 omitted_layers）
+        # 承担。
         layer_ids=(known([str(row["id"]) for row in raw_layers
                           if isinstance(row, dict) and row.get("id")],
                          source="mapspec.layers", revision=revision)
@@ -642,7 +646,7 @@ def compile_interaction(
         for ref_id, journal in journals.items():
             if not isinstance(journal, dict):
                 continue
-            dropped = int(journal.get("dropped") or 0)
+            dropped = _num(journal.get("dropped")) or 0
             for entry in (journal.get("entries") or [])[-3:]:
                 if not isinstance(entry, dict):
                     continue
@@ -657,7 +661,7 @@ def compile_interaction(
                     "content_revision_after": entry.get("content_revision_after"),
                     "journal_dropped": dropped or None,
                 })
-        feature_edit_receipts.sort(key=lambda r: (r.get("seq") or 0), reverse=True)
+        feature_edit_receipts.sort(key=lambda r: (_num(r.get("seq")) or 0), reverse=True)
         feature_edit_receipts = feature_edit_receipts[:5]
     edits_fact = (
         known(feature_edit_receipts, source="map_state._feature_edit_journals")
@@ -778,7 +782,12 @@ async def _bounded_descriptors(
 
     async def _one(ref_id: str):
         try:
-            return ref_id, await store.get_ref_descriptor(session_id, ref_id)
+            # 单描述符有界等待（与 _gather_sources 同纪律）：任一
+            # get_ref_descriptor 挂起不能无限期阻塞本轮编译。
+            return ref_id, await asyncio.wait_for(
+                store.get_ref_descriptor(session_id, ref_id),
+                timeout=_SOURCE_TIMEOUT_S,
+            )
         except Exception:  # noqa: BLE001 — 单描述符失败不失败编译
             return ref_id, None
 

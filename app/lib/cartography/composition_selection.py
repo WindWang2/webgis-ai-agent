@@ -19,9 +19,12 @@
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 #: 变量语义类型（测量层级，决定 classification/color_scheme 契合）。
 VariableKind = str  # "none" | "categorical" | "ordinal" | "continuous" | "rate"
@@ -361,7 +364,10 @@ def _plan_for_category(
             taxonomy=taxonomy,
             spec_registry=spec_registry,
         )
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 — 候选缺失必须留痕（不静默吞错）
+        logger.warning(
+            "composition_selection: plan_composition failed for category %r: "
+            "%s: %s", category_id, type(exc).__name__, exc)
         return None
 
 

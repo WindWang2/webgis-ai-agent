@@ -180,3 +180,48 @@ def test_cancelled_workflow_is_persisted_before_cancellation_propagates(db_sessi
     db_session.expire_all()
     run = db_session.execute(select(WorkflowRun)).scalar_one()
     assert run.status == "cancelled"
+
+
+def test_cancellation_before_step_loop_marks_cancelled_and_resets_context(db_session, monkeypatch):
+    """P2: the mapspec-fingerprint await ran BEFORE the try/finally. A
+    CancelledError there (the helper only catches Exception) escaped untrapped:
+    the committed row stayed status="running" forever and the
+    ToolExecutionContext leaked (INV-AUTH1)."""
+    import asyncio
+
+    from app.models.project import WorkflowRun
+    from app.services.provenance.context import get_tool_execution_context
+
+    wf = _seed_workflow(db_session, steps_data=[
+        {"step_id": "s1", "tool_name": "buffer_analysis", "args_template": {}, "input_bindings": {}, "dependencies": []},
+    ])
+
+    async def _cancel_fingerprint(*args, **kwargs):
+        assert get_tool_execution_context() is not None  # set before the await
+        raise asyncio.CancelledError("client disconnected")
+
+    monkeypatch.setattr(WorkflowEngine, "_session_mapspec_fingerprint", _cancel_fingerprint)
+
+    async def _run_and_probe_context():
+        try:
+            await WorkflowEngine.execute_workflow_run(
+                db=db_session, workflow_id=wf.id, tool_registry=_FakeRegistry(),
+                expected_project_id="proj_1", user_id="tx-owner", org_id=1,
+                session_id="tx-session",
+            )
+        except asyncio.CancelledError:
+            return get_tool_execution_context()
+        raise AssertionError("expected CancelledError to propagate")
+
+    leaked_ctx = asyncio.run(_run_and_probe_context())
+    assert leaked_ctx is None, (
+        "INV-AUTH1 regression: ToolExecutionContext leaked after a cancellation "
+        "that hit before the execution loop"
+    )
+
+    db_session.expire_all()
+    run = db_session.execute(select(WorkflowRun)).scalar_one()
+    assert run.status == "cancelled", (
+        "run row must not stay 'running' when cancellation lands before the loop; "
+        f"got {run.status!r}"
+    )

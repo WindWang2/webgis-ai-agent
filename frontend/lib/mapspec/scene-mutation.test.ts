@@ -111,6 +111,31 @@ describe('commitUserScene', () => {
     expect(apiFetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('200 with success=false is not projected as committed (no spec/revision writes)', async () => {
+    apiFetchMock.mockResolvedValueOnce({
+      success: false,
+      status: 'superseded',
+      mutation_revision: 12,
+      mapspec: { layers: [], scene: { mode: '2d' } },
+    });
+    const result = await commitUserScene({ mode: '3d' });
+    expect(result.outcome).toBe('failed');
+    expect(commitMapSpecDocument).not.toHaveBeenCalled();
+    expect(setMapSpecRevision).not.toHaveBeenCalled();
+  });
+
+  it('409 without status=superseded (e.g. blocked) fails instead of silently converging', async () => {
+    apiFetchMock.mockRejectedValueOnce(
+      new ApiError(409, 'Conflict', {
+        detail: { success: false, status: 'blocked', mutation_revision: 12, mapspec: { layers: [] } },
+      }),
+    );
+    const result = await commitUserScene({ mode: '3d' });
+    expect(result.outcome).toBe('failed');
+    expect(commitMapSpecDocument).not.toHaveBeenCalled();
+    expect(setMapSpecRevision).not.toHaveBeenCalled();
+  });
+
   it('non-409 failure reports failed without touching committed spec', async () => {
     apiFetchMock.mockRejectedValueOnce(
       new ApiError(400, 'Bad Request', { detail: { success: false } }),

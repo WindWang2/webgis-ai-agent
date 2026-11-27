@@ -49,6 +49,18 @@ class TestCompilerStages:
         rec = c.stage("resolve_recipe_candidates")
         assert "explicit_recipe_override" in rec.reason_codes
 
+    def test_unknown_recipe_id_degrades_instead_of_crashing(self):
+        """review P2-17：未知 recipe_id 诚实降级（不抛 AttributeError）。"""
+        c = compile_workflow(
+            "成都各区小学数量是否均衡", recipe_id="no_such_recipe_xyz",
+            profile=_PROFILE_POINTS,
+        )
+        baseline = compile_workflow("成都各区小学数量是否均衡",
+                                    profile=_PROFILE_POINTS)
+        assert c.recipe_id == baseline.recipe_id  # 降级到确定性候选
+        rec = c.stage("resolve_recipe_candidates")
+        assert "unknown_recipe_override" in rec.reason_codes
+
 
 class TestCompilerRouting:
     def test_generic_phrases_stay_with_v1_seed(self):

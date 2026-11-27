@@ -76,5 +76,27 @@ def test_purge_is_idempotent_tombstone(wc_store, wc):
         wc_store.save(wc.next_revision(), expected_revision=None)
 
 
+def test_corrupt_payload_row_is_regrounded_by_save(wc_store, wc):
+    """load() treats an unparseable payload as absent and promises the next
+    save rebuilds it; the save must re-ground the active row instead of
+    failing with working_context_vanished forever."""
+    from app.models.gis_context import GISWorkingContextRow
+
+    with wc_store._sf() as db:
+        db.add(GISWorkingContextRow(
+            mission_id=wc.mission_id, org_id="org-1", state="active",
+            revision=4, schema_version="gis_working_context.v3",
+            payload={"not_a_working_context_field": True},
+        ))
+        db.commit()
+    assert wc_store.load(wc.mission_id, org_id="org-1") is None
+
+    wc_store.save(wc, expected_revision=None)
+    loaded = wc_store.load(wc.mission_id, org_id="org-1")
+    assert loaded is not None
+    assert loaded.mission_id == wc.mission_id
+    assert loaded.basis.aoi_name == "成都市"
+
+
 def test_missing_mission_row_loads_none(wc_store):
     assert wc_store.load("msn-ghost", org_id="org-1") is None

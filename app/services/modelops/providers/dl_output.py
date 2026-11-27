@@ -87,7 +87,13 @@ def map_dl_outputs(
         detections: List[Dict[str, Any]] = []
         for i in range(primary.shape[0]):
             for m in primary[i]:
-                x1, y1, x2, y2, score, label = (float(v) for v in m)
+                # NaN/inf 行：`score<=0` / `label<1` / `x2<=x1` 对 NaN 全为
+                # False —— 不显式拦截就会带着 NaN score 进 detections（下游
+                # 静默出错），且 int(NaN) 抛裸 ValueError。
+                row = np.asarray(m, dtype=np.float64)
+                if not bool(np.isfinite(row).all()):
+                    continue
+                x1, y1, x2, y2, score, label = (float(v) for v in row)
                 if score <= 0.0 or label < 1:
                     continue
                 if x2 <= x1 or y2 <= y1:

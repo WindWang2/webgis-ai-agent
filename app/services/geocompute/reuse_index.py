@@ -96,7 +96,7 @@ def record_result(
             # 重写即刷新（LRU 触点 = created_at）：删除该键的全部行后插入
             # 新行（bulk delete 一并清掉竞态重复行）。
             db.query(GeoComputeNodeResult).filter(
-                GeoComputeNodeResult.owner_scope == owner_scope,
+                GeoComputeNodeResult.owner_scope == owner_scope[:40],
                 GeoComputeNodeResult.node_fingerprint == node_fingerprint,
             ).delete(synchronize_session=False)
             db.flush()
@@ -138,7 +138,7 @@ def find_result(owner_scope: str, node_fingerprint: str) -> Optional[dict[str, A
             row = (
                 db.query(GeoComputeNodeResult)
                 .filter(
-                    GeoComputeNodeResult.owner_scope == owner_scope,
+                    GeoComputeNodeResult.owner_scope == owner_scope[:40],
                     GeoComputeNodeResult.node_fingerprint == node_fingerprint,
                 )
                 .order_by(
@@ -171,7 +171,7 @@ def delete_result(owner_scope: str, node_fingerprint: str) -> bool:
             deleted = (
                 db.query(GeoComputeNodeResult)
                 .filter(
-                    GeoComputeNodeResult.owner_scope == owner_scope,
+                    GeoComputeNodeResult.owner_scope == owner_scope[:40],
                     GeoComputeNodeResult.node_fingerprint == node_fingerprint,
                 )
                 .delete()
@@ -202,7 +202,7 @@ def _prune_owner(db: Any, owner_scope: str, max_per_owner: int) -> None:
     stale_ids = list(
         db.execute(
             select(GeoComputeNodeResult.id)
-            .where(GeoComputeNodeResult.owner_scope == owner_scope)
+            .where(GeoComputeNodeResult.owner_scope == owner_scope[:40])
             .order_by(
                 GeoComputeNodeResult.created_at.desc(), GeoComputeNodeResult.id.desc()
             )

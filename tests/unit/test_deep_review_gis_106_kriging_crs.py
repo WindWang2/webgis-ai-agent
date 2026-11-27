@@ -3,6 +3,8 @@ member (the object-form-only parsing silently defaulted to WGS84).
 """
 import asyncio
 
+import pytest
+
 from app.tools.advanced_spatial import (
     _resolve_kriging_declared_crs,
     register_advanced_spatial_tools,
@@ -22,6 +24,20 @@ def test_string_form_crs_is_extracted():
 
 def test_unknown_declared_crs_is_returned_verbatim_for_driver_rejection():
     assert _resolve_kriging_declared_crs({"crs": "EPSG:999999"}) == "EPSG:999999"
+
+
+@pytest.mark.parametrize(
+    "declared",
+    [
+        "EPSG:4490+5730",
+        "EPSG:3857+4326",
+        "EPSG:4326+32650",
+        "EPSG:14326",
+        "ESRI:104490",
+    ],
+)
+def test_numeric_substring_does_not_rewrite_a_different_crs(declared):
+    assert _resolve_kriging_declared_crs({"crs": declared}) == declared
 
 
 def _utm_feature_collection():

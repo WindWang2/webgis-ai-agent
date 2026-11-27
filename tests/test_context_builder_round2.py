@@ -62,6 +62,20 @@ def test_viewport_layer_relation_missing_inputs():
     assert viewport_layer_relation([0, 0, 1], [0, 0, 1, 1]) is None
 
 
+def test_viewport_layer_relation_rejects_non_numeric_bounds():
+    """P2 regression：bbox/viewport 含 None / 字符串 / NaN 时不得抛 ValueError
+    穿透 format_layer_schema → format_layer_lines → build_map_state_summary →
+    assemble（整轮失败）。无法解析即按「无法判断」返回 None。"""
+    assert viewport_layer_relation([0, 0, "10", 10], [1, 1, 2, 2]) is None
+    assert viewport_layer_relation([0, 0, 10, 10], [None, 1, 2, 2]) is None
+    assert viewport_layer_relation([0, 0, 10, 10], [1, "s", 2, 2]) is None
+    assert viewport_layer_relation([0, 0, 10, float("nan")], [1, 1, 2, 2]) is None
+    assert viewport_layer_relation([0, 0, 10, 10], [1, 1, 2, float("inf")]) is None
+    # 合法数值仍照常判定（回归保护：守卫不得误杀正常路径）
+    assert viewport_layer_relation([0, 0, 10, 10], [1, 1, 2, 2]) == "在视口内"
+    assert viewport_layer_relation([0, 0, 10, 10], [20, 20, 30, 30]) == "在视口外"
+
+
 def test_format_layer_schema_includes_bbox_and_relation():
     schema = {"geom": "Point", "count": 2, "fields": {}, "bbox": [100, 30, 101, 31]}
     out = format_layer_schema(schema, viewport_bounds=[99, 29, 102, 32])
@@ -74,6 +88,13 @@ def test_format_layer_schema_no_relation_when_no_viewport():
     out = format_layer_schema(schema)
     assert "bbox=" in out
     assert "在视口" not in out
+
+
+def test_format_layer_schema_skips_non_numeric_bbox_elements():
+    """descriptor bbox 可能是 [None,...]/字符串 —— 不得抛 TypeError。"""
+    for bbox in ([None, None, None, None], ["a", "b", "c", "d"], [1, 2, None, 4]):
+        out = format_layer_schema({"geom": "Point", "bbox": bbox})
+        assert "bbox=" not in out
 
 
 def test_split_events_categorizes_correctly():
@@ -100,6 +121,13 @@ def test_format_tool_event_renders_key_attrs():
     assert "osm_search" in out
     assert "ref=ref:abc" in out
     assert "feature_count=12" in out
+
+
+def test_format_tool_event_tolerates_null_tool_field():
+    """data.tool 存在但为 None / 非字符串时不得让 " ".join 抛 TypeError。"""
+    assert "?" in _format_tool_event({"data": {"tool": None}})
+    out = _format_tool_event({"data": {"tool": 42, "ref": "ref:x"}})
+    assert "42" in out and "ref=ref:x" in out
 
 
 def test_format_pending_event_warns_against_retrigger():

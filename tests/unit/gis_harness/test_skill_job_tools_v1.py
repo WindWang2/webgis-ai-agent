@@ -137,3 +137,61 @@ async def test_selection_evidence_recorded(registry):
                and e["skill_id"] == "validate_spatial_data"
                and "explicit_user_selection" in e["selection_reason"]
                for e in events)
+
+
+@pytest.mark.asyncio
+async def test_status_bare_job_id_denied_without_session(registry):
+    """sid 为空时裸 job_id 不得跨会话读取运行视图（fail-closed）。"""
+    from app.lib.runtime.context import bind_runtime_context
+    from app.services.session_data import session_data_manager
+
+    owner_sid = "t-tools-owner-1"
+    ref = await session_data_manager.store(owner_sid, _points(), prefix="geojson")
+    r1 = await registry.dispatch("gis_skill_job_prepare", {
+        "skill_id": "validate_spatial_data", "params": {},
+        "bindings": [{"role": "subject", "ref": ref}],
+        "session_id": owner_sid,
+    }, session_id=owner_sid)
+    assert r1.get("success") is True, r1
+    r2 = await registry.dispatch("gis_skill_job_start", {
+        "prepared_id": r1["prepared_id"], "session_id": owner_sid,
+        "wait_timeout_s": 60,
+    }, session_id=owner_sid)
+    assert r2.get("success") is True, r2
+
+    with bind_runtime_context(session_id=""):
+        r3 = await registry.dispatch(
+            "gis_skill_job_status", {"job_id": str(r2["job_id"])})
+    assert r3.get("success") is False, r3
+    assert r3.get("code") == "JOB_NOT_FOUND", r3
+
+
+@pytest.mark.asyncio
+async def test_start_without_session_does_not_consume_prepared(registry):
+    """无会话上下文时不得无过滤消费他人 prepared_id（且不烧原会话意图）。"""
+    from app.lib.runtime.context import bind_runtime_context
+    from app.services.session_data import session_data_manager
+
+    owner_sid = "t-tools-owner-2"
+    ref = await session_data_manager.store(owner_sid, _points(), prefix="geojson")
+    r1 = await registry.dispatch("gis_skill_job_prepare", {
+        "skill_id": "validate_spatial_data", "params": {},
+        "bindings": [{"role": "subject", "ref": ref}],
+        "session_id": owner_sid,
+    }, session_id=owner_sid)
+    assert r1.get("success") is True, r1
+    prepared_id = r1["prepared_id"]
+
+    with bind_runtime_context(session_id=""):
+        r2 = await registry.dispatch(
+            "gis_skill_job_start", {"prepared_id": prepared_id})
+    assert r2.get("success") is False, r2
+    assert r2.get("code") == "PREPARED_EXPIRED", r2
+
+    # 越权尝试不得消费：原会话仍可正常启动
+    r3 = await registry.dispatch("gis_skill_job_start", {
+        "prepared_id": prepared_id, "session_id": owner_sid,
+        "wait_timeout_s": 60,
+    }, session_id=owner_sid)
+    assert r3.get("success") is True, r3
+    assert r3["status"] == "completed"

@@ -130,6 +130,11 @@ class TestDeriveDataKind:
         with pytest.raises(ValueError):
             derive_data_kind("bogus")
 
+    def test_cyclic_tokens_use_name_boundaries(self):
+        assert derive_data_kind("temporal", field_name="Day of Week") == "cyclic"
+        assert derive_data_kind(
+            "temporal", field_name="months_since_start") == "sequential"
+
 
 class TestInferMeasurementKind:
     def test_signed_change_by_value_evidence(self):
@@ -165,6 +170,19 @@ class TestInferMeasurementKind:
             values=[-1.0] + [20.0] * 39)
         assert d.kind == "quantitative"
         assert any(r["kind"] == "signed_change" for r in d.rejected)
+
+    def test_value_sampling_stops_at_cap_without_materializing(self):
+        """超大 values 只消费前 4096 条，不得先 list() 全量拷贝。"""
+        class GuardedValues:
+            def __iter__(self):
+                for i in range(10000):
+                    if i >= 4096:
+                        raise AssertionError("materialized whole sequence")
+                    yield 1.0
+
+        d = infer_measurement_kind(
+            "sensor_reading", dtype="number", values=GuardedValues())
+        assert d.kind == "quantitative"
 
     def test_nominal_by_dtype(self):
         d = infer_measurement_kind("landuse_type", dtype="string", values=[])

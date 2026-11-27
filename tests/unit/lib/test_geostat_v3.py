@@ -917,3 +917,69 @@ def test_robust_variogram_clean_matches_classical_and_false_path_bitwise():
     assert well_supported.sum() >= 5
     assert float(np.median(rel)) < 0.01
     assert float(np.max(rel[well_supported])) < 0.01
+
+
+# ── 9. P2 回归：方向变异函数 band 语义 + 块克里金 γ̄(B,B) 自对归零 ──────────
+
+def test_directional_variogram_band_width_uses_pair_midpoint():
+    """P2 修复：band_width 限制**配对中点**到轴线的垂距（docstring/GSLIB
+    语义），不是配对位移向量与轴的垂距 |u×v|。
+
+    缺陷版对平行于轴的远轴对恒判 perp=0：本例 C→D（方向正东、整对位于
+    y=1000 的远轴）会被 band_width=500 误纳，其巨大平方差污染 0° 方向
+    曲线。修复后远轴对（中点垂距 667 > 500）被剔除；轴线锚在数据质心，
+    故结果对工作 CRS 平移（UTM 带原点）逐位不变。
+    """
+    xy = np.array([
+        [0.0, 0.0],        # A：轴上
+        [100.0, 0.0],      # B：轴上
+        [200.0, 0.0],      # E：轴上
+        [300.0, 0.0],      # F：轴上
+        [0.0, 1000.0],     # C：远轴西端（C→D 平行于轴但整对离轴）
+        [100.0, 1000.0],   # D：远轴东端
+    ])
+    z = np.array([1.0, 2.0, 3.0, 4.0, 0.0, 200.0])
+    _, g_open, c_open, m_open = directional_variogram(
+        xy, z, 0.0, tolerance_deg=1.0, n_lags=4)
+    assert m_open["n_pairs_kept"] == 7          # 6 个轴上对 + 远轴对 C→D
+
+    lags, gamma, cnt, m_band = directional_variogram(
+        xy, z, 0.0, tolerance_deg=1.0, n_lags=4, band_width=500.0)
+    # 修复后远轴对 C→D（中点垂距 667）被剔除，只剩 6 个轴上对
+    assert m_band["n_pairs_kept"] == 6
+    assert cnt.sum() == 6
+    # bin0（d≤261）只剩 5 个轴上对：(1,2),(1,3),(2,3),(2,4),(3,4) ⇒
+    # γ = 0.5·(1+4+1+4+1)/5 = 1.1（缺陷版含远轴 (0,200) 对：γ≈3334）
+    assert gamma[0] == pytest.approx(1.1)
+    assert g_open[0] == pytest.approx(0.5 * (1 + 4 + 1 + 4 + 1 + 40000) / 6)
+    # 质心锚定 ⇒ 平移到 UTM 量级坐标后逐位一致（原点锚定会恒空）
+    _, g_utm, _, _ = directional_variogram(
+        xy + np.array([500000.0, 4000000.0]), z, 0.0,
+        tolerance_deg=1.0, n_lags=4, band_width=500.0)
+    np.testing.assert_array_equal(g_utm, gamma)
+
+
+def test_block_kriging_gamma_bb_excludes_nugget_self_pairs():
+    """P2 修复：γ̄(B,B) 的 4 个自对按约定取 γ(0)=0，不是 _gamma(0)=nugget。
+
+    纯块金变异函数（sill=0 ⇒ 任意 h>0 的 γ 恒为 nugget N）隔离该项：
+    系统对称解 w=1/k、μ=(N−ridge)/k，块方差 = N + μ − γ̄(B,B)。缺陷版
+    γ̄(B,B)=16N/16=N ⇒ 方差=N/k；修复版 12N/16=0.75N ⇒ 方差=0.25N+N/k
+    （k=4、N=4 时 1.0 vs 2.0）。
+    """
+    from app.lib.geo_analysis.kriging import VariogramFit
+
+    nugg = 4.0
+    vfit = VariogramFit(model="spherical", sill=0.0, range_m=500.0,
+                        nugget=nugg)
+    rng = np.random.default_rng(21)
+    pts = rng.uniform(0.0, 2000.0, (60, 2))
+    vals = 10.0 + rng.normal(0.0, 1.0, 60)
+    centers = np.array([[1000.0, 1000.0], [700.0, 1300.0]])
+    k = 4
+    res, meta = block_kriging(pts, vals, centers, block_size=100.0,
+                              variogram=vfit, k_neighbors=k)
+    ridge = 1e-6 * nugg
+    expected = 0.25 * nugg + (nugg - ridge) / k
+    np.testing.assert_allclose(res["variances"], expected, rtol=1e-6)
+    assert meta["n_blocks"] == 2 if "n_blocks" in meta else True

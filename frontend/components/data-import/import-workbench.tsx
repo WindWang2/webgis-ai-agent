@@ -84,6 +84,9 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
   const [pct, setPct] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const genRef = useRef(0);
+  // 最近已知的服务端计划版本：loadBatch 重载时同步，勾选落库成功后刷新。
+  // 乐观锁必须用这个值——active.plan_version 是加载时快照，勾选落库已使其过期。
+  const planVersionRef = useRef<number | null>(null);
 
   // 会话切换：批次上下文整体作废（genRef 递增使在飞响应失效）。
   useEffect(() => {
@@ -98,9 +101,13 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
 
   const refreshList = useCallback(async () => {
     if (!sessionId) return;
+    const gen = genRef.current;
     try {
-      setBatches((await listImportBatches(sessionId, { ownerToken })) ?? []);
+      const list = await listImportBatches(sessionId, { ownerToken });
+      if (genRef.current !== gen) return; // P2：会话切换后旧列表响应不得覆写当前列表
+      setBatches(list ?? []);
     } catch (e) {
+      if (genRef.current !== gen) return;
       setError(String((e as Error).message ?? e));
     }
   }, [sessionId, ownerToken]);
@@ -118,6 +125,7 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
       try {
         const detail = await getImportBatch(batchId, sessionId, { ownerToken });
         if (genRef.current !== gen) return; // 迟到响应丢弃
+        planVersionRef.current = detail.plan_version ?? null;
         setActive(detail);
         setSelectedOverride(null);
         const next: Record<string, Draft> = {};
@@ -163,7 +171,7 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     if (poll.data && active) {
-      setReceipts(poll.data.receipts);
+      setReceipts(poll.data.receipts ?? null); // 缺 receipts 字段时按无收据处理（防 Object.entries(undefined)）
       if (poll.data.status !== 'committing') {
         setActive((prev) =>
           prev && prev.batch_id === active.batch_id
@@ -203,13 +211,20 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
   );
 
   const persistSelection = useCallback(
-    async (keys: string[]) => {
+    async (keys: string[], rollback: string[]) => {
       if (!sessionId || !active) return;
+      const gen = genRef.current;
       try {
-        await saveImportPlan(active.batch_id, sessionId, { selected: keys }, { ownerToken });
+        const saved = await saveImportPlan(active.batch_id, sessionId, { selected: keys }, { ownerToken });
+        if (genRef.current === gen && typeof saved?.plan_version === 'number') {
+          // 勾选落库可能已使服务端版本 +1（0 → 1），后续保存/提交必须用新版本。
+          planVersionRef.current = Math.max(planVersionRef.current ?? 0, saved.plan_version);
+        }
       } catch (e) {
+        if (genRef.current !== gen) return; // 迟到失败不得回滚当前批次的选择
         setError(String((e as Error).message ?? e));
-        setSelectedOverride(null); // 失败回滚到服务器事实源
+        // 失败只回滚本次勾选到落库前的选择，不连坐此前已成功落库的勾选。
+        setSelectedOverride(new Set(rollback));
       }
     },
     [active, sessionId, ownerToken, setSelectedOverride]
@@ -226,7 +241,7 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
         base.add(memberKey);
       }
       setSelectedOverride(base); // 乐观：勾选立即响应
-      void persistSelection([...base]);
+      void persistSelection([...base], selectedKeys);
     },
     [active, selectedKeys, persistSelection, setSelectedOverride]
   );
@@ -262,9 +277,13 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
     setError(null);
     try {
       const configs: Record<string, MemberConfig> = {};
+      // P1：用当前生效选择（乐观覆盖/服务器事实源）而非 members[].selected ——
+      // 勾选后 selectedKeys 已更新但 active.members 仍是陈旧快照，按 m.selected
+      // 过滤会把刚勾选成员的解释配置整条丢掉。
+      const selected = new Set(selectedKeys);
       for (const m of members) {
         const d = drafts[m.member_key];
-        if (!m.selected || m.unsupported_reason || !d) continue;
+        if (!selected.has(m.member_key) || m.unsupported_reason || !d) continue;
         const c: MemberConfig = { mode: d.mode ?? 'auto' };
         if (d.x_column) c.x_column = d.x_column;
         if (d.y_column) c.y_column = d.y_column;
@@ -278,7 +297,7 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
       await saveImportPlan(
         active.batch_id,
         sessionId,
-        { member_configs: configs, selected: selectedKeys, expected_plan_version: active.plan_version ?? null },
+        { member_configs: configs, selected: selectedKeys, expected_plan_version: planVersionRef.current ?? active.plan_version ?? null },
         { ownerToken }
       );
       await loadBatch(active.batch_id); // 保存后配置回到服务器事实源
@@ -320,15 +339,20 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
     try {
       // 先落计划（确保提交用的解释与预览一致），再提交
       const configs: Record<string, MemberConfig> = {};
+      // P1：同 handleSavePlan —— 按当前生效选择取配置，否则刚勾选成员的
+      // member_configs 漏发，提交时按 mode=auto 导入（解释配置静默丢失）。
+      const selected = new Set(selectedKeys);
       for (const m of members) {
         const d = drafts[m.member_key];
-        if (!m.selected || m.unsupported_reason || !d) continue;
-        configs[m.member_key] = d as MemberConfig;
+        if (!selected.has(m.member_key) || m.unsupported_reason || !d) continue;
+        // P2：剥离本地 dirty 标记，不把 UI 状态当作 MemberConfig 发给后端
+        const { dirty: _dirty, ...config } = d;
+        configs[m.member_key] = config;
       }
       await saveImportPlan(
         active.batch_id,
         sessionId,
-        { member_configs: configs, selected: selectedKeys },
+        { member_configs: configs, selected: selectedKeys, expected_plan_version: planVersionRef.current ?? active.plan_version ?? null },
         { ownerToken }
       );
       await commitImportBatch(active.batch_id, sessionId, {}, { ownerToken });

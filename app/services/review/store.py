@@ -123,13 +123,17 @@ class ReviewStore:
     def _review_dir(self, session_id: str) -> Path:
         # 与 MapSpecStore._session_dir_path 同款防线：会话 id 不得逃出 base。
         raw = str(session_id)
-        safe = "".join(
-            ch for ch in raw if ch not in ('\\', '/', ':', '*', '?', '"', '<', '>', '|', '\x00')
-        )
-        # 空/纯点 id 会落到共享目录（review R1-P3 防御纵深）—— 显式拒绝。
-        if not safe or safe in (".", ".."):
+        # 保留字符一律拒绝（而非静默剔除）：剔除会让 "a/b" 与 "ab" 落到
+        # 同一存储目录，而锁按原始 id 分锁 → 同文件无互斥写（丢更新/串数据）。
+        if any(
+            ch in ('\\', '/', ':', '*', '?', '"', '<', '>', '|', '\x00')
+            for ch in raw
+        ):
             raise ReviewStoreError(f"invalid session id: {session_id!r}")
-        d = (self.base_dir / safe / "review").resolve()
+        # 空/纯点 id 会落到共享目录（review R1-P3 防御纵深）—— 显式拒绝。
+        if not raw or raw in (".", ".."):
+            raise ReviewStoreError(f"invalid session id: {session_id!r}")
+        d = (self.base_dir / raw / "review").resolve()
         base_resolved = self.base_dir.resolve()
         if base_resolved not in d.parents:
             raise ReviewStoreError(f"invalid session id: {session_id!r}")

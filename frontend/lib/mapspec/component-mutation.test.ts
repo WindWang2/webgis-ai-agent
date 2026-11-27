@@ -50,8 +50,10 @@ describe('commitComponentPatch（用户拖拽/缩放/折叠唯一提交通道，
       })),
     });
 
-    await commitComponentPatch('north_arrow', { placement: { mode: 'floating', x: 0.4, y: 0.4 } as never });
+    const outcome = await commitComponentPatch('north_arrow', { placement: { mode: 'floating', x: 0.4, y: 0.4 } as never });
 
+    // 落定结局必须回流给调用方（此前入队包装丢弃返回值 → 永远 undefined）。
+    expect(outcome).toEqual({ status: 'applied' });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
     expect(body.intent).toBe('patch_component');
@@ -87,7 +89,7 @@ describe('commitComponentPatch（用户拖拽/缩放/折叠唯一提交通道，
 
     await expect(
       commitComponentPatch('chart_panel', { placement: { mode: 'floating', x: 0.2, y: 0.2 } as never }),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ status: 'superseded' });
 
     expect(getMapSpecSessionCursor().revision).toBe(15);
     // 服务端真相成为可见真相：压着的 override 被清

@@ -414,6 +414,48 @@ async def test_user_wins_guard_blocks_agent_remove_layer():
 
 
 @pytest.mark.asyncio
+async def test_user_wins_guard_matches_parent_layer_family():
+    """P3：spec 侧用户层为父 id（road）时，agent 对族变体（road-label）的
+    显隐反转同样必须被拒绝（族匹配双向，与 reconciliation 一致）。"""
+    sid = "gws-guard-family-parent"
+    await session_data_manager.clear_session(sid)
+    await _seed_layer(sid, "road")
+    engine = MapSpecLifecycleEngine()
+    # 用户隐藏父层 —— 此时派生层尚未存在，只有 road 带 user 印记。
+    user_hide = await apply_gis_mutation(
+        sid, PatchLayerPresentationIntent(layer_id="road", visible=False),
+        origin="user", actor="test", engine=engine, expected_revision=1,
+    )
+    assert not user_hide.is_error, user_hide.error_msg
+    # 派生层后建（无 user 印记）。
+    await _seed_layer(sid, "road-label")
+    # agent 反转派生层显隐 → 父层用户隐藏的族决策必须胜出。
+    agent_show = await apply_gis_mutation(
+        sid, PatchLayerPresentationIntent(layer_id="road-label", visible=True),
+        origin="agent", actor="finalize_display", engine=engine,
+    )
+    assert agent_show.is_error, "父层用户隐藏必须拦住族变体的 agent 反转"
+    assert agent_show.error_code == "user_wins_presentation"
+    await session_data_manager.clear_session(sid)
+
+
+@pytest.mark.asyncio
+async def test_world_state_tolerates_non_dict_current_view():
+    """P2: current_view 为 null/字符串时 build_world_state 不得抛 AttributeError。"""
+    from app.services.gis_world_state.state import build_world_state
+
+    sid = "gws-bad-current-view-1"
+    await session_data_manager.clear_session(sid)
+    await session_data_manager.set_map_state(sid, "mapspec", {
+        "specVersion": 3, "layers": [], "sources": {}, "layout": {"components": []},
+    })
+    for malformed in (None, "not-a-dict"):
+        await session_data_manager.set_map_state(sid, "current_view", malformed)
+        state = await build_world_state(sid)
+        assert state["viewport"]["center"] is None
+
+
+@pytest.mark.asyncio
 async def test_user_wins_patch_hint_does_not_teach_remount():
     """H02: reversal hint no longer tells the model to rebuild the layer."""
     sid = "gws-guard-hint-1"

@@ -16,7 +16,6 @@
 投影失败诚实缺省（空串/空表 + findings），绝不虚构、绝不抛错阻断调用方。
 """
 from __future__ import annotations
-import logging
 
 from typing import Any, Dict, Iterator, List, Optional
 
@@ -91,24 +90,6 @@ def _precondition_description(precondition_id: str) -> str:
     prefix = precondition_id.split(":", 1)[0]
     key = f"{prefix}:N"
     return PRECONDITION_DESCRIPTIONS.get(key, "")
-
-
-def _capability_reverse_map() -> Dict[str, List[str]]:
-    """algorithm_id → capabilities（单次遍历构建；注册表只读）。"""
-    from app.lib.gis.algorithm_registry import get_algorithm_registry
-    from app.lib.gis.capability_registry import get_capability_registry
-
-    reg = get_algorithm_registry()
-    caps = get_capability_registry()
-    reverse: Dict[str, List[str]] = {}
-    for cid in caps.all_ids:
-        try:
-            for algo in reg.algorithms_for_capability(cid):
-                reverse.setdefault(algo.id, []).append(cid)
-        except Exception:  # noqa: BLE001 — 投影是增值，注册表异常不阻断
-            logging.getLogger(__name__).warning('Algorithm capability projection failed; skipping this capability', exc_info=True)
-            continue
-    return reverse
 
 
 def build_method_use_contract(algorithm_id: str) -> MethodUseContract:
@@ -206,7 +187,12 @@ def build_method_use_contract(algorithm_id: str) -> MethodUseContract:
         limitations=list(algo.limitations)[:8],
         numerical_tolerance=algo.numerical_tolerance[:160],
         deterministic=algo.deterministic,
-        findings=findings[:_MAX_FINDINGS],
+        findings=(
+            findings[:_MAX_FINDINGS]
+            if len(findings) <= _MAX_FINDINGS
+            else findings[:_MAX_FINDINGS - 1] + [
+                f"findings_truncated:{len(findings)}"]
+        ),
     )
 
 

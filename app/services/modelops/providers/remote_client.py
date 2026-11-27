@@ -207,27 +207,29 @@ class RemoteInferenceProvider:
 
     # ── HTTP 核 ─────────────────────────────────────────────────────
     def _client_or_default(self) -> httpx.Client:
-        if self._client is not None:
-            return self._client
-        from app.core.egress import guarded_client
+        # 进程级复用：每次 infer 新建 client 会重复 TCP 握手与连接池创建
+        # （多批热路径的纯开销）。懒创建后按 provider 实例存活。
+        with self._lock:
+            if self._client is None:
+                from app.core.egress import guarded_client
 
-        # ADR-0202：egress 守卫叠加在 RemoteEndpointPolicy 之上（AND 语义）：
-        # allowlist 命中 MODELOPS_REMOTE_ALLOWLIST 的公网端点在离线部署下
-        # 仍被部署层守卫拒绝。
-        return guarded_client(
-            dependency_id="modelops_remote",
-            follow_redirects=False,
-            timeout=httpx.Timeout(
-                connect=REMOTE_CONNECT_TIMEOUT_S, read=self._read_timeout_s, write=30.0, pool=30.0
-            ),
-            limits=httpx.Limits(max_connections=4),
-        )
+                # ADR-0202：egress 守卫叠加在 RemoteEndpointPolicy 之上（AND 语义）：
+                # allowlist 命中 MODELOPS_REMOTE_ALLOWLIST 的公网端点在离线部署下
+                # 仍被部署层守卫拒绝。
+                self._client = guarded_client(
+                    dependency_id="modelops_remote",
+                    follow_redirects=False,
+                    timeout=httpx.Timeout(
+                        connect=REMOTE_CONNECT_TIMEOUT_S, read=self._read_timeout_s, write=30.0, pool=30.0
+                    ),
+                    limits=httpx.Limits(max_connections=4),
+                )
+            return self._client
 
     def _request(self, endpoint: str, *, method: str, path: str,
                  json_body: Optional[Dict[str, Any]] = None) -> httpx.Response:
         current = endpoint.rstrip("/") + path
         client = self._client_or_default()
-        own = self._client is None
         try:
             hops = 0
             while True:
@@ -267,9 +269,6 @@ class RemoteInferenceProvider:
                     )
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             raise RemoteInferenceError(f"remote transport failure: {type(exc).__name__}") from exc
-        finally:
-            if own:
-                client.close()
 
     # ── infer ───────────────────────────────────────────────────────
     def infer(
@@ -309,7 +308,11 @@ class RemoteInferenceProvider:
                 )
             try:
                 data = resp.json()
-            except ValueError as exc:
+            # RecursionError 是 RuntimeError 子类而**非** ValueError 子类：
+            # 病态深嵌套 JSON（64MiB 字节预算内即可构造）会绕过 except
+            # ValueError 向上逃逸成未处理异常（500）—— 响应体完全不可信，
+            # 与字节上限/错误体 sanitize/redirect 逐跳重过策略同一口径设防。
+            except (ValueError, RecursionError) as exc:
                 raise RemoteInferenceError("remote response is not valid JSON") from exc
             probs_raw = data.get("class_probabilities")
             if not isinstance(probs_raw, list):

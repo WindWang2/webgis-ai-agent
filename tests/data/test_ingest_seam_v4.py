@@ -8,7 +8,9 @@
 - 修复提案映射：诊断码 → REMEDIATION_OPS 词表（R5，plan-only）。
 """
 import json
+from pathlib import Path
 
+import numpy as np
 import pytest
 
 from app.services import data_parser
@@ -199,6 +201,36 @@ class TestCrsHonesty:
         assert meta["crs_source"] == "assumed"
         assert meta["crs_assumed"] == "EPSG:4326"
         assert any("CRS_MISSING" in w for w in meta.get("warnings", []))
+
+
+# ── Item 3b：栅格原文件原子复制（#1634 同范式）─────────────────────────
+
+class TestRasterAtomicCopy:
+    def test_copy_failure_leaves_no_partial_original_tif(self, tmp_path, monkeypatch):
+        """复制中途失败（磁盘满/进程被杀）→ output_path 绝不出现半截 tif。"""
+        rasterio = pytest.importorskip("rasterio")
+        from rasterio.transform import from_origin
+
+        src = tmp_path / "src.tif"
+        with rasterio.open(
+            src, "w", driver="GTiff", width=4, height=4, count=1,
+            dtype="uint8", crs="EPSG:4326", transform=from_origin(0, 4, 1, 1),
+        ) as dst:
+            dst.write(np.full((1, 4, 4), 7, dtype="uint8"))
+
+        upload = tmp_path / "upload-raster"
+        upload.mkdir()
+
+        def _partial_then_die(s, d, *_a, **_k):
+            Path(d).write_bytes(Path(s).read_bytes()[:10])
+            raise OSError("disk full")
+
+        monkeypatch.setattr(data_parser.shutil, "copy2", _partial_then_die)
+        with pytest.raises(OSError, match="disk full"):
+            data_parser.parse_raster(src, upload, "raster-atomic")
+
+        assert not (upload / "original.tif").exists()
+        assert list(upload.glob(".*.tmp")) == []
 
 
 # ── Item 5b：ingest_dataset 工具（R1）───────────────────────────────────

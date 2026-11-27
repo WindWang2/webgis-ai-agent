@@ -3,8 +3,9 @@
 顺序即裁决顺序，任何一步失败都不留下"半个成果"：
 
     scan_quantities（字段/单位/零/缺失/非法）
+      → clamp_plan_budget（要素上界；先于最重的投影+邻接）
       → prepare_geography（身份/几何/CRS/anchor/邻接）
-      → clamp_plan_budget（资源上界）
+      → clamp_plan_budget（邻接边上界）
       → build_area_scale（共同面积系数）
       → solve_dorling（有界位移）
       → plan_circles（等比归一）
@@ -71,7 +72,17 @@ def _normalize_anchors(
     ys = [a[1] for a in anchors]
     minx, maxx = min(xs), max(xs)
     miny, maxy = min(ys), max(ys)
-    span = max(1e-9, max(maxx - minx, maxy - miny))
+    span = max(maxx - minx, maxy - miny)
+    if span <= 1e-9:
+        # 全重合锚点没有可表达的空间跨度：旧实现用 1e-9 兜底会把 factor
+        # 放大到 1e11 级，几何经该仿射展开后把圆半径归一成 0 —— 与其产出
+        # 不可读的布局，不如 typed 拒绝。
+        raise AuthoringError(
+            "EXTREME_VALUE_RANGE",
+            "所有统计单元的锚点重合（跨度≈0）—— 无法建立可读的示意布局",
+            field="scope",
+            correction_hint="检查几何/投影是否有效（零面积或重复几何）；"
+                            "排除退化单元后重试。")
     factor = (extent * 0.86) / span
     cx, cy = (minx + maxx) / 2.0, (miny + maxy) / 2.0
     offset = extent / 2.0
@@ -108,20 +119,9 @@ def scoped_features(
     return keep
 
 
-def compute_layout(
-    plan: AuthoringPlan,
-    frozen: FrozenSource,
-    *,
-    should_cancel: Optional[Callable[[], bool]] = None,
-    cancellation_exception: Optional[Callable[[], BaseException]] = None,
-) -> LayoutBuild:
-    """确定性计算（同一冻结内容 + 同一计划 → 同一 artifact 指纹）。"""
-    scan = scan_quantities(
-        scoped_features(frozen.features, plan),
-        field_name=plan.quantity.field, unit=plan.quantity.unit,
-        zero_policy=plan.zero_policy, missing_policy=plan.missing_policy)
-
-    available = {str(f.get("id")) for f in frozen.features
+def validate_scope(plan: AuthoringPlan, features: List[Dict[str, Any]]) -> None:
+    """预检 scope 的 id 与排除理由（与 worker 同一套裁决，预检期就拒绝）。"""
+    available = {str(f.get("id")) for f in features
                  if isinstance(f, dict) and f.get("id") is not None}
     if plan.scope.include_ids is not None:
         unknown = [fid for fid in plan.scope.include_ids if fid not in available]
@@ -150,8 +150,26 @@ def compute_layout(
             field="scope.exclude_reasons",
             correction_hint="逐项给理由；发布说明要能解释覆盖范围。")
 
+
+def compute_layout(
+    plan: AuthoringPlan,
+    frozen: FrozenSource,
+    *,
+    should_cancel: Optional[Callable[[], bool]] = None,
+    cancellation_exception: Optional[Callable[[], BaseException]] = None,
+) -> LayoutBuild:
+    """确定性计算（同一冻结内容 + 同一计划 → 同一 artifact 指纹）。"""
+    scoped = scoped_features(frozen.features, plan)
+    scan = scan_quantities(
+        scoped,
+        field_name=plan.quantity.field, unit=plan.quantity.unit,
+        zero_policy=plan.zero_policy, missing_policy=plan.missing_policy)
+    # 要素上界必须在投影/邻接之前：超限源不该先付出最重的一步再被拒。
+    clamp_plan_budget(plan, features=len(scoped), adjacency_edges=0)
+    validate_scope(plan, frozen.features)
+
     prepared = prepare_geography(
-        scoped_features(frozen.features, plan),
+        scoped,
         source_crs=plan.source_crs,
         target_crs=plan.projection.crs,
         snap_tolerance_m=plan.adjacency.snap_tolerance_m,

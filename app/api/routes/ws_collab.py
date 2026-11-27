@@ -130,7 +130,17 @@ def _hello_document(doc: dict | None) -> dict | None:
     """Inline only small UTF-8 documents; clients refetch larger revisions."""
     if doc is None:
         return None
-    return doc if len(json.dumps(doc, ensure_ascii=False, allow_nan=False).encode("utf-8")) < 64 * 1024 else None
+    # #1733 同口径：allow_nan=False 对含 NaN/Inf 的 doc 抛 ValueError ——
+    # 此处无 try 会在订阅总线/建 send_task/join presence 之后炸出 handler，
+    # listener/send_task/presence 全泄漏且会话永远连不上（ws_service 遗留
+    # 直写通道可写入非有限值）。丢内联 doc（client 经 sync 重取），帧级
+    # 防线与 send_loop 的 dumps try 一致。
+    try:
+        encoded = json.dumps(doc, ensure_ascii=False, allow_nan=False)
+    except ValueError:
+        logger.info("[ws-collab] non-finite hello doc dropped")
+        return None
+    return doc if len(encoded.encode("utf-8")) < 64 * 1024 else None
 
 
 async def _reconciliation_anomalies(session_id: str) -> dict:
@@ -433,11 +443,10 @@ async def collab_websocket(websocket: WebSocket, session_id: str) -> None:
     presence_flush_task: asyncio.Task | None = None
 
     async def _flush_presence() -> None:
-        nonlocal presence_pending, last_presence_relay, presence_flush_task
+        nonlocal presence_pending, last_presence_relay
         await asyncio.sleep(0.2)
         data_deferred = presence_pending
         presence_pending = None
-        presence_flush_task = None
         if data_deferred is None:
             return
         from app.services.collab.presence import _sanitize_patch as _sp
@@ -448,7 +457,12 @@ async def collab_websocket(websocket: WebSocket, session_id: str) -> None:
             "client": {"clientId": client_id, **_sp(data_deferred)},
         })
         last_presence_relay = time.monotonic()
-        presence_flush_task = None
+
+    def _flush_done(task: asyncio.Task) -> None:
+        """槽位只由主循环侧写：done 即空位（绝不覆盖主循环新建的在飞 task）。"""
+        nonlocal presence_flush_task
+        if presence_flush_task is task:
+            presence_flush_task = None
 
     try:
         while True:
@@ -537,6 +551,7 @@ async def collab_websocket(websocket: WebSocket, session_id: str) -> None:
                         presence_flush_task = asyncio.get_running_loop().create_task(
                             _flush_presence()
                         )
+                        presence_flush_task.add_done_callback(_flush_done)
                     continue  # flush task 稍后带走最后态
                 presence_pending = None
                 last_presence_relay = now

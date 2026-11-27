@@ -112,6 +112,11 @@ class TestRefsOnlyBounds:
             Compensation(kind="remove_layer",
                          args={f"k{i}": i for i in range(12)})
 
+    def test_compensation_args_bytes_budget(self):
+        from app.lib.gis.action_ir import Compensation
+        with pytest.raises(ValidationError, match="字节"):
+            Compensation(kind="remove_layer", args={"blob": "x" * 4096})
+
 
 class TestSerialization:
     def test_roundtrip_via_json(self):
@@ -128,6 +133,13 @@ class TestSerialization:
         text = describe_plan(plan, max_lines=6)
         assert "…(+36 actions)" in text
         assert len(text.splitlines()) <= 6
+
+    def test_describe_plan_hard_budget_at_one_line(self):
+        plan = _plan(actions=[_action(action_id=f"act-{i:04d}")
+                              for i in range(3)])
+        for max_lines in (0, 1):
+            text = describe_plan(plan, max_lines=max_lines)
+            assert len(text.splitlines()) <= max_lines
 
     def test_digest_of_is_canonical(self):
         assert digest_of({"a": 1, "b": 2}) == digest_of({"b": 2, "a": 1})

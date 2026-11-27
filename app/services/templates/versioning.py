@@ -179,7 +179,7 @@ def create_version(
                 raise TemplateVersionForbiddenError(
                     "parent_version belongs to a template not visible to this caller"
                 )
-        _assert_acyclic(db, parent_version_id, new_template_id=template_id)
+        _assert_acyclic(db, parent_version_id)
 
     from sqlalchemy.exc import IntegrityError
 
@@ -234,9 +234,9 @@ def create_version(
     return row
 
 
-def _assert_acyclic(db: Any, parent_version_id: str, *, new_template_id: str) -> None:
+def _assert_acyclic(db: Any, parent_version_id: str) -> None:
     """新版本行指向既有行时拓扑上不可能成环（新行尚无子边）——此守卫
-    实际承担**深度帽**与父链可见性校验（防御脏数据手工构造的环）。"""
+    实际承担**深度帽**和既有父链环检测（防御脏数据手工构造的环）。"""
     seen: Set[str] = set()
     cursor: Optional[str] = parent_version_id
     depth = 0

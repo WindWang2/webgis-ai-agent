@@ -90,7 +90,10 @@ def _bounded(payload: Dict[str, Any], limit: int = 6000) -> Dict[str, Any]:
         if key in payload:
             part = json.dumps(payload[key], ensure_ascii=False, default=str)
             if len(part.encode("utf-8")) < 2000:
-                trimmed[key] = payload[key]
+                candidate = {**trimmed, key: payload[key]}
+                if len(json.dumps(candidate, ensure_ascii=False,
+                                  default=str).encode("utf-8")) <= limit:
+                    trimmed = candidate
     return trimmed
 
 
@@ -350,13 +353,26 @@ def register_print_layout_tools(registry: ToolRegistry) -> None:
         produced_refs=("artifact", "manifest"),
         required_context=("map_state",),
         failure_modes=("not_configured", "unsupported_format", "pdf_render_failed",
-                       "png_renderer_unavailable", "cancelled", "export_persist_failed"),
+                       "png_renderer_unavailable", "cancelled", "superseded",
+                       "export_persist_failed"),
     )
     async def webgis_print_layout_export(
         format: str = "pdf", dpi: int = 300, page_id: str = "",
         expected_revision: Optional[int] = None, session_id: str = "",
     ) -> dict:
         try:
+            if expected_revision is not None:
+                # submit_export 不接收 CAS 基线：提交前按同一事实源核验，
+                # stale 一律拒绝，避免调用方误以为导出已绑定旧修订。
+                _mapspec = await service.load_mapspec(session_id)
+                _current = await service._spec_revision(session_id, _mapspec)
+                if int(_current) != int(expected_revision):
+                    return {
+                        "success": False, "status": "blocked",
+                        "code": "SUPERSEDED", "committed": False,
+                        "message": (f"mapspec revision {_current} != expected "
+                                    f"{expected_revision}; re-read and retry"),
+                    }
             return _bounded(await service.submit_export(
                 session_id, fmt=format, dpi=dpi, page_id=page_id))
         except Exception as exc:  # noqa: BLE001

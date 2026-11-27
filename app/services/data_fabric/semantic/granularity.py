@@ -49,7 +49,18 @@ def parse_granularity(text: str) -> Optional[Tuple[str, float]]:
     for pattern, canonical in _ALIASES:
         m = re.search(pattern, lowered)
         if m:
-            confidence = 0.9 if m.group(0) else 0.6
+            # 专名（独立词/多字中文术语）与裸子串命中分层；m.group(0) 恒非空，
+            # 此前的 0.9/0.6 分支实际不可达。
+            token = m.group(0)
+            start, end = m.span()
+            word_bounded = (
+                (start == 0 or not (lowered[start - 1].isalnum() or lowered[start - 1] == "_"))
+                and (end == len(lowered) or not (lowered[end].isalnum() or lowered[end] == "_"))
+            )
+            cjk_dedicated = len(token) > 1 and all(
+                "\u4e00" <= ch <= "\u9fff" for ch in token
+            )
+            confidence = 0.9 if (word_bounded or cjk_dedicated) else 0.6
             if best is None or confidence > best[1]:
                 best = (canonical, confidence)
     return best

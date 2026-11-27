@@ -620,7 +620,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         priority=49,
         algorithm_family="terrain_hydrology_dinf",
         complexity="O(N log N)",
-        method_references=["ocallaghan_mark1984"],
+        method_references=["tarboton1997"],
         assumptions=[
             "8 三角面平面梯度最陡下降（Tarboton 1997）；角度弧度 ∈ [0,2π)，x=东 y=北",
             "汇流按面内角度比例分流到两下游邻域；拓扑序（高程降序）累积",
@@ -724,7 +724,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         random_seed_policy="deterministic",
         scientific_status="VALIDATED",
         conformance_tests=[
-            "tests/unit/lib/test_terrain_hydrology_v2.py::test_strahler_confluence_orders_exact",
+            "tests/unit/lib/test_terrain_hydrology_v2.py::test_extract_streams_threshold_mask_exact",
         ],
         parameter_contract_ref="stream_network",
     ),
@@ -884,7 +884,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         algorithm_family="terrain_wetness_index",
         method_references=["beven_kirkby1979"],
         assumptions=[
-            "SPI = SCA·tanβ（侵蚀/输沙潜势代理）；SCA 口径同 terrain.twi",
+            "SPI = SCA·tanβ（线性形式，量纲 m；对数变体 ln(SCA·tanβ) 未采用）；SCA 口径同 terrain.twi",
             "tanβ 无下限（平地 → SPI 0）",
         ],
         limitations=[

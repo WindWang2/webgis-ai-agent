@@ -61,6 +61,15 @@ describe('V3 component variants — live rendering contract', () => {
     expect(t?.className).toContain('font-semibold');
   });
 
+  it('title: prototype-chain variant 不把函数源码拼进 className', () => {
+    const { container } = render(renderComponent(
+      comp('title', { text: '原型链标题', variant: 'constructor' }), ctx(),
+    ));
+    const t = container.querySelector('[data-testid="spec-chrome-title"]');
+    expect(t?.className).toContain('text-title');
+    expect(t?.className).not.toContain('function');
+  });
+
   it('scale_bar: dual_unit renders secondary imperial row', () => {
     const { container } = render(renderComponent(
       comp('scale_bar', { variant: 'dual_unit' }), ctx(),

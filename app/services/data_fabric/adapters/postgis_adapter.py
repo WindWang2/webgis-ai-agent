@@ -992,7 +992,9 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
 
             # ---- STATISTICS / aggregation ----
             if mode == ResultMode.STATISTICS or v2.aggregate:
-                rows, db_queries = self._execute_aggregation(conn, meta, v2, where_sql, params, order_cols)
+                rows, db_queries, group_window_complete = self._execute_aggregation(
+                    conn, meta, v2, where_sql, params, order_cols,
+                )
                 evidence = build_evidence(
                     plan, started_at=started, result_count=len(rows),
                     total_matching=None, rows_fetched=len(rows), rows_returned=len(rows),
@@ -1009,6 +1011,11 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                     result_mode="statistics",
                     execution_time_seconds=round(time.monotonic() - started, 4),
                     schema_info={"columns": list(rows[0].keys()) if rows else []},
+                    # 组窗口完整性随结果上报：消费方据此失败/披露，
+                    # 不再从 len(data) 反推（>10k 组时两者不可区分）。
+                    group_window_complete=group_window_complete,
+                    truncated=group_window_complete is False,
+                    has_more=group_window_complete is False,
                     metadata={
                         "query_plan": plan.model_dump(),
                         "query_evidence": evidence.model_dump(),
@@ -1200,7 +1207,12 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                 total_matching = int(row[0]) if row and row[0] is not None else None
                 db_queries += 1
 
-            non_geom_cols = [c for c in columns if c not in ("_geojson", "_cursor_key")]
+            # 游标键别名列（_cursor_key_N）不出现在 schema_info.columns
+            # （与属性侧 :1154 的 startswith 一致 —— 精确匹配会漏掉 _cursor_key_0 等）。
+            non_geom_cols = [
+                c for c in columns
+                if c != "_geojson" and not c.startswith("_cursor_key")
+            ]
 
             fetched = len(features)
             if total_matching is not None:
@@ -1307,7 +1319,13 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                         "dataset SRID is unknown (0); spatial predicate unsupported. "
                         "Hint: set a SRID constraint on the geometry column or use bbox."
                     )
-                # bbox 由调用方本地过滤（bounded fetch + exact local filter）
+                # bbox 由调用方本地过滤（bounded fetch + exact local filter）——
+                # 但本地过滤需要几何列序列化出的 _geojson；无几何列时几何恒为
+                # NULL，bbox 会静默丢光所有行 → 必须 typed 拒绝（禁静默空成功）。
+                if not meta.geom_col:
+                    raise InvalidQueryError(
+                        "dataset has no geometry column; spatial predicate unsupported"
+                    )
             else:
                 geom_field = v2.spatial.field or meta.geom_col
                 if not geom_field:
@@ -1402,7 +1420,7 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
     def _execute_aggregation(
         self, conn: Any, meta: _TableMeta, v2: QuerySpecV2,
         where_sql: str, params: List[Any], order_cols: List[str],
-    ) -> Tuple[List[Dict[str, Any]], int]:
+    ) -> Tuple[List[Dict[str, Any]], int, Optional[bool]]:
         cur = conn.cursor()
         select_parts: List[str] = []
         if v2.group_by:
@@ -1448,13 +1466,22 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             sql += " ORDER BY " + order_cols[0][0]
         sql += " LIMIT %s"
         page = v2.page
+        # R1-P1-9：分组聚合用 limit+1 哨兵行证明组窗口完整性 —— 否则组数
+        # 超过页上限时 ``len(data) == limit`` 与「恰好 limit 组」不可区分，
+        # 消费方只能靠 len 猜测，>10k 组时静默截断。单组聚合（无 group_by）
+        # 恒一行，无从截断，不付哨兵成本。
+        grouped = bool(v2.group_by)
+        fetch_limit = page.limit + 1 if grouped else page.limit
         if isinstance(page, OffsetPage) and page.offset:
             sql += " OFFSET %s"
-            cur.execute(sql, tuple(params + [page.limit, page.offset]))
+            cur.execute(sql, tuple(params + [fetch_limit, page.offset]))
         else:
-            cur.execute(sql, tuple(params + [page.limit]))
+            cur.execute(sql, tuple(params + [fetch_limit]))
         columns = [d[0] for d in cur.description]
         rows = cur.fetchall()
+        group_window_complete = (not grouped) or len(rows) <= page.limit
+        if grouped and len(rows) > page.limit:
+            rows = rows[:page.limit]
         out = []
         for r in rows:
             d: Dict[str, Any] = {}
@@ -1470,7 +1497,7 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                 else:
                     d[c] = v
             out.append(d)
-        return out, 2
+        return out, 2, group_window_complete
 
     def _tile_strategy(self, dataset_id: str, meta: _TableMeta) -> Dict[str, Any]:
         return {

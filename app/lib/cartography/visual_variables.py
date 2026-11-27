@@ -30,6 +30,7 @@
 """
 from __future__ import annotations
 
+import itertools
 import math
 import re
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -335,8 +336,8 @@ def derive_data_kind(kind: str, *, field_name: str = "") -> DataKind:
     if kind == "signed_change":
         return "diverging"
     if kind == "temporal":
-        name = (field_name or "").lower()
-        if any(token in name for token in _CYCLIC_NAME_TOKENS):
+        name = _norm_name(field_name)
+        if any(_token_in_name(token, name) for token in _CYCLIC_NAME_TOKENS):
             return "cyclic"
     return "sequential"
 
@@ -415,7 +416,7 @@ def infer_measurement_kind(
 
     finite: List[float] = []
     if values:
-        for v in list(values)[:_INFERENCE_SAMPLE_CAP]:
+        for v in itertools.islice(values, _INFERENCE_SAMPLE_CAP):
             if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v):
                 finite.append(float(v))
 

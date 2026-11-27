@@ -19,6 +19,7 @@ from sqlalchemy import select
 from app.core.database import Base, Engine, SessionLocal
 from app.schemas.project_schema import WorkflowStepSpec
 from app.services.gis_harness.workflow_promotion import (
+    build_recipe_metadata,
     build_workflow_recipe,
     promotion_blockers,
 )
@@ -224,6 +225,40 @@ def test_promotion_is_deterministic():
     a, _ = build_workflow_recipe(chapter, name="wf")
     b, _ = build_workflow_recipe(chapter, name="wf")
     assert a.model_dump() == b.model_dump(), "same plan → identical recipe"
+
+
+def test_promotion_rejects_plan_truncated_at_step_cap():
+    """P3：超过 _MAX_STEPS 的计划不得把截断残片当作完整晋升。"""
+    chapter = {
+        "query": "big",
+        "data_requirements": [
+            {"capability": f"cap_{i}", "status": "available",
+             "bound_ref": "ref:x", "params": {}, "depends_on": []}
+            for i in range(65)
+        ],
+        "analysis_steps": [],
+    }
+    recipe, blockers = build_workflow_recipe(chapter, name="wf")
+    assert recipe is None
+    assert blockers == ["plan_truncated"]
+
+
+def test_recipe_metadata_intent_is_depth_and_size_bounded():
+    """P3：metadata.intent 是有界证据面，不是无界载荷。"""
+    intent: dict = {"task": "x" * 2000}
+    node = intent
+    for i in range(10):
+        child: dict = {"level": i}
+        node["nested"] = child
+        node = child
+    bounded = build_recipe_metadata({"intent": intent})["intent"]
+    depth = 0
+    node = bounded
+    while isinstance(node, dict):
+        depth += 1
+        node = node.get("nested")
+    assert depth <= 4
+    assert len(bounded["task"]) <= 512
 
 
 # ── A5: capability re-resolution ──────────────────────────────────────────
@@ -766,6 +801,22 @@ async def test_save_plan_as_workflow_flags_partial_rerun_pair():
 
 
 @pytest.mark.asyncio
+async def test_rerun_workflow_authz_failure_carries_success_false(db):
+    """Authz refusal must carry success:False like every other error path in
+    this module — callers that gate on ``success`` would otherwise miss it."""
+    from app.tools import init_tools
+    from app.tools.registry import ToolRegistry
+
+    reg = ToolRegistry()
+    init_tools(reg)
+    res = await reg.dispatch("rerun_workflow", {
+        "project_id": "proj_p3_missing", "workflow_id": "wf_p3_missing",
+    }, session_id="sess-p3")
+    assert res.get("success") is False, res
+    assert res.get("status") == "error"
+
+
+@pytest.mark.asyncio
 async def test_semantic_tools_dispatch_with_ref_alias():
     """Regression lock (review): semantic tools must be dispatchable with a
     session ref/alias — the args model previously failed to build (missing
@@ -948,6 +999,29 @@ async def test_save_plan_as_workflow_unknown_tool_rejected():
     assert res.get("success") is False
     assert "totally_not_a_tool" in res.get("error", "")
     assert res.get("unknown_tools") == ["totally_not_a_tool"]
+    assert res.get("correction_hint")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_step", [
+    {"step_id": "s1"},
+    {"step_id": "s1", "tool_name": ""},
+])
+async def test_save_plan_as_workflow_missing_tool_name_is_disclosed(bad_step):
+    """Legacy steps with missing/empty tool_name: structured disclosure naming
+    the step — never a KeyError/NOT_FOUND, never an empty '' unknown entry."""
+    from app.tools import init_tools
+    from app.tools.registry import ToolRegistry
+
+    reg = ToolRegistry()
+    init_tools(reg)
+    res = await reg.dispatch("save_plan_as_workflow", {
+        "project_id": "proj_x", "workflow_name": "wf", "steps": [bad_step],
+    }, session_id="sess-x")
+    assert res.get("success") is False
+    assert "missing tool_name" in res.get("error", "")
+    assert "s1" in res.get("error", "")
+    assert "" not in (res.get("unknown_tools") or [])
     assert res.get("correction_hint")
 
 

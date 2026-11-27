@@ -114,6 +114,10 @@ def remote_read_window(
     from rasterio.errors import RasterioError
 
     policy = session.policy
+    if int(policy.max_attempts) < 1:
+        raise ValueError(
+            f"RemoteReadPolicy.max_attempts must be >= 1, got {policy.max_attempts}"
+        )
     if session.requests + 1 > policy.max_requests:
         raise RemoteReadBudgetExceeded(
             f"remote read budget exceeded: {session.requests} requests "

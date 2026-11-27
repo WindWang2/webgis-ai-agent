@@ -17,9 +17,9 @@ const FRONTEND = join(__dirname, '..', '..');
 
 const CJK = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3000-\u303f\uff00-\uffef]/;
 
-function slugify(text, used) {
+export function slugify(text, used) {
   const base = text
-    .replace(CJK, '')
+    .replace(new RegExp(CJK.source, 'g'), '')
     .replace(/[^a-zA-Z0-9]+/g, ' ')
     .trim()
     .split(/\s+/)

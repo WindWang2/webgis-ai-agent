@@ -334,3 +334,75 @@ def test_geodesic_area_handles_holes_and_orientation():
     mp = MultiPolygon([outer, box(10, 10, 11, 11)])
     assert _geodesic_polygon_area_m2(mp, geod) == pytest.approx(
         full + abs(geod.geometry_area_perimeter(box(10, 10, 11, 11))[0]), rel=1e-9)
+
+
+def test_all_nan_numerator_zone_rate_is_none():
+    """P2 修复：有相交要素但分子全 NaN 的区 → rate=None（JSON null）。
+
+    旧实现 ``float(nan)/denom`` 产出 NaN 值落进 rate 列 → json.dumps
+    产出非法 JSON；aggregation.py 的 fabricated mask 意图正是 rate=None
+    （与真实计数零、has_support=False 的无要素区区分）。
+    """
+    import json
+
+    feats = gpd.GeoDataFrame(
+        {"val": [float("nan"), float("nan"), 4.0], "fid": [1, 2, 3]},
+        geometry=[Point(500500, 4400500),   # z1（两个要素值全 NaN）
+                  Point(500600, 4400500),   # z1
+                  Point(501500, 4400500)],  # z2
+        crs="EPSG:32650")
+    out, ev = aggregate_with_denominator(
+        feats, _zones(), numerator_field="val",
+        denominator="pop", denominator_kind="field")
+
+    rates = {int(r.zid): r["rate"] for _, r in out.iterrows()}
+    support = {int(r.zid): bool(r["has_support"]) for _, r in out.iterrows()}
+    assert support[1] is True            # 有相交要素（不是无数据区）
+    assert rates[1] is None              # 分子全 NaN → None（不是 NaN）
+    assert rates[2] is None              # z2 分母 pop=0 → 零分母策略 None
+    assert rates[3] == 0.0                # 无要素区：真实计数零（0/400）
+    assert not support[3]                 # has_support=False 区分无数据区
+    # 排除计数披露（2 个 NaN 分子观测被剔除）
+    assert ev["nan_numerator_excluded"] == 2
+    json.dumps(rates, allow_nan=False)   # 旧实现在此抛（非法 NaN）
+
+
+def test_spatial_aggregate_missing_value_field_disclosed():
+    """P2 修复：value_field 缺失时摘要必须披露降级，不得声称 Used field。
+
+    字段名拼错/投影丢失时 sum/mean/max/min 被静默跳过并降级 count ——
+    旧摘要仍输出 "Used field 'x' for ..."（h3_binning 有同类降级披露，
+    spatial_aggregate 无）。
+    """
+    from app.lib.geo_analysis.aggregation import spatial_aggregate
+
+    pts_fc = {"type": "FeatureCollection", "features": [
+        {"type": "Feature",
+         "geometry": {"type": "Point", "coordinates": [121.47, 31.23]},
+         "properties": {"pop": 10.0}},
+        {"type": "Feature",
+         "geometry": {"type": "Point", "coordinates": [121.48, 31.24]},
+         "properties": {"pop": 20.0}},
+        {"type": "Feature",
+         "geometry": {"type": "Point", "coordinates": [121.49, 31.25]},
+         "properties": {"pop": 30.0}},
+    ]}
+    poly_fc = {"type": "FeatureCollection", "features": [
+        {"type": "Feature",
+         "geometry": {"type": "Polygon", "coordinates": [[
+             [121.46, 31.22], [121.50, 31.22],
+             [121.50, 31.26], [121.46, 31.26], [121.46, 31.22]]]},
+         "properties": {"zid": 1}},
+    ]}
+    res = spatial_aggregate(pts_fc, poly_fc,
+                            stats=["count", "sum", "mean"],
+                            value_field="pop_typo")
+    assert res.success, res.summary
+    assert "Used field" not in res.summary
+    assert "pop_typo" in res.summary and "not found" in res.summary
+    # 字段存在时仍如实声称 Used field（披露不误伤正常路径）
+    res_ok = spatial_aggregate(pts_fc, poly_fc,
+                               stats=["count", "sum", "mean"],
+                               value_field="pop")
+    assert res_ok.success, res_ok.summary
+    assert "Used field 'pop'" in res_ok.summary

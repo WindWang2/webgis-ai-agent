@@ -59,6 +59,29 @@ def _rule_min_points(recipe) -> str:
     return ";".join(values)
 
 
+#: CSV 列（与下方 rows 字典键同序）。registry.all_ids 为空时 rows 为空、
+#: rows[0] 不可用，header 只能从这里取 —— 新增列必须同步此常量。
+_CSV_FIELDS = (
+    "recipe_id",
+    "source",
+    "domain",
+    "intent_tasks",
+    "required_geometry",
+    "allowed_geometry",
+    "min_points_rules",
+    "requires_fields",
+    "primary_cartography",
+    "secondary_cartography",
+    "n_eligibility_rules",
+    "rule_elements",
+    "n_fallback_decls",
+    "fallback_reason_codes",
+    "fallback_targets",
+    "fallback_auto_generated",
+    "priority",
+)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -102,7 +125,8 @@ def main() -> int:
     out_path = _REPO_ROOT / args.csv
     out_path.parent.mkdir(parents=True, exist_ok=True)
     buf = io.StringIO()
-    writer = csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
+    fieldnames = list(rows[0].keys()) if rows else list(_CSV_FIELDS)
+    writer = csv.DictWriter(buf, fieldnames=fieldnames)
     writer.writeheader()
     writer.writerows(rows)
     out_path.write_text(buf.getvalue(), encoding="utf-8")
@@ -119,7 +143,8 @@ def main() -> int:
 
     print(f"total_recipes={total}")
     print(f"with_fallback_decls={with_fb}")
-    print(f"coverage={with_fb / total:.1%}")
+    if total:
+        print(f"coverage={with_fb / total:.1%}")
     for src, stat in sorted(by_source.items()):
         print(f"  {src}: {stat['with_fb']}/{stat['total']}")
     print(f"csv={out_path}")

@@ -187,6 +187,7 @@ def check_capability_contract_drift() -> List[DriftIssue]:
     art_ids = set(get_artifact_type_registry().all_ids)
     cap_reg = get_capability_registry()
     algo_reg = get_algorithm_registry()
+    tool_capabilities = None  # 惰性一次构建（仅当存在无算法生产者的 native capability）
     producers: Dict[str, int] = {}
     for aid in algo_reg.all_ids:
         algo = algo_reg.get(aid)
@@ -219,15 +220,19 @@ def check_capability_contract_drift() -> List[DriftIssue]:
                 logging.getLogger(__name__).debug("drift: optional operation unavailable (%s)", type(_exc).__name__)
         if str(cap.status) == "native" and producers.get(cid, 0) == 0:
             # 工具直连 capability（无算法层）也是合法生产者：再查一次 tool 侧。
-            from app.tools import init_tools
-            from app.tools.registry import ToolRegistry
+            # 工具注册表只构建一次（此前每个无算法生产者的 capability 都重建）。
+            if tool_capabilities is None:
+                from app.tools import init_tools
+                from app.tools.registry import ToolRegistry
 
-            tool_reg = ToolRegistry()
-            init_tools(tool_reg)
-            tool_produced = any(
-                cid in d.capabilities for d in tool_reg.descriptors().values()
-            )
-            if not tool_produced:
+                tool_reg = ToolRegistry()
+                init_tools(tool_reg)
+                tool_capabilities = {
+                    tool_cap
+                    for d in tool_reg.descriptors().values()
+                    for tool_cap in d.capabilities
+                }
+            if cid not in tool_capabilities:
                 issues.append(_issue(
                     "capability_contract", "BLOCKER", "CAP_NO_PRODUCER",
                     cid, "native capability without algorithm or tool producer"))

@@ -90,6 +90,15 @@ interface CacheEntry<T> {
 const cache = new Map<string, CacheEntry<unknown>>();
 
 /**
+ * Process-wide monotonic generation source. It must NOT be derived from the
+ * current cache entry: invalidateCache() / LRU eviction can remove an entry
+ * whose fetch is still in flight, and a successor entry that restarted at 1
+ * would collide with the old request's generation — letting a pre-mutation
+ * response overwrite the newer value (and misreport `stale=false`).
+ */
+let generationSeq = 0;
+
+/**
  * F-12: identity scope of a cache entry (signed-in user + anonymous owner
  * token). A logout/login or session-token change within the TTL must not
  * serve the previous identity's response. Encoded so it never contains the
@@ -193,7 +202,7 @@ export function invalidateCache(pathPrefix: string): number {
   cache.forEach((_value, key) => {
     const unscoped = key.includes('::') ? key.slice(key.indexOf('::') + 2) : key;
     const path = unscoped.split('?')[0].split('|').slice(1).join('|');
-    if (path === pathPrefix || path.startsWith(`${pathPrefix}/`) || path.startsWith(`${pathPrefix}?`)) {
+    if (path === pathPrefix || path.startsWith(`${pathPrefix}/`)) {
       keysToRemove.push(key);
     }
   });
@@ -275,7 +284,8 @@ export async function fastGet<T = unknown>(
 
   // Otherwise: set up a fresh fetch shared by all dedupe'd callers.
   const controller = new AbortController();
-  const generation = (existing?.generation ?? 0) + 1;
+  generationSeq += 1;
+  const generation = generationSeq;
   const entry: CacheEntry<T> = {
     value: (existing?.value ?? undefined) as T,
     generation,

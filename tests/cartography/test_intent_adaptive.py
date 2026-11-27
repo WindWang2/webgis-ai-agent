@@ -437,6 +437,14 @@ class TestEntityResolution:
             "Geological hazard risk zones in Sichuan")
         assert intent.scope.level == "province"
 
+    def test_country_scope_for_china(self) -> None:
+        """P3：英文 China 是国家范围，不得标成 province。"""
+        scope_result, trace = semantic.match_scope(
+            "Population density across China")
+        assert scope_result.name.lower() == "china"
+        assert scope_result.level == "country"
+        assert trace["source"] == "fast_path_en_province"
+
     def test_injected_entity_service_validates_unknown_city(self) -> None:
         calls = []
 

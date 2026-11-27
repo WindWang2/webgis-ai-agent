@@ -276,6 +276,12 @@ export function selectTopLabels(
   } else if (strategy.zoomBands.length > 0 && ratio < 1.0) {
     limit = Math.min(features.length, Math.ceil(features.length * ratio));
   }
+  if (limit <= 0) {
+    // limit=0（band topRatio=0，或 topN×ratio 向上取整为 0）：既取不到
+    // 第 limit 大的值（order[limit-1] 越界为 undefined），空 id 列表也会
+    // 静默清空整层标注 —— 按本模块纪律跳过抽稀，全量交给碰撞器。
+    return { ...skipped, limit: 0, reason: "limit_non_positive" };
+  }
   if (limit >= features.length) {
     return { ...skipped, reason: "no_thinning_needed" };
   }

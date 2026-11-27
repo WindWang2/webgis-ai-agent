@@ -4,7 +4,7 @@
  * tests/unit/thematic_authoring 覆盖）；切层迟到丢弃（验收 18）。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import { ThematicAuthoringPanel } from './thematic-authoring-panel';
 
 const inspectReceipt = {
@@ -70,16 +70,23 @@ vi.mock('@/lib/i18n/useT', () => ({
 vi.mock('@/components/ui/toast', () => ({
   useToastStore: (sel: (s: { addToast: unknown }) => unknown) => sel({ addToast: vi.fn() }),
 }));
+let mockRevision = 3;
+const liveListeners = new Set<() => void>();
 vi.mock('@/lib/mapspec/session-cursor', () => ({
-  getMapSpecSessionCursor: () => ({ sessionId: 'sess-1', revision: 3, ownerToken: null }),
+  getMapSpecSessionCursor: () => ({ sessionId: 'sess-1', revision: mockRevision, ownerToken: null }),
   getCommittedMapSpec: () => null,
-  subscribeMapSpecLive: () => () => {},
+  subscribeMapSpecLive: (cb: () => void) => {
+    liveListeners.add(cb);
+    return () => { liveListeners.delete(cb); };
+  },
   commitMapSpecDocument: vi.fn(),
 }));
 
 describe('ThematicAuthoringPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockRevision = 3;
+    liveListeners.clear();
     inspectMock.mockResolvedValue(inspectReceipt);
     previewMock.mockResolvedValue(previewReceipt);
   });
@@ -135,6 +142,35 @@ describe('ThematicAuthoringPanel', () => {
     render(<ThematicAuthoringPanel layerId="result-1" />);
     await waitFor(() => {
       expect(screen.getByText('thematicAuthoring.sharedScope')).toBeInTheDocument();
+    });
+  });
+
+  it('releases busy when an external revision reloads during an in-flight preview', async () => {
+    let resolvePreview: ((value: unknown) => void) | undefined;
+    previewMock.mockImplementationOnce(() => new Promise((resolve) => {
+      resolvePreview = resolve;
+    }));
+    render(<ThematicAuthoringPanel layerId="result-1" />);
+    await waitFor(() => {
+      expect(screen.getByTestId('thematic-authoring-panel')).toBeInTheDocument();
+    });
+    const previewBtn = screen.getByRole('button', {
+      name: 'thematicAuthoring.previewBtn',
+    }) as HTMLButtonElement;
+    fireEvent.click(previewBtn);
+    await waitFor(() => expect(previewBtn.disabled).toBe(true));
+
+    // 外部提交/undo 推进权威 revision → 面板 reload 递增 epoch（预览不占 epoch）
+    mockRevision = 4;
+    act(() => { liveListeners.forEach((cb) => cb()); });
+    await waitFor(() => expect(inspectMock).toHaveBeenCalledTimes(2));
+
+    // 迟到的预览响应丢弃，但 busy 必须释放 —— 否则四个按钮永久禁用
+    await act(async () => { resolvePreview?.(previewReceipt); });
+    await waitFor(() => {
+      expect(screen.getByRole('button', {
+        name: 'thematicAuthoring.previewBtn',
+      })).not.toBeDisabled();
     });
   });
 });

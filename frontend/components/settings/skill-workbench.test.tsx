@@ -199,6 +199,41 @@ describe('SkillWorkbench', () => {
       expect(screen.getByText('本会话运行记录', { exact: false })).toBeTruthy();
     });
   });
+
+  it('再次运行会停止旧运行的轮询（运行中不会把运行面板弹回来）', async () => {
+    fetchMock.mockReset();
+    routeFetch();
+    const route = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes('/skill-jobs/start')) {
+        return Promise.resolve(jsonOk({ job_id: '9', status: 'running', active: true, cancellable: true }));
+      }
+      if (url.includes('/runs/9?')) {
+        return Promise.resolve(jsonOk({ job_id: '9', status: 'running', active: true, cancellable: true }));
+      }
+      return route(url, init);
+    });
+    render(<SkillWorkbench />);
+    await userEvent.click(await screen.findByTestId('skill-validate_spatial_data'));
+    await userEvent.type(await screen.findByTestId('binding-ref-subject'), 'ref:geojson-x');
+    await userEvent.click(screen.getByTestId('prepare-btn'));
+    await screen.findByTestId('preview-panel');
+    await userEvent.click(screen.getByTestId('start-btn'));
+    await screen.findByTestId('run-panel');
+    const pollCalls = () =>
+      fetchMock.mock.calls.filter(([url]) => String(url).includes('/runs/9?')).length;
+    expect(pollCalls()).toBe(0);
+
+    await userEvent.click(screen.getByRole('button', { name: /再跑一次/ }));
+    expect(screen.queryByTestId('run-panel')).toBeNull();
+
+    // 越过一个 2500ms 轮询间隔：未停止的轮询会写回 run 并重弹运行面板。
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+    });
+    expect(pollCalls()).toBe(0);
+    expect(screen.queryByTestId('run-panel')).toBeNull();
+  });
 });
 
 

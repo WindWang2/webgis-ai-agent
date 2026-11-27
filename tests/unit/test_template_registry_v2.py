@@ -67,6 +67,64 @@ def test_by_kind_groups_correctly():
     assert len(set(t["id"] for t in bm)) == len(bm)  # unique ids
 
 
+def test_remove_user_template_sole_tag_owner():
+    """Removing the sole holder of a keyword must not blow up the tag index.
+
+    Regression: ``remove()`` used to pop from ``self._by_tag`` while
+    iterating over ``self._by_tag.items()``, raising
+    ``RuntimeError: dictionary changed size during iteration``.
+    """
+    r = TemplateRegistry()
+    r.load_builtins()
+    r.add_user_template(
+        {
+            "id": "user_tpl_sole_tag",
+            "kind": "thematic",
+            "name": "我的模板",
+            "keywords": ["useronlykeyword", "人口"],
+        }
+    )
+    assert r.count() > 0
+
+    assert r.remove("user_tpl_sole_tag") is True
+
+    # No exception above + the id is gone from every index.
+    assert r.get("user_tpl_sole_tag") is None
+    assert "user_tpl_sole_tag" not in r
+    assert all(
+        t["id"] != "user_tpl_sole_tag" for t in r.by_kind("thematic")
+    )
+    # The sole keyword is dropped; the shared one survives (other owners).
+    assert "useronlykeyword" not in r._by_tag
+    assert "人口" in r._by_tag
+    # ...and the registry is self-consistent after the removal.
+    assert r.count() == len(r.all_ids())
+
+
+def test_remove_missing_template_returns_false():
+    r = TemplateRegistry()
+    r.load_builtins()
+    assert r.remove("__nope__") is False
+
+
+def test_remove_keeps_shared_tag_owners():
+    """Removing one of several owners of a keyword must keep the others."""
+    r = TemplateRegistry()
+    r.load_builtins()
+    r.add_user_template(
+        {"id": "user_tpl_a", "kind": "thematic", "name": "a", "keywords": ["sharedkw"]}
+    )
+    r.add_user_template(
+        {"id": "user_tpl_b", "kind": "thematic", "name": "b", "keywords": ["sharedkw"]}
+    )
+    before = len(r._by_tag["sharedkw"])
+    assert r.remove("user_tpl_a") is True
+    after = [t["id"] for t in r._by_tag["sharedkw"]]
+    assert len(after) == before - 1
+    assert "user_tpl_a" not in after
+    assert "user_tpl_b" in after
+
+
 # --------------------------------------------------------------------
 # Search
 # --------------------------------------------------------------------
@@ -150,6 +208,23 @@ def test_intent_resolver_returns_none_for_empty_or_garbage():
     assert resolve_template_by_intent("__zzz__") is None
 
 
+def test_intent_resolver_ignores_empty_keyword(monkeypatch):
+    """空串/None keyword 不得匹配任意 query（否则该条目通吃所有输入）。"""
+    r = TemplateRegistry()
+    r.load_builtins()
+    r.add_user_template({
+        "id": "tmpl_unit_empty_kw",
+        "name": "Unit Empty Keyword",
+        "kind": "thematic",
+        "keywords": ["", None],
+        "description": "unit probe",
+    })
+    monkeypatch.setattr(
+        "app.services.templates.intent_resolver.get_template_registry",
+        lambda: r)
+    assert resolve_template_by_intent("__zzz__") is None
+
+
 def test_get_template_or_composite_o1():
     t = get_template_or_composite("tmpl_th_pop_choro")
     assert t is not None
@@ -163,3 +238,43 @@ def test_list_templates_v2_pagination_contract():
     page, total = list_templates_v2(kind="basemap", limit=5, offset=0)
     assert len(page) <= 5
     assert total >= len(page)
+
+
+# --------------------------------------------------------------------
+# Source filter (P3 regression) + validate lock safety
+# --------------------------------------------------------------------
+def test_search_source_user_includes_template_without_is_builtin_flag():
+    """add_user_template 未显式带 is_builtin 的条目必须按 user 归类。"""
+    r = TemplateRegistry()
+    r.load_builtins()
+    r.add_user_template({
+        "id": "user_tpl_no_flag",
+        "kind": "thematic",
+        "name": "无 is_builtin 标记的用户模板",
+        "keywords": ["user-no-flag"],
+    })
+    user_page, user_total = r.search(source="user", limit=1000)
+    assert any(e["id"] == "user_tpl_no_flag" for e in user_page)
+    assert user_total >= 1
+    builtin_page, _ = r.search(source="builtin", limit=1000)
+    assert all(e["id"] != "user_tpl_no_flag" for e in builtin_page)
+
+
+class _LockGuardDict(dict):
+    """值迭代断言调用方持有 registry 锁（validate 并发读的回归探针）。"""
+
+    def __init__(self, *args, lock, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._guard_lock = lock
+
+    def values(self):
+        assert self._guard_lock._is_owned(), (
+            "validate() iterates _by_id without holding the registry lock")
+        return super().values()
+
+
+def test_validate_iterates_registry_under_lock():
+    r = TemplateRegistry()
+    r.load_builtins()
+    r._by_id = _LockGuardDict(r._by_id, lock=r._lock)
+    assert r.validate() == []

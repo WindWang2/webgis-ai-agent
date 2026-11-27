@@ -79,7 +79,7 @@ def _frontend_dependencies() -> Dict[str, Any]:
                 packages.append({"name": name, "version": version.split("(", 1)[0]})
         result["resolved_packages"] = packages
         result["lock_source"] = "frontend/pnpm-lock.yaml"
-    except (OSError, ValueError):
+    except (OSError, ValueError, yaml.YAMLError):
         result["resolved_packages"] = []
         result["lock_source"] = "frontend/pnpm-lock.yaml (unavailable)"
     return result

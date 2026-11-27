@@ -7,10 +7,13 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useHudStore } from '@/lib/store/useHudStore';
-import { getMapSpecSessionCursor, setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
+import { getMapSpecSessionCursor, getPendingPresentation, setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 import {
+  commitLayerStyleAndCommit,
+  removeLayerAndCommit,
   reorderLayersAndCommit,
   setLayerOpacityAndCommit,
+  toggleLayerAndCommit,
 } from '@/lib/mapspec/user-mutation';
 import { emitMutationLinked } from '@/lib/interaction/bus';
 
@@ -73,9 +76,12 @@ describe('reorderLayersAndCommit · Interaction IR 事件', () => {
     expect(refs?.clientMutationId).toMatch(/^[A-Za-z0-9-]{8,}$/);
     expect(refs?.outcome).toBe('committed');
     expect(refs?.mutationRevision).toBe(7);
+    // expectedRevision = 本笔发出的 CAS revision（3），不是落定后的 7。
+    expect(refs?.expectedRevision).toBe(3);
     // 服务端收到的 mutation 与事件共享同一 id（causality 链）。
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
     expect(body.client_mutation_id).toBe(refs?.clientMutationId);
+    expect(body.expected_revision).toBe(3);
   });
 
   it('会话切换（mutation 从未发生）→ 不 emit（P1-3：不得申报 committed）', async () => {
@@ -120,5 +126,63 @@ describe('setLayerOpacityAndCommit · Interaction IR 事件', () => {
     expect(payload).toEqual({ layer_id: 'L1', opacity: 0.4 });
     expect(refs?.outcome).toBe('committed');
     expect(refs?.mutationRevision).toBe(9);
+    // 本笔发出的 CAS revision 是 3（落定前），不是 setMapSpecRevision 后的 9。
+    expect(refs?.expectedRevision).toBe(3);
+  });
+});
+
+describe('commitLayerStyleAndCommit · Interaction IR 事件', () => {
+  it('committed → expectedRevision 保持发出的 CAS revision', async () => {
+    fetchMock.mockResolvedValueOnce(okMutationResponse(9));
+    await commitLayerStyleAndCommit('L1', { 'circle-color': '#f00' });
+    expect(emitMutationLinked).toHaveBeenCalledTimes(1);
+    const [kind, , refs] = vi.mocked(emitMutationLinked).mock.calls[0];
+    expect(kind).toBe('layer_style_changed');
+    expect(refs?.outcome).toBe('committed');
+    expect(refs?.expectedRevision).toBe(3);
+    expect(refs?.mutationRevision).toBe(9);
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body.expected_revision).toBe(3);
+  });
+});
+
+describe('commitLayerPresentation · 无绑定会话', () => {
+  it('清理乐观 pending、回滚 HUD 并发 failed（不静默吞掉用户操作）', async () => {
+    setMapSpecSessionCursor(undefined, 0);
+    await toggleLayerAndCommit('L1');
+
+    // 无会话不发 POST；乐观翻转已回滚（此前停在未持久化的 false）。
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(useHudStore.getState().layers.find((l) => l.id === 'L1')?.visible).toBe(true);
+    // pending 不得永存。
+    expect(getPendingPresentation()).toEqual({});
+    expect(emitMutationLinked).toHaveBeenCalledTimes(1);
+    const [kind, , refs] = vi.mocked(emitMutationLinked).mock.calls[0];
+    expect(kind).toBe('layer_visibility_changed');
+    expect(refs?.outcome).toBe('failed');
+  });
+});
+
+describe('removeLayerAndCommit · Interaction IR 事件', () => {
+  it('在途切会话 → reflected 是守卫折叠，不 emit committed（不得谎报服务端已落账）', async () => {
+    fetchMock.mockImplementationOnce(async () => {
+      // POST 在途时游标切到另一会话：响应作废，delete 未落账。
+      setMapSpecSessionCursor('sid-other', 1);
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        text: () => Promise.resolve(JSON.stringify({
+          success: true,
+          origin: 'user',
+          mutation_revision: 4,
+          mapspec: { layers: [] },
+        })),
+      };
+    });
+
+    await removeLayerAndCommit('L1');
+
+    expect(emitMutationLinked).not.toHaveBeenCalled();
   });
 });

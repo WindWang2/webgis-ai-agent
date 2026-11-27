@@ -29,7 +29,7 @@ class IsolineContourSpec(BaseModel):
     mode: ContourGeometryMode = Field(default="lines", description="Output geometry: 'lines', 'filled_bands', or 'both'")
     levels: Union[int, List[float]] = Field(default=8, description="Level count or explicit list of contour thresholds")
     level_strategy: ContourLevelStrategy = Field(default="auto", description="Level generation strategy")
-    index_contour_interval: int = Field(default=5, description="Every Nth level is treated as an index contour (thicker line)")
+    index_contour_interval: int = Field(default=5, ge=1, description="Every Nth level is treated as an index contour (thicker line)")
     bandwidth_m: float = Field(default=0.0, description="Spatial bandwidth in meters for point KDE (0 = auto)")
     palette: str = Field(default="Viridis", description="Color palette name for contours")
     line_width_base: float = Field(default=1.5, description="Standard line width in pixels")

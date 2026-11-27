@@ -162,6 +162,9 @@ REGISTRY: tuple[HotpathFlag, ...] = (
     HotpathFlag("GIS_VISUAL_PROVIDER_TIMEOUT_S", "mode", True,
                 "services/gis_harness/visual_observation/provider.py",
                 "视觉观测 provider 超时秒（默认 20，上限 60）"),
+    HotpathFlag("GIS_GOAL_RECEIPT_ADAPTERS", "stable", True,
+                "services/gis_harness/goal_satisfaction/receipts.py",
+                "goal_satisfaction 新能力权威回执收集总闸（默认 ON 的 kill switch；=0 回到 G27 前证据形状）"),
 )
 
 _REGISTRY_BY_ENV = {f.env: f for f in REGISTRY}

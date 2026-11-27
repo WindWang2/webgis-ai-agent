@@ -23,7 +23,8 @@ const STREAM_PATH = /\/api\/v1\/chat\/stream$/;
 
 function streamResponse(page: import('playwright/test').Page, timeout = 90_000): Promise<Response> {
   return page.waitForResponse(
-    (r) => STREAM_PATH.test(new URL(r.url()).pathname) && r.status() === 200,
+    // 503 = in-flight 守卫（"Session busy"）；必须命中等待器，重试循环才有机会看到它。
+    (r) => STREAM_PATH.test(new URL(r.url()).pathname) && (r.status() === 200 || r.status() === 503),
     { timeout },
   );
 }

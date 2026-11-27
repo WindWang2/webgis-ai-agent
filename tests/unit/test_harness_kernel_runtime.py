@@ -406,6 +406,82 @@ def test_projection_lines_zero_drift_and_resume_hint():
     assert "turn-9" in line and "interrupted" in line
 
 
+def test_projection_steps_line_non_positive_bound_shows_nothing():
+    from app.services.harness_kernel.models import PlanStep
+    from app.services.harness_kernel.projection import format_steps_line
+    from app.services.session_plan import SessionPlan
+
+    plan = SessionPlan(envelope_id="sp-bound", session_id="s")
+    plan.steps = [
+        PlanStep(id=f"step-{i}", goal="g", status="pending") for i in range(3)
+    ]
+    # max_steps=0 曾退化为 steps[-0:] == 全量；负值会切掉列表开头。
+    assert format_steps_line(plan, max_steps=0) == ""
+    assert format_steps_line(plan, max_steps=-2) == ""
+    line = format_steps_line(plan, max_steps=1)
+    assert "step-2" in line and "step-1" not in line
+
+
+def test_settle_step_replay_idempotent_across_interleaved_evidence():
+    import time
+
+    from app.services.harness_kernel.models import PlanStep, StepEvidence
+    from app.services.harness_kernel.runtime import _settle_step
+    from app.services.session_plan import SessionPlan
+
+    plan = SessionPlan(envelope_id="sp-idem", session_id="s")
+    plan.steps = [PlanStep(
+        id="step-poi_query", capability="poi_query", status="succeeded", attempts=2,
+        evidence=[
+            StepEvidence(tool="t1", tool_call_id="tc-1", at=time.time()),
+            StepEvidence(tool="t2", tool_call_id="tc-2", at=time.time()),
+        ],
+    )]
+    # 同一 tool_call_id 的重放夹在其它证据之后 → 仍是幂等 no-op。
+    changed = _settle_step(
+        plan, capability_hits=["poi_query"], status="succeeded",
+        tool_name="t1", tool_call_id="tc-1", ref="", error="",
+        host="pi", turn_id="turn-1",
+    )
+    assert changed == []
+    assert plan.steps[0].attempts == 2
+    assert len(plan.steps[0].evidence) == 2
+
+    # 新 tool_call_id 仍照常落证据。
+    changed = _settle_step(
+        plan, capability_hits=["poi_query"], status="succeeded",
+        tool_name="t1", tool_call_id="tc-3", ref="", error="",
+        host="pi", turn_id="turn-1",
+    )
+    assert len(changed) == 1
+    assert plan.steps[0].attempts == 3
+
+
+@pytest.mark.asyncio
+async def test_product_step_survives_step_bound_truncation(sid):
+    from app.services.harness_kernel.models import MAX_STEPS, PlanStep
+    from app.services.harness_kernel.runtime import PRODUCT_STEP_ID
+    from app.services.session_plan import save_session_plan
+
+    rt = get_runtime(sid)
+    await rt.begin_turn("turn-wide", host="pi")
+    plan = await rt.hydrate()
+    plan.steps.append(
+        PlanStep(id=PRODUCT_STEP_ID, goal="地图成品", status="pending")
+    )
+    await save_session_plan(plan)
+
+    caps = [f"cap_{i}" for i in range(MAX_STEPS + 1)]
+    await rt.apply_tool_evidence(
+        "webgis_map_intent",
+        {"plan": _chapter("超宽章节", caps)},
+        success=True, tool_call_id="tc-wide", turn_id="turn-wide", host="pi",
+    )
+    plan = await load_session_plan(sid)
+    assert len(plan.steps) == MAX_STEPS
+    assert any(s.id == PRODUCT_STEP_ID for s in plan.steps)
+
+
 # ── review fixes regression ────────────────────────────────────────────────
 
 

@@ -347,6 +347,11 @@ class DatasetSemanticStore:
                                         reason_code=CODE_STORE_CORRUPT,
                                         dataset_key=dataset_key)
             fp = str(head["descriptor_fingerprint"])
+            if not _valid_fingerprint(fp):
+                # head 被篡改（如 "../x" 路径逃逸）：拼载荷路径前先拒收。
+                return DescriptorRecord(status=STATUS_CORRUPT,
+                                        reason_code=CODE_STORE_CORRUPT,
+                                        dataset_key=dataset_key)
         payload_path = ddir / f"{fp}.json"
         if not payload_path.exists():
             return DescriptorRecord(status=STATUS_MISSING,

@@ -118,6 +118,19 @@ def test_corrupt_segment_tolerated(store_dir):
     assert trace_store.last_seq("corrupt") == 2
 
 
+def test_legacy_dedup_covers_more_than_window(store_dir):
+    """V5 legacy 超过 64 行时，早期 turn 的重持久化仍判为重复。"""
+    sid = "legacy-deep"
+    legacy_path = trace_store._chains_path(sid)
+    records = [_rec(f"t{i}") for i in range(70)]
+    legacy_path.write_text(
+        "\n".join(json.dumps(r, ensure_ascii=False) for r in records) + "\n",
+        encoding="utf-8")
+
+    assert trace_store.persist_chain(_rec("t0"), session_id=sid)
+    assert len(trace_store.read_chains(sid)) == 70
+
+
 def test_legacy_manifest_dedup_index_is_persisted_on_duplicate(store_dir, monkeypatch):
     for index in range(20):
         assert trace_store.persist_chain(_rec(f"t{index}"), session_id="index-review")

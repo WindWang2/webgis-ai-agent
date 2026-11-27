@@ -123,6 +123,17 @@ def test_labels_and_colors_length_must_match_classes():
     assert ei.value.code == "COLOR_COUNT_MISMATCH"
 
 
+def test_overlong_class_label_rejected_not_truncated():
+    """P3 回归：>64 字符类级标签必须显式拒绝（此前静默截断后进入回执/摘要）。"""
+    with pytest.raises(ThematicAuthoringError) as ei:
+        _ok(mode="graduated_manual", breaks=[0, 10], labels=["x" * 65])
+    assert ei.value.code == "LABEL_TOO_LONG"
+    assert ei.value.index == 0
+    # 边界：恰 64 字符仍接受且原样保真
+    p = _ok(mode="graduated_manual", breaks=[0, 10], labels=["y" * 64])
+    assert p.labels == ["y" * 64]
+
+
 def test_extra_fields_rejected_no_raw_paint_passthrough():
     with pytest.raises(ThematicAuthoringError):
         parse_plan({"layer_id": "L", "mode": "graduated_auto",

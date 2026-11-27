@@ -44,6 +44,16 @@ def test_project_owner_cannot_be_read_by_other_user(db):
     assert anon is None
 
 
+def test_deleted_project_is_hidden_from_context_and_fingerprint(db):
+    proj = ProjectService.create_project(db, name="deleted", owner_id="alice")
+    proj.status = "deleted"
+    db.commit()
+
+    assert ProjectService.get_project_with_auth(db, proj.id, user_id="alice") is None
+    assert ProjectService.get_project_context_summary(db, proj.id, user_id="alice") is None
+    assert ProjectService.get_project_fingerprint(db, proj.id, user_id="alice") is None
+
+
 def test_anonymous_list_does_not_include_owned_projects(db):
     ProjectService.create_project(db, name="owned", owner_id="alice")
     ProjectService.create_project(db, name="public", owner_id=None)

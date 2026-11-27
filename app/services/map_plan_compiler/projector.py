@@ -82,7 +82,9 @@ def project_plan_ir(
 ) -> MapPlanIR:
     """MapProductPlan (+GrammarDecision +lock 快照) → MapPlanIR（纯投影）。
 
-    ``plan`` 接受 MapProductPlan（或同形 dict）；``grammar`` 接受
+    ``plan`` 只接受 typed MapProductPlan（全程属性访问口径；同形 dict
+    须先 ``MapProductPlan.model_validate`` 再传入，直接传 dict 会
+    AttributeError）；``grammar`` 接受
     GrammarDecision（或 None —— 义务组件退化回 plan.components）。
     ``layer_paint_overrides``：layer_id → 有界 paint 子集（来自 grammar
     symbology 或调用方显式 pin），受 LayerBlueprint 字节闸约束。

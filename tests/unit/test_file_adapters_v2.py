@@ -248,6 +248,28 @@ def test_flatgeobuf_nonexistent_real_path_raises_typed(monkeypatch, tmp_path):
     assert desc.metadata.get("error_type")
 
 
+def test_flatgeobuf_serialization_failure_is_not_an_empty_result():
+    """不可序列化要素（NaN 坐标等）→ typed 错误，绝不吞成空 features。
+
+    吞掉异常会让上层拿到 truncated=False / total_matching=0 的「完整空
+    结果」—— 把读取失败伪装成零命中。
+    """
+    from app.services.data_fabric.adapters.flatgeobuf_adapter import FlatGeobufAdapter
+    from app.services.data_fabric.errors import SourceBadResponseError
+
+    class _UnserializableGdf:
+        """len>0 但 to_json() 抛错（模拟 NaN 坐标不可序列化）。"""
+
+        def __len__(self):
+            return 3
+
+        def to_json(self):
+            raise ValueError("NaN coordinate is not JSON serializable")
+
+    with pytest.raises(SourceBadResponseError, match="serialization failed"):
+        FlatGeobufAdapter._gdf_to_features(_UnserializableGdf(), None)
+
+
 # ── PMTiles v3 header 解析 ──────────────────────────────────────────────────
 
 

@@ -161,6 +161,50 @@ def test_middleware_success_response_untouched():
     assert resp.json() == {"success": True, "data": 1}
 
 
+# ── 422 校验信封：分类学字段 + Accept-Language 本地化（P3）─────────────────
+
+
+@pytest.mark.asyncio
+async def test_validation_envelope_carries_category_and_localizes(monkeypatch):
+    import json
+
+    from fastapi.exceptions import RequestValidationError
+    from starlette.requests import Request
+
+    from app.core import exception as exception_mod
+
+    monkeypatch.setattr(exception_mod.settings, "LEGACY_DETAIL_ENVELOPE", False)
+    monkeypatch.setattr(exception_mod.settings, "DEBUG", False)
+    request = Request({
+        "type": "http", "method": "POST", "path": "/api/v1/check",
+        "headers": [], "query_string": b"",
+        "server": ("testserver", 80), "scheme": "http",
+    })
+    validation = RequestValidationError(
+        [{"type": "missing", "loc": ("body", "field"), "msg": "Field required"}]
+    )
+
+    token = current_locale.set("en_US")
+    try:
+        response = await exception_mod.unified_validation_exception_handler(
+            request, validation
+        )
+    finally:
+        current_locale.reset(token)
+    body = json.loads(response.body)
+    assert body["success"] is False
+    assert body["category"] == "validation"
+    assert body["retryable"] is False
+    assert body["message"] == user_message_for(ErrorCategory.VALIDATION, "en_US")
+
+    response_zh = await exception_mod.unified_validation_exception_handler(
+        request, validation
+    )
+    assert json.loads(response_zh.body)["message"] == CATEGORY_DEFAULTS[
+        ErrorCategory.VALIDATION
+    ].user_message
+
+
 # ── 大错误体缓冲有界（#1641）──────────────────────────────────────────────
 
 

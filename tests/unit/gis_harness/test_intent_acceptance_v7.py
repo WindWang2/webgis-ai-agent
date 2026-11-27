@@ -72,6 +72,27 @@ def test_requirements_derived_bounded():
     assert empty["layers"] == []
 
 
+def test_requirements_roles_truncated_with_layers(monkeypatch):
+    """P3：layers 截断到 MAX_REQUIREMENTS 时 roles 必须同步截断（不错位）。"""
+    import app.services.gis_harness.intent_acceptance as mod
+
+    ids = [f"layer-{i:02d}" for i in range(20)]
+    monkeypatch.setattr(
+        "app.services.gis_harness.render_observation._planned_result_layer_ids",
+        lambda chapter: list(ids),
+    )
+    chapter = {
+        "map_layers": [
+            {"layer_id": lid, "role": "primary" if i == 0 else "secondary"}
+            for i, lid in enumerate(ids)
+        ],
+    }
+    req = mod.derive_intent_requirements(chapter)
+    assert req["layers"] == ids[: mod.MAX_REQUIREMENTS]
+    assert req["roles"] == ["primary"] + ["secondary"] * 15
+    assert len(req["roles"]) == len(req["layers"])
+
+
 # ── 验收判定 ─────────────────────────────────────────────────────────────
 
 
@@ -121,6 +142,24 @@ def test_acceptance_rejects_verdict_and_spec_gaps():
     r4 = assess_intent_acceptance(
         _chapter(), spec2, obs_hidden, product_verdict="READY")
     assert r4["intent_verified"] is True
+
+
+def test_acceptance_empty_requirements_not_rubber_stamped():
+    """反证（review P2）：需求集为空（planned 层与 map_layers 均无
+    layer_id）时 desired 面"全满足"是真空真 —— READY 即 accepted、
+    observation 非空即 intent_verified 等于橡皮图章。"""
+    chapter = {"plan_id": "planEmpty", "query": "q", "map_layers": []}
+    r = assess_intent_acceptance(
+        chapter, _mapspec(), _observation(), product_verdict="READY")
+    assert r["accepted"] is False
+    assert r["intent_verified"] is False
+    assert "no_layer_requirements" in r["unmet"]
+    # 无 layer_id 的 map_layers 同样不构成需求
+    chapter2 = {"plan_id": "planEmpty2", "query": "q",
+                "map_layers": [{"role": "primary"}]}
+    r2 = assess_intent_acceptance(
+        chapter2, _mapspec(), _observation(), product_verdict="READY")
+    assert r2["accepted"] is False
 
 
 def test_acceptance_observed_gaps():

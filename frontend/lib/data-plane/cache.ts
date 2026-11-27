@@ -173,7 +173,7 @@ export class RefDataCache {
     ) {
       return;
     }
-    for (const key of [...this.entries.keys()]) {
+    for (const key of this.entries.keys()) {
       if (
         this._totalBytes <= this.maxBytes
         && this.entries.size <= this.maxEntries

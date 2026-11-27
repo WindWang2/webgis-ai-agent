@@ -172,6 +172,45 @@ async def test_field_compute_status_no_job_record(ops_env):
     assert st["success"] is True and st["job"] is None
 
 
+async def test_field_compute_status_not_squeezed_by_newer_jobs(ops_env):
+    """旧 completed job 不被更多新任务挤出（查询不只看最近 10 条）。"""
+    from app.models.db_model import AnalysisTask
+    from app.services.data_preparation.field_compute import service as fcs
+    from app.services.session_data import session_data_manager as sdm
+
+    payload = {"geojson": {"type": "FeatureCollection", "features": [
+        {"type": "Feature", "properties": {"人口": 100, "面积 平方千米": 10.0},
+         "geometry": None}]}}
+    ref = await sdm.store(SESS, payload, prefix="test")
+    created = await fcs.create_plan({
+        "session_id": SESS, "source_ref": ref,
+        "columns": [{"name": "密度", "expression": "{人口} / {面积 平方千米}"}]})
+    receipt = await fcs.execute(created["plan"].plan_id, SESS)
+
+    # 本会话 10 条 + 其他会话 3 条更新任务：旧 job 落在最近 10 条之外
+    with ops_env["sync_factory"]() as db:
+        for i in range(10):
+            db.add(AnalysisTask(
+                task_type="field_compute_apply",
+                parameters={"session_id": SESS, "plan_id": f"plan-newer-{i}"},
+                session_id=SESS, status="completed"))
+        for i in range(3):
+            db.add(AnalysisTask(
+                task_type="field_compute_apply",
+                parameters={"session_id": "sess-other", "plan_id": f"plan-other-{i}"},
+                session_id="sess-other", status="completed"))
+        db.commit()
+
+    reg = _registry()
+    st = await reg.dispatch(
+        "field_compute_status",
+        {"plan_id": created["plan"].plan_id, "session_id": SESS}, session_id=SESS)
+    assert st["success"] is True
+    assert st["job"] is not None and st["job"]["status"] == "completed"
+    assert st["output_ref"] == receipt.output_ref
+    assert st["output_readable"] is True
+
+
 async def test_field_compute_apply_wait_zero_returns_handle(ops_env):
     """field_compute_apply wait_max_s=0：慢执行返回 job 句柄（不占用调用）。"""
     from app.services.data_preparation.field_compute import service as fcs

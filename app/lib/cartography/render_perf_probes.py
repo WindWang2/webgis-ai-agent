@@ -31,9 +31,13 @@ _MAX_BYTES = 16 * 1024**3
 def _bounded_count(value: Any) -> int:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return 0
-    if value < 0:
+    number = float(value)
+    # 非有限值（NaN/±inf —— Python json 可解析非标准字面量）→ 0：
+    # int(NaN) 抛 ValueError、int(inf) 抛 OverflowError，会把整份
+    # observation 打成 5xx，违背「非法 → 缺席」契约。
+    if not math.isfinite(number) or number < 0:
         return 0
-    return min(int(value), 1_000_000_000)
+    return min(int(number), 1_000_000_000)
 
 
 def _finite_or_zero(value: Any) -> float:

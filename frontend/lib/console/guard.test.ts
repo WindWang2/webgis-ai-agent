@@ -24,6 +24,18 @@ describe('危险语句守卫', () => {
     expect(guardFilterText("name = 'deleted'").ok).toBe(true);
   });
 
+  it('裸动词列名（drop / analyze）作过滤条件不误伤', () => {
+    expect(guardFilterText('WHERE drop > 100').ok).toBe(true);
+    expect(guardFilterText('analyze = 1').ok).toBe(true);
+    expect(guardFilterText('value > 100 AND drop < 5').ok).toBe(true);
+    expect(guardFilterText('WHERE drop > 100 AND analyze = 1').ok).toBe(true);
+    // 动词仍是写语句时不放行（防止放宽过头）
+    expect(guardFilterText('drop table t').ok).toBe(false);
+    expect(guardFilterText('analyze table t').ok).toBe(false);
+    // 括号引号标识符同样不误伤
+    expect(guardFilterText('where [delete] = 1').ok).toBe(true);
+  });
+
   it('注释伪装被剥离后再检测', () => {
     expect(guardFilterText('1=1 /* drop table t */').ok).toBe(true); // 注释内容不是语句
     const sneaky = guardFilterText('1=1 --\ndelete from t');

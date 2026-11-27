@@ -3,7 +3,6 @@
 import React, { useEffect, useState } from 'react';
 import { loadChartArtifact } from '@/lib/map-components/chart-artifact';
 import { loadTableArtifact } from '@/lib/map-components/table-data';
-import { adaptChartData } from '@/lib/chart-adapter';
 import type { ChartData } from '@/lib/types';
 import { ChartCore } from '@/components/chat/chart-core';
 import { TabularDataGrid } from '@/components/explorer/tabular-data-grid';
@@ -93,9 +92,4 @@ function ArtifactUnavailable({ refId, kind }: { refId: string; kind: string }): 
       {t('artifactUnavailable', { kind, ref: refId })}
     </div>
   );
-}
-
-/** adaptChartData 契约与 chat inline 路径一致 —— 供 ChapterArtifact 边界复用。 */
-export function normalizeChapterChart(raw: unknown): ChartData | null {
-  return adaptChartData(raw);
 }

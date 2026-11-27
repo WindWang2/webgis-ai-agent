@@ -87,6 +87,26 @@ class TestCandidateGeneration:
         assert selected.recipe_id == "administrative_choropleth"
         assert not s.rerouted
 
+    def test_reroute_disclosed_when_semantic_top1_blocked(self):
+        """反证（review P2）：语义 top-1 recipe 被科学/数据阻断而另有 recipe
+        候选可行时，rerouted 必须置位并携带 trace 证据。candidates 已在
+        505 行就地排序 —— 若在排序后列表里找"第一个 recipe"会拿到可行候选
+        而非被阻断的语义 top-1，零漂移披露与证据静默丢失。"""
+        it = resolve_map_request_intent("成都小学的热力图")
+        prof = {"featureCount": 60, "geometryTypes": ["Polygon"],
+                "fields": {"name": {"type": "string"}}}
+        s = generate_plan_candidates(it, profile=prof)
+        # 语义 top-1（池内序首个 recipe）被数据阻断
+        top1 = next(c for c in s.candidates
+                    if c.recipe_id == "poi_distribution_overview")
+        assert "data_blocked:GEOMETRY_NOT_SUPPORTED" in top1.rejection_reasons
+        # 最优可行候选是另一个 recipe → 改选必须披露
+        assert s.selected is not None
+        assert s.selected.recipe_id == "proportional_symbol_map"
+        assert s.selected.recipe_id != top1.recipe_id
+        assert s.rerouted is True
+        assert "data_blocked:GEOMETRY_NOT_SUPPORTED" in s.reroute_reason
+
     def test_tools_unavailable_rejection(self):
         it = resolve_map_request_intent("用克里金插值生成污染物浓度表面")
         prof = {"featureCount": 60, "geometryTypes": ["Point"],

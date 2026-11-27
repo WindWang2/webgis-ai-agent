@@ -168,7 +168,8 @@ def _all_integers(vals: List[Any]) -> bool:
 def _all_in_unit_interval(vals: List[Any]) -> bool:
     nums = [_numeric_or_none(v) for v in vals]
     nums = [n for n in nums if n is not None]
-    return bool(nums) and all(0.0 <= n <= 1.0 for n in nums)
+    # 单个样本不足以证明值域（如仅 [0] 也像计数/标志位）——要求 ≥2 个数值样本。
+    return len(nums) >= 2 and all(0.0 <= n <= 1.0 for n in nums)
 
 
 def _all_date_like(vals: List[Any]) -> bool:

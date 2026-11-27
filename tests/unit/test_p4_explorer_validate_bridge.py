@@ -6,6 +6,21 @@ import pytest
 from app.services.explorer import validate_stage as VS
 
 
+def test_rows_to_fc_skips_out_of_range_coordinates() -> None:
+    """越界坐标（lat=999 / lon=200）不得铸成 GeoJSON Point 入库。"""
+    rows = [
+        {"name": "ok", "_lat": 39.9, "_lon": 116.4},
+        {"name": "bad-lat", "_lat": 999, "_lon": 116.4},
+        {"name": "bad-lon", "_lat": 39.9, "_lon": 200},
+        {"name": "edge", "_lat": -90, "_lon": 180},
+    ]
+    fc = VS.rows_to_feature_collection(rows)
+    assert fc is not None
+    assert [f["properties"]["name"] for f in fc["features"]] == ["ok", "edge"]
+    assert fc["features"][1]["geometry"]["coordinates"] == [180.0, -90.0]
+    assert VS.rows_to_feature_collection([{"_lat": 999, "_lon": 200}]) is None
+
+
 @pytest.mark.asyncio
 async def test_validate_without_bridge_returns_completion(monkeypatch) -> None:
     async def _no_bridge(*a, **k):  # noqa: ANN002, ANN003

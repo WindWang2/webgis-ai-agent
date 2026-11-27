@@ -3,6 +3,7 @@
 提供 LLM 主动驱动地图视角的能力：飞行、缩放到包围盒、定位到图层、重置视图、调整 pitch/bearing。
 不修改图层数据。`zoom_to_layer` 还写入 framed `MapSpec.view`（ADR-0057）。
 """
+import copy
 import logging
 import math
 from typing import Any, List, Optional
@@ -279,7 +280,7 @@ def register_map_view_tools(registry: ToolRegistry):
         return {
             "success": True,
             "command": "fly_to",
-            "params": DEFAULT_VIEW.copy(),
+            "params": copy.deepcopy(DEFAULT_VIEW),
             "message": "地图视图已重置为全国默认视角",
         }
 

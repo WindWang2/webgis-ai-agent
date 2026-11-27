@@ -154,6 +154,26 @@ describe('runtime label authoring（G16）', () => {
     expect(map.getSource('schools-label-callout-src')).toBeTruthy();
   });
 
+  it('dispose 解绑 callout moveend，同 map 重建 runtime 不累积监听', () => {
+    const calloutSpec = specWith({
+      overrides: [{
+        featureId: 's1', pinned: true, callout: true,
+        offset: { dx: 2, dy: 2 }, idKey: null,
+      }],
+    });
+    runtime.reconcile(calloutSpec);
+    expect(map._listenerCount('moveend')).toBe(1);
+
+    runtime.dispose();
+    expect(map._listenerCount('moveend')).toBe(0);
+
+    const replacement = new MapSpecRuntime(map as never);
+    replacement.reconcile(calloutSpec);
+    expect(map._listenerCount('moveend')).toBe(1);
+    replacement.dispose();
+    expect(map._listenerCount('moveend')).toBe(0);
+  });
+
   it('orphan 覆写不投影 + 事件披露', () => {
     runtime.reconcile(specWith({
       overrides: [{ featureId: 'ghost', pinned: true, offset: { dx: 1, dy: 1 }, idKey: null }],

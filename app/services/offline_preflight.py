@@ -241,8 +241,12 @@ def check_redis(timeout_s: float = 2.0) -> Dict[str, Any]:
         import redis
         r = redis.from_url(settings.REDIS_URL,
                            socket_connect_timeout=timeout_s)
-        r.ping()
-        r.close()
+        try:
+            r.ping()
+        finally:
+            # 失败路径同样要释放连接池——离线部署最常见情形（不可达/鉴权
+            # 失败）下 socket 句柄不显式关闭即泄漏。
+            r.close()
         return _check("redis", _OK, safe_url, required=True)
     except Exception as exc:  # noqa: BLE001
         return _check("redis", _DOWN,

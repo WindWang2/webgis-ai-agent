@@ -97,6 +97,12 @@ interface SpecWithProduct {
   frame_product?: { enabled?: boolean; frames?: ProductFrameLike[] };
 }
 
+/**
+ * 非 eq 谓词（neq/in/gt…）或残缺 where 的披露码：客户端 canvas 只承载
+ * 等值过滤 —— 有 extent 时曾把谓词整体丢弃、静默降级为纯范围帧。
+ */
+const NON_EQ_WHERE_LIMITATION = 'client_canvas_no_non_eq_where';
+
 export interface ProductFramesResult {
   frames: ExportFrame[];
   /** 产品在场的证据（调用方据此选择后端 publication 产品页路径）。 */
@@ -132,6 +138,7 @@ export function productFramesToExportFrames(
       registered.set(f.id, f);
     }
   }
+  let nonEqWhereSeen = false;
   for (const slot of product.frames ?? []) {
     if (!slot || typeof slot.frame_id !== 'string') continue;
     const frame = registered.get(slot.frame_id);
@@ -143,10 +150,15 @@ export function productFramesToExportFrames(
     const where = slot.data?.where;
     const hasWhere =
       !!where && where.op === 'eq' && typeof where.field === 'string'
-      && 'value' in (where ?? {});
+      && where.value !== undefined;
     if (!extent && !hasWhere) {
       out.skippedCount += 1;
       continue;
+    }
+    if (where && !hasWhere) {
+      // 谓词在场但不被客户端承载（op 非 eq / 字段或 value 残缺）：有 extent
+      // 时帧仍产出，过滤条件被整体丢弃 —— 进 limitations，不静默近似。
+      nonEqWhereSeen = true;
     }
     const ef: ExportFrame = hasWhere
       ? {
@@ -166,6 +178,7 @@ export function productFramesToExportFrames(
     'client_canvas_no_layer_overrides',
     'client_canvas_no_shared_legend_band',
     'client_canvas_no_time_window_exactness',
+    ...(nonEqWhereSeen ? [NON_EQ_WHERE_LIMITATION] : []),
   ];
   return out;
 }

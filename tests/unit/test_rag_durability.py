@@ -781,6 +781,62 @@ def test_add_vectors_after_index_ahead_crash_keeps_slots_aligned():
         shutil.rmtree(dir_, ignore_errors=True)
 
 
+def test_failed_truncation_write_does_not_mutate_cached_metadata(monkeypatch):
+    """#1704 follow-up: the truncate branch of
+    _recover_index_metadata_consistency documents that it writes a COPY so a
+    failed repair leaves the cached metadata describing what is on disk.
+    ``dict(meta)`` + ``list(chunks)`` is only a shallow copy, though:
+    ``ch["index"] = i`` wrote through into the cached chunk dicts. With
+    non-positional ``index`` fields (legacy / partially repaired metadata)
+    the mutated cache then makes a later compact reconstruct vectors from
+    the wrong slots even though the repair never reached disk.
+    """
+    import faiss
+
+    import app.services.rag.faiss_store as mod
+    from app.services.rag.faiss_store import _atomic_write_faiss
+
+    store, dir_ = _tmp_store()
+    try:
+        # Metadata is AHEAD of the index (3 chunks vs 2 vectors) so the
+        # truncate branch runs. The index fields are deliberately not
+        # position-aligned, which makes the write-through mutation visible.
+        original_chunks = [
+            {"index": 5, "document_id": "d1", "content": "alpha"},
+            {"index": 6, "document_id": "d2", "content": "beta"},
+            {"index": 7, "document_id": "d3", "content": "gamma"},
+        ]
+        store.save_metadata({"chunks": original_chunks})
+
+        idx = faiss.IndexFlatIP(8)
+        idx.add(_fake_vectors(2))
+        _atomic_write_faiss(os.path.join(dir_, "index.faiss"), idx)
+        store._index = None
+
+        def fail_write(*a, **kw):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(mod, "_atomic_write_json", fail_write)
+
+        # get_stats -> _get_index -> recovery tries (and fails) to truncate.
+        store.get_stats()
+
+        cached = store.load_metadata()
+        assert cached["chunks"] == original_chunks, (
+            "failed recovery write mutated the cached metadata instead of "
+            f"leaving it describing disk: {cached['chunks']}"
+        )
+        assert len(cached["chunks"]) == 3
+
+        # The on-disk file must still hold the pre-repair state too.
+        with open(os.path.join(dir_, "metadata.json"), encoding="utf-8") as f:
+            on_disk = json.load(f)
+        assert on_disk["chunks"] == original_chunks
+    finally:
+        import shutil
+        shutil.rmtree(dir_, ignore_errors=True)
+
+
 def test_add_vectors_refuses_when_recovery_cannot_persist(monkeypatch):
     """#1704 belt-and-braces: if recovery itself cannot persist the repair
     (disk full / permission denied on metadata.json), add_vectors must

@@ -80,7 +80,10 @@ def _desc_bbox_area(bbox: Optional[Sequence[float]]) -> Optional[float]:
     if not bbox or len(bbox) != 4:
         return None
     minx, miny, maxx, maxy = bbox
-    return max(0.0, (maxx - minx)) * max(0.0, (maxy - miny))
+    # 跨反子午线（minx>maxx）：经度宽环绕 360°，否则 max(0,·) 夹成 0 使
+    # planner bbox_ratio→1e-6、estimated_rows→1，行/字节预算与超限告警失效。
+    width = (maxx - minx) if maxx >= minx else (360.0 + maxx - minx)
+    return max(0.0, width) * max(0.0, (maxy - miny))
 
 
 def _predicate_selectivity(node: Any, stats: Optional[DatasetStatistics] = None) -> float:
@@ -163,12 +166,21 @@ def plan_query(
             raise InvalidQueryError("antimeridian-crossing bbox only supported in EPSG:4326")
         if bbox_crosses_antimeridian(query_spatial.bbox):
             warnings.append("bbox crosses antimeridian; compiled as split envelope OR")
-        if spatial_crs_srid != 4326 and ds_srid is not None and spatial_crs_srid != ds_srid and not caps.server_reprojection:
-            raise CrsInvalidError(
-                f"query CRS EPSG:{spatial_crs_srid} ≠ dataset CRS EPSG:{ds_srid} "
-                "and source cannot reproject",
-                details={"hint": "query in EPSG:4326 or the dataset's native CRS"},
-            )
+    # 输入空间 CRS 一致性校验适用于所有空间谓词（此前仅嵌在 op=="bbox" 分支内：
+    # 非 bbox 谓词 crs 与数据集 CRS 不一致时无校验、源不可重投影即静默错比较）。
+    if (
+        query_spatial is not None
+        and spatial_crs_srid is not None
+        and spatial_crs_srid != 4326
+        and ds_srid is not None
+        and spatial_crs_srid != ds_srid
+        and not caps.server_reprojection
+    ):
+        raise CrsInvalidError(
+            f"query CRS EPSG:{spatial_crs_srid} ≠ dataset CRS EPSG:{ds_srid} "
+            "and source cannot reproject",
+            details={"hint": "query in EPSG:4326 or the dataset's native CRS"},
+        )
 
     # CRS 输出变换：dataset → output
     if out_srid is not None and ds_srid is not None and out_srid != ds_srid:
@@ -311,7 +323,9 @@ def plan_query(
     # 排序确定性：offset/cursor 分页必须有稳定排序
     if pagination_strategy in ("offset", "cursor") and not spec.order_by:
         if pushed_sort or caps.sort_pushdown:
-            pagination_note = (pagination_note or "") + " stable order key appended"
+            pagination_note = (
+                (pagination_note + "; ") if pagination_note else ""
+            ) + "stable order key appended"
         else:
             warnings.append("source lacks sort pushdown; paginated results may not be stable across pages")
 

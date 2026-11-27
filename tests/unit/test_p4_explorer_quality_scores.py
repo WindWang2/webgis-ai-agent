@@ -23,6 +23,12 @@ def test_thematic_score_in_range() -> None:
     assert 0.0 <= score <= 1.0
 
 
+def test_spatial_score_missing_bbox_is_zero_not_crash() -> None:
+    # None / 非字符串 bbox（缺字段的脏源）不得以 AttributeError 杀死 discover。
+    assert _engine().calc_spatial_score(None, "116.0,39.6,116.8,40.3") == 0.0  # type: ignore[arg-type]
+    assert _engine().calc_spatial_score("116.0,39.6,116.8,40.3", None) == 0.0  # type: ignore[arg-type]
+
+
 def test_spatial_score_identical_bbox_is_high() -> None:
     bbox = "116.0,39.6,116.8,40.3"
     score = _engine().calc_spatial_score(bbox, bbox)

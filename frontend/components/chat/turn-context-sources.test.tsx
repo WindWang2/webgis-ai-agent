@@ -98,6 +98,18 @@ describe('TurnContextSources', () => {
     });
   });
 
+  it('可选资料加载失败 → 显示错误而非「空目录」文案', async () => {
+    vi.mocked(fetchOptionalSources).mockRejectedValueOnce(new Error('boom'));
+    render(<TurnContextSources sessionId="s1" />);
+    fireEvent.click(screen.getByTestId('turn-context-sources-toggle'));
+    await waitFor(() => {
+      expect(screen.getByTestId('turn-sources-error')).toBeTruthy();
+    });
+    // 失败与「当前项目暂无可选资料」必须可区分
+    expect(screen.queryByText('当前项目暂无可选资料（无活跃知识条目/记忆事实）。'))
+      .toBeNull();
+  });
+
   it('hides entirely without a session', () => {
     const { container } = render(<TurnContextSources sessionId={null} />);
     expect(container.firstChild).toBeNull();

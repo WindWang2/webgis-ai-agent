@@ -90,6 +90,24 @@ describe("toMapLibrePaint — adapter 原生键直通", () => {
     expect(toMapLibrePaint(layer("heatmap", paint))).toEqual(paint);
   });
 
+  it("circle 仅在显式热力改写时透出原生 heatmap-*，普通 circle 主层仍丢弃", () => {
+    const nativeHeatmapPaint = {
+      "heatmap-radius": 18,
+      "heatmap-opacity": 0.35,
+      "heatmap-intensity": 1.4,
+      "heatmap-weight": 1.25,
+      "heatmap-color": [
+        "interpolate", ["linear"], ["heatmap-density"],
+        0, "rgba(0,0,0,0)", 1, "#ff0000",
+      ],
+    };
+    const circle = layer("circle", { color: "#3388aa", radius: 4, ...nativeHeatmapPaint });
+
+    expect(toMapLibrePaint(circle)).not.toHaveProperty("heatmap-opacity");
+    expect(toMapLibrePaint(circle)).not.toHaveProperty("heatmap-color");
+    expect(toMapLibrePaint(circle, { includeHeatmapKeys: true })).toMatchObject(nativeHeatmapPaint);
+  });
+
   it("symbol: text-*/icon-* 命名空间直通(无 symbol-* 前缀)", () => {
     const paint = { "text-color": "#0f172a", "text-halo-width": 1.5, "icon-color": "#fff" };
     expect(toMapLibrePaint(layer("symbol", paint))).toEqual(paint);

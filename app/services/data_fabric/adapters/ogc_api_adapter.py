@@ -458,7 +458,9 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
         # 满）；matched 上界分支保持原样（matched 在场时本就是保守上界）。
         # OR：numberMatched 不得清掉满页信号；比较用过滤前的 remote_window，
         # 本地余项把 returned 缩小后不得误报 has_more（ISSUE-D04）。
-        truncated = remote_window >= v2.page.limit
+        # links.next 在场即服务端声明有下一页：短页（<limit）+ next 也必须
+        # 续翻，否则 next_cursor=None、后续页被静默丢弃。
+        truncated = remote_window >= v2.page.limit or next_url is not None
         if matched is not None and isinstance(v2.page, OffsetPage):
             truncated = truncated or matched > (v2.page.offset + remote_window)
         next_cursor = encode_cursor([next_url]) if (truncated and next_url) else None

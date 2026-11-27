@@ -247,6 +247,20 @@ class TestVectorTwinScene3d:
         # ref 不可用 → 结构化省略，不伪造数据
         assert "data-kind=\"profile\"" not in res.svg
 
+    def test_extra_notes_string_does_not_explode_into_char_rows(self):
+        # extraNotes 非法（字符串）→ 不得逐字符变成披露行，也不得拖垮面板
+        from app.services.mapspec_to_svg import compile_mapspec_to_svg_detailed
+        spec = self._spec()
+        for comp in spec["layout"]["components"]:
+            if comp["type"] == "scene_disclosure":
+                comp["options"] = {"extraNotes": "not-a-list"}
+        res = compile_mapspec_to_svg_detailed(spec, include_chrome=True)
+        assert "data-kind=\"scene\"" in res.svg
+        assert "三维透视不可矢量化" in res.svg
+        # 字符串被逐字符迭代时每个字符都会成为独立披露行
+        assert ">n</text>" not in res.svg and ">o</text>" not in res.svg
+        assert ">t</text>" not in res.svg and ">-</text>" not in res.svg
+
     def test_semantic_corpus_roundtrip(self):
         from app.services.mapspec_to_svg import compile_mapspec_to_svg_detailed
         from app.lib.cartography.export_semantic_corpus import (

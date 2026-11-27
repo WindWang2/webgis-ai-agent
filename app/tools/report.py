@@ -101,6 +101,16 @@ def _finalize_report_record(report_id: str, success: bool, file_path: str) -> Op
             return None
 
 
+def _discard_partial_report(file_path: str) -> None:
+    """Phase 2 失败兜底：删除渲染过程中留下的半成品文件（可能不存在）。"""
+    try:
+        os.remove(file_path)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        logger.warning("无法删除报告半成品文件 %s: %s", file_path, exc)
+
+
 def register_report_tools(registry: ToolRegistry):
     """注册报告生成工具到 Agent 工具链"""
 
@@ -178,15 +188,22 @@ def register_report_tools(registry: ToolRegistry):
         report_title = prep["report_title"]
         file_path = prep["file_path"]
 
-        mapspec = await mapspec_store.get_mapspec(session_id)
-        success = await spatial_report_engine.generate_report(
-            session_id=session_id,
-            session_title=report_title,
-            messages=prep["msg_dicts"],
-            output_path=file_path,
-            format=format,
-            mapspec=mapspec,
-        )
+        try:
+            mapspec = await mapspec_store.get_mapspec(session_id)
+            success = await spatial_report_engine.generate_report(
+                session_id=session_id,
+                session_title=report_title,
+                messages=prep["msg_dicts"],
+                output_path=file_path,
+                format=format,
+                mapspec=mapspec,
+            )
+        except Exception:
+            # 渲染异常必须收敛为 failed 终态：generate_report 原样向上抛，
+            # 若不兜底，processing 行将永不终结，且半成品文件无人清理。
+            logger.exception("报告 %s 生成异常，转为 failed 终态", report_id)
+            await asyncio.to_thread(_discard_partial_report, file_path)
+            success = False
 
         file_size = await asyncio.to_thread(
             _finalize_report_record, report_id, bool(success), file_path

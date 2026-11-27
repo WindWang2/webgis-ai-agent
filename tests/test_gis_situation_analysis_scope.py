@@ -111,6 +111,22 @@ def test_claimed_scope_single_feature_and_pre_turn_fallback():
     assert derive_claimed_scope(_snapshot([]), pre_turn)["feature_ids"] == ["sch-9"]
 
 
+def test_claimed_scope_empty_ledger_labels_pre_turn_source():
+    """event_count==0 的投影 selection 不是 IR 证据：来源/seq 必须如实标 pre_turn。"""
+    snapshot = {
+        "selection": {
+            "layer_id": "schools", "feature_id": "sch-1",
+            "source": {"server_seq": 9},
+        },
+        "event_count": 0,
+    }
+    pre_turn = {"layer_id": "schools", "feature_id": "sch-9"}
+    claimed = derive_claimed_scope(snapshot, pre_turn)
+    assert claimed["feature_ids"] == ["sch-9"]
+    assert claimed["sources"] == ["pre_turn"]
+    assert claimed["claimed_at_seq"] is None
+
+
 def test_claimed_scope_none_when_no_evidence():
     claimed = derive_claimed_scope(_snapshot([]), None)
     assert claimed["kind"] == "none"

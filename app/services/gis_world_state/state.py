@@ -169,11 +169,14 @@ async def build_world_state(session_id: str) -> Dict[str, Any]:
             observation = {"raw": observation[:128]}
 
     view = mapspec.get("view") if isinstance(mapspec.get("view"), dict) else {}
+    current_view = map_state.get("current_view")
+    if not isinstance(current_view, dict):
+        current_view = {}
     return {
         "session_id": session_id,
         "revision": int(map_state.get("_cartographic_mutation_revision", 0) or 0),
         "viewport": {
-            "center": view.get("center") or map_state.get("current_view", {}).get("center"),
+            "center": view.get("center") or current_view.get("center"),
             "zoom": view.get("zoom"),
             "framed": bool(view.get("framed")),
         },

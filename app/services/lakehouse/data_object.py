@@ -453,10 +453,34 @@ def verify_data_object(
         size = store.size(digest)
         if expected_size is not None and size is not None and int(size) != int(expected_size):
             return "digest_mismatch"
-        raw = store.get_blob(digest, expected_sha256=digest)
-        if raw is None:
+        # 流式校验：单 blob 可达 2GB，整读会 OOM（materialize 同款通道）。
+        if not _stream_verify_digest(store, digest):
             return "digest_mismatch"
     return "verified"
+
+
+def _stream_verify_digest(store: Any, digest: str) -> bool:
+    """流式校验单个 blob 的 sha256（峰值内存 O(chunk)，绝不整体物化）。
+
+    与 ``_stream_blob_to_file`` 同款降级路径：store 未提供
+    ``get_blob_stream`` 时回退到 digest 校验的 ``get_blob`` 读。
+    """
+    import hashlib
+
+    from app.services.durable_blob_store import BlobDigestMismatch
+
+    if not digest:
+        return False
+    stream_fn = getattr(store, "get_blob_stream", None)
+    if stream_fn is None:
+        return store.get_blob(digest, expected_sha256=digest) is not None
+    hasher = hashlib.sha256()
+    try:
+        for chunk in stream_fn(digest, expected_sha256=digest):
+            hasher.update(chunk)
+    except BlobDigestMismatch:
+        return False
+    return hasher.hexdigest() == digest
 
 
 def _stream_blob_to_file(store: Any, digest: str, tmp: Path) -> bool:

@@ -95,6 +95,18 @@ describe('exportCommands export_map (V3 Promise<MapCommandResult> contract)', ()
     expect(setPendingSystemMessage).not.toHaveBeenCalled();
   });
 
+  it('resolves failed export_error when the map is torn down (once/triggerRepaint throw)', async () => {
+    const map = makeMockMaplibreMap();
+    map.once.mockImplementation(() => {
+      throw new Error('map destroyed');
+    });
+    const promise = exportCommands.export_map.run(makeCtx(map, {}));
+
+    // An exception escaping the Promise executor must not reject the action —
+    // the queue must settle with a structured failure.
+    await expect(promise).resolves.toEqual({ status: 'failed', error: 'export_error' });
+  });
+
   it('review: passes watchdog-bounded idleTimeoutMs to the engine (degrade fits inside the 30s watchdog)', async () => {
     const { MapExporterEngine } = await import('@/lib/map-kit/exporter');
     const exportFn = MapExporterEngine.export as ReturnType<typeof vi.fn>;

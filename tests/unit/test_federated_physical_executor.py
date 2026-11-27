@@ -65,6 +65,24 @@ class _PagedAdapter:
         )
 
 
+class _AggregateWindowAdapter:
+    """Return an adapter-reported aggregate group-window fact."""
+
+    def __init__(self, rows, *, complete):
+        self.rows = rows
+        self.complete = complete
+
+    def query(self, dataset_id, spec):
+        return QueryResult(
+            dataset_id=dataset_id,
+            data=list(self.rows),
+            payload_type="aggregation",
+            group_window_complete=self.complete,
+            truncated=not self.complete,
+            has_more=not self.complete,
+        )
+
+
 def _v5_result(adapters, req):
     ex = FederatedExecutor(lambda sid: adapters.get(sid))
     return ex.execute_chain(req)
@@ -219,6 +237,51 @@ def test_differential_aggregate_join_v6_equals_v5():
     v6 = _v6_result(adapters, req)
     assert _canon(v6["rows"]) == _canon(v5["rows"])
     assert v6["row_count"] == v5["row_count"] == 3
+
+
+def _aggregate_scan_executor(rows, *, complete, limit=20_000):
+    from app.services.data_fabric.query.federated.logical import LogicalScan
+    from app.services.data_fabric.query.models import ExecutionBudget
+
+    scan = LogicalScan(
+        source_id="groups",
+        dataset_id="grouped",
+        fetch_limit=limit,
+        aggregate_request={"group_by": ["district"], "aggregates": [{"func": "count"}]},
+    )
+    budget = ExecutionBudget(max_rows=limit)
+    adapter = _AggregateWindowAdapter(rows, complete=complete)
+    return PhysicalExecutor(
+        adapter_factory=lambda _sid: adapter,
+        budget=budget,
+        limit=limit,
+        adaptive=False,
+    ), scan
+
+
+def test_aggregate_pushdown_exact_10000_complete_groups_succeeds():
+    """An adapter-proven exact 10k page is complete even above the public cap."""
+    rows = [{"district": str(i), "count": 1} for i in range(10_000)]
+    executor, scan = _aggregate_scan_executor(rows, complete=True)
+
+    result = executor.execute(scan)
+
+    assert result["row_count"] == 10_000
+    assert result["joined_row_count"] == 10_000
+
+
+def test_aggregate_pushdown_explicit_incomplete_window_fails_fast():
+    """An explicit incomplete fact is authoritative even below legacy heuristics."""
+    from app.services.data_fabric.errors import QueryBudgetExceededError
+
+    executor, scan = _aggregate_scan_executor(
+        [{"district": "a", "count": 1}, {"district": "b", "count": 1}],
+        complete=False,
+        limit=100,
+    )
+
+    with pytest.raises(QueryBudgetExceededError, match="incomplete group window"):
+        executor.execute(scan)
 
 
 # ── 分页 / 取消 / 超时 ─────────────────────────────────────────────────────

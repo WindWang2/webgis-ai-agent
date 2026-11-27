@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import threading
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -12,13 +14,24 @@ from PIL import Image
 
 from app.core.config import settings
 from app.core.database import SessionLocal
-from app.schemas.georeferencing_schema import GcpInputItem, GeorefDomainError, GeorefErrorCode
+from app.schemas.georeferencing_schema import (
+    MAX_GCPS_PER_PLAN,
+    GcpInputItem,
+    GeorefDomainError,
+    GeorefErrorCode,
+)
 from app.services.durable_blob_store import reset_filesystem_blob_store
 from app.services.georeferencing import jobs as georef_jobs
 from app.services.georeferencing.intake import ingest_source_bytes
 from app.services.georeferencing.recovery import recover_interrupted_jobs
 from app.services.georeferencing.refs import purge_session_georef_state
-from app.services.georeferencing.service import cancel_job, create_plan, execute_plan, revise_draft
+from app.services.georeferencing.service import (
+    cancel_job,
+    create_plan,
+    execute_plan,
+    import_gcps,
+    revise_draft,
+)
 from app.services.georeferencing.store import georef_session_dir, get_plan, mutate_plan_cas
 from app.services.georeferencing.warp import WarpCancelledError
 from app.services.jobs.lifecycle import JobStatus
@@ -668,3 +681,251 @@ async def test_2192_reused_durable_row_never_spawns_second_runner(isolated_env, 
     assert fresh.active_execution_id == first["execution_id"]
     assert fresh.latest_artifact is not None
     assert fresh.latest_artifact.execution_id == first["execution_id"]
+
+
+# ── P2 review-swarm regressions ─────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_p2_job_stage_map_entry_is_dropped_when_job_is_terminal(isolated_env):
+    """_STAGE_BY_JOB must not retain an entry forever once the job finished."""
+    sid = isolated_env
+    _, plan = await _seed_valid_plan(sid)
+
+    res = await execute_plan(
+        session_id=sid,
+        plan_id=plan.plan_id,
+        expected_revision=plan.revision,
+        background=False,
+    )
+    assert res["status"] == "completed"
+    assert int(res["job_id"]) not in georef_jobs._STAGE_BY_JOB
+
+
+@pytest.mark.asyncio
+async def test_p2_recovery_unknown_job_status_does_not_abort_loop(isolated_env, monkeypatch):
+    """An unknown durable status string must not stop later stuck plans recovering."""
+    from app.services.georeferencing import recovery as georef_recovery
+
+    sid = isolated_env
+    src, plan_bad = await _seed_valid_plan(sid)
+    plan_good = create_plan(
+        session_id=sid, source_id=src.source_id, name="Recoverable plan", target_crs="EPSG:3857"
+    )
+
+    with SessionLocal() as db:
+        row_bad = DurableJobStore.create_sync(
+            db,
+            task_type="georeference_warp",
+            kind="georeference",
+            display_name="unknown status job",
+            session_id=sid,
+            parameters={},
+        )
+        row_good = DurableJobStore.create_sync(
+            db,
+            task_type="georeference_warp",
+            kind="georeference",
+            display_name="interrupted running job",
+            session_id=sid,
+            parameters={},
+        )
+        DurableJobStore.transition_sync(db, row_good.id, JobStatus.running)
+        db.commit()
+        jid_bad, jid_good = row_bad.id, row_good.id
+
+    mutate_plan_cas(
+        sid,
+        plan_bad.plan_id,
+        expected_revision=None,
+        mutator=lambda c: c.model_copy(update={"active_job_id": str(jid_bad)}),
+    )
+    mutate_plan_cas(
+        sid,
+        plan_good.plan_id,
+        expected_revision=None,
+        mutator=lambda c: c.model_copy(update={"active_job_id": str(jid_good)}),
+    )
+
+    real_get_sync = DurableJobStore.get_sync
+
+    def _fake_get_sync(db, job_id):
+        if int(job_id) == jid_bad:
+            return SimpleNamespace(status="NOT_A_VALID_JOB_STATUS")
+        return real_get_sync(db, job_id)
+
+    monkeypatch.setattr(DurableJobStore, "get_sync", staticmethod(_fake_get_sync))
+    summary = georef_recovery.recover_interrupted_jobs()
+
+    assert summary["failed"] >= 1
+    assert get_plan(sid, plan_good.plan_id).active_job_id is None
+    assert get_plan(sid, plan_bad.plan_id).active_job_id is None
+    with SessionLocal() as db:
+        row = real_get_sync(db, jid_good)
+        assert row is not None and row.status == JobStatus.failed.value
+
+
+@pytest.mark.asyncio
+async def test_p2_target_crs_change_discloses_manual_gcp_coords(isolated_env):
+    """Changing target CRS keeps manual map coords, but must disclose the re-interpretation."""
+    sid = isolated_env
+    _, plan = await _seed_valid_plan(sid)
+    assert plan.gcps and all(g.provenance is None for g in plan.gcps)
+
+    revised = revise_draft(
+        session_id=sid,
+        plan_id=plan.plan_id,
+        expected_revision=plan.revision,
+        target_crs="EPSG:32650",
+    )
+    assert revised.target_crs == "EPSG:32650"
+    assert revised.fit_metrics is not None
+    assert any(
+        "explicit map coordinates" in w and "4 GCP(s)" in w
+        for w in revised.fit_metrics.warnings
+    ), revised.fit_metrics.warnings
+
+
+@pytest.mark.asyncio
+async def test_p2_import_gcps_merge_overflow_fails_instead_of_dropping(isolated_env):
+    """replace_existing=false must not silently discard new GCPs when the plan is full."""
+    sid = isolated_env
+    _, seed_plan = await _seed_valid_plan(sid)
+
+    full_gcps = [
+        GcpInputItem(
+            gcp_id=f"g{i}",
+            px=float(i % 33),
+            py=float(i // 33),
+            map_x=13370000.0 + float(i % 33),
+            map_y=3530000.0 - float(i // 33),
+        )
+        for i in range(MAX_GCPS_PER_PLAN)
+    ]
+    plan = revise_draft(
+        session_id=sid,
+        plan_id=seed_plan.plan_id,
+        expected_revision=seed_plan.revision,
+        gcps=full_gcps,
+    )
+    assert len(plan.gcps) == MAX_GCPS_PER_PLAN
+
+    payload = json.dumps(
+        {"gcps": [{"px": 1.0, "py": 1.0, "map_x": 13370001.0, "map_y": 3529999.0}]}
+    )
+    with pytest.raises(GeorefDomainError) as exc_info:
+        import_gcps(
+            session_id=sid,
+            plan_id=plan.plan_id,
+            expected_revision=plan.revision,
+            fmt="json",
+            content=payload,
+            replace_existing=False,
+        )
+    assert exc_info.value.code == GeorefErrorCode.INVALID_GCP_COORDS
+    unchanged = get_plan(sid, plan.plan_id)
+    assert unchanged is not None
+    assert unchanged.revision == plan.revision
+    assert len(unchanged.gcps) == MAX_GCPS_PER_PLAN
+
+
+@pytest.mark.asyncio
+async def test_p3_import_gcps_over_limit_is_rejected_not_truncated(isolated_env):
+    """Imports above MAX_GCPS_PER_PLAN must fail loudly instead of dropping rows."""
+    sid = isolated_env
+    _, plan = await _seed_valid_plan(sid)
+    overflow = MAX_GCPS_PER_PLAN + 1
+
+    json_rows = [
+        {"gcp_id": f"j{i}", "px": 0.0, "py": 0.0, "map_x": 13370000.0, "map_y": 3530000.0}
+        for i in range(overflow)
+    ]
+    with pytest.raises(GeorefDomainError) as json_exc:
+        import_gcps(
+            session_id=sid,
+            plan_id=plan.plan_id,
+            expected_revision=plan.revision,
+            fmt="json",
+            content=json.dumps({"gcps": json_rows}),
+        )
+    assert json_exc.value.code == GeorefErrorCode.INVALID_GCP_COORDS
+    assert json_exc.value.status_code == 422
+
+    csv_lines = ["px,py,map_x,map_y"]
+    csv_lines += [f"0,0,{13370000.0 + i},3530000.0" for i in range(overflow)]
+    with pytest.raises(GeorefDomainError) as csv_exc:
+        import_gcps(
+            session_id=sid,
+            plan_id=plan.plan_id,
+            expected_revision=plan.revision,
+            fmt="csv",
+            content="\n".join(csv_lines),
+        )
+    assert csv_exc.value.code == GeorefErrorCode.INVALID_GCP_COORDS
+
+    unchanged = get_plan(sid, plan.plan_id)
+    assert unchanged is not None
+    assert unchanged.revision == plan.revision
+    assert len(unchanged.gcps) == len(plan.gcps)
+
+
+@pytest.mark.asyncio
+async def test_p3_active_job_check_fails_closed_on_job_store_error(isolated_env, monkeypatch):
+    """If the active-job state cannot be verified, a second warp must be refused."""
+    sid = isolated_env
+    _, plan = await _seed_valid_plan(sid)
+    mutate_plan_cas(
+        sid,
+        plan.plan_id,
+        expected_revision=None,
+        mutator=lambda cur: cur.model_copy(update={"active_job_id": "999999"}),
+    )
+    fresh = get_plan(sid, plan.plan_id)
+    assert fresh is not None and fresh.active_job_id == "999999"
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("job store unavailable")
+
+    monkeypatch.setattr(DurableJobStore, "get_sync", staticmethod(_boom))
+    with pytest.raises(GeorefDomainError) as exc_info:
+        await execute_plan(
+            session_id=sid,
+            plan_id=plan.plan_id,
+            expected_revision=fresh.revision,
+            background=False,
+        )
+    assert exc_info.value.code == GeorefErrorCode.CAS_CONFLICT
+
+    current = get_plan(sid, plan.plan_id)
+    assert current is not None
+    assert current.latest_artifact is None
+
+
+@pytest.mark.asyncio
+async def test_p3_warp_failure_removes_partial_output(isolated_env, monkeypatch):
+    """Non-domain warp failures must not leave an unregistered partial .tif behind."""
+    sid = isolated_env
+    _, plan = await _seed_valid_plan(sid)
+
+    def _write_partial_then_fail(**kwargs):
+        out_path = kwargs["out_path"]
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(b"PARTIAL_TIF")
+        raise OSError("simulated GDAL write failure")
+
+    monkeypatch.setattr(georef_jobs, "run_direct_affine_warp", _write_partial_then_fail)
+    with pytest.raises(GeorefDomainError) as exc_info:
+        await execute_plan(
+            session_id=sid,
+            plan_id=plan.plan_id,
+            expected_revision=plan.revision,
+            background=False,
+        )
+    assert exc_info.value.code == GeorefErrorCode.JOB_FAILED
+
+    art_dir = georef_session_dir(sid) / "artifacts"
+    assert not list(art_dir.glob("*.tif"))
+    fresh = get_plan(sid, plan.plan_id)
+    assert fresh is not None
+    assert fresh.latest_artifact is None
+    assert fresh.active_job_id is None

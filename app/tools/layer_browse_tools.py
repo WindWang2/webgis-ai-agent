@@ -355,6 +355,8 @@ def register_layer_browse_tools(registry: ToolRegistry) -> None:
         id_mode: Optional[str] = None,
         session_id: Optional[str] = None,
     ) -> dict:
+        import asyncio
+
         from app.services.feature_pages import resolve_feature_stable_id
 
         if not session_id:
@@ -378,10 +380,21 @@ def register_layer_browse_tools(registry: ToolRegistry) -> None:
                     "error": "该要素存在链内稳定 id，请用默认寻址",
                     "hint": "位置 id 与链内 id 是两个命名空间，不混用",
                 }
-            out = dict(f) if isinstance(f, dict) else {"type": "Feature"}
+            if not isinstance(f, dict):
+                return {
+                    "error": "ref 数据损坏：features 含非 Feature 对象条目",
+                    "position": pos,
+                }
+            out = dict(f)
             out.setdefault("id", pos)
             return {"feature": out, "id_mode": "positional", "scope_note": "位置 id 仅当前 revision 内稳定"}
-        for f in features:
-            if resolve_feature_stable_id(f) == str(feature_id):
-                return {"feature": f, "id_mode": "native"}
+        def _find_native(fs: List[Any], fid: str) -> Any:
+            for f in fs:
+                if resolve_feature_stable_id(f) == fid:
+                    return f
+            return None
+
+        found = await asyncio.to_thread(_find_native, features, str(feature_id))
+        if found is not None:
+            return {"feature": found, "id_mode": "native"}
         return {"error": "feature_not_found", "feature_id": feature_id}

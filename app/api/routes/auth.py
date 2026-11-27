@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -281,18 +281,29 @@ async def login(
         # ADR-0139 P6：渐进延迟（进程内 best-effort；跨进程硬上界仍由
         # 既有限流承担）。延迟在响应前施加 —— 不泄漏「失败但已延迟」
         # 之外的任何信息，且 dummy-hash 路径同样走完整 scrypt。
-        delay_s = record_login_failure(req.identifier)
+        # 审计 P1：延迟台账同样按客户端 IP 记账（按 identifier 记账等于
+        # 让攻击者用受害者用户名拖慢受害者本人登录）。
+        delay_s = record_login_failure(client_ip)
         if delay_s > 0:
             await asyncio.sleep(delay_s)
         raise HTTPException(status_code=401, detail="用户名或密码错误")
     if not user.is_active:
         raise HTTPException(status_code=403, detail="账号已停用")
 
-    user.last_login = datetime.now(timezone.utc)
-    user.login_count = (user.login_count or 0) + 1
+    # 并发登录：计数/时间戳走 DB 侧原子自增，避免 ORM read-modify-write
+    # 在两次并发登录间丢失计数或用更旧的 last_login 覆盖较新值。
+    await db.execute(
+        update(User)
+        .where(User.id == user.id)
+        .values(
+            last_login=datetime.now(timezone.utc),
+            login_count=func.coalesce(User.login_count, 0) + 1,
+        )
+        .execution_options(synchronize_session=False)
+    )
     await db.commit()
     await db.refresh(user)
-    reset_login_failures(req.identifier)
+    reset_login_failures(client_ip)
 
     return await _new_pair_with_family(db, user)
 

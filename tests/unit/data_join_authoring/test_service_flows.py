@@ -70,6 +70,29 @@ async def test_preview_full_diagnostics_and_evidence(seeded_sources):
     assert stored["preview_digest"]
 
 
+async def test_preview_runs_join_off_event_loop(seeded_sources, monkeypatch):
+    """预览的全量 join 不在事件循环线程执行（与执行体 asyncio.to_thread 一致）。"""
+    import threading
+
+    view = await service.create_plan(
+        seeded_sources["session_id"], _flagship_plan(seeded_sources),
+        actor=seeded_sources["actor"])
+    loop_ident = threading.get_ident()
+    seen = {}
+    real_run = service.JoinExecutor.run_attribute
+
+    def recording_run(self, left, right):
+        seen["ident"] = threading.get_ident()
+        return real_run(self, left, right)
+
+    monkeypatch.setattr(service.JoinExecutor, "run_attribute", recording_run)
+    result = await service.preview_plan(
+        seeded_sources["session_id"], view["plan_id"], expected_revision=1,
+        actor=seeded_sources["actor"])
+    assert result["status"] == "ready"
+    assert seen["ident"] != loop_ident
+
+
 async def test_execute_inline_completes_with_full_receipt(seeded_sources):
     view = await service.create_plan(seeded_sources["session_id"], _flagship_plan(seeded_sources),
                                      actor=seeded_sources["actor"])
@@ -257,3 +280,66 @@ async def test_j15_bounded_receipt_full_rows_via_pages(seeded_sources):
         if cursor is None:
             break
     assert total == receipt["output_rows"] == 4
+
+
+async def test_p3_post_publish_failure_removes_terminal_output(
+        seeded_sources, monkeypatch):
+    """发布后失败：run 行 failed 且终态目录被回收（不留恢复扫不到的孤儿）。"""
+    view = await service.create_plan(
+        seeded_sources["session_id"], _flagship_plan(seeded_sources),
+        actor=seeded_sources["actor"])
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("post-publish boom")
+
+    monkeypatch.setattr(outputs, "write_receipt", boom)
+    with pytest.raises(RuntimeError):
+        await service.execute_plan(
+            seeded_sources["session_id"], view["plan_id"], expected_revision=1,
+            actor=seeded_sources["actor"], background=False)
+    runs = await service.list_runs(seeded_sources["session_id"],
+                                   plan_id=view["plan_id"])
+    run_id = runs["runs"][0]["run_id"]
+    assert runs["runs"][0]["status"] == "failed"
+    assert runs["runs"][0]["error_code"] == "internal_error"
+    assert not outputs.final_dir(run_id).exists()
+
+
+def test_p3_idempotency_prefix_escapes_like_wildcards(seeded_sources):
+    """幂等键 LIKE 前缀不得把 _ / % 当通配符（不跨计划复用 run/收据）。"""
+    from app.core.database import SessionLocal
+    from app.models.data_join_authoring import DataJoinPlan, DataJoinRun
+
+    session_id = seeded_sources["session_id"]
+    base_under = service._build_idempotency_key(session_id, "plan_1", "d", "l", "r")
+    lookalike_under = service._build_idempotency_key(
+        session_id, "planX1", "d", "l", "r")
+    base_pct = service._build_idempotency_key(session_id, "plan%2", "d", "l", "r")
+    lookalike_pct = service._build_idempotency_key(
+        session_id, "planZ2", "d", "l", "r")
+    with SessionLocal() as db:
+        db.add(DataJoinPlan(id="p3-like-plan", session_id=session_id, plan={},
+                            normalized_digest="d"))
+        db.add(DataJoinRun(
+            id="dj-p3-wildcard-under", plan_id="p3-like-plan",
+            session_id=session_id, plan_revision=1, plan_digest="d",
+            status="completed", idempotency_key=lookalike_under))
+        db.add(DataJoinRun(
+            id="dj-p3-wildcard-pct", plan_id="p3-like-plan",
+            session_id=session_id, plan_revision=1, plan_digest="d",
+            status="completed", idempotency_key=lookalike_pct))
+        db.commit()
+    # 仅差一个通配位 ≠ 同键：不得命中邻近计划的 completed run
+    assert service._find_completed_run_by_key(session_id, base_under) is None
+    assert service._find_completed_run_by_key(session_id, base_pct) is None
+    assert service._count_runs_by_key_prefix(session_id, base_under) == 0
+    assert service._count_runs_by_key_prefix(session_id, base_pct) == 0
+    with SessionLocal() as db:
+        db.add(DataJoinRun(
+            id="dj-p3-exact", plan_id="p3-like-plan", session_id=session_id,
+            plan_revision=1, plan_digest="d", status="completed",
+            idempotency_key=base_under))
+        db.commit()
+    found = service._find_completed_run_by_key(session_id, base_under)
+    assert found is not None and found["run_id"] == "dj-p3-exact"
+    assert service._count_runs_by_key_prefix(session_id, base_under) == 1

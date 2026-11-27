@@ -696,6 +696,29 @@ async def maybe_update_runtime_projection(
                 return None
             if rows_fingerprint(fresh.gis_chapter)[:2048] != validated_rows[:2048]:
                 return None
+            # F8 同型：锁内全输入守卫 —— 等锁窗口内 spec 突变 / 新渲染观察
+            # 会让本次派生带着旧 checked_revision 与旧血缘索引落库（预锁读入
+            # 的 mapspec/revision/render_seq 已过期）。重算 gate（与预锁同
+            # 函数、同输入）不一致即放弃，下一触发点基于新输入重派生。
+            try:
+                fresh_map_state = await session_data_manager.get_map_state(session_id)
+            except Exception:  # noqa: BLE001 — 读失败按 0（与预锁同纪律）
+                fresh_map_state = None
+            try:
+                fresh_revision = int(
+                    (fresh_map_state or {}).get("_cartographic_mutation_revision") or 0)
+            except (TypeError, ValueError):
+                fresh_revision = 0
+            fresh_render_seq = observation_sequence(
+                await load_render_observation(session_id, fresh_map_state))
+            fresh_gate = canonical_fingerprint({
+                "gate": gate_fingerprint(
+                    rows_fp, fresh_revision, fresh_render_seq,
+                    chapter.get("workflow_contract") or ""),
+                "package": package_fp,
+            })
+            if fresh_gate != gate:
+                return None
             # 自漂移守卫：等锁窗口内另一触发点已写过 ⇒ 放弃（下一触发点
             # 基于新块重新派生）。
             fresh_stored = fresh.gis_chapter.get(WORKFLOW_RUNTIME_KEY)

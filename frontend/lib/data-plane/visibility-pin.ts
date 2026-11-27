@@ -101,6 +101,8 @@ export function syncVisibilityPins(): void {
 }
 
 let subscriptionStarted = false;
+/** 订阅侧最近一次观察到的 layers 引用（等价 selector：其余 setState 直接返回）。 */
+let lastSubscribedLayers: unknown;
 
 /**
  * 常驻订阅启动（幂等）。由 map-panel 静态 import 触发（地图在场的
@@ -110,7 +112,12 @@ export function ensureVisibilityPinSubscription(): void {
   if (subscriptionStarted || typeof window === 'undefined') return;
   subscriptionStarted = true;
   try {
-    useHudStore.subscribe(() => {
+    lastSubscribedLayers = useHudStore.getState().layers;
+    useHudStore.subscribe((state) => {
+      // 只关心 layers 引用变化：tab/面板/工具/hover 的 setState 不跑
+      // 全量 filter+map+sort+join 签名（文件头「只在 layers 真变化时触发」）。
+      if (state.layers === lastSubscribedLayers) return;
+      lastSubscribedLayers = state.layers;
       syncVisibilityPins();
     });
   } catch {

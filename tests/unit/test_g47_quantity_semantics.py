@@ -16,6 +16,7 @@ import pytest
 
 from app.services.cartogram_authoring.contract import clamp_plan_budget
 from app.services.cartogram_authoring.errors import AuthoringError
+from app.services.cartogram_authoring.geography import prepare_geography
 from app.services.cartogram_authoring.quantities import (
     MIN_VISIBLE_RADIUS,
     build_area_scale,
@@ -23,7 +24,14 @@ from app.services.cartogram_authoring.quantities import (
     reference_circles,
     scan_quantities,
 )
-from tests.unit.g47_fixtures import frozen, grid_features, plan
+from tests.unit.g47_fixtures import (
+    CELL,
+    ORIGIN,
+    frozen,
+    grid_features,
+    plan,
+    square,
+)
 
 #: 3×3 网格的固定 9 个值（避免用短列表触发"长度不一致"守卫）。
 V9 = [100, 200, 300, 400, 500, 600, 700, 800, 900]
@@ -117,6 +125,49 @@ def test_negative_value_is_rejected_rather_than_absolute():
     assert ei.value.code == "FIELD_NOT_NUMERIC"
     assert ei.value.details["reasons"] == ["negative"]
     assert ei.value.details["invalid_count"] == 1
+
+
+# ── 身份与 geography 层对齐 ────────────────────────────────────────────
+
+def test_float_feature_ids_are_not_demoted_to_row_placeholder():
+    """浮点 id 必须与 geography 层的裁决一致，不能落入 ``#rowN`` 占位。
+
+    占位 id 与 geography 单元对不上：正值圆被静默丢弃，却仍计入 ``total`` 与
+    ``max_value``（共同系数 k），``zeros``/``missing`` 还会报出幻影 id。
+    """
+    feats = [
+        square("a", ORIGIN[0], ORIGIN[1], CELL, {"name": "A", "pop": 900}),
+        square(1.5, ORIGIN[0] + CELL, ORIGIN[1], CELL, {"name": "B", "pop": 300}),
+        square(123.0, ORIGIN[0], ORIGIN[1] + CELL, CELL, {"name": "C", "pop": 0}),
+        square(7, ORIGIN[0] + CELL, ORIGIN[1] + CELL, CELL,
+               {"name": "D", "pop": None}),
+    ]
+    scan = _scan(feats)
+    # 整数值 id 去小数（123.0 → "123"）、非整数值原样（1.5 → "1.5"）。
+    assert [e.feature_id for e in scan.entries] == ["a", "1.5", "123", "7"]
+    assert [e.feature_id for e in scan.positives] == ["a", "1.5"]
+    assert scan.zeros == ["123"]
+    assert scan.missing == ["7"]
+    assert all(not e.feature_id.startswith("#row") for e in scan.entries)
+
+
+def test_numeric_feature_ids_join_geography_units():
+    """正值单元身份必须与 geography 准备的单元重合（不漏、不幻影）。
+
+    compute 层用 ``u.feature_id in positive_ids`` 取圆：两边 id 只要差一点，
+    该区域的圆就静默消失，而它的值还在 ``total``/``max_value`` 里。
+    """
+    feats = [
+        square(1.5, ORIGIN[0], ORIGIN[1], CELL, {"name": "B", "pop": 300}),
+        square(123.0, ORIGIN[0] + CELL, ORIGIN[1], CELL, {"name": "C", "pop": 900}),
+    ]
+    scan = _scan(feats)
+    prepared = prepare_geography(feats, source_crs="EPSG:4326",
+                                 target_crs="EPSG:3857", snap_tolerance_m=1.0,
+                                 min_shared_length_m=10.0)
+    unit_ids = {u.feature_id for u in prepared.units}
+    assert unit_ids == {e.feature_id for e in scan.entries}
+    assert {e.feature_id for e in scan.positives} <= unit_ids
 
 
 # ── 零 / 缺失策略 ───────────────────────────────────────────────────────

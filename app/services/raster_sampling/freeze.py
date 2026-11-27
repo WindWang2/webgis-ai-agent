@@ -36,7 +36,9 @@ def _canonical_fc_digest(fc: Dict[str, Any]) -> str:
     for f in features or []:  # type: ignore[union-attr]
         if not isinstance(f, dict):
             continue
-        geom = f.get("geometry") or {}
+        geom = f.get("geometry")
+        if not isinstance(geom, dict):
+            geom = {}
         coords = geom.get("coordinates")
         fid = f.get("id")
         props = f.get("properties") if isinstance(f.get("properties"), dict) else {}
@@ -231,7 +233,8 @@ def pick_line_feature(
     """线路 FC → 单一绑定 feature（id 精确匹配；未指明时必须恰一条线）。"""
     features = [f for f in (fc.get("features") or [])
                 if isinstance(f, dict)
-                and (f.get("geometry") or {}).get("type")
+                and isinstance(f.get("geometry"), dict)
+                and f["geometry"].get("type")
                 in ("LineString", "MultiLineString")]
     if not features:
         raise RasterSamplingError(

@@ -183,12 +183,32 @@ def diff_workflow_packages(
     # 无存活下游 → 空串（诚实 no-op：该子树整体消失，无物可重算）。
     old_edges_raw = (old.compiled_form.get("typed_dag") or {}).get("edges") or []
 
+    def _node_id_of(endpoint: Any, known: Dict[str, Any]) -> str:
+        """bounded 边端点（"node.port"）→ 裸节点 id（与 _edge_set 同口径）。
+
+        ``to_bounded_dict()`` 形态的边端点携带端口后缀（``"data:x.data"``），
+        而节点 id 是裸 id —— 不剥端口则比对恒不命中。仅当剥离后的前缀确实
+        是已知节点 id 时归一（无法归一保持原样）。
+        """
+        ep = str(endpoint or "")
+        if ep in known:
+            return ep
+        head, sep, _tail = ep.rpartition(".")
+        return head if sep and head and head in known else ep
+
     def _survivor(removed_id: str) -> str:
+        # review P2-22：边端点带端口后缀（"node.port"）—— 旧实现拿裸
+        # removed_id 比对带后缀的 from，又把带后缀的 to 直接查 new_nodes，
+        # 恒返回空串：移除节点的下游（尤其仅靠 depends_on 相连者）不被标为
+        # 重算，陈旧产物复用，违反保守正确红线。
         for e in old_edges_raw:
-            if isinstance(e, dict) and str(e.get("from", "")) == removed_id:
-                to_node = str(e.get("to", ""))
-                if to_node in new_nodes:
-                    return to_node
+            if not isinstance(e, dict):
+                continue
+            if _node_id_of(e.get("from", ""), old_nodes) != removed_id:
+                continue
+            to_node = _node_id_of(e.get("to", ""), new_nodes)
+            if to_node in new_nodes:
+                return to_node
         return ""
 
     for node_id in removed:

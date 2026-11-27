@@ -39,7 +39,7 @@ export function SwarmView({ enabled, missionId, ownerToken }: SwarmViewProps) {
   }
   const runs = swarm.data?.runs ?? [];
   if (runs.length === 0) {
-    return <EmptyState testId="cockpit-swarm-empty">{swarm.loading ? t('empty.noData') : t('empty.noData')}</EmptyState>;
+    return <EmptyState testId="cockpit-swarm-empty">{t('empty.noData')}</EmptyState>;
   }
 
   return (
@@ -107,6 +107,7 @@ function budgetRows(
     ...Object.keys(budget.quota ?? {}),
     ...Object.keys(budget.consumed ?? {}),
     ...Object.keys(budget.reserved ?? {}),
+    ...Object.keys(budget.retry_cost ?? {}),
   ]);
   return [...dims].map((dim) => ({
     dim,

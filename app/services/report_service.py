@@ -5,6 +5,8 @@
 from urllib.parse import urlparse
 from app.services.data_fabric.security import DataFabricSecurity, DataFabricSecurityError, make_safe_session
 import asyncio
+import functools
+from concurrent.futures import ThreadPoolExecutor
 from app.core.async_runner import run_sync
 import html as html_mod
 import json
@@ -102,6 +104,15 @@ _SVG_TIMEOUT_PLACEHOLDER_SVG = (
     '<text x="50%" y="50%" text-anchor="middle" font-size="28" fill="#b91c1c" '
     'font-family="sans-serif">地图导出超时，本图未完整渲染</text>'
     '</svg>'
+)
+
+# P2 resource-leak：``asyncio.wait_for`` 超时只放弃 future，**不会**停止已
+# 提交的编译线程；若编译跑在 loop 的共享默认线程池里，多份报告同时超时会把
+# 僵尸线程堆进默认池，进而阻塞全应用 ``asyncio.to_thread``。改用报告专用的
+# 有界池隔离：至多 2 个僵尸编译线程，超时仍排队的 future 还能被取消，不波及
+# 其它 offload。
+_REPORT_SVG_COMPILE_POOL = ThreadPoolExecutor(
+    max_workers=2, thread_name_prefix="report-svg-compile"
 )
 
 
@@ -250,6 +261,7 @@ def _serialize_svg(elem: Any, out: list[str], is_root: bool) -> None:
 
 
 def _clean_svg_tree(elem: Any) -> None:
+    previous_sibling = None
     for child in list(elem):
         ns, local = _split_tag(child.tag) if isinstance(child.tag, str) else ("x", "")
         if (
@@ -261,9 +273,13 @@ def _clean_svg_tree(elem: Any) -> None:
             tail = child.tail
             elem.remove(child)
             if tail:  # 保留兄弟文本
-                elem.text = (elem.text or "") + tail
+                if previous_sibling is None:
+                    elem.text = (elem.text or "") + tail
+                else:
+                    previous_sibling.tail = (previous_sibling.tail or "") + tail
             continue
         _clean_svg_tree(child)
+        previous_sibling = child
     for attr in list(elem.attrib.keys()):
         _, local = _split_tag(attr)
         low = local.lower()
@@ -677,14 +693,19 @@ class ReportService:
 
         max_features, spec_timeout_ms = _resolve_export_thresholds(mapspec, None, None)
         timeout_ms = min(spec_timeout_ms, 30_000.0)
+        # 专门池（非 ``asyncio.to_thread`` 的 loop 默认池）：wait_for 到点返回
+        # 后，未完成的编译只占本池的 worker，不拖垮全应用共享线程池。
         return await asyncio.wait_for(
-            asyncio.to_thread(
-                compile_mapspec_to_svg_detailed, mapspec, 300,
-                max_features=min(max_features, TIER_EXPORT_FEATURES),
-                timeout_ms=timeout_ms,
-                width=width,
-                height=height,
-                include_chrome=True,
+            asyncio.get_running_loop().run_in_executor(
+                _REPORT_SVG_COMPILE_POOL,
+                functools.partial(
+                    compile_mapspec_to_svg_detailed, mapspec, ir["page"]["dpi"],
+                    max_features=min(max_features, TIER_EXPORT_FEATURES),
+                    timeout_ms=timeout_ms,
+                    width=width,
+                    height=height,
+                    include_chrome=True,
+                ),
             ),
             timeout=min(timeout_s, timeout_ms / 1000.0),
         )

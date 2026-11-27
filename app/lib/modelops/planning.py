@@ -177,8 +177,6 @@ def _grid_axis(total: int, size: int, stride: int) -> List[int]:
     last = starts[-1] if starts else 0
     if last + size < total:
         starts.append(total - size)
-    elif last + size > total and (not starts or starts[-1] != total - size):
-        starts[-1] = total - size
     return starts
 
 

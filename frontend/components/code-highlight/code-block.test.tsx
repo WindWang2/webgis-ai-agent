@@ -103,4 +103,47 @@ describe('parseMessageContent', () => {
     const codeBlock = result[0] as any;
     expect(codeBlock?.props?.code).toBe('some code');
   });
+
+  it('parses code block with hyphenated language name', () => {
+    const content = '```objective-c\nint main() { return 0; }\n```';
+    const result = parseMessageContent(content);
+
+    const codeBlock = result[0] as any;
+    expect(codeBlock?.props?.language).toBe('objective-c');
+    expect(codeBlock?.props?.code).toBe('int main() { return 0; }');
+  });
+
+  it('parses code block with plus-suffixed language name', () => {
+    const content = '```c++\nint x = 1;\n```';
+    const result = parseMessageContent(content);
+
+    const codeBlock = result[0] as any;
+    expect(codeBlock?.props?.language).toBe('c++');
+    expect(codeBlock?.props?.code).toBe('int x = 1;');
+  });
+
+  it('renders unclosed code fence (mid-stream) as a code block, not literal backticks', () => {
+    const content = 'Streaming output:\n```python\nprint(1)';
+    const result = parseMessageContent(content);
+
+    const codeBlocks = result.filter((el: any) => el?.props?.code !== undefined);
+    expect(codeBlocks.length).toBe(1);
+    expect((codeBlocks[0] as any).props.language).toBe('python');
+    expect((codeBlocks[0] as any).props.code).toBe('print(1)');
+
+    const { container } = render(<>{result}</>);
+    expect(container.textContent).not.toContain('```');
+    expect(screen.getByTestId('code-block')).toBeInTheDocument();
+  });
+
+  it('still parses a closed fence followed by trailing text', () => {
+    const content = '```sql\nSELECT 1;\n```\nDone.';
+    const result = parseMessageContent(content);
+
+    const codeBlocks = result.filter((el: any) => el?.props?.code !== undefined);
+    expect(codeBlocks.length).toBe(1);
+    const { container } = render(<>{result}</>);
+    expect(container).toHaveTextContent('Done.');
+    expect(container.textContent).not.toContain('```');
+  });
 });

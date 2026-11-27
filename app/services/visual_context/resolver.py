@@ -105,15 +105,21 @@ async def resolve_attachments(
     outcome = ResolveOutcome()
     if not attachments:
         return outcome
-    items = [a for a in attachments if a][:MAX_ATTACHMENTS_PER_TURN]
+    items = [a for a in attachments if a]
     records = {r.evidence_id: r for r in await load_evidence_index(session_id)} \
         if session_id else {}
     total_b64 = 0
-    for item in items:
+    for idx, item in enumerate(items):
         evidence_id = str(getattr(item, "evidence_id", None)
                           or (item.get("evidence_id") if isinstance(item, dict) else "")
                           or "")[:40]
         receipt = AttachmentReceipt(evidence_id=evidence_id)
+        if idx >= MAX_ATTACHMENTS_PER_TURN:
+            # V09：超出每 turn 上限的附件也逐条回执 —— 绕过 ChatRequest 校验
+            # 的调用方不能指望这里静默丢图。
+            receipt.reason = "attachment_limit_exceeded"
+            outcome.receipts.append(receipt)
+            continue
         rec = records.get(evidence_id)
         if rec is not None:
             receipt.source_type = rec.source_type

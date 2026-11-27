@@ -196,7 +196,9 @@ def resolve_font(font_id: str, weight: str = "normal",
         # 资源完全不可用 → 尝试任一可用资源，明确披露 fallback。
         issues.append("FONT_RESOURCE_UNAVAILABLE")
         for alt in FONT_IDS:
-            alt_hit = resolve_variant(alt, "normal", "normal")
+            # 仍按请求的 weight/style 解析：精确命中才算真正应用；否则
+            # resolve_variant 回退 normal 并回 exact=False，issues 如实披露。
+            alt_hit = resolve_variant(alt, weight, style)
             if alt_hit is not None:
                 hit, font_id = alt_hit, alt
                 break

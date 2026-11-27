@@ -8,7 +8,7 @@
 用法::
 
     python scripts/turn_journal_inspect.py <session_id> [--turn-id T] \
-        [--events] [--stats] [--json]
+        [--events] [--stats] [--stats-limit N] [--json]
 
 不走 HTTP/鉴权（运维面直连 DB）；沿用 SessionLocal（PG/SQLite 由配置决定）。
 """
@@ -54,6 +54,9 @@ def main() -> int:
     parser.add_argument("--events", action="store_true", help="附带原始事件流")
     parser.add_argument("--stats", action="store_true",
                         help="附带 per-turn 汇总（表体量走 API /stats 端点)")
+    parser.add_argument("--stats-limit", type=int, default=50, metavar="N",
+                        help="per-turn 汇总条数上限（默认 50；>50 turn 的"
+                             "session 需显式调大，表头会显示生效上限")
     parser.add_argument("--json", action="store_true", help="机器可读输出")
     args = parser.parse_args()
 
@@ -93,8 +96,9 @@ def main() -> int:
                   f"turn={e['turn_id']} seq={e['seq']} "
                   f"causal={e['causal_id'] or '-'} {e['note'][:80]}")
     if args.stats:
-        stats = ledger._turn_summaries_sync(args.session_id, limit=50)  # noqa: SLF001
-        print(f"turn summaries ({len(stats)}):")
+        stats = ledger._turn_summaries_sync(  # noqa: SLF001
+            args.session_id, limit=args.stats_limit)
+        print(f"turn summaries ({len(stats)}, limit={args.stats_limit}):")
         for s in stats:
             print(f"  {s['turn_id']}: events={s['event_count']} "
                   f"terminal={s['terminal']} "

@@ -435,7 +435,8 @@ class ImpactModelRegistry:
         for m in self._models:
             if m.supports(scenario_type, context):
                 return m
-        return self._models[-1]
+        # Unreachable: the constructor always keeps GenericSpatialImpactModel
+        # (supports() == True) at the tail. No return statement is needed.
 
 
 _GLOBAL_REGISTRY: Optional[ImpactModelRegistry] = None

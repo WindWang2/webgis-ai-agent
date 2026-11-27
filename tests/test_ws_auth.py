@@ -291,6 +291,25 @@ def test_ws_connect_rejects_inactive_user(monkeypatch):
     assert exc_info.value.code == 4001
 
 
+def test_ws_connect_treats_null_is_active_as_enabled():
+    """is_active IS NULL 与 HTTP 实时身份链路一致（None 视为启用）。"""
+    import os
+    import sqlite3
+
+    app = _make_app_with_session()
+    db_path = os.path.join(_TMPDIRS_CREATED[-1], "ws_test.db")
+    conn = sqlite3.connect(db_path)
+    conn.execute("UPDATE users SET is_active = NULL WHERE id = ?", ("user-123",))
+    conn.commit()
+    conn.close()
+
+    client = TestClient(app)
+    token = create_access_token({"sub": "user-123", "role": "viewer"})
+    with client.websocket_connect(f"/api/v1/ws/sess-valid?token={token}") as websocket:
+        websocket.send_json({"event": "ping"})
+        assert websocket.receive_json() == {"event": "pong"}
+
+
 
 # ── security F-15：帧预算 / 大帧丢弃 / 周期撤销复核 ─────────────────────
 
