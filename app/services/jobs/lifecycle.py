@@ -70,6 +70,8 @@ class JobKind(str, Enum):
     cartogram_layout = "cartogram_layout"
     # goal-carto-design-series（WP5）：系列出版生产（Celery；逐成员 checkpoint/取消）
     series_production = "series_production"
+    # 04 线（交互式只读地图发布）：冻结快照物化 + CAS published（Celery）
+    map_publication = "map_publication"
 
 
 #: 终态集合：执行已结束，不再有 worker 在推进它。

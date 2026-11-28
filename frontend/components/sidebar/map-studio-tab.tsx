@@ -4,7 +4,7 @@ import { useState, useEffect, useId, type ReactNode } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import type { ExportItem, ExportSettings } from '@/lib/store/hud-types';
 import { useMapAction } from '@/lib/contexts/map-action-context';
-import { Layers,  Download, Printer, History, ChevronDown, Lock, FlaskConical } from 'lucide-react';
+import { Layers,  Download, Printer, History, ChevronDown, Lock, FlaskConical, Share2 } from 'lucide-react';
 import { API_BASE } from '@/lib/api/config';
 import { downloadWithAuth } from '@/lib/api/authenticated-download';
 import { submitAtlasJob } from '@/lib/api/atlas-jobs';
@@ -12,6 +12,7 @@ import { getSessionIdentity } from '@/lib/store/session-identity';
 import { describeApiError } from '@/lib/api/transport';
 import { useToastStore } from '@/components/ui/toast';
 import { useAuthUser } from '@/lib/auth/use-auth-user';
+import { PublicationPanel } from '@/components/sidebar/publication-panel';
 import { IconButton } from '@/components/shared/icon-button';
 import { ConfirmAction } from '@/components/shared/confirm-action';
 import { EmptyState } from '@/components/shared/empty-state';
@@ -98,7 +99,7 @@ const FORMAT_LABEL: Record<ExportSettings['format'], string> = {
   'vector-pdf': 'Vector PDF',
 };
 
-type SubTab = 'layout' | 'frames' | 'scenarios' | 'history';
+type SubTab = 'layout' | 'frames' | 'scenarios' | 'publication' | 'history';
 
 /** 制图排版表单的可折叠分区（渐进式披露）。 */
 function StudioSection({
@@ -349,7 +350,7 @@ export function MapStudioTab() {
             e.preventDefault();
             // Review P2 修复：APG activation-on-focus —— 方向键切换后焦点跟随
             // 到新激活的 tab（roving tabindex 已随之更新）。
-            const order: SubTab[] = ['layout', 'frames', 'scenarios', 'history'];
+            const order: SubTab[] = ['layout', 'frames', 'scenarios', 'publication', 'history'];
             const delta = e.key === 'ArrowLeft' ? -1 : 1;
             const next = order[(order.indexOf(activeSubTab) + delta + order.length) % order.length];
             setActiveSubTab(next);
@@ -428,6 +429,29 @@ export function MapStudioTab() {
           </button>
           <button
             role="tab"
+            id="map-studio-tab-publication"
+            aria-selected={activeSubTab === 'publication'}
+            aria-controls={activeSubTab === 'publication' ? 'map-studio-panel-publication' : undefined}
+            tabIndex={activeSubTab === 'publication' ? 0 : -1}
+            onClick={() => setActiveSubTab('publication')}
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-md py-1.5 font-medium transition-all"
+            style={{
+              backgroundColor: activeSubTab === 'publication'
+                ? 'var(--surface-raised)'
+                : 'transparent',
+              color: activeSubTab === 'publication'
+                ? 'var(--text-primary)'
+                : 'var(--text-muted)',
+              boxShadow: activeSubTab === 'publication'
+                ? '0 1px 2px var(--border-strong)'
+                : 'none',
+            }}
+          >
+            <Share2 size={13} aria-hidden />
+            <span>{t('publication.author.tabTitle')}</span>
+          </button>
+          <button
+            role="tab"
             id="map-studio-tab-history"
             aria-selected={activeSubTab === 'history'}
             aria-controls={activeSubTab === 'history' ? 'map-studio-panel-history' : undefined}
@@ -468,6 +492,15 @@ export function MapStudioTab() {
             aria-labelledby="map-studio-tab-frames"
           >
             <FrameProductPanel />
+          </div>
+        ) : activeSubTab === 'publication' ? (
+          <div
+            role="tabpanel"
+            id="map-studio-panel-publication"
+            aria-labelledby="map-studio-tab-publication"
+            className="p-3"
+          >
+            <PublicationPanel />
           </div>
         ) : activeSubTab === 'layout' ? (
           <div

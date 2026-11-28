@@ -39,6 +39,9 @@ _TOOL_MODULES = [
     ("app.tools.nature_resources", "register_nature_resource_tools"),
     # 批量图册发布（atlas durable job 提交面）
     ("app.tools.atlas_export_tools", "register_atlas_export_tools"),
+    # 04 线（GOAL-20261127-04）：交互式只读地图发布 —— inspect/prepare/draft/validate
+    # （全只读/私有草稿；发布与链接签发是作者显式动作，工具族不提供）
+    ("app.tools.publication_tools", "register_publication_tools"),
     # G16（v2.1）：要素级标注 authoring —— inspect / author（统一写路径）
     ("app.tools.label_authoring_tools", "register_label_authoring_tools"),
     ("app.tools.upload_tools", "register_upload_tools"),

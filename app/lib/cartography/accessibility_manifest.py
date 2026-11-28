@@ -31,6 +31,25 @@ def _layer_label(layer: Dict[str, Any]) -> str:
     return str(layer.get("id", "layer"))[:80]
 
 
+def _spec_title(spec: Dict[str, Any]) -> str:
+    """标题回退链：layout.title > title 组件（生产载体，前端 commitStudioText
+    经 patch_component 写入）> meta.title。"""
+    layout = spec.get("layout") or {}
+    if isinstance(layout, dict) and layout.get("title"):
+        return str(layout["title"])
+    components = layout.get("components") if isinstance(layout, dict) else None
+    if isinstance(components, list):
+        for comp in components:
+            if isinstance(comp, dict) and comp.get("type") == "title" and comp.get("enabled") is not False:
+                options = comp.get("options") or {}
+                if isinstance(options, dict) and options.get("text"):
+                    return str(options["text"])
+    meta = spec.get("meta") or {}
+    if isinstance(meta, dict) and meta.get("title"):
+        return str(meta["title"])
+    return ""
+
+
 def build_accessibility_manifest(
     spec: Dict[str, Any],
     *,
@@ -44,15 +63,27 @@ def build_accessibility_manifest(
     确定性合成（机器可读的最小合格 alt）。
     """
     title = str(
-        (spec.get("layout") or {}).get("title")
-        or (spec.get("meta") or {}).get("title")
-        or "未命名地图"
+        _spec_title(spec) or "未命名地图"
     )[:120]
     layers = list(spec.get("layers") or [])
     layer_labels = [_layer_label(layer) for layer in layers if isinstance(layer, dict)]
 
     sources = []
-    for src in spec.get("sources") or []:
+    raw_sources = spec.get("sources")
+    if isinstance(raw_sources, dict):
+        # MapSpec 权威形状：sources 是 {id: entry} 映射。
+        raw_iter = [
+            {"name": (entry or {}).get("name") if isinstance(entry, dict) else None,
+             "id": key,
+             "type": (entry or {}).get("type") if isinstance(entry, dict) else None,
+             "attribution": (entry or {}).get("attribution") if isinstance(entry, dict) else ""}
+            for key, entry in raw_sources.items()
+        ]
+    elif isinstance(raw_sources, list):
+        raw_iter = raw_sources
+    else:
+        raw_iter = []
+    for src in raw_iter:
         if isinstance(src, dict):
             name = str(src.get("name") or src.get("id") or src.get("type") or "source")
             attribution = str(src.get("attribution") or "")
