@@ -24,6 +24,8 @@ from app.lib.gis.capabilities.frame_product import CAPABILITIES as _frame_produc
 from app.lib.gis.capabilities.temporal import CAPABILITIES as _temporal
 from app.lib.gis.capabilities.terrain import CAPABILITIES as _terrain
 from app.lib.gis.capabilities.workbench_lifecycle import CAPABILITIES as _workbench_lifecycle
+# GOAL-20261127-03：概率抽样调查能力（与 sampling 布点域边界见包 docstring）。
+from app.lib.gis.capabilities.survey_sampling import CAPABILITIES as _survey_sampling
 
 
 def iter_capability_packs() -> Iterable[List[CapabilityDescriptor]]:
@@ -32,4 +34,5 @@ def iter_capability_packs() -> Iterable[List[CapabilityDescriptor]]:
         _interpolation, _network, _terrain, _raster, _temporal, _decision,
         _platform, _sampling, _ecology, _modelops, _rs_cube, _scene3d,
         _multiscale, _frame_product, _workbench_lifecycle,
+        _survey_sampling,
     )

@@ -62,6 +62,7 @@ import zhFieldContracts from '@/messages/zh-CN/fieldContracts.json'
 import zhCartogram from '@/messages/zh-CN/cartogram.json'
 import zhModelBuilder from '@/messages/zh-CN/modelBuilder.json'
 import zhDesignSeries from '@/messages/zh-CN/designSeries.json'
+import zhSamplingAccuracy from '@/messages/zh-CN/samplingAccuracy.json'
 import enCommon from '@/messages/en-US/common.json'
 import enSettings from '@/messages/en-US/settings.json'
 import enErrors from '@/messages/en-US/errors.json'
@@ -110,6 +111,7 @@ import enFieldContracts from '@/messages/en-US/fieldContracts.json'
 import enCartogram from '@/messages/en-US/cartogram.json'
 import enModelBuilder from '@/messages/en-US/modelBuilder.json'
 import enDesignSeries from '@/messages/en-US/designSeries.json'
+import enSamplingAccuracy from '@/messages/en-US/samplingAccuracy.json'
 import type { AppLocale } from './config'
 
 export interface AppMessages {
@@ -164,6 +166,7 @@ export interface AppMessages {
   cartogram: typeof zhCartogram
   modelBuilder: typeof zhModelBuilder
   designSeries: typeof zhDesignSeries
+  samplingAccuracy: typeof zhSamplingAccuracy
 }
 
 export const messages: Record<AppLocale, AppMessages> = {
@@ -219,6 +222,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     market: zhMarket,
     flow: zhFlow,
     modelBuilder: zhModelBuilder,
+    samplingAccuracy: zhSamplingAccuracy,
   },
   'en-US': {
     // en 与 zh 的 catalog 结构由 test/i18n/key-completeness.test.ts 强制一致。
@@ -273,5 +277,6 @@ export const messages: Record<AppLocale, AppMessages> = {
     market: enMarket as unknown as AppMessages['market'],
     flow: enFlow as unknown as AppMessages['flow'],
     modelBuilder: enModelBuilder as unknown as AppMessages['modelBuilder'],
+    samplingAccuracy: enSamplingAccuracy as unknown as AppMessages['samplingAccuracy'],
   },
 }

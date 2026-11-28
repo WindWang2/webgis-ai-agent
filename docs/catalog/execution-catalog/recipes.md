@@ -364,7 +364,7 @@
 - fallback_links: administrative_choropleth, poi_distribution_overview
 
 ## od_flow_overview（OD 出行流向图）
-- capabilities: admin_boundary_query, od_flow_mapping, od_matrix, point_profile；optional: admin_boundary_query
+- capabilities: admin_boundary_query, od_flow_mapping；optional: admin_boundary_query
 - fallback_links: administrative_choropleth, poi_distribution_overview
 
 ## od_matrix_analysis（OD 矩阵分析）

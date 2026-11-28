@@ -126,6 +126,8 @@ describe('hasUsableHudRefPayload', () => {
   it('不把空 FeatureCollection 当成已解析 ref', () => {
     expect(hasUsableHudRefPayload(hudLayer({ source: { type: 'FeatureCollection', features: [] } }))).toBe(false);
     expect(hasUsableHudRefPayload(hudLayer())).toBe(true);
-    expect(hasUsableHudRefPayload(hudLayer({ type: 'tile', source: { tiles: ['https://tiles.invalid/{z}/{x}/{y}.mvt'] } }))).toBe(true);
+    // Layer['source'] 判别联合未收窄 tiles 模板形态（_tileUrl 是类型化通道）；
+    // 运行时 shape 不变，仅类型断言与文件内既有 `as any` 同口径。
+    expect(hasUsableHudRefPayload(hudLayer({ type: 'tile', source: { tiles: ['https://tiles.invalid/{z}/{x}/{y}.mvt'] } as unknown as Layer['source'] }))).toBe(true);
   });
 });

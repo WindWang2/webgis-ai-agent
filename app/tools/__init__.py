@@ -120,6 +120,8 @@ _TOOL_MODULES = [
     ("app.tools.field_compute_tools", "register_field_compute_tools"),
     # G39：数值栅格采样工具面（plan/preview/execute/status/results；独立模块防冲突）
     ("app.tools.raster_sampling_tools", "register_raster_sampling_tools"),
+    # GOAL-20261127-03：概率抽样调查工具面（frame/design/samples/records/estimate）
+    ("app.tools.survey_sampling_tools", "register_survey_sampling_tools"),
     # G24：权威拾取/选择集检查工具面（pick_detail/selection_inspect；独立模块防冲突）
     ("app.tools.selection_tools", "register_selection_tools"),
     ("app.tools.semantic_tools", "register_semantic_tools"),
