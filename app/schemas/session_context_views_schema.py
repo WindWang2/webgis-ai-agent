@@ -123,6 +123,27 @@ class SessionUsageResponse(BaseModel):
     cost_source: str = "unknown"
     recent_turns: List[SessionUsageTurn] = Field(default_factory=list)
     coverage: Dict[str, Any] = Field(default_factory=dict)
+    # WP3/B6（GOAL-20261127-01）：预算块（cap=生效上限；None=无预算控制；
+    # used/remaining 仅在 cap 有界时出现）—— 与 budget_admission 同一权威。
+    budget: Dict[str, Any] = Field(default_factory=dict)
+
+
+class SessionRuntimeResponse(BaseModel):
+    """GET /sessions/{id}/runtime（WP4 运行质量聚合投影，只读）。
+
+    turns = 账本最近 turn（含 attempt 链）；provider_health = 路由健康表
+    白名单投影（进程级，无用户内容）；vendor_session_stats = vendor 视角
+    对账块（不可达时 available=false + reason，不伪造）。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    session_id: str
+    turns: List[Dict[str, Any]] = Field(default_factory=list)
+    totals: Dict[str, Any] = Field(default_factory=dict)
+    budget: Dict[str, Any] = Field(default_factory=dict)
+    provider_health: Dict[str, Any] = Field(default_factory=dict)
+    vendor_session_stats: Dict[str, Any] = Field(default_factory=dict)
 
 
 # ── G43 上下文资料视图 ────────────────────────────────────────────────────

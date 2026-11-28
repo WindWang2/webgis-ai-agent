@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,8 @@ class ModelApplicationResult:
     """一次 turn 期应用的结果（receipt 的内存形态；持久化由调用方派发）。"""
 
     ok: bool
-    status: str                    # applied | inherit_default | failed | budget_rejected
+    status: str                    # applied | inherit_default | inherit_routed | 
+                                   # degraded_inherit | failed | budget_rejected
     reason_code: str = ""          # 空 = 成功
     reason_detail: str = ""
     mode: str = "inherit"          # inherit | explicit
@@ -54,10 +55,13 @@ class ModelApplicationResult:
     catalog_generation: str = ""
     config_generation: str = ""
     budget: Dict[str, Any] = field(default_factory=dict)
+    # WP2（GOAL-20261127-01）：inherit 路径健康感知选择的理由码（与
+    # ModelRouter 词表同源；explicit 恒空）。有界（≤8，每条 ≤64 字符）。
+    strategy_codes: List[str] = field(default_factory=list)
 
     def sse_payload(self, session_id: str, turn_id: str) -> Dict[str, Any]:
         """model_status SSE 的有界投影（无凭证/无内部路径）。"""
-        return {
+        payload = {
             "session_id": session_id,
             "turn_id": turn_id,
             "status": self.status,
@@ -81,6 +85,12 @@ class ModelApplicationResult:
             "catalog_generation": self.catalog_generation,
             "budget": dict(self.budget) if self.budget else None,
         }
+        if self.strategy_codes:
+            payload["route"] = {
+                "selected": self.requested_model or self.effective_model or None,
+                "codes": list(self.strategy_codes),
+            }
+        return payload
 
 
 def _estimate_tokens(text: str) -> int:
@@ -334,6 +344,21 @@ async def apply_session_model(
         return result
 
     item = target["item"]
+    # WP2（GOAL-20261127-01）：inherit 目标经运行时策略做健康感知选择
+    # （候选池 = 可用目录项，授权边界不逃逸；路由语义复用 ModelRouter）。
+    # 用户显式选择（explicit）不经此路径 —— 撤销/不可用仍 typed 拒绝。
+    if result.mode == "inherit":
+        from app.services.chat.model_runtime.turn_strategy import resolve_inherit_target
+
+        _est = _projected_next_turn_tokens(bound_message, item.max_output)
+        _decision = resolve_inherit_target(
+            target["catalog"],
+            needs_tools=needs_tools,
+            context_estimate_tokens=_est,
+        )
+        if _decision.item is not None:
+            item = _decision.item
+        result.strategy_codes = _decision.codes_bounded()
     result.requested_model = item.item_id
     result.requested_provider = item.provider_id
     result.thinking_requested = pref.thinking_level
@@ -362,7 +387,13 @@ async def apply_session_model(
         return result
 
     # Pi 应用：set_model（目录内 provider/modelId）→ get_state 回读。
-    apply_needed = force_apply or result.mode == "explicit"
+    # WP2：inherit 选中非默认目录项（健康降级）时同样必须应用 —— spawn
+    # 快照默认 ≠ 本 turn 选择；is_default=False 即目录 extra 项。
+    apply_needed = (
+        force_apply
+        or result.mode == "explicit"
+        or (result.mode == "inherit" and not item.is_default)
+    )
     if apply_needed:
         try:
             await rpc.request("set_model", {
@@ -440,7 +471,14 @@ async def apply_session_model(
         return result
 
     result.ok = True
-    result.status = "applied" if result.mode == "explicit" else "inherit_default"
+    if result.mode == "explicit":
+        result.status = "applied"
+    elif not item.is_default:
+        # WP2：inherit 经健康降级选中非默认目录项并已确认 —— 与「继承默认」
+        # （spawn 快照原样）语义不同，账本/UI 需可区分降级事实。
+        result.status = "inherit_routed"
+    else:
+        result.status = "inherit_default"
     return result
 
 

@@ -67,6 +67,9 @@ class RouteRequest:
     est_context_tokens: Optional[int] = None   # 估算上下文 → context window 过滤
     latency_budget_class: Optional[str] = None # fast|medium|soft 约束（可选）
     prefer_model: Optional[str] = None         # operator/会话级偏好（如 Pi set_model）
+    candidate_models: Optional[Tuple[str, ...]] = None  # 显式候选池（授权范围覆盖；
+    # Pi 会话目录等「descriptor ≠ 授权」的调用方必须经此传入候选 —— 提供时
+    # 不再从角色 fallbacks/描述符组派生池，授权边界不逃逸。）
 
 
 class ModelRouter:
@@ -98,14 +101,22 @@ class ModelRouter:
 
         candidates: List[str] = [primary_model]
         seen = {primary_model}
-        for fb in profile.fallbacks:
-            if fb not in seen:
-                candidates.append(fb)
-                seen.add(fb)
-        for desc in self._registry.by_group(profile.preferred_group):
-            if desc.model_id not in seen:
-                candidates.append(desc.model_id)
-                seen.add(desc.model_id)
+        if req.candidate_models is not None:
+            # 显式候选池（授权范围）：主模型之后按给定顺序展开。角色
+            # fallbacks / 描述符组池被整段跳过 —— 池的来源即授权边界。
+            for mid in req.candidate_models:
+                if mid and mid not in seen:
+                    candidates.append(mid)
+                    seen.add(mid)
+        else:
+            for fb in profile.fallbacks:
+                if fb not in seen:
+                    candidates.append(fb)
+                    seen.add(fb)
+            for desc in self._registry.by_group(profile.preferred_group):
+                if desc.model_id not in seen:
+                    candidates.append(desc.model_id)
+                    seen.add(desc.model_id)
 
         def _capable_skip(model: str) -> Optional[str]:
             desc = self._registry.resolve(model, self._provider_id)

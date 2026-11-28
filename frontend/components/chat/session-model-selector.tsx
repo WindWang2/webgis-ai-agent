@@ -74,7 +74,13 @@ interface UsageView {
   cost_total_micro_usd: number | null;
   cost_source: string;
   coverage: { included: string[]; not_included: string[] };
-  budget?: { token_cap: number | null; remaining: number | null };
+  budget?: { token_cap: number | null; remaining: number | null; used?: number | null };
+  /** WP4（GOAL-20261127-01）：attempt 链投影（有界；缺省 = 旧后端）。 */
+  recent_turns?: Array<{
+    provider_retry_attempts?: number;
+    route_reason_codes?: string[];
+    last_provider_failure_kind?: string | null;
+  }>;
 }
 
 const UNAVAILABLE_REASON_KEYS: Record<string, string> = {
@@ -360,6 +366,47 @@ export function SessionModelSelector({
                   ? `$${(usage.cost_total_micro_usd / 1_000_000).toFixed(4)} (${usage.cost_source})`
                   : t('chat.model.costUnknown')}
               </div>
+              {/* WP4：预算块（与 admission 同权威；cap=None = 无预算控制） */}
+              <div>
+                {t('chat.model.budget')}:{' '}
+                {usage.budget?.token_cap != null
+                  ? `${(usage.budget.used ?? 0).toLocaleString()} / ${usage.budget.token_cap.toLocaleString()}${
+                      usage.budget.remaining != null
+                        ? ` · ${t('chat.model.budgetRemaining').replace('{n}', usage.budget.remaining.toLocaleString())}`
+                        : ''
+                    }`
+                  : t('chat.model.budgetUnlimited')}
+              </div>
+              {/* WP4：最近 turn 运行事实（attempt 链；空 = 未观察到，不渲染） */}
+              {(() => {
+                const last = usage.recent_turns?.[usage.recent_turns.length - 1];
+                if (!last) return null;
+                const bits: string[] = [];
+                if ((last.provider_retry_attempts ?? 0) > 0) {
+                  bits.push(
+                    t('chat.model.runtimeAttempts').replace(
+                      '{n}', String(last.provider_retry_attempts),
+                    ),
+                  );
+                }
+                if (last.last_provider_failure_kind) {
+                  bits.push(
+                    t('chat.model.runtimeFailure').replace(
+                      '{kind}', last.last_provider_failure_kind,
+                    ),
+                  );
+                }
+                if (last.route_reason_codes?.length) {
+                  bits.push(
+                    t('chat.model.runtimeRoute').replace(
+                      '{codes}', last.route_reason_codes.slice(0, 3).join(','),
+                    ),
+                  );
+                }
+                return bits.length ? (
+                  <div className="text-ink-muted font-mono">{bits.join(' · ')}</div>
+                ) : null;
+              })()}
               {usage.turns_incomplete > 0 && (
                 <div className="text-status-warning">{t('chat.model.incomplete')}</div>
               )}

@@ -210,6 +210,9 @@ class TurnUsageCollector:
         self.facts: List[MessageUsageFact] = []
         self.write_failures = 0
         self.expected_records = 0
+        # R1-P3-4：governor output 回流一次性标志 —— persist 幂等（upsert）
+        # 但 governor 累加不幂等；重复 finalize 同一 collector 不得双计。
+        self.governor_feedback_done = False
         # review-P3：同 turn 内同一 message 的重复投递去重（vendor 每条消息
         # 带唯一 timestamp；缺席时不去重 —— DB 唯一约束兜底跨 persist 场景）。
         self._seen_message_ts: set = set()
@@ -293,12 +296,20 @@ async def persist_turn_records(
     status: str = "pending",
     failure_reason: Optional[str] = None,
     finalize: bool = False,
+    provider_retry_attempts: int = 0,
+    route_reason_codes: str = "",
+    last_provider_failure_kind: str = "",
 ) -> bool:
     """把 turn 回执 + usage 明细写入宿主账本（独立短事务）。
 
     幂等：turn 行 upsert（按 turn_id）；明细行按 ``(turn_id, call_seq)``
     插入，冲突跳过。``finalize=True`` 时结算（complete=records 全部落盘）。
     返回是否全部落盘成功（失败时调用方保持/标记 incomplete）。
+
+    WP3（GOAL-20261127-01）：``provider_retry_attempts`` /
+    ``route_reason_codes``（| 分隔有界串）/ ``last_provider_failure_kind``
+    构成 attempt 链关联（不建新表）；finalize 时把**真实** output tokens
+    回流 governor session 账本（B4 缺口闭合 —— governor 此前只收组装估算）。
     """
     from datetime import datetime, timezone
 
@@ -339,6 +350,10 @@ async def persist_turn_records(
             row.effective_provider = effective_provider
             row.effective_model = effective_model
             row.thinking_effective = thinking_effective
+            # WP3：attempt 链有界列（超界截断 —— 理由码串 ≤255、失败词表 ≤32）。
+            row.provider_retry_attempts = max(0, int(provider_retry_attempts or 0))
+            row.route_reason_codes = str(route_reason_codes or "")[:255]
+            row.last_provider_failure_kind = str(last_provider_failure_kind or "")[:32]
             row.tokens_input = totals["input"]
             row.tokens_output = totals["output"]
             row.tokens_cache_read = totals["cacheRead"]
@@ -400,6 +415,23 @@ async def persist_turn_records(
                 if fact.kind == "assistant" and fact.response_model:
                     row.response_model = fact.response_model
             await db.commit()
+        # WP3（B4）：结算成功 → 真实 output tokens 回流 governor session 账本
+        #（此前 governor 只收组装估算；真实数是预算/背压的事实源）。fail-open：
+        # governor 缺席/异常绝不影响账本主事务（已提交）。
+        if finalize and not collector.governor_feedback_done:
+            try:
+                from app.services.governor.governor import get_governor
+
+                get_governor().ledger.record_output_tokens(
+                    collector.session_id, collector.turn_id, totals["output"],
+                )
+                collector.governor_feedback_done = True
+            except Exception:  # noqa: BLE001 — 回流是增值面
+                logger.debug(
+                    "[usage-ledger] governor output-token feedback failed "
+                    "session=%s turn=%s",
+                    collector.session_id, collector.turn_id, exc_info=True,
+                )
         return True
     except Exception:  # noqa: BLE001 — 账本持久失败绝不打断 turn 流
         collector.write_failures = len(collector.facts)
@@ -474,6 +506,20 @@ async def session_usage_summary(db, session_id: str, limit_turns: int = 20) -> D
         )
     ).all()
     cost_sources = {row[0] for row in cost_source_rows}
+
+    # WP3/B6（GOAL-20261127-01）：预算块与 admission（budget_admission）
+    # 同一权威 —— 生效 cap（用户自设 > 部署默认）+ 账本实数累计 + 余量。
+    # 前端 session-model-selector 一直读 usage.budget?.token_cap（此前恒
+    # undefined 的契约缺陷在此闭合）。cap=None = 无预算控制（如实 unlimited）。
+    from app.services.chat.model_runtime.session_model_prefs import (
+        effective_session_token_cap,
+    )
+
+    cap = await effective_session_token_cap(db, session_id)
+    budget: Dict[str, Any] = {"cap": cap, "token_cap": cap}
+    if cap is not None:
+        budget["used"] = int(totals_row[4] or 0)
+        budget["remaining"] = max(0, int(cap) - int(totals_row[4] or 0))
     return {
         "session_id": session_id,
         "totals": {
@@ -494,6 +540,7 @@ async def session_usage_summary(db, session_id: str, limit_turns: int = 20) -> D
             else "mixed" if cost_sources - {"unknown"}
             else "unknown"
         ),
+        "budget": budget,
         "recent_turns": [
             {
                 "turn_id": r.turn_id,
@@ -504,6 +551,12 @@ async def session_usage_summary(db, session_id: str, limit_turns: int = 20) -> D
                 "thinking_requested": r.thinking_requested,
                 "thinking_effective": r.thinking_effective,
                 "response_model": r.response_model,
+                # WP3：attempt 链投影（有界；空串/0 = 未观察到）
+                "provider_retry_attempts": r.provider_retry_attempts,
+                "route_reason_codes": [
+                    c for c in str(r.route_reason_codes or "").split("|") if c
+                ],
+                "last_provider_failure_kind": r.last_provider_failure_kind or None,
                 "tokens": {
                     "input": r.tokens_input, "output": r.tokens_output,
                     "cacheRead": r.tokens_cache_read, "cacheWrite": r.tokens_cache_write,

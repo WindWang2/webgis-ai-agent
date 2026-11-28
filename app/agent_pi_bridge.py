@@ -1623,6 +1623,17 @@ class PiBridge:
             )
         except Exception:  # noqa: BLE001 — 测试注入的 mock rpc 可能无该入口
             logger.debug("[PiBridge] ui request sink attach skipped", exc_info=True)
+        # WP2（GOAL-20261127-01）：provider 失败观测 sink —— stderr 结构化行
+        # → 路由健康表（G2 缺口闭合：Pi 面的 provider 失败第一次进入与
+        # ChatEngine 同一权威）。归属模型取已回读验证的会话模型状态。
+        try:
+            self._rpc.set_provider_observation_sink(self._on_provider_observation)
+        except Exception:  # noqa: BLE001 — 测试注入的 mock rpc 可能无该入口
+            logger.debug("[PiBridge] provider observation sink attach skipped", exc_info=True)
+        # WP2：本 worker 最近一次回读确认的 (provider, model)（sink 归属用；
+        # 空串 = 未确认，观测按 spawn 基模型归属）。有界：只存 id 字符串。
+        self._last_confirmed_provider = ""
+        self._last_confirmed_model = ""
         # #1108: explicit lock ownership. ``_lock_lease`` names the turn that
         # currently owns ``_lock``; release is owner-checked and idempotent so
         # one turn can never release another turn's acquisition (INV-P2) and
@@ -1662,6 +1673,10 @@ class PiBridge:
         self._bound_gis_session_id = turn_sid
         # G37：new_session 后 vendor 模型回到 settings 默认 —— 已应用状态
         # 作废，下一 turn 必须重应用并回读验证。
+        # R1-P2-4：健康回写归属锚同步复位（回落 spawn 基模型）—— 复位前
+        # 到达的 provider 观测不得错挂到上一会话确认的模型头上。
+        self._last_confirmed_provider = ""
+        self._last_confirmed_model = ""
         self._vendor_model_state = None
 
     async def _apply_session_model_for_turn(
@@ -1732,18 +1747,116 @@ class PiBridge:
                 result.effective_model or "",
                 rpc_epoch,
             )
+            # WP2：sink 归属锚（回读确认才更新 —— 未确认绝不冒认）。
+            self._last_confirmed_provider = result.effective_provider or ""
+            self._last_confirmed_model = result.effective_model or ""
         return result
+
+    def _on_provider_observation(self, obs: dict) -> None:
+        """WP2：stderr 结构化 provider 观测 → 路由健康表（G2 闭合）。
+
+        stderr 读循环内同步执行：只做分类 + 进程内健康表写入（有界、加锁、
+        快速返回），绝不 I/O、绝不抛出（读循环兜底吞异常）。归属模型 =
+        最近回读确认的会话模型；未确认（空串）按 spawn 基模型；都缺 →
+        跳过（宁缺毋错挂）。多次失败累积由健康表自身语义处理（连续失败
+        开冷却；429 记近期限流位）—— 本层不复制计数状态。
+        """
+        try:
+            from app.services.chat.model_runtime.health import get_llm_provider_health
+            from app.services.chat.model_runtime.provider import classify_status_failure
+
+            status = int(obs.get("status") or 0)
+            if not (400 <= status <= 599):
+                return
+            model = self._last_confirmed_model or str(getattr(self._rpc, "spawn_model_id", "") or "")
+            if not model:
+                return
+            provider = self._last_confirmed_provider or "webgis"
+            failure = classify_status_failure(status)
+            get_llm_provider_health().record_failure(provider, model, kind=failure.value)
+            retry_after = obs.get("retry_after")
+            logger.info(
+                "[PiBridge] provider failure observed: provider=%s model=%s "
+                "status=%d kind=%s retry_after=%s",
+                provider, model, status, failure.value, retry_after,
+            )
+        except Exception:  # noqa: BLE001 — 健康回写绝不影响读循环/turn
+            logger.debug("[PiBridge] provider observation handling failed", exc_info=True)
+
+    def _observe_retry_health(self, *, model: str, failure_kind: str) -> None:
+        """WP2：auto_retry 事件 → 健康表（stderr 观测缺席时的结构化兜底）。
+
+        vendor auto-retry 的 errorMessage/finalError 有时不含 HTTP 状态
+        （如传输层断流）—— 该通道保证失败不丢健康信号；分类复用
+        provider.py 词表（文本启发式在此只做 429/5xx/超时的保守识别）。
+        """
+        try:
+            from app.services.chat.model_runtime.health import get_llm_provider_health
+
+            if not model:
+                return
+            provider = self._last_confirmed_provider or "webgis"
+            get_llm_provider_health().record_failure(provider, model, kind=failure_kind)
+        except Exception:  # noqa: BLE001 — 观测绝不影响事件泵
+            logger.debug("[PiBridge] retry health observe failed", exc_info=True)
+
+    def _observe_retry_success(self, model: str) -> None:
+        """WP2：vendor 重试恢复（auto_retry_end success=true）→ 健康表成功
+        回写（与 ChatEngine observe_outcome 成功语义同源：清冷却/失败计数）。"""
+        try:
+            from app.services.chat.model_runtime.health import get_llm_provider_health
+
+            if not model:
+                return
+            provider = self._last_confirmed_provider or "webgis"
+            get_llm_provider_health().record_success(provider, model)
+        except Exception:  # noqa: BLE001 — 观测绝不影响事件泵
+            logger.debug("[PiBridge] retry success observe failed", exc_info=True)
+
+    @staticmethod
+    def classify_retry_error_text(text: str) -> str:
+        """有界文本分类（auto_retry 事件兜底通道专用）。
+
+        词表对齐 provider.FailureKind 值；识别不出 → unknown（健康表按
+        既有语义计入退避）。只看关键词，绝不记录原文。
+        """
+        lowered = (text or "").lower()[:400]
+        if "429" in lowered or "rate limit" in lowered or "too many requests" in lowered:
+            return "rate_limit"
+        if "503" in lowered or "502" in lowered or "service unavailable" in lowered or "bad gateway" in lowered:
+            return "provider_unavailable"
+        if "timed out" in lowered or "timeout" in lowered or "econnreset" in lowered or "socket" in lowered:
+            return "timeout"
+        return "unknown"
+
+    @staticmethod
+    def _bounded_route_codes(codes, *, limit: int = 255) -> str:
+        """R1-P3-8：理由码整条取舍 —— 列界内保留前缀整码，超界尾部整条丢弃。"""
+        kept: list[str] = []
+        total = 0
+        for code in codes:
+            piece = str(code)[:64]
+            add = len(piece) + (1 if kept else 0)
+            if total + add > limit:
+                break
+            kept.append(piece)
+            total += add
+        return "|".join(kept)
 
     def _persist_turn_runtime_receipt(
         self,
         result,
         *,
         collector,
+        provider_retry_attempts: int = 0,
+        last_provider_failure_kind: str = "",
     ) -> None:
         """G37（WP07/WP08）：回执 + usage 落盘（fire-and-forget，绝不阻塞流）。
 
         幂等（turn_id upsert + (turn_id, call_seq) 冲突跳过）；失败时
         collector.write_failures 置位 → 汇总 complete=False → 面 incomplete。
+        WP3：attempt 链元数据（vendor auto-retry 次数 + 路由理由码 + 最后
+        provider 失败分类）随行落盘 —— 不建新表，与 usage 明细共聚一行。
         """
         try:
             from app.services.chat.model_runtime.usage_ledger import (
@@ -1765,6 +1878,12 @@ class PiBridge:
                 status=result.status,
                 failure_reason=(result.reason_detail or None) if not result.ok else None,
                 finalize=True,
+                provider_retry_attempts=max(0, int(provider_retry_attempts or 0)),
+                # R1-P3-8：整条取舍再 join（列界内丢弃尾部整码，绝不腰斩）。
+                route_reason_codes=self._bounded_route_codes(
+                    getattr(result, "strategy_codes", None) or (), limit=255,
+                ),
+                last_provider_failure_kind=str(last_provider_failure_kind or "")[:32],
             )
         except Exception:  # noqa: BLE001 — 回执落盘是增值面
             collector.write_failures += 1
@@ -1856,6 +1975,10 @@ class PiBridge:
                         # vision 运行时缓存同样失效（旧 state 会把过期能力
                         # 放行给新默认模型）。
                         self._vendor_model_state = None
+                        # R1-P2-4：健康回写归属锚同步复位（与
+                        # _isolate_vendor_session 同语义）。
+                        self._last_confirmed_provider = ""
+                        self._last_confirmed_model = ""
                         self._vision_gate.invalidate_runtime_cache()
                 else:
                     blocked_reason = "revoked_history_pending_regeneration"
@@ -2129,6 +2252,16 @@ class PiBridge:
                     session_id, turn_id,
                 )
                 await self._safe_kernel_end_turn(session_id, turn_id, status)
+        # WP2/WP3（GOAL-20261127-01）：turn 结局 → 路由健康表的**成功**回写
+        # （completed = provider 真实完成了本 turn → 清冷却/失败计数，与
+        # ChatEngine observe_outcome 成功语义同源）。失败方向不在此记录 ——
+        # provider 失败已由 stderr 结构化观测 / auto_retry 兜底通道精确回写，
+        # turn 级失败（超时/停顿/取消）混入会把非 provider 故障错挂到模型。
+        if status == "completed":
+            self._observe_retry_success(
+                self._last_confirmed_model
+                or str(getattr(self._rpc, "spawn_model_id", "") or "")
+            )
         if tracker_task_id:
             try:
                 from app.services.chat.engine_instance import try_get_chat_engine
@@ -2787,6 +2920,11 @@ class PiBridge:
                 # G37（WP05/WP08）：非流式同款 —— 模型应用结果 + usage 采集器。
                 _ns_model_result = None
                 _ns_usage_collector = None
+                # WP3/R1-P3-2：非流式 attempt 链与流式同构（事件 drain 泵
+                # 同样消费 auto_retry 事件）。
+                _ns_provider_retry_attempts = 0
+                _ns_turn_last_failure_kind = ""
+                _ns_turn_effective_model = ""
                 try:
                     from app.services.chat.model_runtime.usage_ledger import (
                         TurnUsageCollector,
@@ -2874,6 +3012,9 @@ class PiBridge:
                         _ns_model_result = await self._apply_session_model_for_turn(
                             turn_sid, turn_id, run_id, str(data.get("message") or ""),
                         )
+                        # WP3/R1-P3-2：非流式生效模型（健康回写归属）。
+                        if _ns_model_result.ok and _ns_model_result.effective_model:
+                            _ns_turn_effective_model = _ns_model_result.effective_model
                         if not _ns_model_result.ok:
                             send_failed = True
                             # G43（C18）：装配后未发出 —— 如实 not_sent
@@ -3063,6 +3204,30 @@ class PiBridge:
                                             "[PiBridge] usage observe failed turn=%s",
                                             turn_id, exc_info=True,
                                         )
+                                # WP3/R1-P3-2：非流式 attempt 链计数（去重语义
+                                # 与流式一致 —— HTTP 状态类失败由 stderr obs
+                                # 通道记，这里只兜底非 HTTP 类）。
+                                if event_type == "auto_retry_start":
+                                    _ns_provider_retry_attempts += 1
+                                    _ar_ns_kind = self.classify_retry_error_text(
+                                        str(event.get("errorMessage") or "")
+                                    )
+                                    _ns_turn_last_failure_kind = _ar_ns_kind
+                                    if _ar_ns_kind not in ("rate_limit", "provider_unavailable"):
+                                        self._observe_retry_health(
+                                            model=(
+                                                _ns_turn_effective_model
+                                                or self._last_confirmed_model
+                                                or str(getattr(self._rpc, "spawn_model_id", "") or "")
+                                            ),
+                                            failure_kind=_ar_ns_kind,
+                                        )
+                                elif event_type == "auto_retry_end" and event.get("success"):
+                                    self._observe_retry_success(
+                                        _ns_turn_effective_model
+                                        or self._last_confirmed_model
+                                        or str(getattr(self._rpc, "spawn_model_id", "") or "")
+                                    )
                                 # PI-01（ADR-0286）：tool_execution_start/end 驱动
                                 # TOOL_WAIT⇀RUNNING（仅在相应相位起作用）。
                                 _phase.observe_tool_event(event_type)
@@ -3200,6 +3365,8 @@ class PiBridge:
                     if _ns_model_result is not None and _ns_usage_collector is not None:
                         self._persist_turn_runtime_receipt(
                             _ns_model_result, collector=_ns_usage_collector,
+                            provider_retry_attempts=_ns_provider_retry_attempts,
+                            last_provider_failure_kind=_ns_turn_last_failure_kind,
                         )
                     # G29（WP10）：非流式 turn teardown 同款交互失效（见 stream_prompt）。
                     try:
@@ -3513,6 +3680,13 @@ class PiBridge:
                 _model_result = None
                 _model_status_pending = None
                 _usage_collector = None
+                # WP2（GOAL-20261127-01）：vendor auto-retry attempt 计数与
+                # 本 turn 生效模型（健康回写归属；S3 随账本持久化）。
+                _provider_retry_attempts = 0
+                _turn_effective_model = ""
+                # WP3：本 turn 观察到的最后 provider 失败分类（失败种类随
+                # 回执落盘；分类来自 stderr 结构化观测 + auto_retry 兜底）。
+                _turn_last_failure_kind = ""
                 try:
                     from app.services.chat.model_runtime.usage_ledger import (
                         TurnUsageCollector,
@@ -3608,6 +3782,9 @@ class PiBridge:
                         _model_result = await self._apply_session_model_for_turn(
                             turn_sid, turn_id, run_id, str(data.get("message") or ""),
                         )
+                        # WP2：本 turn 生效模型（auto_retry 健康回写归属）。
+                        if _model_result.ok and _model_result.effective_model:
+                            _turn_effective_model = _model_result.effective_model
                         if not _model_result.ok:
                             send_failed = True
                             _model_failure_class = (
@@ -3908,6 +4085,36 @@ class PiBridge:
                                             "[PiBridge] usage observe failed turn=%s",
                                             turn_id, exc_info=True,
                                         )
+                                # WP2：vendor auto-retry 事件 → attempt 计数 +
+                                # 健康表结构化兜底回写（stderr 观测的补强通道；
+                                # 传输层断流等无 HTTP 状态的失败不丢信号）。
+                                _ar_type = str(event.get("type") or "")
+                                if _ar_type == "auto_retry_start":
+                                    _provider_retry_attempts += 1
+                                    _ar_kind = self.classify_retry_error_text(
+                                        str(event.get("errorMessage") or "")
+                                    )
+                                    _turn_last_failure_kind = _ar_kind
+                                    # R1-P2-1：HTTP 状态类失败（429/5xx）已由
+                                    # stderr provider-obs 精确通道按 attempt 记
+                                    # 一次；本兜底通道只补「无 HTTP 状态信号」
+                                    # 的失败（传输断流/超时），同一次真实失败
+                                    # 绝不双计健康惩罚。
+                                    if _ar_kind not in ("rate_limit", "provider_unavailable"):
+                                        self._observe_retry_health(
+                                            model=(
+                                                _turn_effective_model
+                                                or self._last_confirmed_model
+                                                or str(getattr(self._rpc, "spawn_model_id", "") or "")
+                                            ),
+                                            failure_kind=_ar_kind,
+                                        )
+                                elif _ar_type == "auto_retry_end" and event.get("success"):
+                                    self._observe_retry_success(
+                                        _turn_effective_model
+                                        or self._last_confirmed_model
+                                        or str(getattr(self._rpc, "spawn_model_id", "") or "")
+                                    )
                                 # PI-01（ADR-0286）：tool_execution_start/end 驱动
                                 # TOOL_WAIT⇀RUNNING（仅在相应相位起作用）。
                                 _phase.observe_tool_event(str(event.get("type") or ""))
@@ -4213,6 +4420,8 @@ class PiBridge:
                     if _model_result is not None and _usage_collector is not None:
                         self._persist_turn_runtime_receipt(
                             _model_result, collector=_usage_collector,
+                            provider_retry_attempts=_provider_retry_attempts,
+                            last_provider_failure_kind=_turn_last_failure_kind,
                         )
                     # Clear the active-turn markers AFTER the abort above (abort reads
                     # them to cancel the token) and before releasing the lock.

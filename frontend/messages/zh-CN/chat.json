@@ -449,8 +449,15 @@
       "degraded_inherit": "降级继承（未验证）",
       "failed": "失败",
       "budget_rejected": "预算拒绝",
-      "pending": "待定"
-    }
+      "pending": "待定",
+      "inherit_routed": "健康降级应用（inherit）"
+    },
+    "budget": "预算",
+    "budgetUnlimited": "无预算上限",
+    "runtimeAttempts": "provider 重试 ×{n}",
+    "runtimeFailure": "最后失败：{kind}",
+    "runtimeRoute": "路由：{codes}",
+    "budgetRemaining": "余量 {n}"
   },
   "turnReceipt": {
     "toggleLabel": "本轮提交资料",

@@ -11,13 +11,17 @@
 - ``PUT  /chat/sessions/{id}/model``  设置/恢复 preference（CAS，M11）；
   active turn 期间返回 pending_next_turn（M04）；
 - ``GET  /chat/sessions/{id}/usage``  会话累计 + 最近 turn 用量 + coverage
-  /completeness（来源与未知如实分层）。
+  /completeness（来源与未知如实分层）；
+- ``GET  /chat/sessions/{id}/runtime`` 运行质量聚合投影（WP4）：attempt 链
+  最近 turn + 路由健康快照（有界白名单）+ vendor session_stats 对账块
+  （D6：宿主账本视角 vs vendor 视角，差额如实呈现，不建第二事实源）。
 
 不提供任何凭证读写：目录/能力来自服务器配置，客户端字符串不解释为
 endpoint/key（M07/M34）。
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -43,7 +47,10 @@ from app.services.chat.model_runtime.session_model_prefs import (
 from app.services.chat.model_runtime.session_model_service import (
     resolve_session_target,
 )
-from app.services.chat.model_runtime.usage_ledger import session_usage_summary
+from app.services.chat.model_runtime.usage_ledger import (
+    session_usage_summary,
+)
+from app.schemas.session_context_views_schema import SessionRuntimeResponse
 
 logger = logging.getLogger(__name__)
 router = APIRouter()  # 前缀/tags 由挂载方（chat.router）提供
@@ -260,3 +267,92 @@ async def get_session_usage(
 ):
     """会话用量：累计 + 最近 turn + coverage/completeness（诚实分层）。"""
     return await session_usage_summary(db, session_id)
+
+
+#: vendor session_stats 对账 RPC 的有界预算（诊断路径；超时 → 如实降级披露）。
+_RUNTIME_VENDOR_STATS_TIMEOUT_S = 3.0
+
+#: vendor session_stats 白名单（R1-P1-1/P2-2：路径与内部会话 id 不出 API 面）。
+_VENDOR_STATS_FIELDS = (
+    "userMessages", "assistantMessages", "toolCalls", "toolResults",
+    "totalMessages", "tokens", "cost", "contextUsage",
+)
+
+#: 健康快照投影的白名单字段（有界，无内容存储语义）。
+_HEALTH_SNAPSHOT_FIELDS = (
+    "available", "cooldown_remaining_s", "consecutive_failures",
+    "last_failure_kind", "rate_limited_recently", "capability_mismatch",
+    "last_latency_bucket", "total_success", "total_failure",
+)
+
+
+@router.get(
+    "/sessions/{session_id}/runtime",
+    response_model=SessionRuntimeResponse,
+)
+async def get_session_runtime(
+    session_id: str,
+    _conv: Conversation = Depends(require_owned_session),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """运行质量聚合投影（WP4，只读）：既有权威的有界投影，非第二事实源。
+
+    - turns：账本最近 turn（含 WP3 attempt 链列）；
+    - provider_health：进程内路由健康表快照的白名单投影（进程级运营元数据，
+      无用户内容；UI/API 双入口共用）；
+    - vendor_session_stats：vendor 视角 usage 汇总对账块 —— RPC 不可达时
+      ``{"available": false, "reason": ...}`` 如实降级（不伪造空值）。
+    """
+    summary = await session_usage_summary(db, session_id)
+
+    health_view: dict = {}
+    try:
+        from app.services.chat.model_runtime.health import get_llm_provider_health
+
+        for key, state in get_llm_provider_health().snapshot().items():
+            health_view[key] = {f: state.get(f) for f in _HEALTH_SNAPSHOT_FIELDS}
+    except Exception:  # noqa: BLE001 — 投影绝不阻断
+        logger.debug("[session-runtime] health snapshot unavailable", exc_info=True)
+
+    vendor_stats: dict = {"available": False, "reason": "bridge_unavailable"}
+    try:
+        from app.agent_pi_bridge import get_pi_bridge
+
+        bridge = await get_pi_bridge(session_id=session_id)
+        # R1-P1-1：RPC 无 session 参数，vendor stats 是 **worker 当前绑定的
+        # vendor 会话** 统计。共享 worker 上请求他人会话/有活动 turn 时必须
+        # 拒答（available=false），绝不把别的 owner 会话的用量当对账块返回。
+        bound = getattr(bridge, "_bound_gis_session_id", None)
+        active = getattr(bridge, "_active_turn_sid", None)
+        if bound != session_id:
+            vendor_stats = {"available": False, "reason": "session_not_bound"}
+        elif active not in (None, session_id):
+            vendor_stats = {"available": False, "reason": "worker_busy"}
+        else:
+            state = await asyncio.wait_for(
+                bridge.rpc.request("get_session_stats", {}),
+                timeout=_RUNTIME_VENDOR_STATS_TIMEOUT_S,
+            )
+            if isinstance(state, dict):
+                # R1-P2-2：白名单投影 —— sessionFile（服务器绝对路径）与
+                # vendor sessionId 不出 API 面。
+                vendor_stats = {
+                    "available": True,
+                    "stats": {
+                        k: state[k] for k in _VENDOR_STATS_FIELDS
+                        if isinstance(state.get(k), (int, float, str, dict))
+                    },
+                }
+            else:
+                vendor_stats = {"available": False, "reason": "unreadable_payload"}
+    except Exception as exc:  # noqa: BLE001 — 诚实降级（超时/桥缺席/RPC 失败）
+        vendor_stats = {"available": False, "reason": type(exc).__name__[:40]}
+
+    return SessionRuntimeResponse(
+        session_id=session_id,
+        turns=summary.get("recent_turns", []),
+        totals=summary.get("totals", {}),
+        budget=summary.get("budget", {}),
+        provider_health=health_view,
+        vendor_session_stats=vendor_stats,
+    )

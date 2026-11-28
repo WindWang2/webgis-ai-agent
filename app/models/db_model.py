@@ -1075,9 +1075,15 @@ class ChatTurnRuntime(Base):
     effective_model = Column(String(160), nullable=True)
     thinking_effective = Column(String(16), nullable=True)
     response_model = Column(String(160), nullable=True)
-    # applied | inherit_default | degraded_inherit | failed | budget_rejected
+    # applied | inherit_default | inherit_routed | degraded_inherit | failed | budget_rejected
     status = Column(String(24), nullable=False, default="pending")
     failure_reason = Column(String(255), nullable=True)
+    # WP3（GOAL-20261127-01）：attempt 链有界关联 —— vendor auto-retry 次数、
+    # inherit 路由理由码（| 分隔，≤8 条 ×64 字符）、本 turn 观察到的最后
+    # provider 失败分类（provider.FailureKind 词表）。空 = 未观察到。
+    provider_retry_attempts = Column(Integer, nullable=False, default=0)
+    route_reason_codes = Column(String(255), nullable=False, default="")
+    last_provider_failure_kind = Column(String(32), nullable=False, default="")
     tokens_input = Column(BigInteger, nullable=False, default=0)
     tokens_output = Column(BigInteger, nullable=False, default=0)
     tokens_cache_read = Column(BigInteger, nullable=False, default=0)
@@ -1097,8 +1103,8 @@ class ChatTurnRuntime(Base):
         # 与迁移 g3701 同名索引（create_all/alembic 两侧一致）
         Index("idx_ctr_session_created", "session_id", "created_at"),
         CheckConstraint(
-            "status IN ('pending', 'applied', 'inherit_default', 'degraded_inherit', "
-            "'failed', 'budget_rejected')",
+            "status IN ('pending', 'applied', 'inherit_default', 'inherit_routed', "
+            "'degraded_inherit', 'failed', 'budget_rejected')",
             name="ck_ctr_status",
         ),
     )
