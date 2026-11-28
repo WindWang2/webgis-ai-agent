@@ -28,6 +28,7 @@ import {
 import { ConfirmAction } from '@/components/shared/confirm-action';
 import { DataDeliveryDialog } from '@/components/data-delivery/delivery-dialog';
 import type { DeliverySourceRef } from '@/lib/api/data-delivery';
+import { PackageExchangeDialog } from '@/components/project-exchange/package-exchange-dialog';
 import { EmptyState } from '@/components/shared/empty-state';
 import { IconButton } from '@/components/shared/icon-button';
 import { InlineNotice } from '@/components/shared/inline-notice';
@@ -68,12 +69,15 @@ export function ArtifactCenter({
   onViewVersionLedger,
 }: ArtifactCenterProps) {
   const t = useT('project');
+  const tEx = useT('projectExchange');
   const ac = useProjectArtifacts(projectId);
   const addToast = useToastStore((s) => s.addToast);
   const [expandedId, setExpandedId] = useState('');
   const [copiedId, setCopiedId] = useState('');
   // G18 数据交付：行级入口（薄挂载；主体在独立对话框组件）
   const [deliverySource, setDeliverySource] = useState<DeliverySourceRef | null>(null);
+  // 05 线工程包交换：项目级导出/导入入口（主体在独立对话框组件）
+  const [exchangeOpen, setExchangeOpen] = useState(false);
   const [sortNewest, setSortNewest] = useState(true);
   const lastFocused = useRef('');
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -174,6 +178,13 @@ export function ArtifactCenter({
               void ac.reload({ forceRefresh: true });
             }}
           />
+          <button
+            type="button"
+            onClick={() => setExchangeOpen(true)}
+            className="rounded-sm border border-edge-subtle px-2 py-0.5 text-micro text-ink transition-colors hover:bg-surface-hover"
+          >
+            {tEx('tabExport')}/{tEx('tabImport')}
+          </button>
         </span>
       </div>
 
@@ -355,6 +366,11 @@ export function ArtifactCenter({
           )}
         </div>
       )}
+      <PackageExchangeDialog
+        open={exchangeOpen}
+        onClose={() => setExchangeOpen(false)}
+        projectId={projectId}
+      />
       <DataDeliveryDialog
         open={deliverySource !== null}
         onClose={() => setDeliverySource(null)}

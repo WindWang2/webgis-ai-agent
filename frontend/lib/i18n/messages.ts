@@ -64,6 +64,7 @@ import zhCartogram from '@/messages/zh-CN/cartogram.json'
 import zhModelBuilder from '@/messages/zh-CN/modelBuilder.json'
 import zhDesignSeries from '@/messages/zh-CN/designSeries.json'
 import zhSamplingAccuracy from '@/messages/zh-CN/samplingAccuracy.json'
+import zhProjectExchange from '@/messages/zh-CN/projectExchange.json'
 import enCommon from '@/messages/en-US/common.json'
 import enSettings from '@/messages/en-US/settings.json'
 import enErrors from '@/messages/en-US/errors.json'
@@ -114,6 +115,7 @@ import enCartogram from '@/messages/en-US/cartogram.json'
 import enModelBuilder from '@/messages/en-US/modelBuilder.json'
 import enDesignSeries from '@/messages/en-US/designSeries.json'
 import enSamplingAccuracy from '@/messages/en-US/samplingAccuracy.json'
+import enProjectExchange from '@/messages/en-US/projectExchange.json'
 import type { AppLocale } from './config'
 
 export interface AppMessages {
@@ -170,6 +172,7 @@ export interface AppMessages {
   modelBuilder: typeof zhModelBuilder
   designSeries: typeof zhDesignSeries
   samplingAccuracy: typeof zhSamplingAccuracy
+  projectExchange: typeof zhProjectExchange
 }
 
 export const messages: Record<AppLocale, AppMessages> = {
@@ -197,6 +200,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     fieldContracts: zhFieldContracts,
     cartogram: zhCartogram,
     designSeries: zhDesignSeries,
+    projectExchange: zhProjectExchange,
     dataImport: zhDataImport,
     fieldCompute: zhFieldCompute,
     rasterSampling: zhRasterSampling,
@@ -253,6 +257,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     fieldContracts: enFieldContracts as unknown as AppMessages['fieldContracts'],
     cartogram: enCartogram as unknown as AppMessages['cartogram'],
     designSeries: enDesignSeries as unknown as AppMessages['designSeries'],
+    projectExchange: enProjectExchange as unknown as AppMessages['projectExchange'],
     dataImport: enDataImport as unknown as AppMessages['dataImport'],
     fieldCompute: enFieldCompute as unknown as AppMessages['fieldCompute'],
     rasterSampling: enRasterSampling as unknown as AppMessages['rasterSampling'],
