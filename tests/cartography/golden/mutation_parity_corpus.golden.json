@@ -16,6 +16,23 @@
    }
   }
  ],
+ "apply_trajectory_product_unknown_ref_rejected": [
+  {
+   "result": {
+    "correction_hint": "Re-read MapSpec and retry with the current mutation_revision.",
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "User MapSpec mutations require expected_revision.",
+    "origin": "user",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 0,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
  "checkpoint_then_rollback": [
   {
    "result": {
@@ -1229,9 +1246,9 @@
       "review_invocations": 1,
       "rule_invocations": 9
      },
-     "final_fingerprint": "carto-sha256:51e78244764c2fc00e0c46c2c0f0e93d4cd7a8f5ae27d5df0fbbfab40da56dd6",
+     "final_fingerprint": "carto-sha256:df2f3ba4242468de5b8076d084e0bb4fa442b91ed735552cd195e78708239f6b",
      "grammar_audit": null,
-     "initial_fingerprint": "carto-sha256:51e78244764c2fc00e0c46c2c0f0e93d4cd7a8f5ae27d5df0fbbfab40da56dd6",
+     "initial_fingerprint": "carto-sha256:df2f3ba4242468de5b8076d084e0bb4fa442b91ed735552cd195e78708239f6b",
      "locked_suppressed": [],
      "repair_count": 0,
      "representation_report": null,
@@ -1434,7 +1451,7 @@
     "layer_ids": [
      "ly-lbl"
     ],
-    "mapspec_fingerprint": "carto-sha256:51e78244764c2fc00e0c46c2c0f0e93d4cd7a8f5ae27d5df0fbbfab40da56dd6",
+    "mapspec_fingerprint": "carto-sha256:df2f3ba4242468de5b8076d084e0bb4fa442b91ed735552cd195e78708239f6b",
     "mutation_revision": 2,
     "origin": "agent",
     "runtime_observation_seq": 0,
@@ -1460,9 +1477,9 @@
       "review_invocations": 1,
       "rule_invocations": 9
      },
-     "final_fingerprint": "carto-sha256:51e78244764c2fc00e0c46c2c0f0e93d4cd7a8f5ae27d5df0fbbfab40da56dd6",
+     "final_fingerprint": "carto-sha256:df2f3ba4242468de5b8076d084e0bb4fa442b91ed735552cd195e78708239f6b",
      "grammar_audit": null,
-     "initial_fingerprint": "carto-sha256:51e78244764c2fc00e0c46c2c0f0e93d4cd7a8f5ae27d5df0fbbfab40da56dd6",
+     "initial_fingerprint": "carto-sha256:df2f3ba4242468de5b8076d084e0bb4fa442b91ed735552cd195e78708239f6b",
      "locked_suppressed": [],
      "repair_count": 0,
      "representation_report": null,
@@ -1665,7 +1682,7 @@
     "layer_ids": [
      "ly-lbl"
     ],
-    "mapspec_fingerprint": "carto-sha256:51e78244764c2fc00e0c46c2c0f0e93d4cd7a8f5ae27d5df0fbbfab40da56dd6",
+    "mapspec_fingerprint": "carto-sha256:df2f3ba4242468de5b8076d084e0bb4fa442b91ed735552cd195e78708239f6b",
     "mutation_revision": 3,
     "origin": "agent",
     "runtime_observation_seq": 0,

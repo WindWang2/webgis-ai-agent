@@ -1045,6 +1045,15 @@ CASES = [
                         "family_id": "odf_missing"}},
         ],
     },
+    # ── ApplyTrajectoryProduct（GOAL-20261127-02）───────────────────────────
+    {
+        "name": "apply_trajectory_product_unknown_ref_rejected",
+        "actions": [
+            {"class": "ApplyTrajectoryProductIntent", "origin": "user",
+             "fields": {"product_ref": "ref:traj-product-missing",
+                        "family_id": "traj_missing"}},
+        ],
+    },
     # ── RestoreStyle ─────────────────────────────────────────────────────────
     {
         "name": "restore_style_subset_skips_missing",

@@ -30,6 +30,7 @@ import {
   type StudioToggleKey,
 } from '@/lib/mapspec/studio-layout';
 import { FlowProductPanel } from '@/components/flow/flow-product-panel';
+import { TrajectoryPanel } from '@/components/moving-object/trajectory-panel';
 
 const iconForType: Record<string, string> = {
   png: '🖼',
@@ -585,6 +586,11 @@ export function MapStudioTab() {
             {/* G21 OD 流产品：功能专属面板（preview/apply/query 与 Studio 同源） */}
             <StudioSection title={t('flow.panelTitle')} summary={t('flow.panelSummaryEmpty')}>
               <FlowProductPanel />
+            </StudioSection>
+
+            {/* GOAL-20261127-02 移动对象轨迹：build/apply/query 与 Pi 工具同链 */}
+            <StudioSection title={t('movingObject.panelTitle')} summary={t('movingObject.panelSummaryEmpty')}>
+              <TrajectoryPanel />
             </StudioSection>
 
             {/* 页面与输出：纸张 / 方向 / DPI / 格式 */}

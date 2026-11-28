@@ -483,8 +483,18 @@ class ApplyFlowProductIntent:
     family_id: str
 
 
+@dataclass
+class ApplyTrajectoryProductIntent:
+    """Apply one session-owned trajectory preview as a single map transaction
+    (GOAL-20261127-02 moving-object line)."""
+
+    product_ref: str
+    family_id: str
+
+
 MutationIntent = Union[
     ApplyFlowProductIntent,
+    ApplyTrajectoryProductIntent,
     InitProjectIntent,
     RefreshDataRevisionIntent,
     SetViewIntent,

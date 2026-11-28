@@ -224,6 +224,7 @@ export interface MapSpecLayer {
   raster_style?: RasterExpressionSpec;
   symbol_asset?: MapSpecLayerSymbolAsset;
   diagram_symbol?: MapSpecLayerDiagramSymbol;
+  trajectory?: MapSpecLayerTrajectory;
 }
 
 export interface MapSpecLayerFlow {
@@ -246,6 +247,20 @@ export interface MapSpecLayerFlow {
   encoding?: Record<string, unknown>;
   time_window?: Record<string, unknown>;
   filters?: Record<string, unknown>;
+}
+
+export interface MapSpecLayerTrajectory {
+  schema_version: "moving_object_trajectory.v1";
+  product_ref: string;
+  family_id: string;
+  source_ref: string;
+  source_revision: number;
+  source_fingerprint: string;
+  product_fingerprint: string;
+  stats?: Record<string, unknown>;
+  encoding?: Record<string, unknown>;
+  coverage?: Record<string, unknown>;
+  assumptions?: string[];
 }
 
 export interface MapSpecLayerExtrusion {
