@@ -112,6 +112,20 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.templates": "rendering",                 # 模板/主题组合
     "app.tools.temporal_tools": "analysis",
     "app.tools.moving_object_tools": "analysis",  # GOAL-20261127-02 轨迹域
+    # GOAL-20261127-03：概率抽样框、设计、估计（分析产出）
+    "app.tools.survey_sampling_tools": "analysis",
+    # GOAL-20261127-04：只读地图发布（草稿是成品；检视/计划/校验名字覆盖）
+    "app.tools.publication_tools": "export",
+    # GOAL-20261127-05：工程包交换（导入是数据获取；导出与只读面名字覆盖）
+    "app.tools.project_exchange_tools": "data_access",
+    # 纸面比例尺综合（apply 写地图；inspect/preview 名字覆盖）
+    "app.tools.paper_scale_tools": "map_mutation",
+    # 多源实体融合（执行/决定/提交是分析产出；只读面名字覆盖）
+    "app.tools.data_fusion_authoring_tools": "analysis",
+    # 情境方案候选（隔离分支上的分析编排；inspect 名字覆盖）
+    "app.tools.scenario_harness_tools": "analysis",
+    # 可视化模型构建（草稿/发布是分析编制；只读面名字覆盖）
+    "app.tools.model_authoring_tools": "analysis",
     "app.tools.science_temporal_tools": "analysis",  # science-v5 物候/立方体/异常
     "app.tools.temporal_view_tools": "rendering",  # GOAL 03：时态视图控制（MapSpec temporal 写面/时间轴驱动）
     "app.tools.terrain_analysis": "analysis",
@@ -377,6 +391,33 @@ _NAME_OVERRIDES: Dict[str, str] = {
     "webgis_map_series_inspect": "inspection",
     "webgis_map_series_consistency": "inspection",
     "webgis_map_series_propagation_preview": "inspection",
+    # publication_tools：检视/计划/校验只读；publication_draft 走模块默认 export
+    "publication_inspect": "inspection",
+    "publication_prepare": "inspection",
+    "publication_validate": "inspection",
+    # project_exchange_tools：计划与检视只读；导出是成品；导入走模块默认 data_access
+    "project_exchange_inspect": "inspection",
+    "project_exchange_export_plan": "inspection",
+    "project_exchange_import_inspect": "inspection",
+    "project_exchange_import_plan": "inspection",
+    "project_exchange_export": "export",
+    # paper_scale_tools：检视与预览只读；apply 走模块默认 map_mutation
+    "webgis_inspect_paper_scale_generalization": "inspection",
+    "webgis_preview_paper_scale_generalization": "inspection",
+    # data_fusion_authoring_tools：只读面；commit 是发布成品
+    "webgis_data_fusion_describe_sources": "inspection",
+    "webgis_data_fusion_preview": "inspection",
+    "webgis_data_fusion_status": "inspection",
+    "webgis_data_fusion_review_queue": "inspection",
+    "webgis_data_fusion_result": "inspection",
+    "webgis_data_fusion_commit": "export",
+    # scenario_harness_tools：检视只读，其余走模块默认 analysis
+    "webgis_scenario_inspect": "inspection",
+    # model_authoring_tools：目录/检视/校验只读
+    "webgis_model_builder_capabilities": "inspection",
+    "webgis_model_builder_inspect": "inspection",
+    "webgis_model_builder_validate": "inspection",
+    "webgis_model_builder_list_models": "inspection",
 }
 
 #: 分类有限集合（审计与披露依赖）

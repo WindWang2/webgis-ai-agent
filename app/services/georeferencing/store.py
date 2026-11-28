@@ -1,7 +1,6 @@
 """Atomic flock-protected session JSON store & CAS persistence for G48 Georeferencing."""
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import logging
@@ -64,6 +63,8 @@ def _lock_path(session_id: str) -> Path:
 
 @contextmanager
 def _session_file_lock(session_id: str) -> Iterator[None]:
+    import fcntl
+
     lp = _lock_path(session_id)
     lp.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(lp, os.O_CREAT | os.O_RDWR, 0o600)

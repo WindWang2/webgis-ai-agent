@@ -155,6 +155,7 @@ async def test_runtime_vendor_stats_rejects_unbound_or_foreign_session(
     """R1-P1-1：vendor stats 是 worker 当前绑定会话的统计 —— 绑定不匹配/
     他人会话在飞时必须拒答，绝不把别的 owner 会话用量当对账块返回。"""
     from types import SimpleNamespace
+    from unittest.mock import AsyncMock
 
     from app.api.routes.session_model_views import get_session_runtime
 
@@ -162,14 +163,7 @@ async def test_runtime_vendor_stats_rejects_unbound_or_foreign_session(
         def __init__(self, bound, active):
             self._bound_gis_session_id = bound
             self._active_turn_sid = active
-
-        class rpc:  # noqa: N801
-            called = False
-
-            @staticmethod
-            async def request(cmd, data=None):
-                type(self).called = True  # noqa: F841 — 不应被调到
-                return {"totalMessages": 99}
+            self.rpc = SimpleNamespace(request=AsyncMock(return_value={"totalMessages": 99}))
 
     import app.agent_pi_bridge as bridge_mod
 
@@ -188,6 +182,7 @@ async def test_runtime_vendor_stats_rejects_unbound_or_foreign_session(
         assert payload["vendor_session_stats"] == {
             "available": False, "reason": reason,
         }, (name, payload["vendor_session_stats"])
+        bridge.rpc.request.assert_not_awaited()
 
 
 @pytest.mark.asyncio

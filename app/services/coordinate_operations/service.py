@@ -23,7 +23,6 @@ import functools
 import hashlib
 import json
 import logging
-import resource
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
@@ -37,7 +36,19 @@ from app.services.coordinate_operations.crs_contract import (
 
 logger = logging.getLogger(__name__)
 
+try:
+    import resource
+except ImportError:  # Windows has no resource module
+    resource = None  # type: ignore[assignment]
+
 _RUNNERS: Dict[str, asyncio.Task] = {}
+
+
+def _maxrss() -> int:
+    """Peak RSS from getrusage. Windows reports 0 because resource is absent."""
+    if resource is None:
+        return 0
+    return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
 
 
 # ── 工具 ───────────────────────────────────────────────────────────────────
@@ -822,7 +833,7 @@ async def _execute_body(handle: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
     session_id = ctx["session_id"]
     plan = ctx["plan"]
     op_meta = json.loads(ctx["op_json"])
-    rss_before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    rss_before = _maxrss()
     t0 = time.monotonic()
 
     _mark_run(session_id, run_id, "running")
@@ -929,7 +940,7 @@ async def _execute_body(handle: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
                        "reason": f"{type(e).__name__}: {e}"}
         handle.checkpoint()
 
-        rss_after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        rss_after = _maxrss()
         receipt = _bounded_json({
             "run_id": run_id,
             "rows_transformed": stats["rows_transformed"],

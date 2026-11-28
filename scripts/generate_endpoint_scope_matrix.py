@@ -82,6 +82,7 @@ OVERRIDES: dict[tuple[str, str], str] = {
     # Both POSTs can create a session-scoped selection handle.
     ("/linked-exploration/plan-preview", "POST"): "gis:write",
     ("/linked-exploration/drill", "POST"): "gis:write",
+    ("/publications/preview", "POST"): "gis:read",
 }
 
 #: 域路径规则：版本归一化路径首段 → (read, write) 或固定 scope。
@@ -139,6 +140,8 @@ DOMAIN_RULES: dict[str, tuple[str, str] | str] = {
     "spatial-events": ("mission:read", "mission:write"),
     "pi-tools": ("session:read", "session:write"),
     "projects": ("projects:read", "projects:write"),
+    "project-exchange": ("projects:read", "projects:write"),
+    "publications": ("gis:read", "gis:write"),
     "ready": "public:read",
     "reports": ("gis:read", "gis:write"),
     "sessions": ("session:read", "session:write"),
@@ -147,6 +150,8 @@ DOMAIN_RULES: dict[str, tuple[str, str] | str] = {
     "storymap": ("session:read", "session:write"),
     "static": ("gis:read", "gis:write"),
     "status": ("gis:read", "gis:write"),
+    "survey": ("gis:read", "gis:write"),
+    "surveys": "gis:read",
     "tasks": ("jobs:read", "jobs:write"),
     "templates": ("gis:read", "gis:write"),
     "upload": ("gis:read", "gis:write"),

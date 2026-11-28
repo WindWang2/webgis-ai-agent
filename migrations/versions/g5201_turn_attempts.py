@@ -54,7 +54,7 @@ def upgrade() -> None:
     )
     with op.batch_alter_table("chat_turn_runtime") as batch:
         batch.drop_constraint("ck_ctr_status", type_="check")
-    op.create_check_constraint("ck_ctr_status", "chat_turn_runtime", _STATUS_NEW)
+        batch.create_check_constraint("ck_ctr_status", _STATUS_NEW)
 
 
 def downgrade() -> None:
@@ -65,7 +65,7 @@ def downgrade() -> None:
     )
     with op.batch_alter_table("chat_turn_runtime") as batch:
         batch.drop_constraint("ck_ctr_status", type_="check")
-    op.create_check_constraint("ck_ctr_status", "chat_turn_runtime", _STATUS_OLD)
+        batch.create_check_constraint("ck_ctr_status", _STATUS_OLD)
     op.drop_column("chat_turn_runtime", "last_provider_failure_kind")
     op.drop_column("chat_turn_runtime", "route_reason_codes")
     op.drop_column("chat_turn_runtime", "provider_retry_attempts")

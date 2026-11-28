@@ -6,7 +6,6 @@
 """
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
@@ -184,6 +183,8 @@ def update_state(principal: str, job_id: str,
     ``flock(LOCK_EX)`` 把读-改-写收口为一次临界区；终态一旦成立，
     迟到成功/进度/成果一律整体回退，而不是只回退 status。
     """
+    import fcntl
+
     directory = job_dir(principal, job_id)
     directory.mkdir(parents=True, exist_ok=True)
     with (directory / "state.lock").open("a+") as lock_file:
